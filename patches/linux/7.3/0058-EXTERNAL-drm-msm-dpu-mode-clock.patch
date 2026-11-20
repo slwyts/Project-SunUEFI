@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+Date: Mon, 28 Sep 2026 01:27:25 +0800
+Subject: piano: drm/msm/dpu: validate modes against the voted core clock
+
+mode_valid checked mode->clock, which includes the horizontal
+blanking, while the core clock is voted for vtotal * hdisplay *
+vrefresh. This rejected the 144 Hz mode of the Xiaomi Pad 8 Pro panel
+(577 MHz) although the rate that is actually voted (559 MHz) fits the
+575 MHz ceiling.
+
+Link: https://github.com/blu-sharky/linux-piano/commit/878af459c071a2c6d807ac3b72365ed6fe2a547b
+Link: https://github.com/blu-sharky/linux-piano/commit/5c2c95fddbe9c29720b7b4e84119357358e9f0cb
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+index 42d0a529b4d515712de3ac2e6e46873406b61adc..950df3d66b1d6a3b4103a985c21bbe85c0cac84a 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+@@ -1609,8 +1609,15 @@ static enum drm_mode_status dpu_crtc_mode_valid(struct drm_crtc *crtc,
+ 	    mode->hdisplay > dpu_kms->catalog->caps->max_mixer_width)
+ 		return MODE_BAD_HVALUE;
+ 
+-	adjusted_mode_clk = dpu_core_perf_adjusted_mode_clk(mode->clock,
+-							    dpu_kms->perf.perf_cfg);
++	/*
++	 * Check the same rate the core clock is voted for: the mixers only
++	 * process the active pixels of each line, so the horizontal blanking
++	 * in mode->clock does not load them.
++	 */
++	adjusted_mode_clk = dpu_core_perf_adjusted_mode_clk(
++		div_u64((u64)mode->vtotal * mode->hdisplay *
++			drm_mode_vrefresh(mode), 1000),
++		dpu_kms->perf.perf_cfg);
+ 
+ 	if (dpu_kms->catalog->caps->has_3d_merge)
+ 		adjusted_mode_clk /= 2;

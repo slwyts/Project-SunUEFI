@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: dt-bindings: arm: qcom: document Xiaomi Piano
+
+Document the compatible used by the SM8750 Xiaomi Pad 8 Pro.
+
+The port retains changes from these linux-piano commits:
+piano: dts: add Xiaomi Pad 8 Pro bring-up skeleton (#2) (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+
+Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/e33927a890e20d1834961a48e0328418ae98db3a
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ Documentation/devicetree/bindings/arm/qcom.yaml | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/arm/qcom.yaml b/Documentation/devicetree/bindings/arm/qcom.yaml
+index ff8a35df7862dbf2c48163d5915ea845fc179634..1636f11a4ce2d6b5df87e4a6c1fe8e146f15afa3 100644
+--- a/Documentation/devicetree/bindings/arm/qcom.yaml
++++ b/Documentation/devicetree/bindings/arm/qcom.yaml
+@@ -1170,6 +1170,7 @@ properties:
+           - enum:
+               - qcom,sm8750-mtp
+               - qcom,sm8750-qrd
++              - xiaomi,piano
+           - const: qcom,sm8750
+ 
+       - items:

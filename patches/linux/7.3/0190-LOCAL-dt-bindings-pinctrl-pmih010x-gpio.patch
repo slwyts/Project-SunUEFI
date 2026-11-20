@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Wed, 11 Nov 2026 00:25:30 +0800
+Subject: dt-bindings: pinctrl: qcom: describe PMIH010x GPIOs
+
+Document the PMIH010x GPIO compatible and its GPIO1 through GPIO18
+pin range used by the Piano thermistor inputs.
+
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+Link: https://github.com/slwyts/Project-SunUEFI/commit/097c92ce69e530138a2afacb237d7acf4e12eb7c
+---
+ Documentation/devicetree/bindings/pinctrl/qcom,pmic-gpio.yaml | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/pinctrl/qcom,pmic-gpio.yaml b/Documentation/devicetree/bindings/pinctrl/qcom,pmic-gpio.yaml
+index c27e24cb206fcd6c566a4ecf0a08f5bbec1c90bd..d594bd2bedd44e3c2dcb4458b88551cec07a2edd 100644
+--- a/Documentation/devicetree/bindings/pinctrl/qcom,pmic-gpio.yaml
++++ b/Documentation/devicetree/bindings/pinctrl/qcom,pmic-gpio.yaml
+@@ -71,6 +71,7 @@ properties:
+           - qcom,pmi8994-gpio
+           - qcom,pmi8998-gpio
+           - qcom,pmih0108-gpio
++          - qcom,pmih010x-gpio
+           - qcom,pmiv0104-gpio
+           - qcom,pmk8350-gpio
+           - qcom,pmk8550-gpio
+@@ -333,6 +334,7 @@ allOf:
+             enum:
+               - qcom,pmh0101-gpio
+               - qcom,pmih0108-gpio
++              - qcom,pmih010x-gpio
+     then:
+       properties:
+         gpio-line-names:
+@@ -505,7 +507,7 @@ $defs:
+                  - gpio1-gpio8 for pmi632
+                  - gpio1-gpio2 for pmi8950
+                  - gpio1-gpio10 for pmi8994
+-                 - gpio1-gpio18 for pmih0108
++                 - gpio1-gpio18 for pmih0108, pmih010x
+                  - gpio1-gpio4 for pmk8350
+                  - gpio1-gpio6 for pmk8550
+                  - gpio1-gpio8 for pmk8850

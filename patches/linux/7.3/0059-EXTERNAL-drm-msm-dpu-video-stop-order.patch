@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Junhao Xie <bigfoot@radxa.com>
+Date: Sun, 6 Sep 2026 18:59:24 +0800
+Subject: drm/msm/dpu: stop the video pipeline before the timing engine
+
+dpu_encoder_phys_vid_disable() stops the timing engine, waits for the last frame to go out, and only then calls dpu_encoder_helper_phys_cleanup(). That helper unbinds the INTF, MERGE_3D, CDM and DSC blocks, resets the mixers, and finishes with a CTL flush followed by a CTL_START.
+
+In video mode a flush is consumed at a frame boundary. By the time the cleanup runs there are no more frame boundaries, so the flush is left to the CTL_START that follows it -- a trigger video mode does not otherwise use.
+
+Signed-off-by: Junhao Xie <bigfoot@radxa.com>
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/61719fcbeda17be045ff3eb5f031d33e644311f9
+---
+ .../gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c   | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c
+index cfa2ad2403d6d07593d2ee16d039b59a1e8a1096..0c190eb86fb14b10ae1ebdbae0b9a02a19c2cf8d 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c
+@@ -606,6 +606,19 @@ static void dpu_encoder_phys_vid_disable(struct dpu_encoder_phys *phys_enc)
+ 		return;
+ 	}
+ 
++	/*
++	 * Tear the pipeline down while the timing engine is still running.
++	 * The cleanup ends in a CTL flush, and in video mode a flush is only
++	 * consumed at a frame boundary.  Doing this after the timing engine
++	 * has been stopped leaves the flush to be swallowed by the CTL_START
++	 * that follows it, which video mode does not otherwise use, and the
++	 * teardown then only reaches the shadow registers.  The stale active
++	 * configuration survives into the next enable and the SSPP fetch
++	 * never restarts: every register reads back correctly while the
++	 * layer mixer keeps emitting its border colour.
++	 */
++	dpu_encoder_helper_phys_cleanup(phys_enc);
++
+ 	spin_lock_irqsave(phys_enc->enc_spinlock, lock_flags);
+ 	phys_enc->hw_intf->ops.enable_timing(phys_enc->hw_intf, 0);
+ 	if (dpu_encoder_phys_vid_is_master(phys_enc))
+@@ -650,7 +663,6 @@ static void dpu_encoder_phys_vid_disable(struct dpu_encoder_phys *phys_enc)
+ 		}
+ 	}
+ 
+-	dpu_encoder_helper_phys_cleanup(phys_enc);
+ 	phys_enc->enable_state = DPU_ENC_DISABLED;
+ }
+ 

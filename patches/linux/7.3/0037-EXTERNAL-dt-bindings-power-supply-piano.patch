@@ -1,0 +1,152 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: dt-bindings: power: supply: describe the Piano charge stages
+
+Describe the SC8541 main charging stage and SC96231 pen transmitter.
+
+The port retains changes from these linux-piano commits:
+piano: SC8541 switched-capacitor stage and direct charging (#27) (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+
+The cited SunUEFI changes were carried through the 7.3 port.
+
+Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/7a33c60fd6eda8a9c20dfda636d4e0a4efa4cbb8
+Link: https://github.com/slwyts/Project-SunUEFI/commit/f77aff981ba1f054ffb659a1e15eef44af19669f
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ .../power/supply/southchip,sc8541.yaml        | 49 ++++++++++++++
+ .../power/supply/southchip,sc96231.yaml       | 67 +++++++++++++++++++
+ 2 files changed, 116 insertions(+)
+ create mode 100644 Documentation/devicetree/bindings/power/supply/southchip,sc8541.yaml
+ create mode 100644 Documentation/devicetree/bindings/power/supply/southchip,sc96231.yaml
+
+diff --git a/Documentation/devicetree/bindings/power/supply/southchip,sc8541.yaml b/Documentation/devicetree/bindings/power/supply/southchip,sc8541.yaml
+new file mode 100644
+index 0000000000000000000000000000000000000000..097e45949bfda97dd879904d159fd49695fcfa37
+--- /dev/null
++++ b/Documentation/devicetree/bindings/power/supply/southchip,sc8541.yaml
+@@ -0,0 +1,49 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/power/supply/southchip,sc8541.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Southchip SC8541 switched-capacitor direct charger
++
++maintainers:
++  - bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
++
++description:
++  The SC8541 is a single-cell 2:1 switched-capacitor charger for USB PD
++  PPS sources, with an I2C interface, a 12-bit ADC and input, bus and
++  battery protections.
++
++allOf:
++  - $ref: power-supply.yaml#
++
++properties:
++  compatible:
++    const: southchip,sc8541
++
++  reg:
++    maxItems: 1
++
++  interrupts:
++    maxItems: 1
++
++required:
++  - compatible
++  - reg
++
++unevaluatedProperties: false
++
++examples:
++  - |
++    #include <dt-bindings/interrupt-controller/irq.h>
++    i2c {
++        #address-cells = <1>;
++        #size-cells = <0>;
++
++        charger@6a {
++            compatible = "southchip,sc8541";
++            reg = <0x6a>;
++            interrupt-parent = <&tlmm>;
++            interrupts = <68 IRQ_TYPE_EDGE_FALLING>;
++        };
++    };
+diff --git a/Documentation/devicetree/bindings/power/supply/southchip,sc96231.yaml b/Documentation/devicetree/bindings/power/supply/southchip,sc96231.yaml
+new file mode 100644
+index 0000000000000000000000000000000000000000..b505ee2a14a1256f9c85cfe18bb2fe5f95325e38
+--- /dev/null
++++ b/Documentation/devicetree/bindings/power/supply/southchip,sc96231.yaml
+@@ -0,0 +1,67 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/power/supply/southchip,sc96231.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Southchip SC96231 wireless pen transmitter
++
++maintainers:
++  - slwyts <slwyts@foxmail.com>
++
++description: |
++  Wireless power transmitter with an I2C control interface. Hall sensors
++  detect the magnetic pen attachment; the charging link reports the receiver
++  battery level and Bluetooth address. The supply regulator owns voltage
++  sequencing. The chip's installed firmware owns the wireless power protocol.
++
++properties:
++  compatible:
++    const: southchip,sc96231
++  reg:
++    maxItems: 1
++  interrupts:
++    maxItems: 1
++  vin-supply: true
++  enable-gpios:
++    maxItems: 1
++    description: Transmitter enable signal.
++  lp-enable-gpios:
++    maxItems: 1
++    description: Optional low-power control held asserted during operation.
++  hall-gpios:
++    minItems: 1
++    maxItems: 2
++    description: Active means pen attached; either sensor may detect the pen.
++  wakeup-source: true
++
++required:
++  - compatible
++  - reg
++  - interrupts
++  - vin-supply
++  - enable-gpios
++  - hall-gpios
++
++additionalProperties: false
++
++examples:
++  - |
++    #include <dt-bindings/gpio/gpio.h>
++    #include <dt-bindings/interrupt-controller/irq.h>
++    i2c {
++        #address-cells = <1>;
++        #size-cells = <0>;
++        charger@38 {
++            compatible = "southchip,sc96231";
++            reg = <0x38>;
++            vin-supply = <&pen_boost>;
++            enable-gpios = <&tlmm 14 GPIO_ACTIVE_HIGH>;
++            lp-enable-gpios = <&tlmm 99 GPIO_ACTIVE_HIGH>;
++            hall-gpios = <&tlmm 200 GPIO_ACTIVE_LOW>,
++                         <&tlmm 196 GPIO_ACTIVE_LOW>;
++            interrupt-parent = <&tlmm>;
++            interrupts = <78 IRQ_TYPE_EDGE_FALLING>;
++            wakeup-source;
++        };
++    };

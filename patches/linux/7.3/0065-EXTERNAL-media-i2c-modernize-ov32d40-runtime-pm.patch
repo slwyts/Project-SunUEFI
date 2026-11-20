@@ -1,0 +1,185 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ianchb <i@4t.pw>
+Date: Sat, 6 Jun 2026 20:54:09 +0800
+Subject: media: i2c: sheng cameras: modernize runtime PM handling
+
+  Update the sheng camera sensor drivers to follow the newer runtime PM
+  lifecycle expected by current CAMSS/libcamera users.
+
+  The old drivers powered sensors down immediately from s_stream(false).
+  With PipeWire/libcamera keeping camera devices open and CAMSS now powering
+  the pipeline around streaming, this caused repeated open/switch cycles to
+  leave the sensor/CAMSS state inconsistent.
+
+  Move ov02b1b, ov32d40 and s5kjn1-sheng to an autosuspend based model:
+  power and identify the sensor during probe, cache the successful chip ID
+  check, use delayed runtime suspend after stream stop, and retry chip ID
+  reads during power-on. Also fix the power-on error paths so MCLK and
+  regulators are unwound in the right order.
+
+(cherry picked from commit 7bc4ad80e78c9625b0282308443ef0c7950c70b3)
+[piano: taken from the sheng tree (ianchb/sm8550-mainline); only the
+ ov32d40 part is kept, ov02b1b and s5kjn1-sheng are not in this tree;
+ the original commit carries no Signed-off-by]
+Signed-off-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+
+Link: https://github.com/ianchb/sm8550-mainline/commit/7bc4ad80e78c9625b0282308443ef0c7950c70b3
+Link: https://github.com/blu-sharky/linux-piano/commit/2042eaaf8288c496c77af6d50d10aebb281e10d6
+---
+ drivers/media/i2c/ov32d40.c | 73 +++++++++++++++++++++++--------------
+ 1 file changed, 45 insertions(+), 28 deletions(-)
+
+diff --git a/drivers/media/i2c/ov32d40.c b/drivers/media/i2c/ov32d40.c
+index 81016b52adc35148f853a05ad34f98dfd7035bbe..a872e8e5e28eb5900665a181fd8a501bf0467362 100644
+--- a/drivers/media/i2c/ov32d40.c
++++ b/drivers/media/i2c/ov32d40.c
+@@ -85,6 +85,7 @@ struct ov32d40 {
+ 	struct regmap *regmap;
+ 
+ 	bool streaming;
++	bool identified;
+ 
+ 	/*
+ 	 * Serialize control access, get/set format, get selection
+@@ -1292,7 +1293,8 @@ static int ov32d40_s_stream(struct v4l2_subdev *sd, int on)
+ 		}
+ 	} else {
+ 		__ov32d40_stop_stream(ov32d40);
+-		pm_runtime_put(&client->dev);
++		pm_runtime_mark_last_busy(&client->dev);
++		pm_runtime_put_autosuspend(&client->dev);
+ 	}
+ 
+ 	ov32d40->streaming = on;
+@@ -1301,7 +1303,7 @@ static int ov32d40_s_stream(struct v4l2_subdev *sd, int on)
+ 	return 0;
+ 
+ err_rpm_put:
+-	pm_runtime_put(&client->dev);
++	pm_runtime_put_autosuspend(&client->dev);
+ unlock_and_return:
+ 	mutex_unlock(&ov32d40->mutex);
+ 
+@@ -1626,20 +1628,32 @@ static int ov32d40_check_sensor_id(struct ov32d40 *ov32d40)
+ {
+ 	u64 chip_id;
+ 	int ret;
++	unsigned int i;
++
++	if (ov32d40->identified)
++		return 0;
+ 
+ 	/* Validate the chip ID */
+-	ret = cci_read(ov32d40->regmap, OV32D40_REG_CHIP_ID, &chip_id, NULL);
+-	if (ret < 0) {
+-		dev_err(ov32d40->dev, "failed to read sensor information\n");
++	for (i = 0; i < 5; i++) {
++		ret = cci_read(ov32d40->regmap, OV32D40_REG_CHIP_ID,
++			       &chip_id, NULL);
++		if (!ret && chip_id == OV32D40_ID) {
++			ov32d40->identified = true;
++			return 0;
++		}
++
++		usleep_range(10000, 12000);
++	}
++	if (ret) {
++		dev_err(ov32d40->dev, "failed to read sensor information: %d\n",
++			ret);
+ 		return ret;
+ 	}
+ 
+-	if (chip_id != OV32D40_ID) {
++	if (chip_id != OV32D40_ID)
+ 		dev_err(ov32d40->dev, "unexpected sensor id(0x%04llx)\n", chip_id);
+-		return -EINVAL;
+-	}
+ 
+-	return 0;
++	return -EINVAL;
+ }
+ 
+ static int ov32d40_power_on(struct device *dev)
+@@ -1655,31 +1669,31 @@ static int ov32d40_power_on(struct device *dev)
+ 				    ov32d40->supplies);
+ 	if (ret < 0) {
+ 		dev_err(dev, "failed to enable regulators\n");
+-		goto disable_clk;
++		return ret;
+ 	}
+-	usleep_range(1000, 2000);
++	usleep_range(5000, 6000);
+ 
+ 	ret = clk_prepare_enable(ov32d40->mclk);
+ 	if (ret < 0) {
+ 		dev_err(dev, "failed to enable mclk\n");
+-		return ret;
++		goto disable_regulator;
+ 	}
+-	usleep_range(1000, 2000);
++	usleep_range(10000, 12000);
+ 
+ 	gpiod_set_value_cansleep(ov32d40->reset_gpio, 0);
+-	usleep_range(5000, 6000);
++	usleep_range(20000, 25000);
+ 
+ 	ret = ov32d40_check_sensor_id(ov32d40);
+ 	if (ret)
+-		goto disable_regulator;
++		goto disable_clk;
+ 
+ 	return 0;
+ 
++disable_clk:
++	clk_disable_unprepare(ov32d40->mclk);
+ disable_regulator:
+ 	regulator_bulk_disable(ARRAY_SIZE(ov32d40_supply_names),
+ 			       ov32d40->supplies);
+-disable_clk:
+-	clk_disable_unprepare(ov32d40->mclk);
+ 
+ 	return ret;
+ }
+@@ -1769,28 +1783,31 @@ static int ov32d40_probe(struct i2c_client *client)
+ 		goto err_free_handler;
+ 	}
+ 
+-	pm_runtime_enable(ov32d40->dev);
+-	if (!pm_runtime_enabled(ov32d40->dev)) {
+-		ret = ov32d40_power_on(ov32d40->dev);
+-		if (ret < 0) {
+-			dev_err_probe(ov32d40->dev, ret, "failed to power on\n");
+-			goto err_clean_entity;
+-		}
++	ret = ov32d40_power_on(ov32d40->dev);
++	if (ret < 0) {
++		dev_err_probe(ov32d40->dev, ret, "failed to power on\n");
++		goto err_clean_entity;
+ 	}
+ 
++	pm_runtime_set_active(ov32d40->dev);
++	pm_runtime_enable(ov32d40->dev);
++
+ 	ret = v4l2_async_register_subdev_sensor(&ov32d40->subdev);
+ 	if (ret) {
+ 		dev_err_probe(ov32d40->dev, ret, "failed to register V4L2 subdev\n");
+ 		goto err_power_off;
+ 	}
+ 
++	pm_runtime_set_autosuspend_delay(ov32d40->dev, 1000);
++	pm_runtime_use_autosuspend(ov32d40->dev);
++	pm_runtime_idle(ov32d40->dev);
++
+ 	return 0;
+ 
+ err_power_off:
+-	if (pm_runtime_enabled(ov32d40->dev))
+-		pm_runtime_disable(ov32d40->dev);
+-	else
+-		ov32d40_power_off(ov32d40->dev);
++	pm_runtime_disable(ov32d40->dev);
++	pm_runtime_set_suspended(ov32d40->dev);
++	ov32d40_power_off(ov32d40->dev);
+ err_clean_entity:
+ 	media_entity_cleanup(&ov32d40->subdev.entity);
+ err_free_handler:

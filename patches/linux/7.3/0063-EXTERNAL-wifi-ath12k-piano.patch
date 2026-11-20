@@ -1,0 +1,1374 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: wifi: ath12k: support the Piano wireless device
+
+Carry the PCI device, firmware capability and radio handling used by the board.
+
+The port retains changes from these linux-piano commits:
+piano: wifi: ath12k: accept the peach PCI function (17cb:110e) (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+BACKPORT-ELDEN: wifi/bt/pwrseq: Peach v2 (WCN7861) support from the Lenovo Y700 Gen4 port (GEEKiDoS <geek_ds@foxmail.com>)
+piano: wifi: ath12k: fall back to the firmware node MAC address (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+BACKPORT: wifi: ath12k: fix frequency range for single-pdev devices (lore: https://ratatoskr.run/ath12k/2026/07/17261133/t) (Shenghan Gao <gsh20040816@gmail.com>)
+
+Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+Co-authored-by: GEEKiDoS <geek_ds@foxmail.com>
+Co-authored-by: Shenghan Gao <gsh20040816@gmail.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/e89c386e04e83235a04f5c583d0ee1b568cb318a
+Link: https://github.com/blu-sharky/linux-piano/commit/d2f590d28247dd751bf5c413d94625271ae394a4
+Link: https://github.com/blu-sharky/linux-piano/commit/be9bd748d57ccb1df459566dea8dd12e4a5d7efc
+Link: https://github.com/blu-sharky/linux-piano/commit/1cbf7b07ad8d6f86f05a85837841f6e1c7a579f0
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ drivers/net/wireless/ath/ath12k/core.c      |  23 +-
+ drivers/net/wireless/ath/ath12k/core.h      |   1 +
+ drivers/net/wireless/ath/ath12k/hw.h        |   3 +
+ drivers/net/wireless/ath/ath12k/pci.c       |   8 +-
+ drivers/net/wireless/ath/ath12k/qmi.c       | 644 +++++++++++++++++++-
+ drivers/net/wireless/ath/ath12k/qmi.h       |  74 ++-
+ drivers/net/wireless/ath/ath12k/wifi7/hal.c |   7 +
+ drivers/net/wireless/ath/ath12k/wifi7/hw.c  |  96 +++
+ drivers/net/wireless/ath/ath12k/wifi7/pci.c |  34 ++
+ drivers/net/wireless/ath/ath12k/wmi.c       |  21 +
+ 10 files changed, 898 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/core.c b/drivers/net/wireless/ath/ath12k/core.c
+index b25202effb0021b5bcad42eb048e1369bc046cef..e97c952db24dee879434b28142f259ac2a9ed9b9 100644
+--- a/drivers/net/wireless/ath/ath12k/core.c
++++ b/drivers/net/wireless/ath/ath12k/core.c
+@@ -538,6 +538,9 @@ int ath12k_core_fetch_bdf(struct ath12k_base *ab, struct ath12k_board_data *bd)
+ 		return ret;
+ 	}
+ 
++	if (ab->hw_params->fw.board_api1_only)
++		goto api1;
++
+ 	bd_api = 2;
+ 	ret = ath12k_core_fetch_board_data_api_n(ab, bd, boardname,
+ 						 ATH12K_BD_IE_BOARD,
+@@ -560,6 +563,7 @@ int ath12k_core_fetch_bdf(struct ath12k_base *ab, struct ath12k_board_data *bd)
+ 	if (!ret)
+ 		goto success;
+ 
++api1:
+ 	bd_api = 1;
+ 	ret = ath12k_core_fetch_board_data_api_1(ab, bd, ATH12K_DEFAULT_BOARD_FILE);
+ 	if (ret) {
+@@ -577,7 +581,11 @@ int ath12k_core_fetch_bdf(struct ath12k_base *ab, struct ath12k_board_data *bd)
+ 	}
+ 
+ success:
+-	ath12k_dbg(ab, ATH12K_DBG_BOOT, "using board api %d\n", bd_api);
++	if (ab->hw_params->fw.board_api1_only)
++		ath12k_dbg(ab, ATH12K_DBG_BOOT,
++			   "using board API 1 data (%zu bytes)\n", bd->len);
++	else
++		ath12k_dbg(ab, ATH12K_DBG_BOOT, "using board api %d\n", bd_api);
+ 	return 0;
+ }
+ 
+@@ -586,6 +594,9 @@ int ath12k_core_fetch_regdb(struct ath12k_base *ab, struct ath12k_board_data *bd
+ 	char boardname[BOARD_NAME_SIZE], default_boardname[BOARD_NAME_SIZE];
+ 	int ret;
+ 
++	if (ab->hw_params->fw.board_api1_only)
++		goto api1;
++
+ 	ret = ath12k_core_create_board_name(ab, boardname, BOARD_NAME_SIZE);
+ 	if (ret) {
+ 		ath12k_dbg(ab, ATH12K_DBG_BOOT,
+@@ -615,14 +626,20 @@ int ath12k_core_fetch_regdb(struct ath12k_base *ab, struct ath12k_board_data *bd
+ 	if (!ret)
+ 		goto exit;
+ 
++api1:
+ 	ret = ath12k_core_fetch_board_data_api_1(ab, bd, ATH12K_REGDB_FILE_NAME);
+ 	if (ret)
+ 		ath12k_dbg(ab, ATH12K_DBG_BOOT, "failed to fetch %s from %s\n",
+ 			   ATH12K_REGDB_FILE_NAME, ab->hw_params->fw.dir);
+ 
+ exit:
+-	if (!ret)
+-		ath12k_dbg(ab, ATH12K_DBG_BOOT, "fetched regdb\n");
++	if (!ret) {
++		if (ab->hw_params->fw.board_api1_only)
++			ath12k_dbg(ab, ATH12K_DBG_BOOT,
++				   "using REGDB API 1 data (%zu bytes)\n", bd->len);
++		else
++			ath12k_dbg(ab, ATH12K_DBG_BOOT, "fetched regdb\n");
++	}
+ 
+ 	return ret;
+ }
+diff --git a/drivers/net/wireless/ath/ath12k/core.h b/drivers/net/wireless/ath/ath12k/core.h
+index 99d71dab7c04cc5e686485f1b520171047d0f6c4..4d859b41df3d122367d6f14a2819945c4d83ce16 100644
+--- a/drivers/net/wireless/ath/ath12k/core.h
++++ b/drivers/net/wireless/ath/ath12k/core.h
+@@ -157,6 +157,7 @@ enum ath12k_hw_rev {
+ 	ATH12K_HW_WCN7850_HW20,
+ 	ATH12K_HW_IPQ5332_HW10,
+ 	ATH12K_HW_QCC2072_HW10,
++	ATH12K_HW_PEACH_HW20,
+ 	ATH12K_HW_IPQ5424_HW10,
+ };
+ 
+diff --git a/drivers/net/wireless/ath/ath12k/hw.h b/drivers/net/wireless/ath/ath12k/hw.h
+index 011bb22e21c7b00711bdd2700f60477e8e4b4cb3..6c6d9b4cb040fc14c2db917b886a359a08283495 100644
+--- a/drivers/net/wireless/ath/ath12k/hw.h
++++ b/drivers/net/wireless/ath/ath12k/hw.h
+@@ -97,6 +97,7 @@ struct ieee80211_rx_status;
+ #define ATH12K_AMSS_FILE		"amss.bin"
+ #define ATH12K_M3_FILE			"m3.bin"
+ #define ATH12K_AUX_UC_FILE		"aux_ucode.bin"
++#define ATH12K_TME_LITE_FILE		"tmel.bin"
+ #define ATH12K_REGDB_FILE_NAME		"regdb.bin"
+ 
+ #define ATH12K_PCIE_MAX_PAYLOAD_SIZE	128
+@@ -161,6 +162,8 @@ struct ath12k_hw_params {
+ 		size_t cal_offset;
+ 		enum ath12k_m3_fw_loaders m3_loader;
+ 		bool download_aux_ucode:1;
++		bool download_tme_lite:1;
++		bool board_api1_only:1;
+ 	} fw;
+ 
+ 	u8 max_radios;
+diff --git a/drivers/net/wireless/ath/ath12k/pci.c b/drivers/net/wireless/ath/ath12k/pci.c
+index 8978edb44ceca051931f04cf51a032338859ea7d..27cdaed7bf4ba3595ef5c70aecd108b44b8afd4f 100644
+--- a/drivers/net/wireless/ath/ath12k/pci.c
++++ b/drivers/net/wireless/ath/ath12k/pci.c
+@@ -861,8 +861,11 @@ static int ath12k_pci_claim(struct ath12k_pci *ab_pci, struct pci_dev *pdev)
+ 	}
+ 
+ 	ab_pci->dma_mask = DMA_BIT_MASK(ATH12K_PCI_DMA_MASK);
+-	dma_set_mask(&pdev->dev, ab_pci->dma_mask);
+-	dma_set_coherent_mask(&pdev->dev, DMA_BIT_MASK(32));
++	ret = dma_set_mask_and_coherent(&pdev->dev, ab_pci->dma_mask);
++	if (ret) {
++		ath12k_err(ab, "failed to set DMA mask: %d\n", ret);
++		goto release_region;
++	}
+ 
+ 	pci_set_master(pdev);
+ 
+@@ -1853,3 +1856,4 @@ EXPORT_SYMBOL(ath12k_pci_unregister_driver);
+ /* firmware files */
+ MODULE_FIRMWARE(ATH12K_FW_DIR "/QCN9274/hw2.0/*");
+ MODULE_FIRMWARE(ATH12K_FW_DIR "/WCN7850/hw2.0/*");
++MODULE_FIRMWARE(ATH12K_FW_DIR "/PEACH/hw2.0/*");
+diff --git a/drivers/net/wireless/ath/ath12k/qmi.c b/drivers/net/wireless/ath/ath12k/qmi.c
+index 280e50a1f31d89e2bef94225b8bceeae6e0b1113..2e5284993bd3f0a89d49101048fa5b93589188ee 100644
+--- a/drivers/net/wireless/ath/ath12k/qmi.c
++++ b/drivers/net/wireless/ath/ath12k/qmi.c
+@@ -5,6 +5,7 @@
+  */
+ 
+ #include <linux/elf.h>
++#include <linux/pwrseq/qcom_wcn.h>
+ 
+ #include "qmi.h"
+ #include "core.h"
+@@ -20,6 +21,9 @@
+ #define PLATFORM_CAP_PCIE_GLOBAL_RESET	0x08
+ #define ATH12K_QMI_MAX_CHUNK_SIZE	2097152
+ 
++/* WLFW returns this service-specific code when the TME power-on fails. */
++#define QMI_ERR_HARDWARE_RESTRICTED_V01	0x0053
++
+ static const struct qmi_elem_info wlfw_host_mlo_chip_info_s_v01_ei[] = {
+ 	{
+ 		.data_type	= QMI_UNSIGNED_1_BYTE,
+@@ -1212,6 +1216,86 @@ static const struct qmi_elem_info qmi_wlanfw_fw_version_info_s_v01_ei[] = {
+ 	},
+ };
+ 
++static const struct qmi_elem_info qmi_wlanfw_pmu_param_v01_ei[] = {
++	{
++		.data_type	= QMI_UNSIGNED_1_BYTE,
++		.elem_len	= ATH12K_QMI_WLFW_PMU_PIN_NAME_MAX_LEN_V01,
++		.elem_size	= sizeof(u8),
++		.array_type	= STATIC_ARRAY,
++		.tlv_type	= 0,
++		.offset		= offsetof(struct qmi_wlanfw_pmu_param_v01,
++					   pin_name),
++	},
++	{
++		.data_type	= QMI_UNSIGNED_4_BYTE,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u32),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0,
++		.offset		= offsetof(struct qmi_wlanfw_pmu_param_v01,
++					   wake_volt_valid),
++	},
++	{
++		.data_type	= QMI_UNSIGNED_4_BYTE,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u32),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0,
++		.offset		= offsetof(struct qmi_wlanfw_pmu_param_v01,
++					   wake_volt),
++	},
++	{
++		.data_type	= QMI_UNSIGNED_4_BYTE,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u32),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0,
++		.offset		= offsetof(struct qmi_wlanfw_pmu_param_v01,
++					   sleep_volt_valid),
++	},
++	{
++		.data_type	= QMI_UNSIGNED_4_BYTE,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u32),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0,
++		.offset		= offsetof(struct qmi_wlanfw_pmu_param_v01,
++					   sleep_volt),
++	},
++	{
++		.data_type	= QMI_EOTI,
++		.array_type	= NO_ARRAY,
++		.tlv_type	= QMI_COMMON_TLV_TYPE,
++	},
++};
++
++static const struct qmi_elem_info qmi_wlanfw_pmu_cfg_v01_ei[] = {
++	{
++		.data_type	= QMI_DATA_LEN,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u8),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0,
++		.offset		= offsetof(struct qmi_wlanfw_pmu_cfg_v01,
++					   pmu_param_len),
++	},
++	{
++		.data_type	= QMI_STRUCT,
++		.elem_len	= ATH12K_QMI_WLFW_PMU_PARAMS_MAX_V01,
++		.elem_size	= sizeof(struct qmi_wlanfw_pmu_param_v01),
++		.array_type	= VAR_LEN_ARRAY,
++		.tlv_type	= 0,
++		.offset		= offsetof(struct qmi_wlanfw_pmu_cfg_v01,
++					   pmu_param),
++		.ei_array	= qmi_wlanfw_pmu_param_v01_ei,
++	},
++	{
++		.data_type	= QMI_EOTI,
++		.array_type	= NO_ARRAY,
++		.tlv_type	= QMI_COMMON_TLV_TYPE,
++	},
++};
++
+ static const struct qmi_elem_info qmi_wlanfw_cap_resp_msg_v01_ei[] = {
+ 	{
+ 		.data_type	= QMI_STRUCT,
+@@ -1459,6 +1543,25 @@ static const struct qmi_elem_info qmi_wlanfw_cap_resp_msg_v01_ei[] = {
+ 		.offset		= offsetof(struct qmi_wlanfw_cap_resp_msg_v01, dev_mem),
+ 		.ei_array	= qmi_wlanfw_dev_mem_info_s_v01_ei,
+ 	},
++	{
++		.data_type	= QMI_OPT_FLAG,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u8),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0x22,
++		.offset		= offsetof(struct qmi_wlanfw_cap_resp_msg_v01,
++					   ol_cpr_cfg_valid),
++	},
++	{
++		.data_type	= QMI_STRUCT,
++		.elem_len	= 1,
++		.elem_size	= sizeof(struct qmi_wlanfw_pmu_cfg_v01),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0x22,
++		.offset		= offsetof(struct qmi_wlanfw_cap_resp_msg_v01,
++					   ol_cpr_cfg),
++		.ei_array	= qmi_wlanfw_pmu_cfg_v01_ei,
++	},
+ 	{
+ 		.data_type	= QMI_EOTI,
+ 		.array_type	= NO_ARRAY,
+@@ -1619,6 +1722,113 @@ static const struct qmi_elem_info qmi_wlanfw_bdf_download_resp_msg_v01_ei[] = {
+ 	},
+ };
+ 
++static const struct qmi_elem_info qmi_wlanfw_qdss_trace_config_download_req_msg_v01_ei[] = {
++	{
++		.data_type	= QMI_OPT_FLAG,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u8),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0x10,
++		.offset		= offsetof(struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01,
++				   total_size_valid),
++	},
++	{
++		.data_type	= QMI_UNSIGNED_4_BYTE,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u32),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0x10,
++		.offset		= offsetof(struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01,
++				   total_size),
++	},
++	{
++		.data_type	= QMI_OPT_FLAG,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u8),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0x11,
++		.offset		= offsetof(struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01,
++				   seg_id_valid),
++	},
++	{
++		.data_type	= QMI_UNSIGNED_4_BYTE,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u32),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0x11,
++		.offset		= offsetof(struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01,
++				   seg_id),
++	},
++	{
++		.data_type	= QMI_OPT_FLAG,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u8),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0x12,
++		.offset		= offsetof(struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01,
++				   data_valid),
++	},
++	{
++		.data_type	= QMI_DATA_LEN,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u16),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0x12,
++		.offset		= offsetof(struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01,
++				   data_len),
++	},
++	{
++		.data_type	= QMI_UNSIGNED_1_BYTE,
++		.elem_len	= QMI_WLANFW_MAX_DATA_SIZE_V01,
++		.elem_size	= sizeof(u8),
++		.array_type	= VAR_LEN_ARRAY,
++		.tlv_type	= 0x12,
++		.offset		= offsetof(struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01,
++				   data),
++	},
++	{
++		.data_type	= QMI_OPT_FLAG,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u8),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0x13,
++		.offset		= offsetof(struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01,
++				   end_valid),
++	},
++	{
++		.data_type	= QMI_UNSIGNED_1_BYTE,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u8),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0x13,
++		.offset		= offsetof(struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01,
++				   end),
++	},
++	{
++		.data_type	= QMI_EOTI,
++		.array_type	= NO_ARRAY,
++		.tlv_type	= QMI_COMMON_TLV_TYPE,
++	},
++};
++
++static const struct qmi_elem_info qmi_wlanfw_qdss_trace_config_download_resp_msg_v01_ei[] = {
++	{
++		.data_type	= QMI_STRUCT,
++		.elem_len	= 1,
++		.elem_size	= sizeof(struct qmi_response_type_v01),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0x02,
++		.offset		= offsetof(struct qmi_wlanfw_qdss_trace_config_download_resp_msg_v01,
++				   resp),
++		.ei_array	= qmi_response_type_v01_ei,
++	},
++	{
++		.data_type	= QMI_EOTI,
++		.array_type	= NO_ARRAY,
++		.tlv_type	= QMI_COMMON_TLV_TYPE,
++	},
++};
++
+ static const struct qmi_elem_info qmi_wlanfw_m3_info_req_msg_v01_ei[] = {
+ 	{
+ 		.data_type	= QMI_UNSIGNED_8_BYTE,
+@@ -1704,6 +1914,59 @@ static const struct qmi_elem_info qmi_wlanfw_aux_uc_info_resp_msg_v01_ei[] = {
+ 	},
+ };
+ 
++static const struct qmi_elem_info qmi_wlanfw_tme_lite_info_req_msg_v01_ei[] = {
++	{
++		.data_type	= QMI_SIGNED_4_BYTE_ENUM,
++		.elem_len	= 1,
++		.elem_size	= sizeof(enum qmi_wlanfw_tme_lite_file_type_v01),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0x01,
++		.offset		= offsetof(struct qmi_wlanfw_tme_lite_info_req_msg_v01,
++					   tme_file),
++	},
++	{
++		.data_type	= QMI_UNSIGNED_8_BYTE,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u64),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0x02,
++		.offset		= offsetof(struct qmi_wlanfw_tme_lite_info_req_msg_v01,
++					   addr),
++	},
++	{
++		.data_type	= QMI_UNSIGNED_4_BYTE,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u32),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0x03,
++		.offset		= offsetof(struct qmi_wlanfw_tme_lite_info_req_msg_v01,
++					   size),
++	},
++	{
++		.data_type	= QMI_EOTI,
++		.array_type	= NO_ARRAY,
++		.tlv_type	= QMI_COMMON_TLV_TYPE,
++	},
++};
++
++static const struct qmi_elem_info qmi_wlanfw_tme_lite_info_resp_msg_v01_ei[] = {
++	{
++		.data_type	= QMI_STRUCT,
++		.elem_len	= 1,
++		.elem_size	= sizeof(struct qmi_response_type_v01),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0x02,
++		.offset		= offsetof(struct qmi_wlanfw_tme_lite_info_resp_msg_v01,
++					   resp),
++		.ei_array	= qmi_response_type_v01_ei,
++	},
++	{
++		.data_type	= QMI_EOTI,
++		.array_type	= NO_ARRAY,
++		.tlv_type	= QMI_COMMON_TLV_TYPE,
++	},
++};
++
+ static const struct qmi_elem_info qmi_wlanfw_ce_tgt_pipe_cfg_s_v01_ei[] = {
+ 	{
+ 		.data_type	= QMI_UNSIGNED_4_BYTE,
+@@ -2050,7 +2313,61 @@ static const struct qmi_elem_info qmi_wlanfw_mem_ready_ind_msg_v01_ei[] = {
+ 	},
+ };
+ 
+-static const struct qmi_elem_info qmi_wlanfw_fw_ready_ind_msg_v01_ei[] = {
++static const struct qmi_elem_info qmi_wlanfw_fw_init_done_ind_msg_v01_ei[] = {
++	{
++		.data_type	= QMI_OPT_FLAG,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u8),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0x10,
++		.offset		= offsetof(struct qmi_wlanfw_fw_init_done_ind_msg_v01,
++				   hang_data_addr_offset_valid),
++	},
++	{
++		.data_type	= QMI_UNSIGNED_4_BYTE,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u32),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0x10,
++		.offset		= offsetof(struct qmi_wlanfw_fw_init_done_ind_msg_v01,
++				   hang_data_addr_offset),
++	},
++	{
++		.data_type	= QMI_OPT_FLAG,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u8),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0x11,
++		.offset		= offsetof(struct qmi_wlanfw_fw_init_done_ind_msg_v01,
++				   hang_data_length_valid),
++	},
++	{
++		.data_type	= QMI_UNSIGNED_2_BYTE,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u16),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0x11,
++		.offset		= offsetof(struct qmi_wlanfw_fw_init_done_ind_msg_v01,
++				   hang_data_length),
++	},
++	{
++		.data_type	= QMI_OPT_FLAG,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u8),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0x12,
++		.offset		= offsetof(struct qmi_wlanfw_fw_init_done_ind_msg_v01,
++				   soft_sku_features_valid),
++	},
++	{
++		.data_type	= QMI_UNSIGNED_8_BYTE,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u64),
++		.array_type	= NO_ARRAY,
++		.tlv_type	= 0x12,
++		.offset		= offsetof(struct qmi_wlanfw_fw_init_done_ind_msg_v01,
++				   soft_sku_features),
++	},
+ 	{
+ 		.data_type	= QMI_EOTI,
+ 		.array_type	= NO_ARRAY,
+@@ -2267,6 +2584,8 @@ int ath12k_qmi_host_cap_send(struct ath12k_base *ab)
+ 	if (ab->hw_params->qmi_cnss_feature_bitmap) {
+ 		req.feature_list_valid = 1;
+ 		req.feature_list = ab->hw_params->qmi_cnss_feature_bitmap;
++		if (!ab->hw_params->fw.download_aux_ucode)
++			req.feature_list &= ~BIT(CNSS_AUX_UC_SUPPORT_V01);
+ 	}
+ 
+ 	/* BRINGUP: here we are piggybacking a lot of stuff using
+@@ -2877,6 +3196,47 @@ out:
+ }
+ 
+ /* clang stack usage explodes if this is inlined */
++static noinline_for_stack
++int ath12k_qmi_apply_ol_cpr(struct ath12k_base *ab,
++			    const struct qmi_wlanfw_cap_resp_msg_v01 *resp)
++{
++	struct pwrseq_qcom_wcn_pmu_param *params;
++	u32 num_params;
++	int ret;
++	int i;
++
++	if (!resp->ol_cpr_cfg_valid)
++		return -ENODATA;
++
++	num_params = resp->ol_cpr_cfg.pmu_param_len;
++	if (!num_params || num_params > ATH12K_QMI_WLFW_PMU_PARAMS_MAX_V01)
++		return -EINVAL;
++
++	params = kcalloc(num_params, sizeof(*params), GFP_KERNEL);
++	if (!params)
++		return -ENOMEM;
++
++	for (i = 0; i < num_params; i++) {
++		const struct qmi_wlanfw_pmu_param_v01 *src =
++			&resp->ol_cpr_cfg.pmu_param[i];
++
++		memcpy(params[i].pin_name, src->pin_name,
++		       sizeof(params[i].pin_name));
++		params[i].wake_volt_valid = src->wake_volt_valid;
++		params[i].wake_volt = src->wake_volt;
++		params[i].sleep_volt_valid = src->sleep_volt_valid;
++		params[i].sleep_volt = src->sleep_volt;
++	}
++
++	ret = pwrseq_qcom_wcn_set_ol_cpr(ab->dev, params, num_params);
++	if (ret)
++		ath12k_warn(ab, "failed to apply OL-CPR dynamic PDC votes: %d\n",
++			    ret);
++
++	kfree(params);
++	return ret;
++}
++
+ static noinline_for_stack
+ int ath12k_qmi_request_target_cap(struct ath12k_base *ab)
+ {
+@@ -2941,6 +3301,11 @@ int ath12k_qmi_request_target_cap(struct ath12k_base *ab)
+ 		strscpy(ab->qmi.target.fw_build_id, resp.fw_build_id,
+ 			sizeof(ab->qmi.target.fw_build_id));
+ 
++	if (resp.fw_caps_valid)
++		ab->qmi.target.fw_caps = resp.fw_caps;
++	else
++		ab->qmi.target.fw_caps = 0;
++
+ 	if (resp.dev_mem_info_valid) {
+ 		for (i = 0; i < ATH12K_QMI_WLFW_MAX_DEV_MEM_NUM_V01; i++) {
+ 			ab->qmi.dev_mem[i].start =
+@@ -2959,6 +3324,13 @@ int ath12k_qmi_request_target_cap(struct ath12k_base *ab)
+ 		ath12k_dbg(ab, ATH12K_DBG_QMI, "qmi cal data supported from eeprom\n");
+ 	}
+ 
++	/* Peach requires firmware-directed PDC voltage votes before TME-L. */
++	if (ab->hw_params->fw.download_tme_lite) {
++		ret = ath12k_qmi_apply_ol_cpr(ab, &resp);
++		if (ret)
++			goto out;
++	}
++
+ 	ath12k_info(ab, "chip_id 0x%x chip_family 0x%x board_id 0x%x soc_id 0x%x\n",
+ 		    ab->qmi.target.chip_id, ab->qmi.target.chip_family,
+ 		    ab->qmi.target.board_id, ab->qmi.target.soc_id);
+@@ -2967,6 +3339,8 @@ int ath12k_qmi_request_target_cap(struct ath12k_base *ab)
+ 		    ab->qmi.target.fw_version,
+ 		    ab->qmi.target.fw_build_timestamp,
+ 		    ab->qmi.target.fw_build_id);
++	ath12k_info(ab, "fw_caps 0x%llx%s\n", ab->qmi.target.fw_caps,
++		    resp.fw_caps_valid ? "" : " (not provided)");
+ 
+ 	r = ath12k_core_check_smbios(ab);
+ 	if (r)
+@@ -3305,6 +3679,136 @@ out:
+ 	return ret;
+ }
+ 
++static void ath12k_qmi_tme_lite_free(struct ath12k_base *ab)
++{
++	struct m3_mem_region *tme_mem = &ab->qmi.tme_lite_mem;
++
++	if (!tme_mem->vaddr)
++		return;
++
++	dma_free_coherent(ab->dev, tme_mem->total_size,
++			  tme_mem->vaddr, tme_mem->paddr);
++	tme_mem->vaddr = NULL;
++	tme_mem->paddr = 0;
++	tme_mem->total_size = 0;
++	tme_mem->size = 0;
++}
++
++static int ath12k_qmi_tme_lite_load(struct ath12k_base *ab)
++{
++	struct m3_mem_region *tme_mem = &ab->qmi.tme_lite_mem;
++	const struct firmware *fw;
++	char path[100];
++	int ret;
++
++	fw = ath12k_core_firmware_request(ab, ATH12K_TME_LITE_FILE);
++	if (IS_ERR(fw)) {
++		ret = PTR_ERR(fw);
++		ath12k_core_create_firmware_path(ab, ATH12K_TME_LITE_FILE,
++						 path, sizeof(path));
++		ath12k_err(ab, "failed to load %s: %d\n", path, ret);
++		return ret;
++	}
++
++	if (!fw->size || fw->size > U32_MAX) {
++		ath12k_err(ab, "invalid TME-L firmware size: %zu\n", fw->size);
++		ret = fw->size ? -EFBIG : -EINVAL;
++		goto out;
++	}
++
++	/* The buffer remains allocated across recovery, as M3 and AUX do. */
++	if (tme_mem->vaddr) {
++		if (tme_mem->total_size >= fw->size)
++			goto copy;
++
++		ath12k_qmi_tme_lite_free(ab);
++	}
++
++	tme_mem->vaddr = dma_alloc_coherent(ab->dev, fw->size,
++					    &tme_mem->paddr, GFP_KERNEL);
++	if (!tme_mem->vaddr) {
++		ret = -ENOMEM;
++		goto out;
++	}
++
++	tme_mem->total_size = fw->size;
++
++copy:
++	memcpy(tme_mem->vaddr, fw->data, fw->size);
++	tme_mem->size = fw->size;
++	ret = 0;
++
++out:
++	release_firmware(fw);
++	return ret;
++}
++
++static noinline_for_stack
++int ath12k_qmi_wlanfw_tme_lite_info_send(struct ath12k_base *ab)
++{
++	struct m3_mem_region *tme_mem = &ab->qmi.tme_lite_mem;
++	struct qmi_wlanfw_tme_lite_info_req_msg_v01 req = {};
++	struct qmi_wlanfw_tme_lite_info_resp_msg_v01 resp = {};
++	struct qmi_txn txn;
++	int ret;
++
++	ret = ath12k_qmi_tme_lite_load(ab);
++	if (ret)
++		return ret;
++
++	req.tme_file = WLFW_TME_LITE_PATCH_FILE_V01;
++	req.addr = tme_mem->paddr;
++	req.size = tme_mem->size;
++
++	ret = qmi_txn_init(&ab->qmi.handle, &txn,
++			   qmi_wlanfw_tme_lite_info_resp_msg_v01_ei, &resp);
++	if (ret < 0)
++		return ret;
++
++	ret = qmi_send_request(&ab->qmi.handle, NULL, &txn,
++			       QMI_WLANFW_TME_LITE_INFO_REQ_V01,
++			       QMI_WLANFW_TME_LITE_INFO_REQ_MSG_V01_MAX_MSG_LEN,
++			       qmi_wlanfw_tme_lite_info_req_msg_v01_ei, &req);
++	if (ret < 0) {
++		qmi_txn_cancel(&txn);
++		ath12k_warn(ab,
++			    "qmi failed to send TME-L patch information request: %d\n",
++			    ret);
++		return ret;
++	}
++
++	ret = qmi_txn_wait(&txn,
++			   msecs_to_jiffies(ATH12K_QMI_WLANFW_TIMEOUT_MS));
++	if (ret < 0) {
++		ath12k_warn(ab,
++			    "qmi failed to wait for TME-L patch response: %d\n",
++			    ret);
++		return ret;
++	}
++
++	if (resp.resp.result != QMI_RESULT_SUCCESS_V01) {
++		if (resp.resp.error == QMI_ERR_HARDWARE_RESTRICTED_V01) {
++			/*
++			 * Stock elden CNSS receives the same TME Power On failure,
++			 * records it, and deliberately continues with REGDB/BDF/M3/AUX.
++			 * Keep the TME request mandatory, but match its non-fatal stock
++			 * result instead of aborting the complete WLAN boot chain.
++			 */
++			ath12k_warn(ab,
++				    "qmi TME-L power-on hardware-restricted (stock-compatible, continuing)\n");
++			return 0;
++		}
++
++		ath12k_warn(ab,
++			    "qmi TME-L patch request failed, result: %u, err: %u\n",
++			    resp.resp.result, resp.resp.error);
++		return -EINVAL;
++	}
++
++	ath12k_info(ab, "qmi TME-L patch request succeeded\n");
++	return 0;
++}
++
+ static void ath12k_qmi_aux_uc_free(struct ath12k_base *ab)
+ {
+ 	struct m3_mem_region *aux_uc_mem = &ab->qmi.aux_uc_mem;
+@@ -3350,6 +3854,12 @@ static int ath12k_qmi_aux_uc_load(struct ath12k_base *ab)
+ 		aux_uc_len = fw->size;
+ 	}
+ 
++	if (!aux_uc_len || aux_uc_len > U32_MAX) {
++		ath12k_err(ab, "invalid AUX_UC firmware size: %zu\n", aux_uc_len);
++		ret = aux_uc_len ? -EFBIG : -EINVAL;
++		goto out;
++	}
++
+ 	/* In recovery/resume cases, AUX_UC buffer is not freed, try to reuse that */
+ 	if (aux_uc_mem->vaddr) {
+ 		if (aux_uc_mem->total_size >= aux_uc_len)
+@@ -3397,7 +3907,6 @@ int ath12k_qmi_wlanfw_aux_uc_info_send(struct ath12k_base *ab)
+ 
+ 	req.addr = aux_uc_mem->paddr;
+ 	req.size = aux_uc_mem->size;
+-
+ 	ret = qmi_txn_init(&ab->qmi.handle, &txn,
+ 			   qmi_wlanfw_aux_uc_info_resp_msg_v01_ei, &resp);
+ 	if (ret < 0)
+@@ -3426,10 +3935,102 @@ int ath12k_qmi_wlanfw_aux_uc_info_send(struct ath12k_base *ab)
+ 		ret = -EINVAL;
+ 		goto out;
+ 	}
++
++	ath12k_info(ab, "qmi AUX_UC request succeeded\n");
+ out:
+ 	return ret;
+ }
+ 
++static int ath12k_qmi_wlanfw_qdss_config_send(struct ath12k_base *ab)
++{
++	struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01 *req;
++	struct qmi_wlanfw_qdss_trace_config_download_resp_msg_v01 resp = {};
++	const struct firmware *fw;
++	const u8 *data;
++	u32 remaining;
++	u32 seg_id = 0;
++	struct qmi_txn txn;
++	int ret;
++
++	fw = ath12k_core_firmware_request(ab, ATH12K_QMI_QDSS_CFG_FILE);
++	if (IS_ERR(fw)) {
++		ret = PTR_ERR(fw);
++		ath12k_err(ab, "failed to load exact Peach QDSS config: %d\n", ret);
++		return ret;
++	}
++
++	if (!fw->size || fw->size > U32_MAX) {
++		ret = fw->size ? -EFBIG : -EINVAL;
++		goto out_release;
++	}
++
++	req = kzalloc_obj(*req);
++	if (!req) {
++		ret = -ENOMEM;
++		goto out_release;
++	}
++
++	data = fw->data;
++	remaining = fw->size;
++	while (remaining) {
++		memset(req, 0, sizeof(*req));
++		memset(&resp, 0, sizeof(resp));
++		req->total_size_valid = 1;
++		req->total_size = remaining;
++		req->seg_id_valid = 1;
++		req->seg_id = seg_id;
++		req->data_valid = 1;
++		req->data_len = min_t(u32, remaining,
++				      QMI_WLANFW_MAX_DATA_SIZE_V01);
++		req->end_valid = 1;
++		req->end = remaining == req->data_len;
++		memcpy(req->data, data, req->data_len);
++
++		ret = qmi_txn_init(&ab->qmi.handle, &txn,
++				   qmi_wlanfw_qdss_trace_config_download_resp_msg_v01_ei,
++				   &resp);
++		if (ret < 0)
++			goto out_free;
++
++		ret = qmi_send_request(&ab->qmi.handle, NULL, &txn,
++				       QMI_WLFW_QDSS_TRACE_CONFIG_DOWNLOAD_REQ_V01,
++				       QMI_WLFW_QDSS_TRACE_CONFIG_DOWNLOAD_REQ_MSG_V01_MAX_LEN,
++				       qmi_wlanfw_qdss_trace_config_download_req_msg_v01_ei,
++				       req);
++		if (ret < 0) {
++			qmi_txn_cancel(&txn);
++			goto out_free;
++		}
++
++		ret = qmi_txn_wait(&txn,
++				   msecs_to_jiffies(ATH12K_QMI_WLANFW_TIMEOUT_MS));
++		if (ret < 0)
++			goto out_free;
++
++		if (resp.resp.result != QMI_RESULT_SUCCESS_V01) {
++			ath12k_warn(ab,
++				    "qmi QDSS config segment %u failed, result: %u err: %u\n",
++				    req->seg_id, resp.resp.result, resp.resp.error);
++			ret = -EINVAL;
++			goto out_free;
++		}
++
++		remaining -= req->data_len;
++		data += req->data_len;
++		seg_id++;
++	}
++
++	ath12k_dbg(ab, ATH12K_DBG_QMI,
++		   "qmi QDSS config download succeeded (%zu bytes)\n", fw->size);
++	ret = 0;
++
++out_free:
++	kfree(req);
++out_release:
++	release_firmware(fw);
++	return ret;
++}
++
+ static int ath12k_qmi_wlanfw_mode_send(struct ath12k_base *ab,
+ 				       enum ath12k_qmi_firmware_mode mode)
+ {
+@@ -3803,17 +4404,29 @@ int ath12k_qmi_event_load_bdf(struct ath12k_qmi *qmi)
+ 		return ret;
+ 	}
+ 
++	if (hw_params->fw.download_tme_lite) {
++		ret = ath12k_qmi_wlanfw_tme_lite_info_send(ab);
++		if (ret < 0) {
++			ath12k_warn(ab,
++				    "qmi failed to send TME-L patch info req: %d\n",
++				    ret);
++			return ret;
++		}
++	}
++
+ 	ret = ath12k_qmi_load_bdf_qmi(ab, ATH12K_QMI_BDF_TYPE_REGDB);
+ 	if (ret < 0) {
+ 		ath12k_warn(ab, "qmi failed to load regdb file:%d\n", ret);
+ 		return ret;
+ 	}
++	ath12k_dbg(ab, ATH12K_DBG_QMI, "qmi REGDB download succeeded\n");
+ 
+ 	ret = ath12k_qmi_load_bdf_qmi(ab, ATH12K_QMI_BDF_TYPE_ELF);
+ 	if (ret < 0) {
+ 		ath12k_warn(ab, "qmi failed to load board data file:%d\n", ret);
+ 		return ret;
+ 	}
++	ath12k_dbg(ab, ATH12K_DBG_QMI, "qmi BDF download succeeded\n");
+ 
+ 	if (hw_params->download_calib) {
+ 		ret = ath12k_qmi_load_bdf_qmi(ab, ATH12K_QMI_BDF_TYPE_CALIBRATION);
+@@ -3826,13 +4439,25 @@ int ath12k_qmi_event_load_bdf(struct ath12k_qmi *qmi)
+ 		ath12k_warn(ab, "qmi failed to send m3 info req:%d\n", ret);
+ 		return ret;
+ 	}
++	ath12k_dbg(ab, ATH12K_DBG_QMI, "qmi M3 download succeeded\n");
+ 
+-	if (hw_params->fw.download_aux_ucode) {
++	if (hw_params->fw.download_aux_ucode &&
++	    (ab->qmi.target.fw_caps & QMI_WLANFW_AUX_UC_SUPPORT_V01)) {
+ 		ret = ath12k_qmi_wlanfw_aux_uc_info_send(ab);
+ 		if (ret < 0) {
+ 			ath12k_warn(ab, "qmi failed to send aux_uc info req: %d\n", ret);
+ 			return ret;
+ 		}
++	} else if (hw_params->fw.download_aux_ucode) {
++		ath12k_info(ab, "firmware does not advertise AUX_UC support, skipping upload\n");
++	}
++
++	if (hw_params->fw.download_tme_lite) {
++		ret = ath12k_qmi_wlanfw_qdss_config_send(ab);
++		if (ret < 0) {
++			ath12k_warn(ab, "qmi failed to download QDSS config: %d\n", ret);
++			return ret;
++		}
+ 	}
+ 
+ 	return ret;
+@@ -3900,10 +4525,15 @@ static void ath12k_qmi_msg_fw_ready_cb(struct qmi_handle *qmi_hdl,
+ 				       struct qmi_txn *txn,
+ 				       const void *decoded)
+ {
++	const struct qmi_wlanfw_fw_init_done_ind_msg_v01 *ind = decoded;
+ 	struct ath12k_qmi *qmi = container_of(qmi_hdl, struct ath12k_qmi, handle);
+ 	struct ath12k_base *ab = qmi->ab;
+ 
+-	ath12k_dbg(ab, ATH12K_DBG_QMI, "qmi firmware ready\n");
++	ath12k_info(ab,
++		    "qmi FW_INIT_DONE received: hang_offset_valid=%u hang_offset=%u hang_length_valid=%u hang_length=%u soft_sku_valid=%u soft_sku=0x%llx\n",
++		    ind->hang_data_addr_offset_valid, ind->hang_data_addr_offset,
++		    ind->hang_data_length_valid, ind->hang_data_length,
++		    ind->soft_sku_features_valid, ind->soft_sku_features);
+ 	ath12k_qmi_driver_event_post(qmi, ATH12K_QMI_EVENT_FW_READY, NULL);
+ }
+ 
+@@ -3925,8 +4555,8 @@ static const struct qmi_msg_handler ath12k_qmi_msg_handlers[] = {
+ 	{
+ 		.type = QMI_INDICATION,
+ 		.msg_id = QMI_WLFW_FW_READY_IND_V01,
+-		.ei = qmi_wlanfw_fw_ready_ind_msg_v01_ei,
+-		.decoded_size = sizeof(struct qmi_wlanfw_fw_ready_ind_msg_v01),
++		.ei = qmi_wlanfw_fw_init_done_ind_msg_v01_ei,
++		.decoded_size = sizeof(struct qmi_wlanfw_fw_init_done_ind_msg_v01),
+ 		.fn = ath12k_qmi_msg_fw_ready_cb,
+ 	},
+ 
+@@ -4109,6 +4739,7 @@ void ath12k_qmi_deinit_service(struct ath12k_base *ab)
+ 	cancel_work_sync(&ab->qmi.event_work);
+ 	destroy_workqueue(ab->qmi.event_wq);
+ 	ath12k_qmi_aux_uc_free(ab);
++	ath12k_qmi_tme_lite_free(ab);
+ 	ath12k_qmi_m3_free(ab);
+ 	ath12k_qmi_free_target_mem_chunk(ab);
+ 	ab->qmi.ab = NULL;
+@@ -4118,5 +4749,6 @@ void ath12k_qmi_free_resource(struct ath12k_base *ab)
+ {
+ 	ath12k_qmi_free_target_mem_chunk(ab);
+ 	ath12k_qmi_aux_uc_free(ab);
++	ath12k_qmi_tme_lite_free(ab);
+ 	ath12k_qmi_m3_free(ab);
+ }
+diff --git a/drivers/net/wireless/ath/ath12k/qmi.h b/drivers/net/wireless/ath/ath12k/qmi.h
+index 6da10f3cb597c3533070bc8cf30b86af2e0f17a3..df40ef10a3248f2f9de317c5a0a434aa849a8783 100644
+--- a/drivers/net/wireless/ath/ath12k/qmi.h
++++ b/drivers/net/wireless/ath/ath12k/qmi.h
+@@ -26,12 +26,18 @@
+ #define ATH12K_QMI_BDF_EXT_STR_LENGTH		0x20
+ #define ATH12K_QMI_WLFW_MAX_DEV_MEM_NUM_V01 4
+ #define ATH12K_QMI_DEVMEM_CMEM_INDEX	0
++#define ATH12K_QMI_WLFW_PMU_PARAMS_MAX_V01	16
++#define ATH12K_QMI_WLFW_PMU_PIN_NAME_MAX_LEN_V01	32
+ 
+ #define QMI_WLFW_REQUEST_MEM_IND_V01		0x0035
+ #define QMI_WLFW_FW_MEM_READY_IND_V01		0x0037
+ #define QMI_WLFW_FW_READY_IND_V01		0x0038
++#define QMI_WLFW_QDSS_TRACE_CONFIG_DOWNLOAD_REQ_V01	0x0044
++#define QMI_WLFW_QDSS_TRACE_CONFIG_DOWNLOAD_REQ_MSG_V01_MAX_LEN 6167
+ 
+ #define QMI_WLANFW_MAX_DATA_SIZE_V01		6144
++#define ATH12K_FIRMWARE_MODE_OFF		4
++#define ATH12K_QMI_QDSS_CFG_FILE		"qdss_trace_config.bin"
+ 
+ #define ATH12K_BOARD_ID_DEFAULT	0xFF
+ 
+@@ -108,6 +114,7 @@ struct target_info {
+ 	u32 board_id;
+ 	u32 soc_id;
+ 	u32 fw_version;
++	u64 fw_caps;
+ 	u32 eeprom_caldata;
+ 	char fw_build_timestamp[ATH12K_QMI_WLANFW_MAX_TIMESTAMP_LEN_V01 + 1];
+ 	char fw_build_id[ATH12K_QMI_WLANFW_MAX_BUILD_ID_LEN_V01 + 1];
+@@ -150,6 +157,7 @@ struct ath12k_qmi {
+ 	struct target_info target;
+ 	struct m3_mem_region m3_mem;
+ 	struct m3_mem_region aux_uc_mem;
++	struct m3_mem_region tme_lite_mem;
+ 	unsigned int service_ins_id;
+ 	struct dev_mem_info dev_mem[ATH12K_QMI_WLFW_MAX_DEV_MEM_NUM_V01];
+ 	u8 dynamic_ddr_support;
+@@ -196,6 +204,7 @@ struct wlfw_host_mlo_chip_info_s_v01 {
+ 
+ enum ath12k_qmi_cnss_feature {
+ 	CNSS_FEATURE_MIN_ENUM_VAL_V01 = INT_MIN,
++	CNSS_WLAN_EN_SUPPORT_V01 = 2,
+ 	CNSS_QDSS_CFG_MISS_V01 = 3,
+ 	CNSS_PCIE_PERST_NO_PULL_V01 = 4,
+ 	CNSS_AUX_UC_SUPPORT_V01 = 6,
+@@ -370,8 +379,13 @@ struct qmi_wlanfw_fw_mem_ready_ind_msg_v01 {
+ 	char placeholder;
+ };
+ 
+-struct qmi_wlanfw_fw_ready_ind_msg_v01 {
+-	char placeholder;
++struct qmi_wlanfw_fw_init_done_ind_msg_v01 {
++	u8 hang_data_addr_offset_valid;
++	u32 hang_data_addr_offset;
++	u8 hang_data_length_valid;
++	u16 hang_data_length;
++	u8 soft_sku_features_valid;
++	u64 soft_sku_features;
+ };
+ 
+ #define QMI_WLANFW_CAP_REQ_MSG_V01_MAX_LEN	0
+@@ -436,6 +450,20 @@ struct qmi_wlanfw_dev_mem_info_s_v01 {
+ 	u64 size;
+ };
+ 
++struct qmi_wlanfw_pmu_param_v01 {
++	u8 pin_name[ATH12K_QMI_WLFW_PMU_PIN_NAME_MAX_LEN_V01];
++	u32 wake_volt_valid;
++	u32 wake_volt;
++	u32 sleep_volt_valid;
++	u32 sleep_volt;
++};
++
++struct qmi_wlanfw_pmu_cfg_v01 {
++	u32 pmu_param_len;
++	struct qmi_wlanfw_pmu_param_v01
++		pmu_param[ATH12K_QMI_WLFW_PMU_PARAMS_MAX_V01];
++};
++
+ enum qmi_wlanfw_cal_temp_id_enum_v01 {
+ 	QMI_WLANFW_CAL_TEMP_IDX_0_V01 = 0,
+ 	QMI_WLANFW_CAL_TEMP_IDX_1_V01 = 1,
+@@ -453,6 +481,8 @@ enum qmi_wlanfw_rd_card_chain_cap_v01 {
+ 	WLFW_RD_CARD_CHAIN_CAP_MAX_VAL_V01 = INT_MAX,
+ };
+ 
++#define QMI_WLANFW_AUX_UC_SUPPORT_V01	BIT_ULL(2)
++
+ struct qmi_wlanfw_cap_resp_msg_v01 {
+ 	struct qmi_response_type_v01 resp;
+ 	u8 chip_info_valid;
+@@ -481,6 +511,8 @@ struct qmi_wlanfw_cap_resp_msg_v01 {
+ 	enum qmi_wlanfw_rd_card_chain_cap_v01 rd_card_chain_cap;
+ 	u8 dev_mem_info_valid;
+ 	struct qmi_wlanfw_dev_mem_info_s_v01 dev_mem[ATH12K_QMI_WLFW_MAX_DEV_MEM_NUM_V01];
++	u8 ol_cpr_cfg_valid;
++	struct qmi_wlanfw_pmu_cfg_v01 ol_cpr_cfg;
+ };
+ 
+ struct qmi_wlanfw_cap_req_msg_v01 {
+@@ -514,6 +546,22 @@ struct qmi_wlanfw_bdf_download_resp_msg_v01 {
+ 	struct qmi_response_type_v01 resp;
+ };
+ 
++struct qmi_wlanfw_qdss_trace_config_download_req_msg_v01 {
++	u8 total_size_valid;
++	u32 total_size;
++	u8 seg_id_valid;
++	u32 seg_id;
++	u8 data_valid;
++	u32 data_len;
++	u8 data[QMI_WLANFW_MAX_DATA_SIZE_V01];
++	u8 end_valid;
++	u8 end;
++};
++
++struct qmi_wlanfw_qdss_trace_config_download_resp_msg_v01 {
++	struct qmi_response_type_v01 resp;
++};
++
+ #define QMI_WLANFW_M3_INFO_REQ_MSG_V01_MAX_MSG_LEN	18
+ #define QMI_WLANFW_M3_INFO_REQ_V01		0x003C
+ 
+@@ -538,6 +586,28 @@ struct qmi_wlanfw_aux_uc_info_resp_msg_v01 {
+ 	struct qmi_response_type_v01 resp;
+ };
+ 
++enum qmi_wlanfw_tme_lite_file_type_v01 {
++	WLFW_TME_LITE_FILE_TYPE_MIN_VAL_V01 = INT_MIN,
++	WLFW_TME_LITE_PATCH_FILE_V01 = 0,
++	WLFW_TME_LITE_OEM_FUSE_FILE_V01 = 1,
++	WLFW_TME_LITE_RPR_FILE_V01 = 2,
++	WLFW_TME_LITE_DPR_FILE_V01 = 3,
++	WLFW_TME_LITE_FILE_TYPE_MAX_VAL_V01 = INT_MAX,
++};
++
++#define QMI_WLANFW_TME_LITE_INFO_REQ_MSG_V01_MAX_MSG_LEN	25
++#define QMI_WLANFW_TME_LITE_INFO_REQ_V01			0x005B
++
++struct qmi_wlanfw_tme_lite_info_req_msg_v01 {
++	enum qmi_wlanfw_tme_lite_file_type_v01 tme_file;
++	u64 addr;
++	u32 size;
++};
++
++struct qmi_wlanfw_tme_lite_info_resp_msg_v01 {
++	struct qmi_response_type_v01 resp;
++};
++
+ #define QMI_WLANFW_WLAN_MODE_REQ_MSG_V01_MAX_LEN	11
+ #define QMI_WLANFW_WLAN_CFG_REQ_MSG_V01_MAX_LEN		803
+ #define QMI_WLANFW_WLAN_MODE_REQ_V01			0x0022
+diff --git a/drivers/net/wireless/ath/ath12k/wifi7/hal.c b/drivers/net/wireless/ath/ath12k/wifi7/hal.c
+index a0a1902fb49152c35df3b6a9aff4cfa3a529bb9d..708592a5c2dac1343fddb85be6ef01d967a1e93a 100644
+--- a/drivers/net/wireless/ath/ath12k/wifi7/hal.c
++++ b/drivers/net/wireless/ath/ath12k/wifi7/hal.c
+@@ -50,6 +50,13 @@ static const struct ath12k_hw_version_map ath12k_wifi7_hw_ver_map[] = {
+ 		.hal_params = &ath12k_hw_hal_params_wcn7850,
+ 		.hw_regs = &qcc2072_regs,
+ 	},
++	[ATH12K_HW_PEACH_HW20] = {
++		.hal_ops = &hal_qcc2072_ops,
++		.hal_desc_sz = sizeof(struct hal_rx_desc_qcc2072),
++		.tcl_to_wbm_rbm_map = ath12k_hal_tcl_to_wbm_rbm_map_wcn7850,
++		.hal_params = &ath12k_hw_hal_params_wcn7850,
++		.hw_regs = &qcc2072_regs,
++	},
+ 	[ATH12K_HW_IPQ5424_HW10] = {
+ 		.hal_ops = &hal_qcn9274_ops,
+ 		.hal_desc_sz = sizeof(struct hal_rx_desc_qcn9274_compact),
+diff --git a/drivers/net/wireless/ath/ath12k/wifi7/hw.c b/drivers/net/wireless/ath/ath12k/wifi7/hw.c
+index 7b86f324b2e682a631d6b11b90a524ebbbf9120e..a148d57c9d079bbd0c4f25f5fe47e56e3901381d 100644
+--- a/drivers/net/wireless/ath/ath12k/wifi7/hw.c
++++ b/drivers/net/wireless/ath/ath12k/wifi7/hw.c
+@@ -808,6 +808,102 @@ static const struct ath12k_hw_params ath12k_wifi7_hw_params[] = {
+ 
+ 		.host_alloc_ml_id = false,
+ 	},
++	{
++		.name = "peach hw2.0",
++		.hw_rev = ATH12K_HW_PEACH_HW20,
++
++		.fw = {
++			.dir = "PEACH/hw2.0",
++			.board_size = 256 * 1024,
++			.cal_offset = 256 * 1024,
++			.m3_loader = ath12k_m3_fw_loader_driver,
++			.download_aux_ucode = true,
++			.download_tme_lite = true,
++			.board_api1_only = true,
++		},
++
++		.max_radios = 1,
++		.single_pdev_only = true,
++		.qmi_service_ins_id = ATH12K_QMI_WLFW_SERVICE_INS_ID_V01_WCN7850,
++		.internal_sleep_clock = false,
++
++		/* Peach v2 uses the QCC2072 datapath with the WCN7850 CE layout. */
++		.hw_ops = &qcc2072_ops,
++		.ring_mask = &ath12k_wifi7_hw_ring_mask_wcn7850,
++
++		.host_ce_config = ath12k_wifi7_host_ce_config_wcn7850,
++		.ce_count = 9,
++		.target_ce_config = ath12k_wifi7_target_ce_config_wlan_wcn7850,
++		.target_ce_count = 9,
++		.svc_to_ce_map =
++			ath12k_wifi7_target_service_to_ce_map_wlan_wcn7850,
++		.svc_to_ce_map_len = 14,
++
++		.rxdma1_enable = false,
++		.num_rxdma_per_pdev = 2,
++		.num_rxdma_dst_ring = 1,
++		.rx_mac_buf_ring = true,
++		.vdev_start_delay = true,
++
++		.interface_modes = BIT(NL80211_IFTYPE_STATION) |
++				   BIT(NL80211_IFTYPE_AP) |
++				   BIT(NL80211_IFTYPE_P2P_DEVICE) |
++				   BIT(NL80211_IFTYPE_P2P_CLIENT) |
++				   BIT(NL80211_IFTYPE_P2P_GO),
++		.supports_monitor = true,
++
++		.idle_ps = true,
++		.download_calib = false,
++		.supports_suspend = true,
++		.tcl_ring_retry = false,
++		.reoq_lut_support = false,
++		.supports_shadow_regs = true,
++
++		.num_tcl_banks = 7,
++		.max_tx_ring = 3,
++
++		.mhi_config = &ath12k_wifi7_mhi_config_wcn7850,
++
++		.wmi_init = ath12k_wifi7_wmi_init_wcn7850,
++
++		.qmi_cnss_feature_bitmap = BIT(CNSS_WLAN_EN_SUPPORT_V01) |
++					   BIT(CNSS_AUX_UC_SUPPORT_V01),
++
++		.rfkill_pin = 0,
++		.rfkill_cfg = 0,
++		.rfkill_on_level = 0,
++
++		.rddm_size = 0x780000,
++
++		.def_num_link = 2,
++		.max_mlo_peer = 32,
++
++		.otp_board_id_register = 0,
++
++		.supports_sta_ps = true,
++
++		.acpi_guid = &wcn7850_uuid,
++		.supports_dynamic_smps_6ghz = false,
++
++		.iova_mask = 0,
++
++		.supports_aspm = true,
++
++		.ce_ie_addr = NULL,
++		.ce_remap = NULL,
++		.bdf_addr_offset = 0,
++
++		.current_cc_support = true,
++
++		.dp_primary_link_only = false,
++		.client = {
++			.max_client_single = 512,
++			.max_client_dbs = 128,
++			.max_client_dbs_sbs = 128,
++		},
++
++		.host_alloc_ml_id = false,
++	},
+ 	{
+ 		.name = "ipq5424 hw1.0",
+ 		.hw_rev = ATH12K_HW_IPQ5424_HW10,
+diff --git a/drivers/net/wireless/ath/ath12k/wifi7/pci.c b/drivers/net/wireless/ath/ath12k/wifi7/pci.c
+index 6c96b52dec13155fd63439d4dcde82083f78e21a..311a10815957bbd7b9d3c2abd53db4a459a37c62 100644
+--- a/drivers/net/wireless/ath/ath12k/wifi7/pci.c
++++ b/drivers/net/wireless/ath/ath12k/wifi7/pci.c
+@@ -19,6 +19,7 @@
+ 
+ #define QCN9274_DEVICE_ID		0x1109
+ #define WCN7850_DEVICE_ID		0x1107
++#define PEACH_DEVICE_ID			0x110e
+ #define QCC2072_DEVICE_ID		0x1112
+ 
+ #define ATH12K_PCI_W7_SOC_HW_VERSION_1	1
+@@ -34,6 +35,7 @@
+ static const struct pci_device_id ath12k_wifi7_pci_id_table[] = {
+ 	{ PCI_VDEVICE(QCOM, QCN9274_DEVICE_ID) },
+ 	{ PCI_VDEVICE(QCOM, WCN7850_DEVICE_ID) },
++	{ PCI_VDEVICE(QCOM, PEACH_DEVICE_ID) },
+ 	{ PCI_VDEVICE(QCOM, QCC2072_DEVICE_ID) },
+ 	{}
+ };
+@@ -51,6 +53,17 @@ static const struct ath12k_msi_config ath12k_wifi7_msi_config[] = {
+ 			{ .name = "DP", .num_vectors = 8, .base_vector = 8 },
+ 		},
+ 	},
++	{
++		/* Qualcomm cnss2 Peach layout. */
++		.total_vectors = 32,
++		.total_users = 4,
++		.users = (struct ath12k_msi_user[]) {
++			{ .name = "MHI", .num_vectors = 3, .base_vector = 0 },
++			{ .name = "CE", .num_vectors = 10, .base_vector = 3 },
++			{ .name = "WAKE", .num_vectors = 1, .base_vector = 13 },
++			{ .name = "DP", .num_vectors = 18, .base_vector = 14 },
++		},
++	},
+ };
+ 
+ static const struct ath12k_pci_ops ath12k_wifi7_pci_ops_qcn9274 = {
+@@ -155,6 +168,27 @@ static int ath12k_wifi7_pci_probe(struct pci_dev *pdev,
+ 			return -EOPNOTSUPP;
+ 		}
+ 		break;
++	case PEACH_DEVICE_ID:
++		ab->id.bdf_search = ATH12K_BDF_SEARCH_BUS_AND_BOARD;
++		ab_pci->msi_config = &ath12k_wifi7_msi_config[1];
++		ab->static_window_map = false;
++		ab_pci->pci_ops = &ath12k_wifi7_pci_ops_wcn7850;
++		/* Peach, like QCC2072, uses the 0x3278 remap register. */
++		ab_pci->window_reg_addr = WINDOW_REG_ADDRESS_QCC2072;
++		ath12k_wifi7_pci_read_hw_version(ab, &soc_hw_version_major,
++						 &soc_hw_version_minor);
++		ab->target_mem_mode = ATH12K_QMI_MEMORY_MODE_DEFAULT;
++		switch (soc_hw_version_major) {
++		case ATH12K_PCI_W7_SOC_HW_VERSION_2:
++			ab->hw_rev = ATH12K_HW_PEACH_HW20;
++			break;
++		default:
++			dev_err(&pdev->dev,
++				"Unknown hardware version found for Peach: 0x%x\n",
++				soc_hw_version_major);
++			return -EOPNOTSUPP;
++		}
++		break;
+ 	case QCC2072_DEVICE_ID:
+ 		ab->id.bdf_search = ATH12K_BDF_SEARCH_BUS_AND_BOARD;
+ 		ab_pci->msi_config = &ath12k_wifi7_msi_config[0];
+diff --git a/drivers/net/wireless/ath/ath12k/wmi.c b/drivers/net/wireless/ath/ath12k/wmi.c
+index d5160af60e00d115131c548dbf17f55de2abffd6..0de82510b3db7ec0b444e26233230b946bbb0bc9 100644
+--- a/drivers/net/wireless/ath/ath12k/wmi.c
++++ b/drivers/net/wireless/ath/ath12k/wmi.c
+@@ -8,12 +8,14 @@
+ #include <net/mac80211.h>
+ #include <net/cfg80211.h>
+ #include <linux/completion.h>
++#include <linux/etherdevice.h>
+ #include <linux/if_ether.h>
+ #include <linux/types.h>
+ #include <linux/pci.h>
+ #include <linux/uuid.h>
+ #include <linux/time.h>
+ #include <linux/of.h>
++#include <linux/property.h>
+ #include <linux/cleanup.h>
+ #include <linux/percpu.h>
+ #include <linux/refcount.h>
+@@ -7100,6 +7102,25 @@ static int ath12k_ready_event(struct ath12k_base *ab, struct sk_buff *skb)
+ 		return ret;
+ 	}
+ 
++	/*
++	 * Boards whose OTP holds no MAC address report all zeroes here (on
++	 * Android the platform driver pushes one from persistent storage).
++	 * Fall back to the firmware node's (local-)mac-address, then to a
++	 * random locally administered address.
++	 */
++	if (!is_valid_ether_addr(ab->mac_addr)) {
++		if (!device_get_mac_address(ab->dev, ab->mac_addr) &&
++		    is_valid_ether_addr(ab->mac_addr)) {
++			ath12k_info(ab, "using MAC address %pM from firmware node\n",
++				    ab->mac_addr);
++		} else {
++			eth_random_addr(ab->mac_addr);
++			ath12k_warn(ab, "no valid MAC address, using random %pM\n",
++				    ab->mac_addr);
++		}
++		ab->pdevs_macaddr_valid = false;
++	}
++
+ 	complete(&ab->wmi_ab.unified_ready);
+ 	return 0;
+ }

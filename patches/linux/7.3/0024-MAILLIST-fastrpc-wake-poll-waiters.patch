@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jianping Li <jianping.li@oss.qualcomm.com>
+Date: Thu, 22 Oct 2026 10:35:30 +0800
+Subject: [PATCH] misc: fastrpc: wake poll-mode waiters on SSR
+
+fastrpc_notify_users() sets ctx->retval to -EPIPE and completes
+ctx->work for every pending and interrupted context, which is enough to
+release a thread blocked in fastrpc_wait_for_response().
+
+A thread using polling mode does not wait on that completion. It spins
+in poll_for_remote_response(), whose exit condition is:
+
+  (val == FASTRPC_POLL_RESPONSE) || ctx->is_work_done
+
+Since the DSP is already down, it will never write FASTRPC_POLL_RESPONSE
+into the poll address, and is_work_done is left untouched by
+fastrpc_notify_users(). The thread therefore keeps spinning until
+FASTRPC_POLL_MAX_TIMEOUT_US expires instead of bailing out immediately.
+
+Worse, the poll address lives inside ctx->buf, so a polling thread that
+has not been told to stop is still reading a buffer that the SSR
+teardown path is about to reclaim.
+
+Set is_work_done along with retval so polling waiters observe the
+termination on their next iteration, exactly like completion waiters do.
+
+Fixes: 96e62cc0a84d ("misc: fastrpc: Add polling mode support for fastRPC driver")
+Signed-off-by: Jianping Li <jianping.li@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261022023531.465-2-jianping.li@oss.qualcomm.com
+---
+ drivers/misc/fastrpc.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
+index d4fac2caca8678c801a6891678bd17e1dce4a2f2..2c1bc2c127b925a4c9eed433fbcfd12805d10341 100644
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -2666,6 +2666,7 @@ static void fastrpc_notify_users(struct fastrpc_user *user)
+ 	spin_lock(&user->lock);
+ 	list_for_each_entry(ctx, &user->pending, node) {
+ 		ctx->retval = -EPIPE;
++		ctx->is_work_done = true;
+ 		complete(&ctx->work);
+ 	}
+ 	spin_unlock(&user->lock);

@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 22:46:51 +0800
+Subject: piano: backlight: ktz8866: keep the brightness set by the bootloader
+
+When the backlight is already enabled at probe, start from the
+brightness programmed in the chip instead of the fixed default of 1500,
+so that taking over the panel from the bootloader does not change its
+brightness.
+
+Signed-off-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/ade4610d8519e80a2a528ec3f1d874e616523c0b
+---
+ drivers/video/backlight/ktz8866.c | 20 +++++++++++++++++++-
+ 1 file changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/video/backlight/ktz8866.c b/drivers/video/backlight/ktz8866.c
+index b1b9ecdbf2c9e739063b66a56768319e2b94de7d..709109142ecda86289412624e055cc9afcce5567 100644
+--- a/drivers/video/backlight/ktz8866.c
++++ b/drivers/video/backlight/ktz8866.c
+@@ -139,6 +139,24 @@ static void ktz8866_init(struct ktz8866 *ktz)
+ 		ktz8866_write(ktz, LCD_BIAS_CFG1, LCD_BIAS_EN);
+ }
+ 
++/*
++ * Keep the brightness the bootloader left behind instead of jumping to the
++ * default when the backlight is already on.
++ */
++static unsigned int ktz8866_get_initial_brightness(struct ktz8866 *ktz)
++{
++	unsigned int en, lsb, msb, brightness;
++
++	if (regmap_read(ktz->regmap, BL_EN, &en) || !(en & BL_EN_BIT) ||
++	    regmap_read(ktz->regmap, BL_BRT_LSB, &lsb) ||
++	    regmap_read(ktz->regmap, BL_BRT_MSB, &msb))
++		return DEFAULT_BRIGHTNESS;
++
++	brightness = (msb << 3) | (lsb & 0x7);
++
++	return brightness ?: DEFAULT_BRIGHTNESS;
++}
++
+ static void ktz8866_put_device(void *data)
+ {
+ 	put_device(data);
+@@ -216,7 +234,7 @@ static int ktz8866_probe(struct i2c_client *client)
+ 	memset(&props, 0, sizeof(props));
+ 	props.type = BACKLIGHT_RAW;
+ 	props.max_brightness = MAX_BRIGHTNESS;
+-	props.brightness = DEFAULT_BRIGHTNESS;
++	props.brightness = ktz8866_get_initial_brightness(ktz);
+ 	props.scale = BACKLIGHT_SCALE_LINEAR;
+ 
+ 	ktz->backlight = devm_backlight_device_register(&client->dev, "ktz8866-backlight",

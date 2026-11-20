@@ -1,0 +1,128 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: usb: dwc3: preserve the SM8750 firmware handoff
+
+Carry the wrapper and core startup behavior used on Piano.
+
+The port retains changes from these linux-piano commits:
+piano: usb: dwc3: treat empty extcon property as absent (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+piano: usb: dwc3-qcom: degrade gracefully without interconnect providers (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+
+Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/4ae4e66c73ff7a449f695d8737abf5dcc38529b7
+Link: https://github.com/blu-sharky/linux-piano/commit/b2bb4637d467e1c75c2b2fcd4c3c96f98b15cb35
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ drivers/usb/dwc3/core.c      | 19 ++++++++++++++++++-
+ drivers/usb/dwc3/dwc3-qcom.c | 25 ++++++++++++++++++++-----
+ 2 files changed, 38 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/usb/dwc3/core.c b/drivers/usb/dwc3/core.c
+index fd5c2cd36c595c8b67a75e8791491fae0811b4c3..c1a58cee40b7b3610d1fe290072f7d884b15cc1a 100644
+--- a/drivers/usb/dwc3/core.c
++++ b/drivers/usb/dwc3/core.c
+@@ -322,6 +322,7 @@ u32 dwc3_core_fifo_space(struct dwc3_ep *dep, u8 type)
+ int dwc3_core_soft_reset(struct dwc3 *dwc)
+ {
+ 	u32		reg;
++	u32		dctl_before;
+ 	int		retries = 1000;
+ 
+ 	/*
+@@ -333,6 +334,7 @@ int dwc3_core_soft_reset(struct dwc3 *dwc)
+ 		return 0;
+ 
+ 	reg = dwc3_readl(dwc, DWC3_DCTL);
++	dctl_before = reg;
+ 	reg |= DWC3_DCTL_CSFTRST;
+ 	reg &= ~DWC3_DCTL_RUN_STOP;
+ 	dwc3_gadget_dctl_write_safe(dwc, reg);
+@@ -358,6 +360,15 @@ int dwc3_core_soft_reset(struct dwc3 *dwc)
+ 	} while (--retries);
+ 
+ 	dev_warn(dwc->dev, "DWC3 controller soft reset failed.\n");
++	/* Capture the failed reset before probe cleanup changes PHY/clock state. */
++	dev_err(dwc->dev,
++		"reset state: DCTL=%08x->%08x GCTL=%08x GSNPSID=%08x USB2PHYCFG=%08x USB3PIPECTL=%08x usb2_phy=%u usb3_phy=%u\n",
++		dctl_before, reg, dwc3_readl(dwc, DWC3_GCTL),
++		dwc3_readl(dwc, DWC3_GSNPSID),
++		dwc->num_usb2_ports ? dwc3_readl(dwc, DWC3_GUSB2PHYCFG(0)) : 0,
++		dwc->num_usb3_ports ? dwc3_readl(dwc, DWC3_GUSB3PIPECTL(0)) : 0,
++		!!dwc->usb2_phy || (dwc->num_usb2_ports && !!dwc->usb2_generic_phy[0]),
++		!!dwc->usb3_phy || (dwc->num_usb3_ports && !!dwc->usb3_generic_phy[0]));
+ 	return -ETIMEDOUT;
+ 
+ done:
+@@ -2010,7 +2021,13 @@ static struct extcon_dev *dwc3_get_extcon(struct dwc3 *dwc)
+ 	struct extcon_dev *edev = NULL;
+ 	const char *name;
+ 
+-	if (device_property_present(dev, "extcon"))
++	/*
++	 * A DT overlay cannot remove a property, only blank it. Treat an
++	 * empty "extcon" property as absent so blanked-out dependencies fall
++	 * through to the usb-role-switch / port-graph paths.
++	 */
++	if (dev->of_node && of_property_present(dev->of_node, "extcon") &&
++	    of_property_count_u32_elems(dev->of_node, "extcon") > 0)
+ 		return extcon_get_edev_by_phandle(dev, 0);
+ 
+ 	/*
+diff --git a/drivers/usb/dwc3/dwc3-qcom.c b/drivers/usb/dwc3/dwc3-qcom.c
+index ac68b4218b56b77838d457e8c131e2d9dd757ec5..b72f9ef4840d110be8e73559f98d4651145e8742 100644
+--- a/drivers/usb/dwc3/dwc3-qcom.c
++++ b/drivers/usb/dwc3/dwc3-qcom.c
+@@ -7,6 +7,7 @@
+ #include <linux/io.h>
+ #include <linux/of.h>
+ #include <linux/clk.h>
++#include <linux/clk-provider.h>
+ #include <linux/irq.h>
+ #include <linux/of_clk.h>
+ #include <linux/module.h>
+@@ -170,17 +171,24 @@ static int dwc3_qcom_interconnect_init(struct dwc3_qcom *qcom)
+ 	struct device *dev = qcom->dev;
+ 	int ret;
+ 
++	/*
++	 * Interconnect bandwidth voting is a performance optimisation, not a
++	 * functional requirement.  Boards without a live interconnect provider
++	 * (e.g. when the RPMh fabric is not up yet) must still enumerate USB:
++	 * degrade to no bandwidth voting instead of failing probe.
++	 */
+ 	qcom->icc_path_ddr = of_icc_get(dev, "usb-ddr");
+ 	if (IS_ERR(qcom->icc_path_ddr)) {
+-		return dev_err_probe(dev, PTR_ERR(qcom->icc_path_ddr),
+-				     "failed to get usb-ddr path\n");
++		dev_warn(dev, "usb-ddr icc path unavailable (%ld), continuing without\n",
++			 PTR_ERR(qcom->icc_path_ddr));
++		qcom->icc_path_ddr = NULL;
+ 	}
+ 
+ 	qcom->icc_path_apps = of_icc_get(dev, "apps-usb");
+ 	if (IS_ERR(qcom->icc_path_apps)) {
+-		ret = dev_err_probe(dev, PTR_ERR(qcom->icc_path_apps),
+-				    "failed to get apps-usb path\n");
+-		goto put_path_ddr;
++		dev_warn(dev, "apps-usb icc path unavailable (%ld), continuing without\n",
++			 PTR_ERR(qcom->icc_path_apps));
++		qcom->icc_path_apps = NULL;
+ 	}
+ 
+ 	max_speed = usb_get_maximum_speed(qcom->dwc.dev);
+@@ -707,6 +715,13 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
+ 	probe_data.properties = DWC3_DEFAULT_PROPERTIES;
+ 	ret = dwc3_core_probe(&probe_data);
+ 	if (ret)  {
++		int i;
++
++		/* Keep failure evidence before disabling the wrapper clocks. */
++		for (i = 0; i < qcom->num_clocks; i++)
++			dev_err(dev, "probe failure clock %s: rate=%lu enabled=%d\n",
++				qcom->clks[i].id, clk_get_rate(qcom->clks[i].clk),
++				__clk_is_enabled(qcom->clks[i].clk));
+ 		ret = dev_err_probe(dev, ret, "failed to register DWC3 Core\n");
+ 		goto clk_disable;
+ 	}

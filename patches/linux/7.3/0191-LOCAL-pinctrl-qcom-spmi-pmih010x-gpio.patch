@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Wed, 11 Nov 2026 00:25:30 +0800
+Subject: pinctrl: qcom: spmi-gpio: match PMIH010x
+
+Register the documented 18-pin PMIH010x GPIO block so the ADC
+thermistor pinctrl states can apply.
+
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+Link: https://github.com/slwyts/Project-SunUEFI/commit/097c92ce69e530138a2afacb237d7acf4e12eb7c
+---
+ drivers/pinctrl/qcom/pinctrl-spmi-gpio.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/pinctrl/qcom/pinctrl-spmi-gpio.c b/drivers/pinctrl/qcom/pinctrl-spmi-gpio.c
+index c6f93fb1dc2027a697eeec0060761b58b9361256..530d7eb7fdefdb8c3a521b71d252492dbb8c46be 100644
+--- a/drivers/pinctrl/qcom/pinctrl-spmi-gpio.c
++++ b/drivers/pinctrl/qcom/pinctrl-spmi-gpio.c
+@@ -1292,6 +1292,7 @@ static const struct of_device_id pmic_gpio_of_match[] = {
+ 	{ .compatible = "qcom,pmi8994-gpio", .data = (void *) 10 },
+ 	{ .compatible = "qcom,pmi8998-gpio", .data = (void *) 14 },
+ 	{ .compatible = "qcom,pmih0108-gpio", .data = (void *) 18 },
++	{ .compatible = "qcom,pmih010x-gpio", .data = (void *) 18 },
+ 	{ .compatible = "qcom,pmiv0104-gpio", .data = (void *) 10 },
+ 	{ .compatible = "qcom,pmk8350-gpio", .data = (void *) 4 },
+ 	{ .compatible = "qcom,pmk8550-gpio", .data = (void *) 6 },

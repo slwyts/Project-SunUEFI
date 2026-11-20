@@ -1,0 +1,169 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+Date: Mon, 28 Sep 2026 01:27:25 +0800
+Subject: piano: drm/msm/dpu: DSC 1.2 full ICH precision and vendor initial
+ lines
+
+Match the vendor driver: set full ICH error precision above 8 bpc on
+DPU 10+, and compute the initial lines with its encoder latency
+model. Not verified to be required on their own.
+
+Link: https://github.com/blu-sharky/linux-piano/commit/fc7d3843134cb3404bf366336c86a1a5b0fe17a1
+Link: https://github.com/blu-sharky/linux-piano/commit/5c2c95fddbe9c29720b7b4e84119357358e9f0cb
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c   | 49 ++++++++++++-------
+ drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dsc.h    |  4 +-
+ .../gpu/drm/msm/disp/dpu1/dpu_hw_dsc_1_2.c    |  9 +++-
+ drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c        |  2 +-
+ 4 files changed, 42 insertions(+), 22 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
+index 1f20695f81e35cc0868d981b89c4a2dd38409799..d5ea78748fcdf896a2bf4b45617f987c1b003d08 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
+@@ -12,6 +12,7 @@
+ #include <linux/kthread.h>
+ #include <linux/seq_file.h>
+ 
++#include <drm/display/drm_dsc_helper.h>
+ #include <drm/drm_atomic.h>
+ #include <drm/drm_crtc.h>
+ #include <drm/drm_file.h>
+@@ -1964,27 +1965,36 @@ int dpu_encoder_vsync_time(struct drm_encoder *drm_enc, ktime_t *wakeup_time)
+ 
+ static u32
+ dpu_encoder_dsc_initial_line_calc(struct drm_dsc_config *dsc,
+-				  u32 enc_ip_width)
++				  u32 enc_ip_width, u32 dsc_common_mode)
+ {
+-	int ssm_delay, total_pixels, soft_slice_per_enc;
+-
+-	soft_slice_per_enc = enc_ip_width / dsc->slice_width;
+-
+ 	/*
+-	 * minimum number of initial line pixels is a sum of:
+-	 * 1. sub-stream multiplexer delay (83 groups for 8bpc,
+-	 *    91 for 10 bpc) * 3
+-	 * 2. for two soft slice cases, add extra sub-stream multiplexer * 3
+-	 * 3. the initial xmit delay
+-	 * 4. total pipeline delay through the "lock step" of encoder (47)
+-	 * 5. 6 additional pixels as the output of the rate buffer is
+-	 *    48 bits wide
++	 * Latency model of the DSC 1.2 encoder core (rtl_max_bpc 10, 64-bit
++	 * output data path, pipeline latency 28), as used by the vendor
++	 * driver. The simpler estimate this replaces undercounts the output
++	 * buffer and multi-slice latency and gives one line too few for
++	 * e.g. 10 bpc, 8 bpp, two 800 pixel soft slices per encoder.
+ 	 */
+-	ssm_delay = ((dsc->bits_per_component < 10) ? 84 : 92);
+-	total_pixels = ssm_delay * 3 + dsc->initial_xmit_delay + 47;
+-	if (soft_slice_per_enc > 1)
+-		total_pixels += (ssm_delay * 3);
+-	return DIV_ROUND_UP(total_pixels, dsc->slice_width);
++	const int max_ssm_delay = 4 * (10 + 1) + 48 - 1;
++	const int ob_data_width = 64;
++	int soft_slice_per_enc = enc_ip_width / dsc->slice_width;
++	int mux_word_size = dsc->bits_per_component >= 12 ? 64 : 48;
++	int bpp = drm_dsc_get_bpp_int(dsc);
++	int chunk_bits = 8 * dsc->slice_chunk_size;
++	int base_hs_latency, extra_bits;
++
++	base_hs_latency = dsc->initial_xmit_delay +
++		28 + 3 * (max_ssm_delay + 2) * soft_slice_per_enc +
++		DIV_ROUND_UP(9 * ob_data_width + mux_word_size, bpp) + 1;
++
++	if (((dsc_common_mode & DSC_MODE_SPLIT_PANEL) &&
++	     (dsc_common_mode & DSC_MODE_MULTIPLEX)) ||
++	    (soft_slice_per_enc > 1 && ob_data_width > bpp))
++		extra_bits = chunk_bits;
++	else
++		extra_bits = ((ob_data_width - bpp) * chunk_bits) >> 6;
++
++	return DIV_ROUND_UP(base_hs_latency + DIV_ROUND_UP(extra_bits, bpp),
++			    dsc->slice_width);
+ }
+ 
+ static void dpu_encoder_dsc_pipe_cfg(struct dpu_hw_ctl *ctl,
+@@ -2052,7 +2062,8 @@ static void dpu_encoder_prep_dsc(struct dpu_encoder_virt *dpu_enc,
+ 	intf_ip_w = this_frame_slices * dsc->slice_width;
+ 
+ 	enc_ip_w = intf_ip_w / num_dsc;
+-	initial_lines = dpu_encoder_dsc_initial_line_calc(dsc, enc_ip_w);
++	initial_lines = dpu_encoder_dsc_initial_line_calc(dsc, enc_ip_w,
++							  dsc_common_mode);
+ 
+ 	for (i = 0; i < num_dsc; i++)
+ 		dpu_encoder_dsc_pipe_cfg(ctl, hw_dsc[i], hw_pp[i],
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dsc.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dsc.h
+index 39d93b9df05150b6b63584605b48443650ab91f2..d901771005c46361870a2607662044c5ddc87999 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dsc.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dsc.h
+@@ -61,6 +61,7 @@ struct dpu_hw_dsc {
+ 	/* dsc */
+ 	enum dpu_dsc idx;
+ 	const struct dpu_dsc_cfg *caps;
++	const struct dpu_mdss_version *mdss_ver;
+ 
+ 	/* ops */
+ 	struct dpu_hw_dsc_ops ops;
+@@ -73,7 +74,8 @@ struct dpu_hw_dsc *dpu_hw_dsc_init(struct drm_device *dev,
+ 
+ struct dpu_hw_dsc *dpu_hw_dsc_init_1_2(struct drm_device *dev,
+ 				       const struct dpu_dsc_cfg *cfg,
+-				       void __iomem *addr);
++				       void __iomem *addr,
++				       const struct dpu_mdss_version *mdss_ver);
+ 
+ static inline struct dpu_hw_dsc *to_dpu_hw_dsc(struct dpu_hw_blk *hw)
+ {
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dsc_1_2.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dsc_1_2.c
+index b3395e9c34a19363019ec0ccfb0c87943553b4c9..19419f2f200e9f839edf375d57d663ac3c4b955a 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dsc_1_2.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dsc_1_2.c
+@@ -124,6 +124,10 @@ static void dpu_hw_dsc_config_1_2(struct dpu_hw_dsc *hw_dsc,
+ 
+ 	data |= (_dsc_calc_output_buf_max_addr(hw_dsc, num_active_slice_per_enc) << 18);
+ 
++	/* DPU 10.0+ need full ICH error precision above 8 bpc */
++	if (hw_dsc->mdss_ver->core_major_ver >= 10 && dsc->bits_per_component > 8)
++		data |= BIT(12);
++
+ 	DPU_REG_WRITE(hw, sblk->enc.base + ENC_DF_CTRL, data);
+ 
+ 	data = (dsc->dsc_version_minor & 0xf) << 28;
+@@ -373,11 +377,13 @@ static void _setup_dcs_ops_1_2(struct dpu_hw_dsc_ops *ops)
+  * @dev:  Corresponding device for devres management
+  * @cfg:  DSC catalog entry for which driver object is required
+  * @addr: Mapped register io address of MDP
++ * @mdss_ver: dpu core's major and minor versions
+  * Returns: Error code or allocated dpu_hw_dsc context
+  */
+ struct dpu_hw_dsc *dpu_hw_dsc_init_1_2(struct drm_device *dev,
+ 				       const struct dpu_dsc_cfg *cfg,
+-				       void __iomem *addr)
++				       void __iomem *addr,
++				       const struct dpu_mdss_version *mdss_ver)
+ {
+ 	struct dpu_hw_dsc *c;
+ 
+@@ -390,6 +396,7 @@ struct dpu_hw_dsc *dpu_hw_dsc_init_1_2(struct drm_device *dev,
+ 
+ 	c->idx = cfg->id;
+ 	c->caps = cfg;
++	c->mdss_ver = mdss_ver;
+ 	_setup_dcs_ops_1_2(&c->ops);
+ 
+ 	return c;
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c
+index 7e77d88f895920cf2b755ba22cf2cc1f69b91452..5d2d3922df104a9790a6e17f2e8f13269d746ce9 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c
+@@ -169,7 +169,7 @@ int dpu_rm_init(struct drm_device *dev,
+ 		const struct dpu_dsc_cfg *dsc = &cat->dsc[i];
+ 
+ 		if (cat->mdss_ver->core_major_ver >= 7)
+-			hw = dpu_hw_dsc_init_1_2(dev, dsc, mmio);
++			hw = dpu_hw_dsc_init_1_2(dev, dsc, mmio, cat->mdss_ver);
+ 		else
+ 			hw = dpu_hw_dsc_init(dev, dsc, mmio, cat->mdss_ver);
+ 

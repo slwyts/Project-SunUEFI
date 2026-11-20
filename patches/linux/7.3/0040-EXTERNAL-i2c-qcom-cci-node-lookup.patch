@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: i2c: qcom-cci: resolve camera devices within the controller node
+
+Use the CCI node scope when looking up the attached devices.
+
+The port retains changes from these linux-piano commits:
+piano: cameras through CAMSS and the TFE hardware ISP (#28) (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+
+Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/352508459733d3e6d349ea5581a8dd2fd8bb4180
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ drivers/i2c/busses/i2c-qcom-cci.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/i2c/busses/i2c-qcom-cci.c b/drivers/i2c/busses/i2c-qcom-cci.c
+index bd70c6bae5dc685435bf2ad031cf7a11ec60ab4f..d55806c89c06a4a65b0f8c3eba3b4928f65b6b36 100644
+--- a/drivers/i2c/busses/i2c-qcom-cci.c
++++ b/drivers/i2c/busses/i2c-qcom-cci.c
+@@ -520,6 +520,13 @@ static int cci_probe(struct platform_device *pdev)
+ 	if (!cci->data)
+ 		return -ENOENT;
+ 
++	/*
++	 * cci_reset() always waits on master 0, and the interrupt handler may
++	 * complete either master, whether or not the board uses it.
++	 */
++	for (i = 0; i < NUM_MASTERS; i++)
++		init_completion(&cci->master[i].irq_complete);
++
+ 	for_each_available_child_of_node_scoped(dev->of_node, child) {
+ 		struct cci_master *master;
+ 		u32 idx;
+@@ -558,8 +565,6 @@ static int cci_probe(struct platform_device *pdev)
+ 			else if (val == I2C_MAX_FAST_MODE_PLUS_FREQ)
+ 				master->mode = I2C_MODE_FAST_PLUS;
+ 		}
+-
+-		init_completion(&master->irq_complete);
+ 	}
+ 
+ 	/* Memory */

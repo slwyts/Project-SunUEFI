@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // Sources: stock DT nanosic@4c and mi_qupv3_se6_i2c pinctrl, the Linux 7.3
-// keyboard node in patches/linux/7.3/0001-platform.patch and pinctrl-sm8750.c
+// keyboard node in the Piano board device tree and pinctrl-sm8750.c
 #include "PianoPogoBoard.h"
 #include <Protocol/EFIClock.h>
 #include <Library/UefiBootServicesTableLib.h>

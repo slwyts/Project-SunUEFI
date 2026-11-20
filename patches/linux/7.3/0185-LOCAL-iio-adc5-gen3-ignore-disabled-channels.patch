@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Wed, 11 Nov 2026 00:18:30 +0800
+Subject: iio: adc: qcom-spmi-adc5-gen3: skip disabled channel nodes
+
+Count and configure only available child nodes. Piano needs to omit
+unsupported charger-current channels while retaining the working
+temperature channels.
+
+Keep the existing Piano formatting of the Gen4 raw-code check and SID
+comment when replaying the Gen4 series.
+
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+---
+ drivers/iio/adc/qcom-spmi-adc5-gen3.c | 17 +++++++++--------
+ 1 file changed, 9 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/iio/adc/qcom-spmi-adc5-gen3.c b/drivers/iio/adc/qcom-spmi-adc5-gen3.c
+index 810d25b665b13abec9eb64854dbe403365b7592f..d6094f2eae9c0c60bc0baef3e21903a9d2cfdb7f 100644
+--- a/drivers/iio/adc/qcom-spmi-adc5-gen3.c
++++ b/drivers/iio/adc/qcom-spmi-adc5-gen3.c
+@@ -100,11 +100,10 @@ static int adc5_gen3_read_voltage_data(struct adc5_chip *adc,
+ 
+ 	*data = get_unaligned_le16(rslt);
+ 
+-	if (*data == ADC5_USR_DATA_CHECK) {
+-		if (!(prop->generation == ADC5_GEN4 && prop->cal_method == ADC5_RATIOMETRIC_CAL)) {
+-			dev_err(adc->dev, "Invalid data:%#x\n", *data);
+-			return -EINVAL;
+-		}
++	if (*data == ADC5_USR_DATA_CHECK &&
++	    !(prop->generation == ADC5_GEN4 && prop->cal_method == ADC5_RATIOMETRIC_CAL)) {
++		dev_err(adc->dev, "Invalid data:%#x\n", *data);
++		return -EINVAL;
+ 	}
+ 
+ 	dev_dbg(adc->dev, "voltage raw code:%#x\n", *data);
+@@ -135,7 +134,7 @@ static int adc5_gen3_configure(struct adc5_chip *adc,
+ 	if (ret)
+ 		return ret;
+ 
+-	/* Write SID and bus_id*/
++	/* Write SID and bus index. */
+ 	buf[0] = FIELD_PREP(ADC5_GEN4_BUS_INDEX_MASK, prop->bus_index) |
+ 		 FIELD_PREP(ADC5_GEN4_SID_MASK, prop->sid);
+ 
+@@ -634,7 +633,9 @@ static int adc5_get_fw_data(struct adc5_chip *adc)
+ 	unsigned int index = 0;
+ 	int ret;
+ 
+-	adc->nchannels = device_get_child_node_count(dev);
++	adc->nchannels = 0;
++	fwnode_for_each_available_child_node_scoped(dev_fwnode(dev), child)
++		adc->nchannels++;
+ 	if (!adc->nchannels)
+ 		return dev_err_probe(dev, -EINVAL, "No ADC channels found\n");
+ 
+@@ -653,7 +654,7 @@ static int adc5_get_fw_data(struct adc5_chip *adc)
+ 	iio_chan = adc->iio_chans;
+ 	adc->data = device_get_match_data(dev);
+ 
+-	device_for_each_child_node_scoped(dev, child) {
++	fwnode_for_each_available_child_node_scoped(dev_fwnode(dev), child) {
+ 		ret = adc5_gen3_get_fw_channel_data(adc, chan_props, child);
+ 		if (ret)
+ 			return ret;

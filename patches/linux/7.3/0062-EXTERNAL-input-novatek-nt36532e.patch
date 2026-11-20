@@ -1,0 +1,5000 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: Input: add the Novatek NT36532E SPI touchscreen driver
+
+Carry the touchscreen, firmware and panel-event integration required by Piano.
+
+The port retains changes from these linux-piano commits:
+piano: touch: port Novatek NT36532E SPI driver from sheng tree (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+piano: NT36532 THP touch bring-up (milestone-touch) (#11) (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+
+The cited SunUEFI changes were carried through the 7.3 port.
+
+Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/5dfe65a84067e5f97d692429668a7cb3569c7bb7
+Link: https://github.com/blu-sharky/linux-piano/commit/00b055cd9c1634371cd501530ba5c29de4ab91d4
+Link: https://github.com/slwyts/Project-SunUEFI/commit/fa53499be18934d90eae372805b57ad93844151f
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ drivers/input/touchscreen/Kconfig             |    2 +
+ drivers/input/touchscreen/Makefile            |    1 +
+ drivers/input/touchscreen/nt36532e/Kconfig    |   13 +
+ drivers/input/touchscreen/nt36532e/Makefile   |    9 +
+ drivers/input/touchscreen/nt36532e/nt36xxx.c  | 2646 +++++++++++++++++
+ drivers/input/touchscreen/nt36532e/nt36xxx.h  |  249 ++
+ .../touchscreen/nt36532e/nt36xxx_fw_update.c  |  925 ++++++
+ .../touchscreen/nt36532e/nt36xxx_mem_map.h    |  733 +++++
+ .../touchscreen/nt36532e/test_thp_control.py  |  325 ++
+ 9 files changed, 4903 insertions(+)
+ create mode 100644 drivers/input/touchscreen/nt36532e/Kconfig
+ create mode 100644 drivers/input/touchscreen/nt36532e/Makefile
+ create mode 100644 drivers/input/touchscreen/nt36532e/nt36xxx.c
+ create mode 100644 drivers/input/touchscreen/nt36532e/nt36xxx.h
+ create mode 100644 drivers/input/touchscreen/nt36532e/nt36xxx_fw_update.c
+ create mode 100644 drivers/input/touchscreen/nt36532e/nt36xxx_mem_map.h
+ create mode 100644 drivers/input/touchscreen/nt36532e/test_thp_control.py
+
+diff --git a/drivers/input/touchscreen/Kconfig b/drivers/input/touchscreen/Kconfig
+index 9b9ae8ac3f7fd3b9e948083fcd05afabdcd69bca..064b877d50858530f566761c29235b00c305591b 100644
+--- a/drivers/input/touchscreen/Kconfig
++++ b/drivers/input/touchscreen/Kconfig
+@@ -1414,4 +1414,6 @@ config TOUCHSCREEN_HIMAX_HX83112B
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called himax_hx83112b.
+ 
++source "drivers/input/touchscreen/nt36532e/Kconfig"
++
+ endif
+diff --git a/drivers/input/touchscreen/Makefile b/drivers/input/touchscreen/Makefile
+index bfd9de83389d8833dbe7cc2641cb24493cdf3807..aff20104466527061dd01dd2d57626f967403bb3 100644
+--- a/drivers/input/touchscreen/Makefile
++++ b/drivers/input/touchscreen/Makefile
+@@ -119,3 +119,4 @@ obj-$(CONFIG_TOUCHSCREEN_IQS5XX)	+= iqs5xx.o
+ obj-$(CONFIG_TOUCHSCREEN_IQS7211)	+= iqs7211.o
+ obj-$(CONFIG_TOUCHSCREEN_ZINITIX)	+= zinitix.o
+ obj-$(CONFIG_TOUCHSCREEN_HIMAX_HX83112B)	+= himax_hx83112b.o
++obj-$(CONFIG_TOUCHSCREEN_NT36532E_SPI)	+= nt36532e/
+diff --git a/drivers/input/touchscreen/nt36532e/Kconfig b/drivers/input/touchscreen/nt36532e/Kconfig
+new file mode 100644
+index 0000000000000000000000000000000000000000..a0e0f16b38058d6df849adebfa311166bf72e7fe
+--- /dev/null
++++ b/drivers/input/touchscreen/nt36532e/Kconfig
+@@ -0,0 +1,13 @@
++# SPDX-License-Identifier: GPL-2.0
++#
++# Novatek NT36532E touchscreen driver configuration
++#
++config TOUCHSCREEN_NT36532E_SPI
++	tristate "Novatek NT36532E host download SPI driver"
++	select CRC32
++	default n
++	help
++	  Say Y here if you have a Novatek NT36532E no flash touchscreen connected
++	  to your system by SPI bus.
++
++	  If unsure, say N.
+diff --git a/drivers/input/touchscreen/nt36532e/Makefile b/drivers/input/touchscreen/nt36532e/Makefile
+new file mode 100644
+index 0000000000000000000000000000000000000000..309263303fb8b0b198569ff8217b8ca293fea1b4
+--- /dev/null
++++ b/drivers/input/touchscreen/nt36532e/Makefile
+@@ -0,0 +1,9 @@
++# SPDX-License-Identifier: GPL-2.0
++#
++# Makefile for the Novatek NT36532E touchscreen driver.
++#
++
++# Each configuration option enables a list of files.
++
++obj-$(CONFIG_TOUCHSCREEN_NT36532E_SPI) += nt36532e_ts.o
++nt36532e_ts-y := nt36xxx.o nt36xxx_fw_update.o
+diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx.c b/drivers/input/touchscreen/nt36532e/nt36xxx.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..309d623fd61664777092523406263dee06d45baa
+--- /dev/null
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx.c
+@@ -0,0 +1,2646 @@
++// SPDX-License-Identifier: GPL-2.0
++
++/*
++ * Copyright (C) 2010 - 2022 Novatek, Inc.
++ *
++ * $Revision: 102158 $
++ * $Date: 2022-07-07 11:10:06 +0800 (週四, 07 七月 2022) $
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++ * more details.
++ *
++ */
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/interrupt.h>
++#include <linux/irq.h>
++#include <linux/gpio.h>
++#include <linux/proc_fs.h>
++#include <linux/seq_file.h>
++#include <linux/poll.h>
++#include <linux/power_supply.h>
++#include <linux/gpio/consumer.h>
++#include <linux/of_irq.h>
++#include <linux/unaligned.h>
++#include <linux/vmalloc.h>
++#include <uapi/linux/sched/types.h>
++#include "nt36xxx.h"
++
++#if defined(CONFIG_DRM_PANEL)
++#include <drm/drm_panel.h>
++#endif
++
++static int32_t nvt_ts_suspend(struct device *dev);
++static int32_t nvt_ts_resume(struct device *dev);
++struct nvt_ts_data *ts;
++static uint8_t bTouchIsAwake;
++
++#if BOOT_UPDATE_FIRMWARE
++static struct workqueue_struct *nvt_fwu_wq;
++extern void Boot_Update_Firmware(struct work_struct *work);
++#endif
++
++#if defined(CONFIG_DRM_PANEL)
++static struct drm_panel_follower_funcs nt36xxx_panel_follower_funcs;
++#endif
++
++/* The follower lives inside ts, so it must not outlive manual ts cleanup.
++ * drm_panel_remove_follower() takes the panel follower lock, waits for
++ * callbacks and invokes unprepare while our work/IRQ/locks still exist.
++ */
++static void nvt_panel_remove_follower(struct nvt_ts_data *data)
++{
++#if defined(CONFIG_DRM_PANEL)
++	if (data->panel_follower_registered) {
++		drm_panel_remove_follower(&data->panel_follower);
++		data->panel_follower_registered = false;
++	}
++#endif
++}
++#define NVT_THP_HEADER_LEN 257
++/* sheng payload length, used when the firmware has no polling info */
++#define NVT_THP_DEFAULT_PAYLOAD_LEN 5160
++/* one SPI read must fit rbuf together with the dummy byte */
++#define NVT_THP_MAX_PAYLOAD_LEN (NVT_READ_LEN - NVT_THP_HEADER_LEN - DUMMY_BYTES)
++#define NVT_THP_MAX_FRAME_LEN (NVT_THP_HEADER_LEN + NVT_THP_MAX_PAYLOAD_LEN)
++#define NVT_THP_POLL_INFO_LEN 39
++#define NVT_THP_STREAM_SIZE (4 * 1024 * 1024)
++#define NVT_THP_STREAM_MAGIC 0x3150544e
++#define NVT_THP_STREAM_FLAG_VALID BIT(0)
++#define NVT_THP_STREAM_FLAG_EPOCH BIT(1)
++
++struct nvt_thp_stream_header {
++	__le32 magic;
++	__le16 header_len;
++	__le16 frame_len;
++	__le64 sequence;
++	__le64 timestamp_ns;
++	__le16 header_crc;
++	__le16 flags;
++	__le32 firmware_magic;
++} __packed;
++
++static bool nvt_thp_header_valid(const u8 *frame, u16 *header_crc,
++				 u32 *magic)
++{
++	u16 crc = get_unaligned_le16(frame + NVT_THP_HEADER_LEN + 4);
++	u32 marker = get_unaligned_le32(frame + NVT_THP_HEADER_LEN + 8);
++	u16 crc_inv = get_unaligned_le16(frame + NVT_THP_HEADER_LEN + 12);
++	u32 marker_inv = get_unaligned_le32(frame + NVT_THP_HEADER_LEN + 16);
++
++	*header_crc = crc;
++	*magic = marker;
++
++	return crc_inv == (u16)~crc && marker_inv == ~marker;
++}
++
++static u16 nvt_thp_frame_len(void)
++{
++	return NVT_THP_HEADER_LEN + ts->thp_payload_len;
++}
++
++static int nvt_thp_read_frame(u8 *fw_state)
++{
++	int ret;
++
++	mutex_lock(&ts->thp_lock);
++	nvt_set_page(ts->mmap->EVENT_BUF_ADDR);
++	ts->thp_frame[0] = 0;
++	ret = CTP_SPI_READ(ts->client, ts->thp_frame, nvt_thp_frame_len());
++	if (ret < 0)
++		ts->thp_read_errors++;
++	else {
++		memcpy(fw_state, ts->thp_frame, 7);
++		ts->thp_timestamp = ktime_get_boottime();
++	}
++	mutex_unlock(&ts->thp_lock);
++
++	return ret;
++}
++
++static void nvt_thp_publish_frame(void)
++{
++	struct nvt_thp_stream_header header;
++	u16 frame_len = nvt_thp_frame_len();
++	size_t record_len = sizeof(header) + frame_len;
++	u16 header_crc;
++	u32 magic;
++	bool valid;
++	bool epoch;
++
++	mutex_lock(&ts->thp_lock);
++	valid = nvt_thp_header_valid(ts->thp_frame, &header_crc, &magic);
++	ts->thp_frame_count++;
++	ts->thp_frame_valid = valid;
++	ts->thp_header_crc = header_crc;
++	ts->thp_magic = magic;
++	if (!valid)
++		ts->thp_header_errors++;
++	epoch = valid && ts->thp_epoch_pending;
++	if (epoch)
++		ts->thp_epoch_pending = false;
++
++	header.magic = cpu_to_le32(NVT_THP_STREAM_MAGIC);
++	header.header_len = cpu_to_le16(sizeof(header));
++	header.frame_len = cpu_to_le16(frame_len);
++	header.sequence = cpu_to_le64(ts->thp_frame_count);
++	header.timestamp_ns = cpu_to_le64(ktime_to_ns(ts->thp_timestamp));
++	header.header_crc = cpu_to_le16(header_crc);
++	header.flags = cpu_to_le16((valid ? NVT_THP_STREAM_FLAG_VALID : 0) |
++				       (epoch ? NVT_THP_STREAM_FLAG_EPOCH : 0));
++	header.firmware_magic = cpu_to_le32(magic);
++
++	if (!ts->thp_capture_enabled) {
++		/* statistics only */
++	} else if (kfifo_avail(&ts->thp_stream_fifo) < record_len) {
++		ts->thp_stream_drops++;
++	} else {
++		kfifo_in(&ts->thp_stream_fifo, &header, sizeof(header));
++		kfifo_in(&ts->thp_stream_fifo, ts->thp_frame, frame_len);
++	}
++	mutex_unlock(&ts->thp_lock);
++	wake_up_interruptible(&ts->thp_stream_wait);
++}
++
++void nvt_thp_mark_epoch(void)
++{
++	if (!ts)
++		return;
++
++	mutex_lock(&ts->thp_lock);
++	ts->thp_epoch_pending = true;
++	ts->thp_epoch_count++;
++	if (ts->thp_capture_enabled)
++		kfifo_reset(&ts->thp_stream_fifo);
++	mutex_unlock(&ts->thp_lock);
++	wake_up_interruptible(&ts->thp_stream_wait);
++}
++
++static ssize_t nvt_thp_raw_write(struct file *file, const char __user *buf,
++				 size_t count, loff_t *ppos)
++{
++	bool enable;
++	int ret;
++
++	if (!ts)
++		return -ENODEV;
++
++	ret = kstrtobool_from_user(buf, count, &enable);
++	if (ret)
++		return ret;
++
++	mutex_lock(&ts->thp_lock);
++	if (enable && !ts->thp_capture_enabled)
++		kfifo_reset(&ts->thp_stream_fifo);
++	WRITE_ONCE(ts->thp_capture_enabled, enable);
++	mutex_unlock(&ts->thp_lock);
++	wake_up_interruptible(&ts->thp_stream_wait);
++	NVT_ERR("THP passive capture %s, event buffer 0x%06X\n",
++		enable ? "enabled" : "disabled", ts->mmap->EVENT_BUF_ADDR);
++
++	return count;
++}
++
++/*
++ * Xiaomi p81/NT36532 THP ABI, also verified against the captured Piano
++ * nt36532_touch.ko (SHA256 d3ef0e85f98147d50784fc6b32d1d55e53834e8aa406e682e86c048ef663bac0):
++ * https://github.com/MiCode/vendor_xiaomi_proprietary_touch-driver/blob/piano-w-oss/p81/nt36532/nt36xxx_ext_proc.c
++ * nvt_{get,set}_extend_custom_cmd and nvt_xm_htc_{get,set}_game_mode.
++ * 0x08 is a frequency selection number; 0x0a/0x0b are scan-rate getters.
++ * The vendor source supplies no index-to-Hz mapping or 360-Hz command.
++ * Caller holds ts->lock; a read request itself writes the host mailbox.
++ */
++static int nvt_thp_extended_cmd(u8 cmd, bool read, u16 *value)
++{
++	u8 buf[6] = { 0 };
++	u8 status = 0;
++	u16 result = 0;
++	int retry, ret, page_ret;
++
++	ret = nvt_set_page(ts->mmap->EVENT_BUF_ADDR | EVENT_MAP_HOST_CMD);
++	if (ret < 0)
++		goto out;
++
++	for (retry = 0; retry < 10; retry++) {
++		/* 0xbf means the preceding request is still pending. */
++		if (status != 0xbf) {
++			buf[0] = EVENT_MAP_HOST_CMD;
++			buf[1] = 0xbf;
++			buf[2] = cmd;
++			buf[3] = read ? 0x01 : 0x00;
++			buf[4] = *value & 0xff;
++			buf[5] = *value >> 8;
++			ret = CTP_SPI_WRITE(ts->client, buf, read ? 4 : 6);
++			if (ret < 0)
++				goto out;
++		}
++
++		usleep_range(10000, 11000);
++		memset(buf, 0, sizeof(buf));
++		buf[0] = EVENT_MAP_HOST_CMD;
++		buf[1] = 0xff;
++		ret = CTP_SPI_READ(ts->client, buf, read ? 6 : 2);
++		if (ret < 0)
++			goto out;
++		status = buf[1];
++		if (!status) {
++			result = get_unaligned_le16(buf + 4);
++			break;
++		}
++	}
++	ret = retry == 10 ? -ETIMEDOUT : 0;
++out:
++	/* Restore the frame-read page on every exit, including SPI errors. */
++	page_ret = nvt_set_page(ts->mmap->EVENT_BUF_ADDR);
++	if (!ret && page_ret < 0)
++		ret = page_ret;
++	if (!ret && read)
++		*value = result;
++	return ret;
++}
++
++static int nvt_thp_control_begin(void)
++{
++	/*
++	 * Balance our own IRQ-disable reference without changing irq_enabled.
++	 * This preserves a concurrent suspend/boot disable, and avoids waiting
++	 * for the IRQ thread while holding the mutex that thread needs.
++	 */
++	disable_irq(ts->client->irq);
++	mutex_lock(&ts->lock);
++	if (!bTouchIsAwake || ts->dev_pm_suspend ||
++	    !ts->thp_firmware_ready || ts->ic_state == NVT_IC_SUSPEND_IN ||
++	    ts->ic_state == NVT_IC_SUSPEND_OUT) {
++		mutex_unlock(&ts->lock);
++		enable_irq(ts->client->irq);
++		return -EAGAIN;
++	}
++	return 0;
++}
++
++static void nvt_thp_control_end(void)
++{
++	mutex_unlock(&ts->lock);
++	enable_irq(ts->client->irq);
++}
++
++static bool nvt_thp_game_firmware_matches(void)
++{
++	return ts->thp_firmware_ready &&
++	       ts->thp_game_fw_crc == ts->thp_firmware_crc &&
++	       ts->thp_game_fw_ver == ts->fw_ver &&
++	       ts->thp_game_fw_pid == ts->nvt_pid;
++}
++
++static void nvt_thp_game_forget(void)
++{
++	ts->thp_game_valid = false;
++	ts->thp_game_prior_valid = false;
++}
++
++static int nvt_thp_game_get(u16 *value)
++{
++	int ret = nvt_thp_extended_cmd(0x0f, true, value);
++
++	if (!ret && *value > 1)
++		ret = -ERANGE;
++	return ret;
++}
++
++/* Caller holds ts->lock. Only confirmed writes become reload requests. */
++static int nvt_thp_game_apply(u8 requested, bool save_prior)
++{
++	u16 before = 0, after = 0, target = requested;
++	int ret, rollback_ret;
++
++	ret = nvt_thp_game_get(&before);
++	if (ret)
++		return ret;
++	ret = nvt_thp_extended_cmd(0x0f, false, &target);
++	if (!ret)
++		ret = nvt_thp_game_get(&after);
++	if (!ret && after != requested)
++		ret = -EIO;
++	if (ret) {
++		/* A timed-out write may have taken effect: verify the rollback. */
++		rollback_ret = nvt_thp_extended_cmd(0x0f, false, &before);
++		if (!rollback_ret)
++			rollback_ret = nvt_thp_game_get(&after);
++		if (!rollback_ret && after != before)
++			rollback_ret = -EIO;
++		if (rollback_ret) {
++			nvt_thp_game_forget();
++			NVT_ERR("game-mode rollback unconfirmed: %d\n", rollback_ret);
++		}
++		return ret;
++	}
++
++	/* Keep the first verified baseline until rollback is consumed. */
++	if (save_prior && (!ts->thp_game_prior_valid ||
++			   !nvt_thp_game_firmware_matches())) {
++		ts->thp_game_prior = before;
++		ts->thp_game_prior_valid = true;
++	}
++	ts->thp_game_requested = requested;
++	ts->thp_game_fw_crc = ts->thp_firmware_crc;
++	ts->thp_game_fw_ver = ts->fw_ver;
++	ts->thp_game_fw_pid = ts->nvt_pid;
++	ts->thp_game_valid = true;
++	return 0;
++}
++
++void nvt_thp_restore_game(void)
++{
++	int ret;
++
++	if (!ts->thp_game_valid)
++		return;
++	if (!nvt_thp_game_firmware_matches()) {
++		nvt_thp_game_forget();
++		return;
++	}
++	ret = nvt_thp_game_apply(ts->thp_game_requested, false);
++	if (ret) {
++		nvt_thp_game_forget();
++		NVT_ERR("game-mode restore unconfirmed: %d\n", ret);
++	}
++}
++
++static void nvt_thp_game_show_cache(struct seq_file *m)
++{
++	bool matches = nvt_thp_game_firmware_matches();
++
++	seq_printf(m, "requested_known: %u\n", ts->thp_game_valid && matches);
++	if (ts->thp_game_valid && matches)
++		seq_printf(m, "requested_game_mode: %u\n", ts->thp_game_requested);
++	seq_printf(m, "rollback_known: %u\n", ts->thp_game_prior_valid && matches);
++	if (ts->thp_game_prior_valid && matches)
++		seq_printf(m, "rollback_game_mode: %u\n", ts->thp_game_prior);
++}
++
++/* Explicit controller queries; nvt_thp_status remains entirely passive. */
++static int nvt_thp_controller_show(struct seq_file *m, void *v)
++{
++	static const u8 commands[] = { 0x0f, 0x08, 0x09, 0x0a, 0x0b };
++	static const char * const names[] = {
++		"game_mode", "scan_freq_no", "scan_freq", "hand_scan_rate", "pen_scan_rate"
++	};
++	u16 values[ARRAY_SIZE(commands)] = { 0 };
++	int i, ret;
++
++	if (!ts)
++		return -ENODEV;
++	ret = nvt_thp_control_begin();
++	if (ret)
++		return ret;
++	for (i = 0; i < ARRAY_SIZE(commands); i++) {
++		ret = nvt_thp_extended_cmd(commands[i], true, &values[i]);
++		if (ret)
++			goto out;
++	}
++	seq_printf(m, "firmware: %s\nfw_ver: 0x%02x\nfw_pid: 0x%04x\n",
++		   ts->fw_name, ts->fw_ver, ts->nvt_pid);
++	seq_printf(m, "firmware_crc32: 0x%08x\n", ts->thp_firmware_crc);
++	for (i = 0; i < ARRAY_SIZE(commands); i++)
++		seq_printf(m, "%s: %d\n", names[i], (s16)values[i]);
++	nvt_thp_game_show_cache(m);
++out:
++	nvt_thp_control_end();
++	return ret;
++}
++
++static int nvt_thp_game_show(struct seq_file *m, void *v)
++{
++	u16 value = 0;
++	int ret;
++
++	if (!ts)
++		return -ENODEV;
++	ret = nvt_thp_control_begin();
++	if (ret)
++		return ret;
++	ret = nvt_thp_game_get(&value);
++	if (!ret) {
++		seq_printf(m, "game_mode: %u\n", value);
++		nvt_thp_game_show_cache(m);
++	}
++	nvt_thp_control_end();
++	return ret;
++}
++
++static ssize_t nvt_thp_game_write(struct file *file, const char __user *buf,
++				size_t count, loff_t *ppos)
++{
++	u8 mode;
++	int ret;
++
++	if (!ts)
++		return -ENODEV;
++	ret = kstrtou8_from_user(buf, count, 0, &mode);
++	if (ret)
++		return ret;
++	if (mode > 1)
++		return -EINVAL;
++	ret = nvt_thp_control_begin();
++	if (ret)
++		return ret;
++	ret = nvt_thp_game_apply(mode, true);
++	nvt_thp_control_end();
++	if (ret)
++		return ret;
++	return count;
++}
++
++static ssize_t nvt_thp_game_rollback_write(struct file *file,
++					 const char __user *buf, size_t count,
++					 loff_t *ppos)
++{
++	u8 rollback;
++	int ret;
++
++	if (!ts)
++		return -ENODEV;
++	ret = kstrtou8_from_user(buf, count, 0, &rollback);
++	if (ret)
++		return ret;
++	if (rollback != 1)
++		return -EINVAL;
++	ret = nvt_thp_control_begin();
++	if (ret)
++		return ret;
++	if (!ts->thp_game_prior_valid || !nvt_thp_game_firmware_matches()) {
++		ret = -ENODATA;
++	} else {
++		ret = nvt_thp_game_apply(ts->thp_game_prior, false);
++		if (!ret)
++			ts->thp_game_prior_valid = false;
++	}
++	nvt_thp_control_end();
++	if (ret)
++		return ret;
++	return count;
++}
++
++static int nvt_thp_controller_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, nvt_thp_controller_show, NULL);
++}
++
++static int nvt_thp_game_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, nvt_thp_game_show, NULL);
++}
++
++static ssize_t nvt_thp_stylus_read(struct file *file, char __user *buf,
++				   size_t count, loff_t *ppos)
++{
++	char value[3];
++	int len;
++
++	if (!ts)
++		return -ENODEV;
++
++	len = scnprintf(value, sizeof(value), "%u\n",
++			READ_ONCE(ts->thp_stylus_mode));
++	return simple_read_from_buffer(buf, count, ppos, value, len);
++}
++
++static int nvt_thp_set_pen_switch(u8 value)
++{
++	u8 command[3] = { 0x50, 0x7b, value };
++	u8 ack[2] = { 0x50, 0xff };
++	int retry;
++	int ret = 0;
++
++	ret = nvt_set_page(ts->mmap->EVENT_BUF_ADDR | 0x50);
++	if (ret < 0)
++		return ret;
++
++	for (retry = 0; retry < 10; retry++) {
++		ret = CTP_SPI_WRITE(ts->client, command, sizeof(command));
++		if (ret < 0)
++			break;
++
++		usleep_range(10000, 11000);
++		ack[1] = 0xff;
++		ret = CTP_SPI_READ(ts->client, ack, sizeof(ack));
++		if (ret < 0)
++			break;
++		if (!ack[1]) {
++			ret = 0;
++			break;
++		}
++	}
++
++	nvt_set_page(ts->mmap->EVENT_BUF_ADDR);
++	if (ret < 0)
++		return ret;
++
++	return ack[1] ? -ETIMEDOUT : 0;
++}
++
++static ssize_t nvt_thp_stylus_write(struct file *file,
++				    const char __user *buf, size_t count,
++				    loff_t *ppos)
++{
++	u8 mode;
++	int ret;
++
++	if (!ts)
++		return -ENODEV;
++
++	ret = kstrtou8_from_user(buf, count, 0, &mode);
++	if (ret)
++		return ret;
++	if (mode != 0 && mode != 1 && mode != 3)
++		return -EINVAL;
++
++	/* Own one disable reference; do not overwrite a suspend's IRQ state. */
++	disable_irq(ts->client->irq);
++	mutex_lock(&ts->lock);
++	if (!bTouchIsAwake || ts->dev_pm_suspend || !ts->thp_firmware_ready ||
++	    ts->ic_state == NVT_IC_SUSPEND_IN || ts->ic_state == NVT_IC_SUSPEND_OUT) {
++		/* The firmware restore path applies the desired mode on wake. */
++		ts->thp_stylus_mode = mode;
++		ret = 0;
++		goto out;
++	}
++	ret = nvt_set_custom_cmd(0x04, mode != 0);
++	if (!ret && mode)
++		ret = nvt_thp_set_pen_switch(mode);
++	if (!ret)
++		ts->thp_stylus_mode = mode;
++out:
++	mutex_unlock(&ts->lock);
++	enable_irq(ts->client->irq);
++
++	if (ret)
++		return ret;
++
++	NVT_ERR("THP stylus scanning mode %u\n", mode);
++	return count;
++}
++
++/*
++ * Send one Xiaomi extended host command (0x50 0xBF <cmd> 0 <value>) for
++ * bring-up experiments: "echo '<cmd> <value>' > /proc/nvt_thp_cmd".
++ */
++static ssize_t nvt_thp_cmd_write(struct file *file, const char __user *buf,
++				 size_t count, loff_t *ppos)
++{
++	bool irq_was_enabled;
++	char kbuf[32];
++	unsigned int cmd, value;
++	int ret;
++
++	if (!ts)
++		return -ENODEV;
++	if (count >= sizeof(kbuf))
++		return -EINVAL;
++	if (copy_from_user(kbuf, buf, count))
++		return -EFAULT;
++	kbuf[count] = '\0';
++	if (sscanf(kbuf, "%i %i", &cmd, &value) != 2 || cmd > 0xff ||
++	    value > 0xffff)
++		return -EINVAL;
++	if (!READ_ONCE(bTouchIsAwake))
++		return -EAGAIN;
++
++	irq_was_enabled = READ_ONCE(ts->irq_enabled);
++	if (irq_was_enabled)
++		nvt_irq_enable(false);
++	mutex_lock(&ts->lock);
++	ret = nvt_set_custom_cmd(cmd, value);
++	/* An untracked debug write must not leave a stale reload request. */
++	if (cmd == 0x0f)
++		nvt_thp_game_forget();
++	mutex_unlock(&ts->lock);
++	if (irq_was_enabled)
++		nvt_irq_enable(true);
++
++	NVT_INFO("custom cmd 0x%02x value 0x%04x: %d\n", cmd, value, ret);
++	return ret ? -EIO : count;
++}
++
++int nvt_thp_restore_stylus(void)
++{
++	u8 mode;
++	int ret;
++
++	mode = READ_ONCE(ts->thp_stylus_mode);
++	if (!mode)
++		return 0;
++
++	ret = nvt_set_custom_cmd(0x04, 1);
++	if (!ret)
++		ret = nvt_thp_set_pen_switch(mode);
++	if (ret)
++		NVT_ERR("failed to restore THP stylus state: %d\n", ret);
++
++	return ret;
++}
++
++static bool nvt_thp_stream_ready(void)
++{
++	return !kfifo_is_empty(&ts->thp_stream_fifo) ||
++	       !READ_ONCE(ts->thp_capture_enabled);
++}
++
++static ssize_t nvt_thp_stream_read(struct file *file, char __user *buf,
++				   size_t count, loff_t *ppos)
++{
++	unsigned int copied = 0;
++	int ret;
++
++	if (!ts)
++		return -ENODEV;
++	if (!count)
++		return 0;
++
++	if (file->f_flags & O_NONBLOCK) {
++		if (kfifo_is_empty(&ts->thp_stream_fifo))
++			return -EAGAIN;
++	} else {
++		ret = wait_event_interruptible(ts->thp_stream_wait,
++					       nvt_thp_stream_ready());
++		if (ret)
++			return ret;
++	}
++
++	mutex_lock(&ts->thp_lock);
++	ret = kfifo_to_user(&ts->thp_stream_fifo, buf, count, &copied);
++	mutex_unlock(&ts->thp_lock);
++
++	return ret ? ret : copied;
++}
++
++static __poll_t nvt_thp_stream_poll(struct file *file, poll_table *wait)
++{
++	__poll_t mask = 0;
++
++	if (!ts)
++		return EPOLLERR;
++
++	poll_wait(file, &ts->thp_stream_wait, wait);
++	if (!kfifo_is_empty(&ts->thp_stream_fifo))
++		mask |= EPOLLIN | EPOLLRDNORM;
++	if (!READ_ONCE(ts->thp_capture_enabled))
++		mask |= EPOLLHUP;
++
++	return mask;
++}
++
++static int nvt_thp_status_show(struct seq_file *m, void *v)
++{
++	if (!ts)
++		return -ENODEV;
++
++	mutex_lock(&ts->thp_lock);
++	seq_printf(m, "enabled: %u\n", ts->thp_capture_enabled);
++	seq_printf(m, "event_buffer: 0x%06x\n", ts->mmap->EVENT_BUF_ADDR);
++	seq_printf(m, "firmware: %s\n", ts->fw_name ? ts->fw_name : "(none)");
++	seq_printf(m, "lcd_id: %d\n", ts->lcd_id);
++	seq_printf(m, "fw_ver: 0x%02x\n", ts->fw_ver);
++	seq_printf(m, "fw_pid: 0x%04x\n", ts->nvt_pid);
++	seq_printf(m, "sensor_x: %u\n", ts->x_num);
++	seq_printf(m, "sensor_y: %u\n", ts->y_num);
++	seq_printf(m, "irq_enabled: %u\n", ts->irq_enabled);
++	seq_printf(m, "irqs: %llu\n", (unsigned long long)ts->thp_irq_count);
++	seq_printf(m, "stylus_enabled: %u\n", ts->thp_stylus_mode != 0);
++	seq_printf(m, "stylus_mode: %u\n", ts->thp_stylus_mode);
++	seq_puts(m, "kernel_input: disabled\n");
++	seq_printf(m, "payload_length: %u\n", ts->thp_payload_len);
++	seq_printf(m, "raw_frame_length: %u\n", nvt_thp_frame_len());
++	seq_printf(m, "stream_frame_length: %u\n", nvt_thp_frame_len());
++	seq_printf(m, "frames: %llu\n",
++		   (unsigned long long)ts->thp_frame_count);
++	seq_printf(m, "epochs: %llu\n",
++		   (unsigned long long)ts->thp_epoch_count);
++	seq_printf(m, "epoch_pending: %u\n", ts->thp_epoch_pending);
++	seq_printf(m, "read_errors: %llu\n",
++		   (unsigned long long)ts->thp_read_errors);
++	seq_printf(m, "header_errors: %llu\n",
++		   (unsigned long long)ts->thp_header_errors);
++	seq_printf(m, "stream_bytes: %u\n", kfifo_len(&ts->thp_stream_fifo));
++	seq_printf(m, "stream_drops: %llu\n",
++		   (unsigned long long)ts->thp_stream_drops);
++	seq_printf(m, "latest_valid: %u\n", ts->thp_frame_valid);
++	seq_printf(m, "latest_header_crc: 0x%04x\n", ts->thp_header_crc);
++	seq_printf(m, "latest_magic: 0x%08x\n", ts->thp_magic);
++	seq_printf(m, "latest_timestamp_ns: %lld\n",
++		   (long long)ktime_to_ns(ts->thp_timestamp));
++	mutex_unlock(&ts->thp_lock);
++
++	return 0;
++}
++
++static int nvt_thp_status_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, nvt_thp_status_show, NULL);
++}
++
++static const struct proc_ops nvt_thp_raw_ops = {
++	.proc_write = nvt_thp_raw_write,
++	.proc_lseek = noop_llseek,
++};
++
++static const struct proc_ops nvt_thp_stream_ops = {
++	.proc_read = nvt_thp_stream_read,
++	.proc_poll = nvt_thp_stream_poll,
++	.proc_lseek = noop_llseek,
++};
++
++static const struct proc_ops nvt_thp_stylus_ops = {
++	.proc_read = nvt_thp_stylus_read,
++	.proc_write = nvt_thp_stylus_write,
++	.proc_lseek = default_llseek,
++};
++
++static const struct proc_ops nvt_thp_cmd_ops = {
++	.proc_write = nvt_thp_cmd_write,
++	.proc_lseek = noop_llseek,
++};
++
++static const struct proc_ops nvt_thp_status_ops = {
++	.proc_open = nvt_thp_status_open,
++	.proc_read = seq_read,
++	.proc_lseek = seq_lseek,
++	.proc_release = single_release,
++};
++
++static const struct proc_ops nvt_thp_controller_ops = {
++	.proc_open = nvt_thp_controller_open,
++	.proc_read = seq_read,
++	.proc_lseek = seq_lseek,
++	.proc_release = single_release,
++};
++
++static const struct proc_ops nvt_thp_game_ops = {
++	.proc_open = nvt_thp_game_open,
++	.proc_read = seq_read,
++	.proc_write = nvt_thp_game_write,
++	.proc_lseek = seq_lseek,
++	.proc_release = single_release,
++};
++
++static const struct proc_ops nvt_thp_game_rollback_ops = {
++	.proc_write = nvt_thp_game_rollback_write,
++	.proc_lseek = noop_llseek,
++};
++
++uint32_t ENG_RST_ADDR  = 0x7FFF80;
++uint32_t SPI_RD_FAST_ADDR;	//read from dtsi
++
++static void nvt_power_supply_work(struct work_struct *work)
++{
++	struct nvt_ts_data *ts_core = container_of(work, struct nvt_ts_data,
++						    power_supply_work);
++	u8 command[3] = { 0x50, 0x51, 0x00 };
++	int supplied;
++	int ret;
++
++	mutex_lock(&ts_core->power_supply_lock);
++	if (READ_ONCE(bTouchIsAwake) != 1)
++		goto out;
++
++	supplied = !!power_supply_is_system_supplied();
++	if (ts_core->power_supply_status == supplied)
++		goto out;
++
++	ts_core->power_supply_status = supplied;
++	command[1] = supplied ? 0x53 : 0x51;
++	/* the host command byte lives in the event buffer page */
++	mutex_lock(&ts_core->lock);
++	ret = nvt_set_page(ts_core->mmap->EVENT_BUF_ADDR | EVENT_MAP_HOST_CMD);
++	if (!ret)
++		ret = CTP_SPI_WRITE(ts_core->client, command, sizeof(command));
++	mutex_unlock(&ts_core->lock);
++	if (ret)
++		NVT_ERR("USB status set failed, ret=%d\n", ret);
++	else
++		NVT_LOG("charger mode=%d\n", supplied);
++
++out:
++	mutex_unlock(&ts_core->power_supply_lock);
++}
++
++static int nvt_power_supply_callback(struct notifier_block *nb,
++				     unsigned long event, void *data)
++{
++	struct nvt_ts_data *ts_core = container_of(nb, struct nvt_ts_data,
++						    power_supply_notifier);
++
++	queue_work(ts_core->event_wq, &ts_core->power_supply_work);
++	return NOTIFY_OK;
++}
++
++void nvt_power_supply_restore(void)
++{
++	if (!ts || !ts->power_supply_registered || !ts->event_wq)
++		return;
++
++	mutex_lock(&ts->power_supply_lock);
++	ts->power_supply_status = -1;
++	mutex_unlock(&ts->power_supply_lock);
++	queue_work(ts->event_wq, &ts->power_supply_work);
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen irq enable/disable function.
++
++return:
++	n.a.
++*******************************************************/
++void nvt_irq_enable(bool enable)
++{
++	if (enable) {
++		if (!ts->irq_enabled) {
++			enable_irq(ts->client->irq);
++			ts->irq_enabled = true;
++		}
++	} else {
++		if (ts->irq_enabled) {
++			disable_irq(ts->client->irq);
++			ts->irq_enabled = false;
++		}
++	}
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen spi read/write core function.
++
++return:
++	Executive outcomes. 0---succeed.
++*******************************************************/
++static inline int32_t spi_read_write(struct spi_device *client, uint8_t *buf, size_t len, NVT_SPI_RW rw)
++{
++	struct spi_message m;
++	struct spi_transfer t = {
++		.len    = len,
++	};
++
++	memset(ts->xbuf, 0, len + DUMMY_BYTES);
++	memcpy(ts->xbuf, buf, len);
++
++	switch (rw) {
++	case NVTREAD:
++		t.tx_buf = ts->xbuf;
++		t.rx_buf = ts->rbuf;
++		t.len    = (len + DUMMY_BYTES);
++		break;
++
++	case NVTWRITE:
++		t.tx_buf = ts->xbuf;
++		break;
++	}
++
++	spi_message_init(&m);
++	spi_message_add_tail(&t, &m);
++	return spi_sync(client, &m);
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen spi read function.
++
++return:
++	Executive outcomes. 2---succeed. -5---I/O error
++*******************************************************/
++int32_t CTP_SPI_READ(struct spi_device *client, uint8_t *buf, uint16_t len)
++{
++	int32_t ret = -1;
++	int32_t retries = 0;
++
++	mutex_lock(&ts->xbuf_lock);
++
++	buf[0] = SPI_READ_MASK(buf[0]);
++
++	while (retries < 5) {
++		ret = spi_read_write(client, buf, len, NVTREAD);
++		if (ret == 0)
++			break;
++		retries++;
++	}
++
++	if (unlikely(retries == 5)) {
++		NVT_ERR("read error, ret=%d\n", ret);
++		ret = -EIO;
++	} else {
++		memcpy((buf+1), (ts->rbuf+2), (len-1));
++	}
++
++	mutex_unlock(&ts->xbuf_lock);
++
++	return ret;
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen spi write function.
++
++return:
++	Executive outcomes. 1---succeed. -5---I/O error
++*******************************************************/
++int32_t CTP_SPI_WRITE(struct spi_device *client, uint8_t *buf, uint16_t len)
++{
++	int32_t ret = -1;
++	int32_t retries = 0;
++
++	mutex_lock(&ts->xbuf_lock);
++
++	buf[0] = SPI_WRITE_MASK(buf[0]);
++
++	while (retries < 5) {
++		ret = spi_read_write(client, buf, len, NVTWRITE);
++		if (ret == 0)
++			break;
++		retries++;
++	}
++
++	if (unlikely(retries == 5)) {
++		NVT_ERR("error, ret=%d\n", ret);
++		ret = -EIO;
++	}
++
++	mutex_unlock(&ts->xbuf_lock);
++
++	return ret;
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen set index/page/addr address.
++
++return:
++	Executive outcomes. 0---succeed. -5---access fail.
++*******************************************************/
++int32_t nvt_set_page(uint32_t addr)
++{
++	uint8_t buf[4] = {0};
++
++	buf[0] = 0xFF;	//set index/page/addr command
++	buf[1] = (addr >> 15) & 0xFF;
++	buf[2] = (addr >> 7) & 0xFF;
++
++	return CTP_SPI_WRITE(ts->client, buf, 3);
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen write data to specify address.
++
++return:
++	Executive outcomes. 0---succeed. -5---access fail.
++*******************************************************/
++int32_t nvt_write_addr(uint32_t addr, uint8_t data)
++{
++	int32_t ret = 0;
++	uint8_t buf[4] = {0};
++
++	//---set xdata index---
++	buf[0] = 0xFF;	//set index/page/addr command
++	buf[1] = (addr >> 15) & 0xFF;
++	buf[2] = (addr >> 7) & 0xFF;
++	ret = CTP_SPI_WRITE(ts->client, buf, 3);
++	if (ret) {
++		NVT_ERR("set page 0x%06X failed, ret = %d\n", addr, ret);
++		return ret;
++	}
++
++	//---write data to index---
++	buf[0] = addr & (0x7F);
++	buf[1] = data;
++	ret = CTP_SPI_WRITE(ts->client, buf, 2);
++	if (ret) {
++		NVT_ERR("write data to 0x%06X failed, ret = %d\n", addr, ret);
++		return ret;
++	}
++
++	return ret;
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen read value to specific register.
++
++return:
++	Executive outcomes. 0---succeed. -5---access fail.
++*******************************************************/
++int32_t nvt_read_reg(nvt_ts_reg_t reg, uint8_t *val)
++{
++	int32_t ret = 0;
++	uint32_t addr = 0;
++	uint8_t mask = 0;
++	uint8_t shift = 0;
++	uint8_t buf[8] = {0};
++	uint8_t temp = 0;
++
++	addr = reg.addr;
++	mask = reg.mask;
++	/* get shift */
++	temp = reg.mask;
++	shift = 0;
++	while (1) {
++		if ((temp >> shift) & 0x01)
++			break;
++		if (shift == 8) {
++			NVT_ERR("mask all bits zero!\n");
++			ret = -1;
++			break;
++		}
++		shift++;
++	}
++	/* read the byte of the register is in */
++	nvt_set_page(addr);
++	buf[0] = addr & 0xFF;
++	buf[1] = 0x00;
++	ret = CTP_SPI_READ(ts->client, buf, 2);
++	if (ret < 0) {
++		NVT_ERR("CTP_SPI_READ failed!(%d)\n", ret);
++		goto nvt_read_register_exit;
++	}
++	/* get register's value in its field of the byte */
++	*val = (buf[1] & mask) >> shift;
++
++nvt_read_register_exit:
++	return ret;
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen clear status & enable fw crc function.
++
++return:
++	N/A.
++*******************************************************/
++void nvt_fw_crc_enable(void)
++{
++	uint8_t buf[8] = {0};
++
++	//---set xdata index to EVENT BUF ADDR---
++	nvt_set_page(ts->mmap->EVENT_BUF_ADDR);
++
++	//---clear fw reset status---
++	buf[0] = EVENT_MAP_RESET_COMPLETE & (0x7F);
++	buf[1] = 0x00;
++	buf[2] = 0x00;
++	buf[3] = 0x00;
++	buf[4] = 0x00;
++	buf[5] = 0x00;
++	buf[6] = 0x00;
++	CTP_SPI_WRITE(ts->client, buf, 7);
++
++	//---enable fw crc---
++	buf[0] = EVENT_MAP_HOST_CMD & (0x7F);
++	buf[1] = 0xAE;	//enable fw crc command
++	buf[2] = 0x00;
++	CTP_SPI_WRITE(ts->client, buf, 3);
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen set boot ready function.
++
++return:
++	N/A.
++*******************************************************/
++void nvt_boot_ready(void)
++{
++	//---write BOOT_RDY status cmds---
++	nvt_write_addr(ts->mmap->BOOT_RDY_ADDR, 1);
++
++	mdelay(5);
++
++	if (ts->hw_crc == HWCRC_NOSUPPORT) {
++		//---write BOOT_RDY status cmds---
++		nvt_write_addr(ts->mmap->BOOT_RDY_ADDR, 0);
++
++		//---write POR_CD cmds---
++		nvt_write_addr(ts->mmap->POR_CD_ADDR, 0xA0);
++	}
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen enable auto copy mode function.
++
++return:
++	N/A.
++*******************************************************/
++void nvt_tx_auto_copy_mode(void)
++{
++	if (ts->auto_copy == CHECK_SPI_DMA_TX_INFO) {
++		//---write TX_AUTO_COPY_EN cmds---
++		nvt_write_addr(ts->mmap->TX_AUTO_COPY_EN, 0x69);
++	} else if (ts->auto_copy == CHECK_TX_AUTO_COPY_EN) {
++		//---write SPI_MST_AUTO_COPY cmds---
++		nvt_write_addr(ts->mmap->TX_AUTO_COPY_EN, 0x56);
++	}
++
++	NVT_LOG("tx auto copy mode %d enable\n", ts->auto_copy);
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen check spi dma tx info function.
++
++return:
++	Executive outcomes. 0---succeed. -1---fail.
++*******************************************************/
++int32_t nvt_check_spi_dma_tx_info(void)
++{
++	uint8_t buf[8] = {0};
++	int32_t i = 0;
++	const int32_t retry = 200;
++
++	if (ts->mmap->SPI_DMA_TX_INFO == 0) {
++		NVT_ERR("error, SPI_DMA_TX_INFO = 0\n");
++		return -1;
++	}
++
++	for (i = 0; i < retry; i++) {
++		//---set xdata index to SPI_DMA_TX_INFO---
++		nvt_set_page(ts->mmap->SPI_DMA_TX_INFO);
++
++		//---read spi dma status---
++		buf[0] = ts->mmap->SPI_DMA_TX_INFO & 0x7F;
++		buf[1] = 0xFF;
++		CTP_SPI_READ(ts->client, buf, 2);
++
++		if (buf[1] == 0x00)
++			break;
++
++		usleep_range(1000, 1000);
++	}
++
++	if (i >= retry) {
++		NVT_ERR("failed, i=%d, buf[1]=0x%02X\n", i, buf[1]);
++		return -1;
++	} else {
++		return 0;
++	}
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen check tx auto copy state function.
++
++return:
++	Executive outcomes. 0---succeed. -1---fail.
++*******************************************************/
++int32_t nvt_check_tx_auto_copy(void)
++{
++	uint8_t buf[8] = {0};
++	int32_t i = 0;
++	const int32_t retry = 200;
++
++	if (ts->mmap->TX_AUTO_COPY_EN == 0) {
++		NVT_ERR("error, TX_AUTO_COPY_EN = 0\n");
++		return -1;
++	}
++
++	for (i = 0; i < retry; i++) {
++		//---set xdata index to SPI_MST_AUTO_COPY---
++		nvt_set_page(ts->mmap->TX_AUTO_COPY_EN);
++
++		//---read auto copy status---
++		buf[0] = ts->mmap->TX_AUTO_COPY_EN & 0x7F;
++		buf[1] = 0xFF;
++		CTP_SPI_READ(ts->client, buf, 2);
++
++		if (buf[1] == 0x00)
++			break;
++
++		usleep_range(1000, 1000);
++	}
++
++	if (i >= retry) {
++		NVT_ERR("failed, i=%d, buf[1]=0x%02X\n", i, buf[1]);
++		return -1;
++	} else {
++		return 0;
++	}
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen wait auto copy finished function.
++
++return:
++	Executive outcomes. 0---succeed. -1---fail.
++*******************************************************/
++int32_t nvt_wait_auto_copy(void)
++{
++	if (ts->auto_copy == CHECK_SPI_DMA_TX_INFO) {
++		return nvt_check_spi_dma_tx_info();
++	} else if (ts->auto_copy == CHECK_TX_AUTO_COPY_EN) {
++		return nvt_check_tx_auto_copy();
++	} else {
++		NVT_ERR("failed, not support mode %d!\n", ts->auto_copy);
++		return -1;
++	}
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen eng reset cmd
++    function.
++
++return:
++	n.a.
++*******************************************************/
++void nvt_eng_reset(void)
++{
++	//---eng reset cmds to ENG_RST_ADDR---
++	nvt_write_addr(ENG_RST_ADDR, 0x5A);
++
++	mdelay(1);	//wait tMCU_Idle2TP_REX_Hi after TP_RST
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen reset MCU
++    function.
++
++return:
++	n.a.
++*******************************************************/
++void nvt_sw_reset(void)
++{
++	//---software reset cmds to SWRST_SIF_ADDR---
++	nvt_write_addr(ts->swrst_sif_addr, 0x55);
++
++	msleep(10);
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen reset MCU then into idle mode
++    function.
++
++return:
++	n.a.
++*******************************************************/
++void nvt_sw_reset_idle(void)
++{
++	//---MCU idle cmds to SWRST_SIF_ADDR---
++	nvt_write_addr(ts->swrst_sif_addr, 0xAA);
++
++	msleep(15);
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen reset MCU (boot) function.
++
++return:
++	n.a.
++*******************************************************/
++void nvt_bootloader_reset(void)
++{
++	//---reset cmds to SWRST_SIF_ADDR---
++	nvt_write_addr(ts->swrst_sif_addr, 0x69);
++
++	mdelay(5);	//wait tBRST2FR after Bootload RST
++
++	if (SPI_RD_FAST_ADDR) {
++		/* disable SPI_RD_FAST */
++		nvt_write_addr(SPI_RD_FAST_ADDR, 0x00);
++	}
++
++	NVT_LOG("end\n");
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen clear FW status function.
++
++return:
++	Executive outcomes. 0---succeed. -1---fail.
++*******************************************************/
++int32_t nvt_clear_fw_status(void)
++{
++	uint8_t buf[8] = {0};
++	int32_t i = 0;
++	const int32_t retry = 20;
++
++	for (i = 0; i < retry; i++) {
++		//---set xdata index to EVENT BUF ADDR---
++		nvt_set_page(ts->mmap->EVENT_BUF_ADDR);
++
++		//---clear fw status---
++		buf[0] = EVENT_MAP_HANDSHAKING_or_SUB_CMD_BYTE;
++		buf[1] = 0x00;
++		CTP_SPI_WRITE(ts->client, buf, 2);
++
++		//---read fw status---
++		buf[0] = EVENT_MAP_HANDSHAKING_or_SUB_CMD_BYTE;
++		buf[1] = 0xFF;
++		CTP_SPI_READ(ts->client, buf, 2);
++
++		if (buf[1] == 0x00)
++			break;
++
++		usleep_range(10000, 10000);
++	}
++
++	if (i >= retry) {
++		NVT_ERR("failed, i=%d, buf[1]=0x%02X\n", i, buf[1]);
++		return -1;
++	} else {
++		return 0;
++	}
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen check FW status function.
++
++return:
++	Executive outcomes. 0---succeed. -1---failed.
++*******************************************************/
++int32_t nvt_check_fw_status(void)
++{
++	uint8_t buf[8] = {0};
++	int32_t i = 0;
++	const int32_t retry = 50;
++
++	usleep_range(20000, 20000);
++
++	for (i = 0; i < retry; i++) {
++		//---set xdata index to EVENT BUF ADDR---
++		nvt_set_page(ts->mmap->EVENT_BUF_ADDR);
++
++		//---read fw status---
++		buf[0] = EVENT_MAP_HANDSHAKING_or_SUB_CMD_BYTE;
++		buf[1] = 0x00;
++		CTP_SPI_READ(ts->client, buf, 2);
++
++		if ((buf[1] & 0xF0) == 0xA0)
++			break;
++
++		usleep_range(10000, 10000);
++	}
++
++	if (i >= retry) {
++		NVT_ERR("failed, i=%d, buf[1]=0x%02X\n", i, buf[1]);
++		return -1;
++	} else {
++		return 0;
++	}
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen check FW reset state function.
++
++return:
++	Executive outcomes. 0---succeed. -1---failed.
++*******************************************************/
++int32_t nvt_check_fw_reset_state(RST_COMPLETE_STATE check_reset_state)
++{
++	uint8_t buf[8] = {0};
++	int32_t ret = 0;
++	int32_t retry = 0;
++	int32_t retry_max = (check_reset_state == RESET_STATE_INIT) ? 10 : 50;
++
++	//---set xdata index to EVENT BUF ADDR---
++	nvt_set_page(ts->mmap->EVENT_BUF_ADDR);
++
++	while (1) {
++		//---read reset state---
++		buf[0] = EVENT_MAP_RESET_COMPLETE;
++		buf[1] = 0x00;
++		CTP_SPI_READ(ts->client, buf, 6);
++
++		if ((buf[1] >= check_reset_state) && (buf[1] <= RESET_STATE_MAX)) {
++			ret = 0;
++			break;
++		}
++
++		retry++;
++		if (unlikely(retry > retry_max)) {
++			NVT_ERR("error, retry=%d, buf[1]=0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X\n",
++				retry, buf[1], buf[2], buf[3], buf[4], buf[5]);
++			ret = -1;
++			break;
++		}
++
++		usleep_range(10000, 10000);
++	}
++
++	return ret;
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen get firmware related information
++	function.
++
++return:
++	Executive outcomes. 0---success. -1---fail.
++*******************************************************/
++int32_t nvt_get_fw_info(void)
++{
++	uint8_t buf[64] = {0};
++	uint32_t retry_count = 0;
++	int32_t ret = 0;
++
++info_retry:
++	//---set xdata index to EVENT BUF ADDR---
++	nvt_set_page(ts->mmap->EVENT_BUF_ADDR);
++
++	//---read fw info---
++	buf[0] = EVENT_MAP_FWINFO;
++	CTP_SPI_READ(ts->client, buf, 39);
++	if ((buf[1] + buf[2]) != 0xFF) {
++		NVT_ERR("FW info is broken! fw_ver=0x%02X, ~fw_ver=0x%02X\n", buf[1], buf[2]);
++		if (retry_count < 3) {
++			retry_count++;
++			NVT_ERR("retry_count=%d\n", retry_count);
++			goto info_retry;
++		} else {
++			ts->fw_ver = 0;
++			ts->x_num = TOUCH_DEFAULT_NUM_X;
++			ts->y_num = TOUCH_DEFAULT_NUM_Y;
++			ts->abs_x_max = TOUCH_DEFAULT_MAX_WIDTH;
++			ts->abs_y_max = TOUCH_DEFAULT_MAX_HEIGHT;
++			NVT_ERR("Set default fw_ver=%d, abs_x_max=%d, abs_y_max=%d!\n",
++					ts->fw_ver, ts->abs_x_max, ts->abs_y_max);
++			ret = -1;
++			goto out;
++		}
++	}
++	ts->fw_ver = buf[1];
++	ts->x_num = buf[3];
++	ts->y_num = buf[4];
++	ts->abs_x_max = (uint16_t)((buf[5] << 8) | buf[6]);
++	ts->abs_y_max = (uint16_t)((buf[7] << 8) | buf[8]);
++	ts->nvt_pid = (uint16_t)((buf[36] << 8) | buf[35]);
++	NVT_LOG("fw_ver=0x%02X, fw_type=0x%02X, PID=0x%04X\n", ts->fw_ver, buf[14], ts->nvt_pid);
++
++	ret = 0;
++out:
++
++	return ret;
++}
++
++/*
++ * Read the Xiaomi host touch computing polling info published by the THP
++ * firmware after boot; bytes 2..3 hold the frame length that follows the
++ * 256-byte event buffer (MiCode p81 nvt_get_xm_htc_poll_info()).
++ */
++int32_t nvt_get_xm_htc_poll_info(void)
++{
++	uint8_t buf[NVT_THP_POLL_INFO_LEN + 1 + DUMMY_BYTES] = {0};
++	uint32_t addr = ts->mmap->XM_HTC_POLL_INFO_ADDR;
++	uint16_t frame_len;
++	int32_t ret;
++
++	if (!addr) {
++		ts->thp_payload_len = NVT_THP_DEFAULT_PAYLOAD_LEN;
++		return 0;
++	}
++
++	nvt_set_page(addr);
++	buf[0] = addr & 0x7F;
++	ret = CTP_SPI_READ(ts->client, buf, NVT_THP_POLL_INFO_LEN + 1);
++	nvt_set_page(ts->mmap->EVENT_BUF_ADDR);
++	if (ret) {
++		NVT_ERR("poll info read failed (%d)\n", ret);
++		return ret;
++	}
++
++	NVT_INFO("poll info: %*ph\n", NVT_THP_POLL_INFO_LEN, buf + 1);
++	frame_len = get_unaligned_le16(buf + 1 + 2);
++	if (!frame_len || frame_len > NVT_THP_MAX_PAYLOAD_LEN) {
++		NVT_ERR("poll info frame length %u out of range, keep %u\n",
++			frame_len, ts->thp_payload_len);
++		return -ERANGE;
++	}
++
++	mutex_lock(&ts->thp_lock);
++	ts->thp_payload_len = frame_len;
++	mutex_unlock(&ts->thp_lock);
++	NVT_INFO("THP frame length %u\n", frame_len);
++
++	return 0;
++}
++
++int nvt_set_custom_cmd(u8 cmd, u16 value)
++{
++	u8 buf[6] = {0};
++	u32 retries = 0;
++	int ret, i = 0;
++
++	NVT_LOG("++\n");
++
++	msleep(35);
++
++	ret = nvt_set_page(ts->mmap->EVENT_BUF_ADDR);
++	if (ret) {
++		NVT_ERR("nvt_set_page fail! ret=%d\n", ret);
++		goto nvt_set_custom_cmd_out;
++	}
++
++	while (retries < 5) {
++		//first byte is offset, it's processed by spi loop
++		buf[0] = 0x50;
++		//event loop will read 0xBF and call xiaomi's cmd parser
++		buf[1] = 0xBF;
++		//0x51 is a command
++		buf[2] = cmd;
++		//0x52 must be 0
++		buf[3] = 0x00;
++		//0x53-0x54 is a short value
++		buf[4] = value & 0xFF;
++		buf[5] = (value >> 8) & 0xFF;
++
++		ret = CTP_SPI_WRITE(ts->client, (u8 *)buf, 6);
++		if (ret) {
++			NVT_ERR("CTP_SPI_WRITE fail! ret=%d\n", ret);
++			goto nvt_set_custom_cmd_out;
++		}
++
++		usleep_range_state(20000, 21000, TASK_UNINTERRUPTIBLE);
++
++		//offset is 0x50
++		buf[0] = 0x50;
++		//read status
++		buf[1] = 0xFF;
++		ret = CTP_SPI_READ(ts->client, (u8 *)buf, 2);
++		if (ret) {
++			NVT_ERR("CTP_SPI_READ fail! ret=%d\n", ret);
++			goto nvt_set_custom_cmd_out;
++		}
++
++		if (!buf[1])
++			break;
++		retries++;
++	}
++
++	if (unlikely(retries == 5)) {
++		NVT_ERR("send cmd failed, buf[1] = 0x%02X\n", buf[1]);
++		return -1;
++	} else {
++		NVT_LOG("send cmd success, tried %d times\n", i);
++	}
++
++nvt_set_custom_cmd_out:
++	NVT_LOG("--\n");
++
++	return ret;
++}
++
++void nvt_set_doze_delay(u16 value)
++{
++	u8 buf[3] = {0};
++
++	nvt_set_page(0x113718);
++	buf[0] = 0x113718 & 0x7F;
++	buf[1] = value & 0xFF;
++	buf[2] = value >> 8;
++	CTP_SPI_WRITE(ts->client, buf, 3);
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen parse device tree function.
++
++return:
++	n.a.
++*******************************************************/
++#ifdef CONFIG_OF
++/*
++ * piano ships one THP firmware per panel vendor. The stock driver reads the
++ * panel ID pin once at probe (0 = CSOT, 1 = BOE) and picks the matching
++ * blob; here the blobs are listed in firmware-name in that pin order.
++ * Without firmware-name no firmware is requested and every download path
++ * degrades safely (update_firmware_request() returns -ENOENT for NULL).
++ */
++static int32_t nvt_select_firmware(struct device *dev)
++{
++	struct device_node *np = dev->of_node;
++	int count, index = 0;
++	int ret;
++
++	ts->lcd_id = -1;
++	ts->fw_name = NULL;
++
++	ts->lcd_id_gpiod = devm_gpiod_get_optional(dev, "novatek,lcd-id",
++						   GPIOD_IN);
++	if (IS_ERR(ts->lcd_id_gpiod))
++		return dev_err_probe(dev, PTR_ERR(ts->lcd_id_gpiod),
++				     "failed to get lcd-id GPIO\n");
++	if (ts->lcd_id_gpiod) {
++		ret = gpiod_get_value_cansleep(ts->lcd_id_gpiod);
++		if (ret < 0)
++			return dev_err_probe(dev, ret, "failed to read lcd-id\n");
++		ts->lcd_id = ret;
++	}
++
++	count = of_property_count_strings(np, "firmware-name");
++	if (count <= 0) {
++		NVT_ERR("firmware-name not set, firmware download disabled\n");
++		return 0;
++	}
++
++	if (count > 1) {
++		if (ts->lcd_id < 0) {
++			dev_err(dev, "several firmware names but no lcd-id GPIO\n");
++			return -EINVAL;
++		}
++		index = ts->lcd_id;
++		if (index >= count) {
++			dev_err(dev, "no firmware for lcd-id %d\n", index);
++			return -EINVAL;
++		}
++	}
++
++	ret = of_property_read_string_index(np, "firmware-name", index,
++					    &ts->fw_name);
++	if (ret)
++		return ret;
++
++	NVT_INFO("lcd-id %d, firmware %s\n", ts->lcd_id, ts->fw_name);
++	return 0;
++}
++
++static int32_t nvt_parse_dt(struct device *dev)
++{
++	struct device_node *np = dev->of_node;
++	int32_t ret = 0;
++
++	ts->irq_gpiod = fwnode_gpiod_get_index(dev_fwnode(dev), "novatek,irq", 0,
++					       GPIOD_IN, "NVT-int");
++	if (IS_ERR(ts->irq_gpiod)) {
++		NVT_ERR("Failed to request NVT-int GPIO\n");
++		return PTR_ERR(ts->irq_gpiod);
++	}
++	NVT_LOG("novatek,irq-gpio: gpiod obtained\n");
++
++	ret = of_property_read_u32(np, "novatek,spi-rd-fast-addr", &SPI_RD_FAST_ADDR);
++	if (ret) {
++		NVT_LOG("not support novatek,spi-rd-fast-addr\n");
++		SPI_RD_FAST_ADDR = 0;
++		ret = 0;
++	} else {
++		NVT_LOG("SPI_RD_FAST_ADDR=0x%06X\n", SPI_RD_FAST_ADDR);
++	}
++
++	return nvt_select_firmware(dev);
++}
++#else
++static int32_t nvt_parse_dt(struct device *dev)
++{
++	ts->irq_gpiod = gpio_to_desc(NVTTOUCH_INT_PIN);
++	if (!ts->irq_gpiod) {
++		NVT_ERR("Failed to get NVT-int GPIO descriptor\n");
++		return -EINVAL;
++	}
++	return 0;
++}
++#endif
++
++/*******************************************************
++Description:
++	Novatek touchscreen config and request gpio
++
++return:
++	Executive outcomes. 0---succeed. not 0---failed.
++*******************************************************/
++static int nvt_gpio_config(struct nvt_ts_data *ts)
++{
++	int32_t ret = 0;
++
++	if (IS_ERR(ts->irq_gpiod)) {
++		NVT_ERR("Invalid NVT-int GPIO descriptor\n");
++		return PTR_ERR(ts->irq_gpiod);
++	}
++
++	/* Ensure GPIO is configured as input */
++	ret = gpiod_direction_input(ts->irq_gpiod);
++	if (ret) {
++		NVT_ERR("Failed to set NVT-int GPIO direction\n");
++		return ret;
++	}
++
++	return ret;
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen deconfig gpio
++
++return:
++	n.a.
++*******************************************************/
++static void nvt_gpio_deconfig(struct nvt_ts_data *ts)
++{
++	if (!IS_ERR(ts->irq_gpiod))
++		gpiod_put(ts->irq_gpiod);
++}
++
++static uint8_t nvt_fw_recovery(uint8_t *point_data)
++{
++	uint8_t i = 0;
++	uint8_t detected = true;
++
++	/* check pattern */
++	for (i = 1; i < 7; i++) {
++		if (point_data[i] != 0x77) {
++			detected = false;
++			break;
++		}
++	}
++
++	return detected;
++}
++
++#if NVT_TOUCH_WDT_RECOVERY
++static uint8_t recovery_cnt;
++static uint8_t nvt_wdt_fw_recovery(uint8_t *point_data)
++{
++	uint32_t recovery_cnt_max = 10;
++	uint8_t recovery_enable = false;
++	uint8_t i = 0;
++
++	recovery_cnt++;
++
++	/* check pattern */
++	for (i = 1; i < 7; i++) {
++		if (point_data[i] != 0xFD && point_data[i] != 0xFE) {
++			recovery_cnt = 0;
++			break;
++		}
++	}
++
++	if (recovery_cnt > recovery_cnt_max) {
++		recovery_enable = true;
++		recovery_cnt = 0;
++	}
++
++   return recovery_enable;
++}
++
++void nvt_read_fw_history(uint32_t fw_history_addr)
++{
++	uint8_t i = 0;
++	uint8_t buf[65];
++	char str[128];
++
++	if (fw_history_addr == 0)
++		return;
++
++    nvt_set_page(fw_history_addr);
++
++    buf[0] = (uint8_t) (fw_history_addr & 0x7F);
++    CTP_SPI_READ(ts->client, buf, 64+1);	//read 64bytes history
++
++	//print all data
++	NVT_ERR("fw history 0x%X: \n", fw_history_addr);
++	for (i = 0; i < 4; i++) {
++		snprintf(str, sizeof(str),
++				"%02X %02X %02X %02X %02X %02X %02X %02X  "
++				"%02X %02X %02X %02X %02X %02X %02X %02X\n",
++				buf[1+i*16], buf[2+i*16], buf[3+i*16], buf[4+i*16],
++				buf[5+i*16], buf[6+i*16], buf[7+i*16], buf[8+i*16],
++				buf[9+i*16], buf[10+i*16], buf[11+i*16], buf[12+i*16],
++				buf[13+i*16], buf[14+i*16], buf[15+i*16], buf[16+i*16]);
++		NVT_ERR("%s", str);
++	}
++
++	nvt_set_page(ts->mmap->EVENT_BUF_ADDR);
++}
++#endif	/* #if NVT_TOUCH_WDT_RECOVERY */
++
++/*******************************************************
++Description:
++	Novatek touchscreen work function.
++
++return:
++	n.a.
++*******************************************************/
++static irqreturn_t nvt_ts_work_func(int irq, void *data)
++{
++	int32_t ret = -1;
++	uint8_t fw_state[7] = { 0 };
++	bool frame_captured = false;
++
++	mutex_lock(&ts->lock);
++	ts->thp_irq_count++;
++
++	if (ts->dev_pm_suspend) {
++		ret = wait_for_completion_timeout(&ts->dev_pm_suspend_completion, msecs_to_jiffies(500));
++		if (!ret) {
++			NVT_ERR("system(spi) can't finished resuming procedure, skip it\n");
++			goto XFER_ERROR;
++		}
++	}
++
++	/*
++	 * Like the stock p81 THP driver, always fetch the whole frame the IC
++	 * announced; it is only queued for userspace while capture is on.
++	 */
++	ret = nvt_thp_read_frame(fw_state);
++	frame_captured = ret >= 0;
++	if (ret < 0) {
++		NVT_ERR("CTP_SPI_READ failed.(%d)\n", ret);
++		goto XFER_ERROR;
++	}
++#if NVT_TOUCH_WDT_RECOVERY
++	/* ESD protect by WDT */
++	if (nvt_wdt_fw_recovery(fw_state)) {
++		NVT_ERR("Recover for fw reset, %02X\n", fw_state[1]);
++		if (fw_state[1] == 0xFE) {
++			nvt_sw_reset_idle();
++		}
++		nvt_read_fw_history(ts->mmap->MMAP_HISTORY_EVENT0);
++		nvt_read_fw_history(ts->mmap->MMAP_HISTORY_EVENT1);
++		nvt_update_firmware(ts->fw_name);
++		nvt_thp_restore_stylus();
++		nvt_power_supply_restore();
++		goto XFER_ERROR;
++	}
++#endif /* #if NVT_TOUCH_WDT_RECOVERY */
++
++	/* ESD protect by FW handshake */
++	if (nvt_fw_recovery(fw_state)) {
++		goto XFER_ERROR;
++	}
++
++	if (frame_captured)
++		nvt_thp_publish_frame();
++
++XFER_ERROR:
++
++	mutex_unlock(&ts->lock);
++	return IRQ_HANDLED;
++}
++
++
++/*******************************************************
++Description:
++	Novatek touchscreen check chip version trim function.
++
++return:
++	Executive outcomes. 0---NVT IC. -1---not NVT IC.
++*******************************************************/
++static int32_t nvt_ts_check_chip_ver_trim(struct nvt_ts_hw_reg_addr_info hw_regs)
++{
++	uint8_t buf[8] = {0};
++	int32_t retry = 0;
++	int32_t list = 0;
++	int32_t i = 0;
++	int32_t found_nvt_chip = 0;
++	int32_t ret = -1;
++	uint8_t enb_casc = 0;
++
++	/* hw reg mapping */
++	ts->chip_ver_trim_addr = hw_regs.chip_ver_trim_addr;
++	ts->swrst_sif_addr = hw_regs.swrst_sif_addr;
++	ts->crc_err_flag_addr = hw_regs.crc_err_flag_addr;
++
++	NVT_LOG("check chip ver trim with chip_ver_trim_addr=0x%06x, "
++			"swrst_sif_addr=0x%06x, crc_err_flag_addr=0x%06x\n",
++			ts->chip_ver_trim_addr, ts->swrst_sif_addr, ts->crc_err_flag_addr);
++
++	//---Check for 5 times---
++	for (retry = 5; retry > 0; retry--) {
++
++		nvt_bootloader_reset();
++
++		nvt_set_page(ts->chip_ver_trim_addr);
++
++		buf[0] = ts->chip_ver_trim_addr & 0x7F;
++		buf[1] = 0x00;
++		buf[2] = 0x00;
++		buf[3] = 0x00;
++		buf[4] = 0x00;
++		buf[5] = 0x00;
++		buf[6] = 0x00;
++		CTP_SPI_WRITE(ts->client, buf, 7);
++
++		buf[0] = ts->chip_ver_trim_addr & 0x7F;
++		buf[1] = 0x00;
++		buf[2] = 0x00;
++		buf[3] = 0x00;
++		buf[4] = 0x00;
++		buf[5] = 0x00;
++		buf[6] = 0x00;
++		CTP_SPI_READ(ts->client, buf, 7);
++		NVT_LOG("buf[1]=0x%02X, buf[2]=0x%02X, buf[3]=0x%02X, buf[4]=0x%02X, buf[5]=0x%02X, buf[6]=0x%02X\n",
++			buf[1], buf[2], buf[3], buf[4], buf[5], buf[6]);
++		if (retry == 1)
++			NVT_INFO("trim 0x%06x reads %*ph\n", ts->chip_ver_trim_addr,
++				 NVT_ID_BYTE_MAX, buf + 1);
++
++		// compare read chip id on supported list
++		for (list = 0; list < (sizeof(trim_id_table) / sizeof(struct nvt_ts_trim_id_table)); list++) {
++			found_nvt_chip = 0;
++
++			// compare each byte
++			for (i = 0; i < NVT_ID_BYTE_MAX; i++) {
++				if (trim_id_table[list].mask[i]) {
++					if (buf[i + 1] != trim_id_table[list].id[i])
++						break;
++				}
++			}
++
++			if (i == NVT_ID_BYTE_MAX) {
++				found_nvt_chip = 1;
++			}
++
++			if (found_nvt_chip) {
++				NVT_INFO("chip id %*ph (trim table entry %d)\n",
++					 NVT_ID_BYTE_MAX, buf + 1, list);
++				if (trim_id_table[list].mmap->ENB_CASC_REG.addr) {
++					/* check single or cascade */
++					nvt_read_reg(trim_id_table[list].mmap->ENB_CASC_REG, &enb_casc);
++					/* NVT_LOG("ENB_CASC=0x%02X\n", enb_casc); */
++					if (enb_casc & 0x01) {
++						NVT_INFO("single chip\n");
++						ts->mmap = trim_id_table[list].mmap;
++					} else {
++						NVT_INFO("cascade chip\n");
++						ts->mmap = trim_id_table[list].mmap_casc;
++					}
++				} else {
++					/* for chip that do not have ENB_CASC */
++					ts->mmap = trim_id_table[list].mmap;
++				}
++				ts->hw_crc = trim_id_table[list].hwinfo->hw_crc;
++				ts->auto_copy = trim_id_table[list].hwinfo->auto_copy;
++
++				/* hw reg re-mapping */
++				ts->chip_ver_trim_addr = trim_id_table[list].hwinfo->hw_regs->chip_ver_trim_addr;
++				ts->swrst_sif_addr = trim_id_table[list].hwinfo->hw_regs->swrst_sif_addr;
++				ts->crc_err_flag_addr = trim_id_table[list].hwinfo->hw_regs->crc_err_flag_addr;
++
++				NVT_LOG("set reg chip_ver_trim_addr=0x%06x, "
++						"swrst_sif_addr=0x%06x, crc_err_flag_addr=0x%06x\n",
++						ts->chip_ver_trim_addr, ts->swrst_sif_addr, ts->crc_err_flag_addr);
++
++				ret = 0;
++				goto out;
++			} else {
++				ts->mmap = NULL;
++				ret = -1;
++			}
++		}
++
++		msleep(10);
++	}
++
++out:
++	return ret;
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen check chip version trim loop
++	function. Check chip version trim via hw regs table.
++
++return:
++	Executive outcomes. 0---NVT IC. -1---not NVT IC.
++*******************************************************/
++static int32_t nvt_ts_check_chip_ver_trim_loop(void)
++{
++    uint8_t i = 0;
++	int32_t ret = 0;
++
++	struct nvt_ts_hw_reg_addr_info hw_regs_table[] = {
++		hw_reg_addr_info,
++		hw_reg_addr_info_old_w_isp,
++		hw_reg_addr_info_legacy_w_isp
++	};
++
++	for (i = 0; i < (sizeof(hw_regs_table) / sizeof(struct nvt_ts_hw_reg_addr_info)); i++) {
++		//---check chip version trim---
++		ret = nvt_ts_check_chip_ver_trim(hw_regs_table[i]);
++		if (!ret) {
++			break;
++		}
++    }
++
++	return ret;
++}
++
++static void nvt_resume_work(struct work_struct *work)
++{
++	struct nvt_ts_data *ts_core = container_of(work, struct nvt_ts_data, resume_work);
++	nvt_ts_resume(&ts_core->client->dev);
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen driver probe function.
++
++return:
++	Executive outcomes. 0---succeed. negative---failed
++*******************************************************/
++static int32_t nvt_ts_probe(struct spi_device *client)
++{
++	int32_t ret = 0;
++	int32_t retry_count = 0;
++
++	NVT_LOG("start\n");
++
++	ts = (struct nvt_ts_data *)kzalloc(sizeof(struct nvt_ts_data), GFP_KERNEL);
++	if (ts == NULL) {
++		NVT_ERR("failed to allocated memory for nvt ts data\n");
++		return -ENOMEM;
++	}
++
++	ts->xbuf = (uint8_t *)kzalloc(NVT_XBUF_LEN, GFP_KERNEL);
++	if (ts->xbuf == NULL) {
++		NVT_ERR("kzalloc for xbuf failed!\n");
++		ret = -ENOMEM;
++		goto err_malloc_xbuf;
++	}
++
++	ts->rbuf = (uint8_t *)kzalloc(NVT_READ_LEN, GFP_KERNEL);
++	if (ts->rbuf == NULL) {
++		NVT_ERR("kzalloc for rbuf failed!\n");
++		ret = -ENOMEM;
++		goto err_malloc_rbuf;
++	}
++
++	ts->client = client;
++	spi_set_drvdata(client, ts);
++
++	//---prepare for spi parameter---
++	if (ts->client->controller->flags & SPI_CONTROLLER_HALF_DUPLEX) {
++		NVT_ERR("Full duplex not supported by master\n");
++		ret = -EIO;
++		goto err_ckeck_full_duplex;
++	}
++	ts->client->bits_per_word = 8;
++	ts->client->mode = SPI_MODE_0;
++	/* chip select setup/hold time of the stock p81 driver */
++	ts->client->cs_setup.value = 300;
++	ts->client->cs_setup.unit = SPI_DELAY_UNIT_NSECS;
++	ts->client->cs_hold.value = 300;
++	ts->client->cs_hold.unit = SPI_DELAY_UNIT_NSECS;
++
++	ret = spi_setup(ts->client);
++	if (ret < 0) {
++		NVT_ERR("Failed to perform SPI setup\n");
++		goto err_spi_setup;
++	}
++
++	NVT_LOG("mode=%d, max_speed_hz=%d\n", ts->client->mode, ts->client->max_speed_hz);
++
++	//---parse dts---
++	ret = nvt_parse_dt(&client->dev);
++	if (ret) {
++		NVT_ERR("parse dt error\n");
++		goto err_spi_setup;
++	}
++
++	//---request and config GPIOs---
++	ret = nvt_gpio_config(ts);
++	if (ret) {
++		NVT_ERR("gpio config error!\n");
++		goto err_gpio_config_failed;
++	}
++
++	mutex_init(&ts->lock);
++	mutex_init(&ts->xbuf_lock);
++	mutex_init(&ts->thp_lock);
++	init_waitqueue_head(&ts->thp_stream_wait);
++
++#if defined(CONFIG_DRM_PANEL)
++	/* If the device follows a DRM panel, configure panel follower */
++	if (drm_is_panel_follower(&client->dev)) {
++		ts->panel_follower.funcs = &nt36xxx_panel_follower_funcs;
++		ret = drm_panel_add_follower(&client->dev, &ts->panel_follower);
++		if (ret)
++			goto err_panelwait_failed;
++		ts->panel_follower_registered = true;
++	} else
++#endif
++	{
++		/*
++		 * No DRM panel to follow: the display, and with it the touch
++		 * half of this TDDI chip, was powered by the bootloader and is
++		 * kept on (continuous splash on a simple framebuffer).
++		 */
++		ts->panel_on = true;
++	}
++
++	while (!ts->panel_on) {
++		if (retry_count > 5) {
++			ret = -EPROBE_DEFER;
++			NVT_ERR("panel wait failed, ret=%d\n", ret);
++			goto err_panelwait_failed;
++		}
++		NVT_LOG("panel is off, retry=%d\n", retry_count);
++		retry_count++;
++		msleep(200);
++	}
++
++	//---eng reset after panel preparation
++	nvt_eng_reset();
++
++	// need 10ms delay after POR(power on reset)
++	usleep_range(10000, 11000);
++
++	//---check chip version trim---
++	ret = nvt_ts_check_chip_ver_trim_loop();
++	if (ret) {
++		NVT_ERR("chip is not identified\n");
++		ret = -EINVAL;
++		goto err_chipvertrim_failed;
++	}
++
++	ts->thp_frame = kzalloc(NVT_THP_MAX_FRAME_LEN, GFP_KERNEL);
++	if (!ts->thp_frame) {
++		ret = -ENOMEM;
++		goto err_chipvertrim_failed;
++	}
++	ts->thp_stream_buf = vzalloc(NVT_THP_STREAM_SIZE);
++	if (!ts->thp_stream_buf) {
++		ret = -ENOMEM;
++		goto err_chipvertrim_failed;
++	}
++	kfifo_init(&ts->thp_stream_fifo, ts->thp_stream_buf,
++		   NVT_THP_STREAM_SIZE);
++
++	ts->x_num = TOUCH_DEFAULT_NUM_X;
++	ts->y_num = TOUCH_DEFAULT_NUM_Y;
++	ts->abs_x_max = TOUCH_DEFAULT_MAX_WIDTH;
++	ts->abs_y_max = TOUCH_DEFAULT_MAX_HEIGHT;
++	ts->thp_payload_len = NVT_THP_DEFAULT_PAYLOAD_LEN;
++
++	ts->int_trigger_type = INT_TRIGGER_TYPE;
++
++	//---set int-pin & request irq---
++	ret = gpiod_to_irq(ts->irq_gpiod);
++	if (ret < 0) {
++		NVT_ERR("no IRQ for the NVT-int GPIO, ret=%d\n", ret);
++		goto err_int_request_failed;
++	}
++	client->irq = ret;
++	NVT_LOG("int_trigger_type=%d\n", ts->int_trigger_type);
++	/* the IRQ stays off until the boot firmware download succeeded */
++	ts->irq_enabled = false;
++	ret = request_threaded_irq(client->irq, NULL, nvt_ts_work_func,
++			ts->int_trigger_type | IRQF_ONESHOT | IRQF_NO_AUTOEN,
++			NVT_SPI_NAME, ts);
++	if (ret != 0) {
++		NVT_ERR("request irq failed. ret=%d\n", ret);
++		goto err_int_request_failed;
++	}
++	NVT_LOG("request irq %d succeed\n", client->irq);
++
++	ts->ic_state = NVT_IC_INIT;
++	ts->dev_pm_suspend = false;
++	init_completion(&ts->dev_pm_suspend_completion);
++
++#if BOOT_UPDATE_FIRMWARE
++	nvt_fwu_wq = alloc_workqueue("nvt_fwu_wq", WQ_UNBOUND | WQ_MEM_RECLAIM, 1);
++	if (!nvt_fwu_wq) {
++		NVT_ERR("nvt_fwu_wq create workqueue failed\n");
++		ret = -ENOMEM;
++		goto err_create_nvt_fwu_wq_failed;
++	}
++	INIT_DELAYED_WORK(&ts->nvt_fwu_work, Boot_Update_Firmware);
++#endif
++
++	ts->event_wq = alloc_workqueue("nvt-event-queue",
++		WQ_UNBOUND | WQ_HIGHPRI | WQ_CPU_INTENSIVE, 1);
++	if (!ts->event_wq) {
++		NVT_ERR("Can not create work thread for suspend/resume!!");
++		ret = -ENOMEM;
++		goto err_alloc_work_thread_failed;
++	}
++
++	INIT_WORK(&ts->resume_work, nvt_resume_work);
++	mutex_init(&ts->power_supply_lock);
++	ts->power_supply_status = -1;
++	INIT_WORK(&ts->power_supply_work, nvt_power_supply_work);
++	ts->power_supply_notifier.notifier_call = nvt_power_supply_callback;
++	ret = power_supply_reg_notifier(&ts->power_supply_notifier);
++	if (ret) {
++		NVT_ERR("register power_supply_notifier failed, ret=%d\n", ret);
++		goto err_register_power_supply_notifier;
++	}
++	ts->power_supply_registered = true;
++
++	ts->thp_raw_proc = proc_create("nvt_thp_raw", 0200, NULL,
++				       &nvt_thp_raw_ops);
++	ts->thp_stream_proc = proc_create("nvt_thp_stream", 0400, NULL,
++					  &nvt_thp_stream_ops);
++	ts->thp_status_proc = proc_create("nvt_thp_status", 0400, NULL,
++					  &nvt_thp_status_ops);
++	ts->thp_stylus_proc = proc_create("nvt_thp_stylus", 0600, NULL,
++					  &nvt_thp_stylus_ops);
++	ts->thp_cmd_proc = proc_create("nvt_thp_cmd", 0200, NULL,
++				       &nvt_thp_cmd_ops);
++	ts->thp_controller_proc = proc_create("nvt_thp_controller_state", 0400,
++					      NULL, &nvt_thp_controller_ops);
++	ts->thp_game_proc = proc_create("nvt_thp_game_mode", 0600, NULL,
++					&nvt_thp_game_ops);
++	ts->thp_game_rollback_proc = proc_create("nvt_thp_game_rollback", 0200,
++						 NULL, &nvt_thp_game_rollback_ops);
++	if (!ts->thp_raw_proc || !ts->thp_stream_proc ||
++	    !ts->thp_status_proc || !ts->thp_stylus_proc ||
++	    !ts->thp_cmd_proc || !ts->thp_controller_proc ||
++	    !ts->thp_game_proc || !ts->thp_game_rollback_proc) {
++		ret = -ENOMEM;
++		goto err_create_thp_proc;
++	}
++
++	bTouchIsAwake = 1;
++	NVT_LOG("end\n");
++
++#if BOOT_UPDATE_FIRMWARE
++	/*
++	 * Download once everything above exists; the work enables the IRQ.
++	 * Please make sure boot update starts after the display reset (RESX)
++	 * sequence.
++	 */
++	queue_delayed_work(nvt_fwu_wq, &ts->nvt_fwu_work, 0);
++#endif
++
++	return 0;
++
++err_create_thp_proc:
++	nvt_panel_remove_follower(ts);
++	proc_remove(ts->thp_game_rollback_proc);
++	proc_remove(ts->thp_game_proc);
++	proc_remove(ts->thp_controller_proc);
++	if (ts->thp_cmd_proc)
++		proc_remove(ts->thp_cmd_proc);
++	if (ts->thp_status_proc)
++		proc_remove(ts->thp_status_proc);
++	if (ts->thp_stylus_proc)
++		proc_remove(ts->thp_stylus_proc);
++	if (ts->thp_stream_proc)
++		proc_remove(ts->thp_stream_proc);
++	if (ts->thp_raw_proc)
++		proc_remove(ts->thp_raw_proc);
++	power_supply_unreg_notifier(&ts->power_supply_notifier);
++	ts->power_supply_registered = false;
++	cancel_work_sync(&ts->power_supply_work);
++err_register_power_supply_notifier:
++	nvt_panel_remove_follower(ts);
++	mutex_destroy(&ts->power_supply_lock);
++	destroy_workqueue(ts->event_wq);
++	ts->event_wq = NULL;
++
++err_alloc_work_thread_failed:
++	nvt_panel_remove_follower(ts);
++#if BOOT_UPDATE_FIRMWARE
++	if (nvt_fwu_wq) {
++		cancel_delayed_work_sync(&ts->nvt_fwu_work);
++		destroy_workqueue(nvt_fwu_wq);
++		nvt_fwu_wq = NULL;
++	}
++err_create_nvt_fwu_wq_failed:
++	nvt_panel_remove_follower(ts);
++#endif
++	free_irq(client->irq, ts);
++err_int_request_failed:
++err_panelwait_failed:
++err_chipvertrim_failed:
++	nvt_panel_remove_follower(ts);
++	vfree(ts->thp_stream_buf);
++	ts->thp_stream_buf = NULL;
++	kfree(ts->thp_frame);
++	ts->thp_frame = NULL;
++	mutex_destroy(&ts->thp_lock);
++	mutex_destroy(&ts->xbuf_lock);
++	mutex_destroy(&ts->lock);
++	nvt_gpio_deconfig(ts);
++err_gpio_config_failed:
++err_spi_setup:
++err_ckeck_full_duplex:
++	if (ts->rbuf) {
++		kfree(ts->rbuf);
++		ts->rbuf = NULL;
++	}
++err_malloc_rbuf:
++	if (ts->xbuf) {
++		kfree(ts->xbuf);
++		ts->xbuf = NULL;
++	}
++err_malloc_xbuf:
++	if (ts) {
++		kfree(ts);
++		ts = NULL;
++	}
++	return ret;
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen driver release function.
++
++return:
++	Executive outcomes. 0---succeed.
++*******************************************************/
++static void nvt_ts_remove(struct spi_device *client)
++{
++	NVT_LOG("Removing driver...\n");
++
++	nvt_panel_remove_follower(ts);
++
++	bTouchIsAwake = 0;
++	WRITE_ONCE(ts->thp_capture_enabled, false);
++	wake_up_interruptible(&ts->thp_stream_wait);
++	proc_remove(ts->thp_game_rollback_proc);
++	proc_remove(ts->thp_game_proc);
++	proc_remove(ts->thp_controller_proc);
++	proc_remove(ts->thp_cmd_proc);
++	proc_remove(ts->thp_status_proc);
++	proc_remove(ts->thp_stylus_proc);
++	proc_remove(ts->thp_stream_proc);
++	proc_remove(ts->thp_raw_proc);
++	if (ts->power_supply_registered) {
++		power_supply_unreg_notifier(&ts->power_supply_notifier);
++		ts->power_supply_registered = false;
++	}
++	cancel_work_sync(&ts->power_supply_work);
++	mutex_destroy(&ts->power_supply_lock);
++
++	destroy_workqueue(ts->event_wq);
++	ts->event_wq = NULL;
++
++#if BOOT_UPDATE_FIRMWARE
++	if (nvt_fwu_wq) {
++		cancel_delayed_work_sync(&ts->nvt_fwu_work);
++		destroy_workqueue(nvt_fwu_wq);
++		nvt_fwu_wq = NULL;
++	}
++#endif
++
++	nvt_irq_enable(false);
++	free_irq(client->irq, ts);
++
++	mutex_destroy(&ts->xbuf_lock);
++	mutex_destroy(&ts->lock);
++	mutex_destroy(&ts->thp_lock);
++
++	nvt_gpio_deconfig(ts);
++
++	spi_set_drvdata(client, NULL);
++
++	if (ts->rbuf) {
++		kfree(ts->rbuf);
++		ts->rbuf = NULL;
++	}
++
++	if (ts->xbuf) {
++		kfree(ts->xbuf);
++		ts->xbuf = NULL;
++	}
++
++	kfree(ts->thp_frame);
++	ts->thp_frame = NULL;
++	vfree(ts->thp_stream_buf);
++	ts->thp_stream_buf = NULL;
++
++	if (ts) {
++		kfree(ts);
++		ts = NULL;
++	}
++
++	return;
++}
++
++static void nvt_ts_shutdown(struct spi_device *client)
++{
++	NVT_LOG("Shutdown driver...\n");
++
++	nvt_panel_remove_follower(ts);
++
++	nvt_irq_enable(false);
++	if (ts->power_supply_registered) {
++		power_supply_unreg_notifier(&ts->power_supply_notifier);
++		ts->power_supply_registered = false;
++	}
++	cancel_work_sync(&ts->power_supply_work);
++
++	destroy_workqueue(ts->event_wq);
++	ts->event_wq = NULL;
++
++#if BOOT_UPDATE_FIRMWARE
++	if (nvt_fwu_wq) {
++		cancel_delayed_work_sync(&ts->nvt_fwu_work);
++		destroy_workqueue(nvt_fwu_wq);
++		nvt_fwu_wq = NULL;
++	}
++#endif
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen driver suspend function.
++
++return:
++	Executive outcomes. 0---succeed.
++*******************************************************/
++static int32_t nvt_ts_suspend(struct device *dev)
++{
++	if (!bTouchIsAwake) {
++		NVT_LOG("Touch is already suspend\n");
++		return 0;
++	}
++
++	pm_stay_awake(dev);
++	ts->ic_state = NVT_IC_SUSPEND_IN;
++
++	nvt_irq_enable(false);
++
++	mutex_lock(&ts->lock);
++
++	NVT_LOG("start\n");
++
++	bTouchIsAwake = 0;
++
++	mutex_unlock(&ts->lock);
++
++	msleep(50);
++
++	if (likely(ts->ic_state == NVT_IC_SUSPEND_IN))
++		ts->ic_state = NVT_IC_SUSPEND_OUT;
++	else
++		NVT_ERR("IC state may error,caused by suspend/resume flow, please CHECK!!");
++
++	NVT_LOG("end\n");
++	pm_relax(dev);
++
++	return 0;
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen driver resume function.
++
++return:
++	Executive outcomes. 0---succeed.
++*******************************************************/
++static int32_t nvt_ts_resume(struct device *dev)
++{
++	if (bTouchIsAwake) {
++		NVT_LOG("Touch is already resume\n");
++		return 0;
++	}
++
++	if (ts->fw_name == NULL) {
++		NVT_ERR("fw has not been loaded and cannot be resume!\n");
++		return 0;
++	}
++
++	if (ts->dev_pm_suspend)
++		pm_stay_awake(dev);
++
++	mutex_lock(&ts->lock);
++
++	NVT_LOG("start\n");
++
++	ts->ic_state = NVT_IC_RESUME_IN;
++
++	// please make sure display reset(RESX) sequence and mipi dsi cmds sent before this
++	if (nvt_update_firmware(ts->fw_name)) {
++		NVT_ERR("download firmware failed, ignore check fw state\n");
++	} else {
++		nvt_check_fw_reset_state(RESET_STATE_REK);
++	}
++
++	nvt_irq_enable(true);
++
++	bTouchIsAwake = 1;
++
++	if (likely(ts->ic_state == NVT_IC_RESUME_IN)) {
++		ts->ic_state = NVT_IC_RESUME_OUT;
++	} else {
++		NVT_ERR("IC state may error,caused by suspend/resume flow, please CHECK!!");
++	}
++
++	nvt_thp_restore_stylus();
++
++	mutex_unlock(&ts->lock);
++	nvt_power_supply_restore();
++
++	NVT_LOG("end\n");
++
++	if (ts->dev_pm_suspend)
++		pm_relax(dev);
++	return 0;
++}
++
++
++#if defined(CONFIG_DRM_PANEL)
++static int panel_prepared(struct drm_panel_follower *follower)
++{
++	struct nvt_ts_data *ts = container_of(follower, struct nvt_ts_data, panel_follower);
++
++	ts->panel_on = true;
++
++	if (!ts->event_wq) {
++		return 0;
++	}
++
++	flush_workqueue(ts->event_wq);
++	queue_work(ts->event_wq, &ts->resume_work);
++
++	return 0;
++}
++
++static int panel_unpreparing(struct drm_panel_follower *follower)
++{
++	struct nvt_ts_data *ts = container_of(follower, struct nvt_ts_data, panel_follower);
++
++	ts->panel_on = false;
++
++	if (ts->event_wq)
++		flush_workqueue(ts->event_wq);
++	return nvt_ts_suspend(&ts->client->dev);
++}
++
++static struct drm_panel_follower_funcs nt36xxx_panel_follower_funcs = {
++	.panel_prepared = panel_prepared,
++	.panel_unpreparing = panel_unpreparing,
++};
++#endif
++
++static const struct spi_device_id nvt_ts_id[] = {
++	{ NVT_SPI_NAME, 0 },
++	{ }
++};
++MODULE_DEVICE_TABLE(spi, nvt_ts_id);
++
++#ifdef CONFIG_OF
++static const struct of_device_id nvt_match_table[] = {
++	{ .compatible = "novatek,NVT-ts-spi",},
++	{ },
++};
++MODULE_DEVICE_TABLE(of, nvt_match_table);
++#endif
++
++#ifdef CONFIG_PM
++static int nvt_pm_suspend(struct device *dev)
++{
++	NVT_LOG("system enters into pm_suspend");
++	ts->dev_pm_suspend = true;
++	reinit_completion(&ts->dev_pm_suspend_completion);
++	NVT_LOG("system enters into pm_suspend2");
++	return 0;
++}
++
++static int nvt_pm_resume(struct device *dev)
++{
++	NVT_LOG("system resume from pm_suspend");
++	ts->dev_pm_suspend = false;
++	complete(&ts->dev_pm_suspend_completion);
++	/* The runtime path re-enables the IRQ; system resume must too, or the
++	 * controller keeps sampling while the driver sees no frames. When a
++	 * panel follower is present and the panel is down, the follower's
++	 * prepared callback restores scanning instead. */
++	if (!ts->panel_follower_registered || ts->panel_on) {
++		nvt_irq_enable(true);
++		bTouchIsAwake = 1;
++	}
++	NVT_LOG("system resume from pm_suspend2");
++	return 0;
++}
++
++static const struct dev_pm_ops nvt_dev_pm_ops = {
++	.suspend = nvt_pm_suspend,
++	.resume = nvt_pm_resume,
++};
++#endif
++
++static struct spi_driver nvt_spi_driver = {
++	.probe		= nvt_ts_probe,
++	.remove		= nvt_ts_remove,
++	.shutdown	= nvt_ts_shutdown,
++	.id_table	= nvt_ts_id,
++	.driver = {
++		.name	= NVT_SPI_NAME,
++		.owner	= THIS_MODULE,
++#ifdef CONFIG_OF
++		.of_match_table = nvt_match_table,
++#endif
++#ifdef CONFIG_PM
++		.pm = &nvt_dev_pm_ops,
++#endif
++	},
++};
++
++module_spi_driver(nvt_spi_driver);
++
++MODULE_DESCRIPTION("Novatek Touchscreen Driver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx.h b/drivers/input/touchscreen/nt36532e/nt36xxx.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..541f0a8db3a80d33656864152cda890d650616e0
+--- /dev/null
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx.h
+@@ -0,0 +1,249 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++
++/*
++ * Copyright (C) 2010 - 2022 Novatek, Inc.
++ *
++ * $Revision: 103375 $
++ * $Date: 2022-07-29 10:34:16 +0800 (週五, 29 七月 2022) $
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++ * more details.
++ *
++ */
++#ifndef _LINUX_NVT_TOUCH_H
++#define		_LINUX_NVT_TOUCH_H
++
++#include <linux/delay.h>
++#include <linux/kfifo.h>
++#include <linux/notifier.h>
++#include <linux/of.h>
++#include <linux/spi/spi.h>
++#include <linux/uaccess.h>
++#include <linux/version.h>
++
++#if defined(CONFIG_DRM_PANEL)
++#include <drm/drm_panel.h>
++#endif
++
++#include "nt36xxx_mem_map.h"
++
++struct proc_dir_entry;
++
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)
++#define HAVE_PROC_OPS
++#endif
++
++#define NVT_DEBUG 0
++
++//---GPIO number---
++#define NVTTOUCH_RST_PIN 980
++#define NVTTOUCH_INT_PIN 943
++
++//---INT trigger mode---
++//#define IRQ_TYPE_EDGE_RISING 1
++//#define IRQ_TYPE_EDGE_FALLING 2
++#define INT_TRIGGER_TYPE IRQ_TYPE_EDGE_RISING
++
++//---bus transfer length---
++#define BUS_TRANSFER_LENGTH  256
++
++//---SPI driver info.---
++#define NVT_SPI_NAME "NVT-ts-spi"
++
++#if NVT_DEBUG
++#define NVT_LOG(fmt, args...)    pr_err("[%s] %s %d: " fmt, NVT_SPI_NAME, __func__, __LINE__, ##args)
++#else
++#define NVT_LOG(fmt, args...)    pr_debug("[%s] %s %d: " fmt, NVT_SPI_NAME, __func__, __LINE__, ##args)
++#endif
++#define NVT_ERR(fmt, args...)    pr_err("[%s] %s %d: " fmt, NVT_SPI_NAME, __func__, __LINE__, ##args)
++#define NVT_INFO(fmt, args...)   pr_info("[%s] " fmt, NVT_SPI_NAME, ##args)
++
++//---Touch info.---
++#define TOUCH_DEFAULT_NUM_X 60
++#define TOUCH_DEFAULT_NUM_Y 40
++#define TOUCH_DEFAULT_MAX_WIDTH 3048
++#define TOUCH_DEFAULT_MAX_HEIGHT 2032
++
++//---Customerized func.---
++#define BOOT_UPDATE_FIRMWARE 1
++#define BOOT_UPDATE_FIRMWARE_NAME "novatek/nt36532e.bin"
++#define POINT_DATA_LEN 760
++
++//---ESD Protect.---
++#define NVT_TOUCH_WDT_RECOVERY 1
++
++#if BOOT_UPDATE_FIRMWARE
++#define SIZE_4KB 4096
++#define FLASH_SECTOR_SIZE SIZE_4KB
++#define FW_BIN_VER_OFFSET (fw_need_write_size - SIZE_4KB)
++#define FW_BIN_VER_BAR_OFFSET (FW_BIN_VER_OFFSET + 1)
++#define NVT_FLASH_END_FLAG_LEN 3
++#define NVT_FLASH_END_FLAG_ADDR (fw_need_write_size - NVT_FLASH_END_FLAG_LEN)
++#endif
++
++enum nvt_ic_state {
++	NVT_IC_SUSPEND_IN,
++	NVT_IC_SUSPEND_OUT,
++	NVT_IC_RESUME_IN,
++	NVT_IC_RESUME_OUT,
++	NVT_IC_INIT,
++};
++
++struct nvt_ts_data {
++	struct spi_device *client;
++	struct delayed_work nvt_fwu_work;
++	int ic_state;
++	bool dev_pm_suspend;
++	struct completion dev_pm_suspend_completion;
++	uint16_t addr;
++#if defined(CONFIG_DRM_PANEL)
++	struct drm_panel_follower panel_follower;
++	bool panel_follower_registered;
++#endif
++	const char *fw_name;
++	struct gpio_desc *lcd_id_gpiod;
++	int lcd_id;
++	uint8_t fw_ver;
++	uint8_t x_num;
++	uint8_t y_num;
++	uint16_t abs_x_max;
++	uint16_t abs_y_max;
++	uint32_t int_trigger_type;
++	struct gpio_desc *irq_gpiod;
++	uint32_t irq_flags;
++	int32_t reset_gpio;
++	uint32_t reset_flags;
++	struct mutex lock;
++	const struct nvt_ts_mem_map *mmap;
++	uint8_t hw_crc;
++	uint8_t auto_copy;
++	uint16_t nvt_pid;
++	uint8_t *rbuf;
++	uint8_t *xbuf;
++	struct mutex xbuf_lock;
++	bool irq_enabled;
++	uint8_t debug_flag;
++	int result_type;
++	int panel_index;
++	uint32_t chip_ver_trim_addr;
++	uint32_t swrst_sif_addr;
++	uint32_t crc_err_flag_addr;
++	struct workqueue_struct *event_wq;
++	struct work_struct resume_work;
++	struct mutex power_supply_lock;
++	struct work_struct power_supply_work;
++	struct notifier_block power_supply_notifier;
++	int power_supply_status;
++	bool power_supply_registered;
++	bool panel_on;
++	struct mutex thp_lock; /* protects the frame buffer and stream FIFO */
++	u8 *thp_frame;
++	bool thp_capture_enabled;
++	u8 thp_stylus_mode;
++	bool thp_firmware_ready; /* successful download and firmware-info read */
++	u32 thp_firmware_crc;
++	bool thp_game_valid;
++	bool thp_game_prior_valid;
++	u8 thp_game_requested;
++	u8 thp_game_prior;
++	u8 thp_game_fw_ver;
++	u16 thp_game_fw_pid;
++	u32 thp_game_fw_crc;
++	bool thp_frame_valid;
++	bool thp_epoch_pending;
++	u64 thp_frame_count;
++	u64 thp_epoch_count;
++	u64 thp_read_errors;
++	u64 thp_header_errors;
++	u64 thp_stream_drops;
++	u64 thp_irq_count;
++	u16 thp_payload_len;
++	u16 thp_header_crc;
++	u32 thp_magic;
++	ktime_t thp_timestamp;
++	struct kfifo thp_stream_fifo;
++	void *thp_stream_buf;
++	wait_queue_head_t thp_stream_wait;
++	struct proc_dir_entry *thp_raw_proc;
++	struct proc_dir_entry *thp_stream_proc;
++	struct proc_dir_entry *thp_status_proc;
++	struct proc_dir_entry *thp_stylus_proc;
++	struct proc_dir_entry *thp_cmd_proc;
++	struct proc_dir_entry *thp_controller_proc;
++	struct proc_dir_entry *thp_game_proc;
++	struct proc_dir_entry *thp_game_rollback_proc;
++};
++
++typedef enum {
++	RESET_STATE_INIT = 0xA0,// IC reset
++	RESET_STATE_REK,		// ReK baseline
++	RESET_STATE_REK_FINISH,	// baseline is ready
++	RESET_STATE_NORMAL_RUN,	// normal run
++	RESET_STATE_MAX  = 0xAF
++} RST_COMPLETE_STATE;
++
++typedef enum {
++    EVENT_MAP_HOST_CMD                      = 0x50,
++    EVENT_MAP_HANDSHAKING_or_SUB_CMD_BYTE   = 0x51,
++    EVENT_MAP_RESET_COMPLETE                = 0x60,
++    EVENT_MAP_FWINFO                        = 0x78,
++    EVENT_MAP_PROJECTID                     = 0x9A,
++} SPI_EVENT_MAP;
++
++//---SPI READ/WRITE---
++#define SPI_WRITE_MASK(a)	(a | 0x80)
++#define SPI_READ_MASK(a)	(a & 0x7F)
++
++#define DUMMY_BYTES (1)
++#define NVT_TRANSFER_LEN	(63*1024)
++#define NVT_READ_LEN		(8*1024)
++#define NVT_XBUF_LEN		(NVT_TRANSFER_LEN+1+DUMMY_BYTES)
++
++typedef enum {
++	NVTWRITE = 0,
++	NVTREAD  = 1
++} NVT_SPI_RW;
++
++//---extern structures---
++extern struct nvt_ts_data *ts;
++
++//---extern functions---
++void nvt_irq_enable(bool enable);
++int32_t CTP_SPI_READ(struct spi_device *client, uint8_t *buf, uint16_t len);
++int32_t CTP_SPI_WRITE(struct spi_device *client, uint8_t *buf, uint16_t len);
++void nvt_bootloader_reset(void);
++void nvt_eng_reset(void);
++void nvt_sw_reset(void);
++void nvt_sw_reset_idle(void);
++void nvt_boot_ready(void);
++void nvt_fw_crc_enable(void);
++void nvt_tx_auto_copy_mode(void);
++void nvt_read_fw_history(uint32_t fw_history_addr);
++int32_t nvt_update_firmware(const char *firmware_name);
++void nvt_thp_mark_epoch(void);
++int32_t nvt_check_fw_reset_state(RST_COMPLETE_STATE check_reset_state);
++int32_t nvt_get_fw_info(void);
++int32_t nvt_get_xm_htc_poll_info(void);
++int32_t nvt_clear_fw_status(void);
++int32_t nvt_check_fw_status(void);
++int32_t nvt_set_page(uint32_t addr);
++int32_t nvt_wait_auto_copy(void);
++int32_t nvt_write_addr(uint32_t addr, uint8_t data);
++int32_t nvt_read_reg(nvt_ts_reg_t reg, uint8_t *val);
++int32_t nvt_check_spi_dma_tx_info(void);
++int32_t nvt_check_tx_auto_copy(void);
++int nvt_set_custom_cmd(u8 cmd, u16 value);
++int nvt_thp_restore_stylus(void);
++void nvt_thp_restore_game(void);
++void nvt_power_supply_restore(void);
++void nvt_set_doze_delay(u16 value);
++void Boot_Update_Firmware(struct work_struct *work);
++void thp_parse_frame(u16 *touch_matrix);
++#endif /* _LINUX_NVT_TOUCH_H */
+diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx_fw_update.c b/drivers/input/touchscreen/nt36532e/nt36xxx_fw_update.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..01572b9da4e2816199192357014c1d96984c7b84
+--- /dev/null
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx_fw_update.c
+@@ -0,0 +1,925 @@
++// SPDX-License-Identifier: GPL-2.0
++
++/*
++ * Copyright (C) 2010 - 2022 Novatek, Inc.
++ *
++ * $Revision: 77624 $
++ * $Date: 2021-02-05 10:03:05 +0800 (週五, 05 二月 2021) $
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++ * more details.
++ *
++ */
++
++#include <linux/firmware.h>
++#include <linux/crc32.h>
++#include <linux/gpio.h>
++
++#include "nt36xxx.h"
++
++#if BOOT_UPDATE_FIRMWARE
++
++static ktime_t start, end;
++const struct firmware *fw_entry;
++static size_t fw_need_write_size;
++static uint8_t *fwbuf;
++
++struct nvt_ts_bin_map {
++	char name[12];
++	uint32_t BIN_addr;
++	uint32_t SRAM_addr;
++	uint32_t size;
++	uint32_t crc;
++};
++
++static struct nvt_ts_bin_map *bin_map;
++
++static int32_t nvt_get_fw_need_write_size(const struct firmware *fw_entry)
++{
++	int32_t i = 0;
++	int32_t total_sectors_to_check = 0;
++
++	total_sectors_to_check = fw_entry->size / FLASH_SECTOR_SIZE;
++	/* printk("total_sectors_to_check = %d\n", total_sectors_to_check); */
++
++	for (i = total_sectors_to_check; i > 0; i--) {
++		/* printk("current end flag address checked = 0x%X\n", i * FLASH_SECTOR_SIZE - NVT_FLASH_END_FLAG_LEN); */
++		/* check if there is end flag "NVT" at the end of this sector */
++		if (strncmp(&fw_entry->data[i * FLASH_SECTOR_SIZE - NVT_FLASH_END_FLAG_LEN], "NVT", NVT_FLASH_END_FLAG_LEN) == 0) {
++			fw_need_write_size = i * FLASH_SECTOR_SIZE;
++			NVT_LOG("fw_need_write_size = %zu(0x%zx), NVT end flag\n", fw_need_write_size, fw_need_write_size);
++			return 0;
++		}
++
++		/* check if there is end flag "MOD" at the end of this sector */
++		if (strncmp(&fw_entry->data[i * FLASH_SECTOR_SIZE - NVT_FLASH_END_FLAG_LEN], "MOD", NVT_FLASH_END_FLAG_LEN) == 0) {
++			fw_need_write_size = i * FLASH_SECTOR_SIZE;
++			NVT_LOG("fw_need_write_size = %zu(0x%zx), MOD end flag\n", fw_need_write_size, fw_need_write_size);
++			return 0;
++		}
++	}
++
++	NVT_ERR("end flag \"NVT\" \"MOD\" not found!\n");
++	return -1;
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen init variable and allocate buffer
++for download firmware function.
++
++return:
++	n.a.
++*******************************************************/
++static int32_t nvt_download_init(void)
++{
++	/* allocate buffer for transfer firmware */
++	//NVT_LOG("NVT_TRANSFER_LEN = 0x%06X\n", NVT_TRANSFER_LEN);
++
++	if (fwbuf == NULL) {
++		fwbuf = (uint8_t *)kzalloc((NVT_TRANSFER_LEN + 1 + DUMMY_BYTES), GFP_KERNEL);
++		if (fwbuf == NULL) {
++			NVT_ERR("kzalloc for fwbuf failed!\n");
++			return -ENOMEM;
++		}
++	}
++
++	return 0;
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen checksum function. Calculate bin
++file checksum for comparison.
++
++return:
++	n.a.
++*******************************************************/
++static uint32_t CheckSum(const u8 *data, size_t len)
++{
++	uint32_t i = 0;
++	uint32_t checksum = 0;
++
++	for (i = 0 ; i < len+1 ; i++)
++		checksum += data[i];
++
++	checksum += len;
++	checksum = ~checksum +1;
++
++	return checksum;
++}
++
++static uint32_t Crc32(const uint32_t *data, size_t len)
++{
++	uint32_t i, j;
++	uint32_t checksum = 0xFFFFFFFF;
++
++	len = (len + 4) / 4;
++
++	for (i = 0 ; i < len ; i++) {
++		checksum = checksum ^ data[i];
++		for (j = 0; j < 32; j++) {
++			if (checksum & 0x80000000)
++				checksum = (checksum << 1) ^ 0x04C11DB7;
++			else
++				checksum = (checksum << 1);
++		}
++	}
++
++	return checksum;
++}
++
++static uint32_t byte_to_word(const uint8_t *data)
++{
++	return data[0] + (data[1] << 8) + (data[2] << 16) + (data[3] << 24);
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen parsing bin header function.
++
++return:
++	n.a.
++*******************************************************/
++static uint32_t partition;
++static uint8_t ilm_dlm_num = 2;
++static uint8_t cascade_2nd_header_info;
++static int32_t nvt_bin_header_parser(const u8 *fwdata, size_t fwsize)
++{
++	uint32_t list = 0;
++	uint32_t pos = 0x00;
++	uint32_t end = 0x00;
++	uint8_t info_sec_num = 0;
++	uint8_t ovly_sec_num = 0;
++	uint8_t ovly_info = 0;
++	uint8_t find_bin_header = 0;
++
++	/* Find the header size */
++	end = fwdata[0] + (fwdata[1] << 8) + (fwdata[2] << 16) + (fwdata[3] << 24);
++
++	/* check cascade next header */
++	cascade_2nd_header_info = (fwdata[0x20] & 0x02) >> 1;
++	NVT_LOG("cascade_2nd_header_info = %d\n", cascade_2nd_header_info);
++
++	if (cascade_2nd_header_info) {
++		pos = 0x30;	// info section start at 0x30 offset
++		while (pos < (end / 2)) {
++			info_sec_num++;
++			pos += 0x10;	/* each header info is 16 bytes */
++		}
++
++		info_sec_num = info_sec_num + 1; //next header section
++	} else {
++		pos = 0x30;	// info section start at 0x30 offset
++		while (pos < end) {
++			info_sec_num++;
++			pos += 0x10;	/* each header info is 16 bytes */
++		}
++	}
++
++	/*
++	 * Find the DLM OVLY section
++	 * [0:3] Overlay Section Number
++	 * [4]   Overlay Info
++	 */
++	ovly_info = (fwdata[0x28] & 0x10) >> 4;
++	ovly_sec_num = (ovly_info) ? (fwdata[0x28] & 0x0F) : 0;
++
++	/*
++	 * calculate all partition number
++	 * ilm_dlm_num (ILM & DLM) + ovly_sec_num + info_sec_num
++	 */
++	partition = ilm_dlm_num + ovly_sec_num + info_sec_num;
++	NVT_LOG("ovly_info = %d, ilm_dlm_num = %d, ovly_sec_num = %d, info_sec_num = %d, partition = %d\n",
++			ovly_info, ilm_dlm_num, ovly_sec_num, info_sec_num, partition);
++
++	/* allocated memory for header info */
++	bin_map = (struct nvt_ts_bin_map *)kzalloc((partition+1) * sizeof(struct nvt_ts_bin_map), GFP_KERNEL);
++	if (bin_map == NULL) {
++		NVT_ERR("kzalloc for bin_map failed!\n");
++		return -ENOMEM;
++	}
++
++	for (list = 0; list < partition; list++) {
++		/*
++		 * [1] parsing ILM & DLM header info
++		 * BIN_addr : SRAM_addr : size (12-bytes)
++		 * crc located at 0x18 & 0x1C
++		 */
++		if (list < ilm_dlm_num) {
++			bin_map[list].BIN_addr = byte_to_word(&fwdata[0 + list*12]);
++			bin_map[list].SRAM_addr = byte_to_word(&fwdata[4 + list*12]);
++			bin_map[list].size = byte_to_word(&fwdata[8 + list*12]);
++			if (ts->hw_crc)
++				bin_map[list].crc = Crc32((const u32 *)&fwdata[bin_map[list].BIN_addr], bin_map[list].size);
++				//bin_map[list].crc = byte_to_word(&fwdata[0x18 + list*4]);
++			else { //ts->hw_crc
++				if ((bin_map[list].BIN_addr + bin_map[list].size) < fwsize)
++					bin_map[list].crc = CheckSum(&fwdata[bin_map[list].BIN_addr], bin_map[list].size);
++				else {
++					NVT_ERR("access range (0x%08X to 0x%08X) is larger than bin size!\n",
++							bin_map[list].BIN_addr, bin_map[list].BIN_addr + bin_map[list].size);
++					return -EINVAL;
++				}
++			} //ts->hw_crc
++			if (list == 0)
++				sprintf(bin_map[list].name, "ILM");
++			else if (list == 1)
++				sprintf(bin_map[list].name, "DLM");
++		}
++
++		/*
++		 * [2] parsing others header info
++		 * SRAM_addr : size : BIN_addr : crc (16-bytes)
++		 */
++		if ((list >= ilm_dlm_num) && (list < (ilm_dlm_num + info_sec_num))) {
++			if (find_bin_header == 0) {
++				/* others partition located at 0x30 offset */
++				pos = 0x30 + (0x10 * (list - ilm_dlm_num));
++			} else if (find_bin_header && cascade_2nd_header_info) {
++				/* cascade 2nd header info */
++				pos = end - 0x10;
++			}
++
++			bin_map[list].SRAM_addr = byte_to_word(&fwdata[pos]);
++			bin_map[list].size = byte_to_word(&fwdata[pos+4]);
++			bin_map[list].BIN_addr = byte_to_word(&fwdata[pos+8]);
++			if (ts->hw_crc)
++				bin_map[list].crc = byte_to_word(&fwdata[pos+12]);
++			else { //ts->hw_crc
++				if ((bin_map[list].BIN_addr + bin_map[list].size) < fwsize)
++					bin_map[list].crc = CheckSum(&fwdata[bin_map[list].BIN_addr], bin_map[list].size);
++				else {
++					NVT_ERR("access range (0x%08X to 0x%08X) is larger than bin size!\n",
++							bin_map[list].BIN_addr, bin_map[list].BIN_addr + bin_map[list].size);
++					return -EINVAL;
++				}
++			} //ts->hw_crc
++			/* detect header end to protect parser function */
++			if ((bin_map[list].BIN_addr < end) && (bin_map[list].size != 0)) {
++				sprintf(bin_map[list].name, "Header");
++				find_bin_header = 1;
++			} else {
++				sprintf(bin_map[list].name, "Info-%d", (list - ilm_dlm_num));
++			}
++		}
++
++		/*
++		 * [3] parsing overlay section header info
++		 * SRAM_addr : size : BIN_addr : crc (16-bytes)
++		 */
++		if (list >= (ilm_dlm_num + info_sec_num)) {
++			/* overlay info located at DLM (list = 1) start addr */
++			pos = bin_map[1].BIN_addr + (0x10 * (list- ilm_dlm_num - info_sec_num));
++
++			bin_map[list].SRAM_addr = byte_to_word(&fwdata[pos]);
++			bin_map[list].size = byte_to_word(&fwdata[pos+4]);
++			bin_map[list].BIN_addr = byte_to_word(&fwdata[pos+8]);
++			if (ts->hw_crc)
++				bin_map[list].crc = byte_to_word(&fwdata[pos+12]);
++			else { //ts->hw_crc
++				if ((bin_map[list].BIN_addr + bin_map[list].size) < fwsize)
++					bin_map[list].crc = CheckSum(&fwdata[bin_map[list].BIN_addr], bin_map[list].size);
++				else {
++					NVT_ERR("access range (0x%08X to 0x%08X) is larger than bin size!\n",
++							bin_map[list].BIN_addr, bin_map[list].BIN_addr + bin_map[list].size);
++					return -EINVAL;
++				}
++			} //ts->hw_crc
++			sprintf(bin_map[list].name, "Overlay-%d", (list- ilm_dlm_num - info_sec_num));
++		}
++
++		/* BIN size error detect */
++		if ((bin_map[list].BIN_addr + bin_map[list].size) > fwsize) {
++			NVT_ERR("access range (0x%08X to 0x%08X) is larger than bin size!\n",
++					bin_map[list].BIN_addr, bin_map[list].BIN_addr + bin_map[list].size);
++			return -EINVAL;
++		}
++
++//		NVT_LOG("[%d][%s] SRAM (0x%08X), SIZE (0x%08X), BIN (0x%08X), CRC (0x%08X)\n",
++//				list, bin_map[list].name,
++//				bin_map[list].SRAM_addr, bin_map[list].size,  bin_map[list].BIN_addr, bin_map[list].crc);
++	}
++
++	return 0;
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen release update firmware function.
++
++return:
++	n.a.
++*******************************************************/
++static void update_firmware_release(void)
++{
++	if (fw_entry) {
++		release_firmware(fw_entry);
++	}
++
++	fw_entry = NULL;
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen request update firmware function.
++
++return:
++	Executive outcomes. 0---succeed. -1,-22---failed.
++*******************************************************/
++static int32_t update_firmware_request(const char *filename)
++{
++	uint8_t retry = 0;
++	int32_t ret = 0;
++
++	if (NULL == filename) {
++		return -ENOENT;
++	}
++
++	while (1) {
++		NVT_LOG("filename is %s\n", filename);
++
++		ret = request_firmware(&fw_entry, filename, &ts->client->dev);
++		if (ret) {
++			NVT_ERR("firmware load failed, ret=%d\n", ret);
++			goto request_fail;
++		}
++
++		// check FW need to write size
++		if (nvt_get_fw_need_write_size(fw_entry)) {
++			NVT_ERR("get fw need to write size fail!\n");
++			ret = -EINVAL;
++			goto invalid;
++		}
++
++		// check if FW version add FW version bar equals 0xFF
++		if (*(fw_entry->data + FW_BIN_VER_OFFSET) + *(fw_entry->data + FW_BIN_VER_BAR_OFFSET) != 0xFF) {
++			NVT_ERR("bin file FW_VER + FW_VER_BAR should be 0xFF!\n");
++			NVT_ERR("FW_VER=0x%02X, FW_VER_BAR=0x%02X\n", *(fw_entry->data+FW_BIN_VER_OFFSET), *(fw_entry->data+FW_BIN_VER_BAR_OFFSET));
++			ret = -ENOEXEC;
++			goto invalid;
++		}
++
++		/* BIN Header Parser */
++		ret = nvt_bin_header_parser(fw_entry->data, fw_entry->size);
++		if (ret) {
++			NVT_ERR("bin header parser failed\n");
++			goto invalid;
++		} else {
++			break;
++		}
++
++invalid:
++		update_firmware_release();
++		if (!IS_ERR_OR_NULL(bin_map)) {
++			kfree(bin_map);
++			bin_map = NULL;
++		}
++
++request_fail:
++		retry++;
++		if (unlikely(retry > 2)) {
++			NVT_ERR("error, retry=%d\n", retry);
++			break;
++		}
++	}
++
++	return ret;
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen write data to sram function.
++
++- fwdata   : The buffer is written
++- SRAM_addr: The sram destination address
++- size     : Number of data bytes in @fwdata being written
++- BIN_addr : The transferred data offset of @fwdata
++
++return:
++	Executive outcomes. 0---succeed. else---fail.
++*******************************************************/
++static int32_t nvt_write_sram(const u8 *fwdata,
++		uint32_t SRAM_addr, uint32_t size, uint32_t BIN_addr)
++{
++	int32_t ret = 0;
++	uint32_t i = 0;
++	uint16_t len = 0;
++	int32_t count = 0;
++
++	if (size % NVT_TRANSFER_LEN)
++		count = (size / NVT_TRANSFER_LEN) + 1;
++	else
++		count = (size / NVT_TRANSFER_LEN);
++
++	for (i = 0 ; i < count ; i++) {
++		len = (size < NVT_TRANSFER_LEN) ? size : NVT_TRANSFER_LEN;
++
++		//---set xdata index to start address of SRAM---
++		ret = nvt_set_page(SRAM_addr);
++		if (ret) {
++			NVT_ERR("set page failed, ret = %d\n", ret);
++			return ret;
++		}
++
++		//---write data into SRAM---
++		fwbuf[0] = SRAM_addr & 0x7F;	//offset
++		memcpy(fwbuf+1, &fwdata[BIN_addr], len);	//payload
++		ret = CTP_SPI_WRITE(ts->client, fwbuf, len+1);
++		if (ret) {
++			NVT_ERR("write to sram failed, ret = %d\n", ret);
++			return ret;
++		}
++
++		SRAM_addr += NVT_TRANSFER_LEN;
++		BIN_addr += NVT_TRANSFER_LEN;
++		size -= NVT_TRANSFER_LEN;
++	}
++
++	return ret;
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen nvt_write_firmware function to write
++firmware into each partition.
++
++return:
++	n.a.
++*******************************************************/
++static int32_t nvt_write_firmware(const u8 *fwdata, size_t fwsize)
++{
++	uint32_t list = 0;
++	char *name;
++	uint32_t BIN_addr, SRAM_addr, size;
++	int32_t ret = 0;
++
++	memset(fwbuf, 0, (NVT_TRANSFER_LEN+1));
++
++	for (list = 0; list < partition; list++) {
++		/* initialize variable */
++		SRAM_addr = bin_map[list].SRAM_addr;
++		size = bin_map[list].size;
++		BIN_addr = bin_map[list].BIN_addr;
++		name = bin_map[list].name;
++
++//		NVT_LOG("[%d][%s] SRAM (0x%08X), SIZE (0x%08X), BIN (0x%08X)\n",
++//				list, name, SRAM_addr, size, BIN_addr);
++
++		/* Check data size */
++		if ((BIN_addr + size) > fwsize) {
++			NVT_ERR("access range (0x%08X to 0x%08X) is larger than bin size!\n",
++					BIN_addr, BIN_addr + size);
++			ret = -EINVAL;
++			goto out;
++		}
++
++		/* ignore reserved partition (Reserved Partition size is zero) */
++		if (!size)
++			continue;
++		else
++			size = size +1;
++
++		/* write data to SRAM */
++		ret = nvt_write_sram(fwdata, SRAM_addr, size, BIN_addr);
++		if (ret) {
++			NVT_ERR("sram program failed, ret = %d\n", ret);
++			goto out;
++		}
++	}
++
++out:
++	return ret;
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen check checksum function.
++This function will compare file checksum and fw checksum.
++
++return:
++	n.a.
++*******************************************************/
++static int32_t nvt_check_fw_checksum(void)
++{
++	uint32_t fw_checksum = 0;
++	uint32_t len = partition*4;
++	uint32_t list = 0;
++	int32_t ret = 0;
++
++	memset(fwbuf, 0, (len+1));
++
++	//---set xdata index to checksum---
++	nvt_set_page(ts->mmap->R_ILM_CHECKSUM_ADDR);
++
++	/* read checksum */
++	fwbuf[0] = (ts->mmap->R_ILM_CHECKSUM_ADDR) & 0x7F;
++	ret = CTP_SPI_READ(ts->client, fwbuf, len+1);
++	if (ret) {
++		NVT_ERR("Read fw checksum failed\n");
++		return ret;
++	}
++
++	/*
++	 * Compare each checksum from fw
++	 * ILM + DLM + Overlay + Info
++	 * ilm_dlm_num (ILM & DLM) + ovly_sec_num + info_sec_num
++	 */
++	for (list = 0; list < partition; list++) {
++		fw_checksum = byte_to_word(&fwbuf[1+list*4]);
++
++		/* ignore reserved partition (Reserved Partition size is zero) */
++		if (!bin_map[list].size)
++			continue;
++
++		if (bin_map[list].crc != fw_checksum) {
++			NVT_ERR("[%d] BIN_checksum=0x%08X, FW_checksum=0x%08X\n",
++					list, bin_map[list].crc, fw_checksum);
++			ret = -EIO;
++		}
++	}
++
++	return ret;
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen set bootload crc reg bank function.
++This function will set hw crc reg before enable crc function.
++
++return:
++	n.a.
++*******************************************************/
++static void nvt_set_bld_crc_bank(uint32_t DES_ADDR, uint32_t SRAM_ADDR,
++		uint32_t LENGTH_ADDR, uint32_t size,
++		uint32_t G_CHECKSUM_ADDR, uint32_t crc)
++{
++	/* write destination address */
++	nvt_set_page(DES_ADDR);
++	fwbuf[0] = DES_ADDR & 0x7F;
++	fwbuf[1] = (SRAM_ADDR) & 0xFF;
++	fwbuf[2] = (SRAM_ADDR >> 8) & 0xFF;
++	fwbuf[3] = (SRAM_ADDR >> 16) & 0xFF;
++	CTP_SPI_WRITE(ts->client, fwbuf, 4);
++
++	/* write length */
++	//nvt_set_page(LENGTH_ADDR);
++	fwbuf[0] = LENGTH_ADDR & 0x7F;
++	fwbuf[1] = (size) & 0xFF;
++	fwbuf[2] = (size >> 8) & 0xFF;
++	fwbuf[3] = (size >> 16) & 0xFF;
++	if (ts->hw_crc == HWCRC_LEN_2Bytes) {
++		CTP_SPI_WRITE(ts->client, fwbuf, 3);
++	} else if (ts->hw_crc >= HWCRC_LEN_3Bytes) {
++		CTP_SPI_WRITE(ts->client, fwbuf, 4);
++	}
++
++	/* write golden dlm checksum */
++	//nvt_set_page(G_CHECKSUM_ADDR);
++	fwbuf[0] = G_CHECKSUM_ADDR & 0x7F;
++	fwbuf[1] = (crc) & 0xFF;
++	fwbuf[2] = (crc >> 8) & 0xFF;
++	fwbuf[3] = (crc >> 16) & 0xFF;
++	fwbuf[4] = (crc >> 24) & 0xFF;
++	CTP_SPI_WRITE(ts->client, fwbuf, 5);
++
++	return;
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen set BLD hw crc function.
++This function will set ILM and DLM crc information to register.
++
++return:
++	n.a.
++*******************************************************/
++static void nvt_set_bld_hw_crc(void)
++{
++	/* [0] ILM */
++	/* write register bank */
++	nvt_set_bld_crc_bank(ts->mmap->ILM_DES_ADDR, bin_map[0].SRAM_addr,
++			ts->mmap->ILM_LENGTH_ADDR, bin_map[0].size,
++			ts->mmap->G_ILM_CHECKSUM_ADDR, bin_map[0].crc);
++
++	/* [1] DLM */
++	/* write register bank */
++	nvt_set_bld_crc_bank(ts->mmap->DLM_DES_ADDR, bin_map[1].SRAM_addr,
++			ts->mmap->DLM_LENGTH_ADDR, bin_map[1].size,
++			ts->mmap->G_DLM_CHECKSUM_ADDR, bin_map[1].crc);
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen read BLD hw crc info function.
++This function will check crc results from register.
++
++return:
++	n.a.
++*******************************************************/
++static void nvt_read_bld_hw_crc(void)
++{
++	uint8_t buf[8] = {0};
++	uint32_t g_crc = 0, r_crc = 0;
++
++	/* CRC Flag */
++	nvt_set_page(ts->mmap->BLD_ILM_DLM_CRC_ADDR);
++	buf[0] = ts->mmap->BLD_ILM_DLM_CRC_ADDR & 0x7F;
++	buf[1] = 0x00;
++	CTP_SPI_READ(ts->client, buf, 2);
++	NVT_ERR("crc_done = %d, ilm_crc_flag = %d, dlm_crc_flag = %d\n",
++			(buf[1] >> 2) & 0x01, (buf[1] >> 0) & 0x01, (buf[1] >> 1) & 0x01);
++
++	/* ILM CRC */
++	nvt_set_page(ts->mmap->G_ILM_CHECKSUM_ADDR);
++	buf[0] = ts->mmap->G_ILM_CHECKSUM_ADDR & 0x7F;
++	buf[1] = 0x00;
++	buf[2] = 0x00;
++	buf[3] = 0x00;
++	buf[4] = 0x00;
++	CTP_SPI_READ(ts->client, buf, 5);
++	g_crc = buf[1] | (buf[2] << 8) | (buf[3] << 16) | (buf[4] << 24);
++
++	nvt_set_page(ts->mmap->R_ILM_CHECKSUM_ADDR);
++	buf[0] = ts->mmap->R_ILM_CHECKSUM_ADDR & 0x7F;
++	buf[1] = 0x00;
++	buf[2] = 0x00;
++	buf[3] = 0x00;
++	buf[4] = 0x00;
++	CTP_SPI_READ(ts->client, buf, 5);
++	r_crc = buf[1] | (buf[2] << 8) | (buf[3] << 16) | (buf[4] << 24);
++
++	NVT_ERR("ilm: bin crc = 0x%08X, golden = 0x%08X, result = 0x%08X\n",
++			bin_map[0].crc, g_crc, r_crc);
++
++	/* DLM CRC */
++	nvt_set_page(ts->mmap->G_DLM_CHECKSUM_ADDR);
++	buf[0] = ts->mmap->G_DLM_CHECKSUM_ADDR & 0x7F;
++	buf[1] = 0x00;
++	buf[2] = 0x00;
++	buf[3] = 0x00;
++	buf[4] = 0x00;
++	CTP_SPI_READ(ts->client, buf, 5);
++	g_crc = buf[1] | (buf[2] << 8) | (buf[3] << 16) | (buf[4] << 24);
++
++	nvt_set_page(ts->mmap->R_DLM_CHECKSUM_ADDR);
++	buf[0] = ts->mmap->R_DLM_CHECKSUM_ADDR & 0x7F;
++	buf[1] = 0x00;
++	buf[2] = 0x00;
++	buf[3] = 0x00;
++	buf[4] = 0x00;
++	CTP_SPI_READ(ts->client, buf, 5);
++	r_crc = buf[1] | (buf[2] << 8) | (buf[3] << 16) | (buf[4] << 24);
++
++	NVT_ERR("dlm: bin crc = 0x%08X, golden = 0x%08X, result = 0x%08X\n",
++			bin_map[1].crc, g_crc, r_crc);
++
++	return;
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen Download_Firmware with HW CRC
++function. It's complete download firmware flow.
++
++return:
++	Executive outcomes. 0---succeed. else---fail.
++*******************************************************/
++static int32_t nvt_download_firmware_hw_crc(void)
++{
++	uint8_t retry = 0;
++	int32_t ret = 0;
++
++	start = ktime_get();
++
++	while (1) {
++		/* bootloader reset to reset MCU */
++		nvt_bootloader_reset();
++
++		/* set ilm & dlm reg bank */
++		nvt_set_bld_hw_crc();
++
++		/* Start to write firmware process */
++		if (cascade_2nd_header_info) {
++			/* for cascade */
++			nvt_tx_auto_copy_mode();
++
++			ret = nvt_write_firmware(fw_entry->data, fw_entry->size);
++			if (ret) {
++				NVT_ERR("Write_Firmware failed. (%d)\n", ret);
++				goto fail;
++			}
++
++			ret = nvt_wait_auto_copy();
++			if (ret) {
++				NVT_ERR("wait auto copy failed. (%d)\n", ret);
++				goto fail;
++			}
++		} else {
++			ret = nvt_write_firmware(fw_entry->data, fw_entry->size);
++			if (ret) {
++				NVT_ERR("Write_Firmware failed. (%d)\n", ret);
++				goto fail;
++			}
++		}
++
++		/* clear fw reset status & enable fw crc check */
++		nvt_fw_crc_enable();
++
++		/* Set Boot Ready Bit */
++		nvt_boot_ready();
++
++		ret = nvt_check_fw_reset_state(RESET_STATE_INIT);
++		if (ret) {
++			NVT_ERR("nvt_check_fw_reset_state failed. (%d)\n", ret);
++			goto fail;
++		} else {
++			break;
++		}
++
++fail:
++		retry++;
++		if (unlikely(retry > 2)) {
++			NVT_ERR("error, retry=%d\n", retry);
++			nvt_read_bld_hw_crc();
++			break;
++		}
++	}
++
++	end = ktime_get();
++
++	return ret;
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen Download_Firmware function. It's
++complete download firmware flow.
++
++return:
++	n.a.
++*******************************************************/
++static int32_t nvt_download_firmware(void)
++{
++	uint8_t retry = 0;
++	int32_t ret = 0;
++
++	start = ktime_get();
++
++	while (1) {
++		/*
++		 * Send eng reset cmd before download FW
++		 * Keep TP_RESX low when send eng reset cmd
++		 */
++		nvt_eng_reset();
++		nvt_bootloader_reset();
++
++		/* clear fw reset status */
++		nvt_write_addr(ts->mmap->EVENT_BUF_ADDR | EVENT_MAP_RESET_COMPLETE, 0x00);
++
++		/* Start to write firmware process */
++		ret = nvt_write_firmware(fw_entry->data, fw_entry->size);
++		if (ret) {
++			NVT_ERR("Write_Firmware failed. (%d)\n", ret);
++			goto fail;
++		}
++
++		/* Set Boot Ready Bit */
++		nvt_boot_ready();
++
++		ret = nvt_check_fw_reset_state(RESET_STATE_INIT);
++		if (ret) {
++			NVT_ERR("nvt_check_fw_reset_state failed. (%d)\n", ret);
++			goto fail;
++		}
++
++		/* check fw checksum result */
++		ret = nvt_check_fw_checksum();
++		if (ret) {
++			NVT_ERR("firmware checksum not match, retry=%d\n", retry);
++			goto fail;
++		} else {
++			break;
++		}
++
++fail:
++		retry++;
++		if (unlikely(retry > 2)) {
++			NVT_ERR("error, retry=%d\n", retry);
++			break;
++		}
++	}
++
++	end = ktime_get();
++
++	return ret;
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen update firmware main function.
++
++return:
++	n.a.
++*******************************************************/
++int32_t nvt_update_firmware(const char *firmware_name)
++{
++	int32_t ret = 0;
++
++	/* A failed download/info read must not leave the control API ready. */
++	ts->thp_firmware_ready = false;
++
++	// request bin file in "/etc/firmware"
++	ret = update_firmware_request(firmware_name);
++	if (ret) {
++		NVT_ERR("update_firmware_request failed. (%d)\n", ret);
++		goto request_firmware_fail;
++	}
++
++	/* initial buffer and variable */
++	ret = nvt_download_init();
++	if (ret) {
++		NVT_ERR("Download Init failed. (%d)\n", ret);
++		goto download_fail;
++	}
++
++	/* download firmware process */
++	if (ts->hw_crc)
++		ret = nvt_download_firmware_hw_crc();
++	else
++		ret = nvt_download_firmware();
++	if (ret) {
++		NVT_ERR("Download Firmware failed. (%d)\n", ret);
++		goto download_fail;
++	}
++
++	NVT_INFO("firmware %s downloaded in %ld us\n", firmware_name,
++		 (long) ktime_us_delta(end, start));
++	nvt_thp_mark_epoch();
++
++	/* THP firmware: the frame length is only known after the download */
++	if (nvt_get_xm_htc_poll_info())
++		NVT_ERR("THP poll info unavailable, frame length %u\n",
++			ts->thp_payload_len);
++
++	/* Get FW Info */
++	ret = nvt_get_fw_info();
++	if (ret) {
++		NVT_ERR("nvt_get_fw_info failed. (%d)\n", ret);
++	} else {
++		NVT_INFO("fw_ver=0x%02X, x_num=%u, y_num=%u, PID=0x%04X\n",
++			 ts->fw_ver, ts->x_num, ts->y_num, ts->nvt_pid);
++		ts->thp_firmware_crc = crc32_le(~0U, fw_entry->data,
++					      fw_entry->size) ^ ~0U;
++		ts->thp_firmware_ready = true;
++		/* No game-mode write unless userspace previously validated one. */
++		nvt_thp_restore_game();
++	}
++
++download_fail:
++	if (!IS_ERR_OR_NULL(bin_map)) {
++		kfree(bin_map);
++		bin_map = NULL;
++	}
++
++	update_firmware_release();
++request_firmware_fail:
++
++	return ret;
++}
++
++/*******************************************************
++Description:
++	Novatek touchscreen update firmware when booting
++	function.
++
++return:
++	n.a.
++*******************************************************/
++void Boot_Update_Firmware(struct work_struct *work)
++{
++	int32_t ret;
++
++	mutex_lock(&ts->lock);
++	ret = nvt_update_firmware(ts->fw_name);
++	if (!ret)
++		nvt_thp_restore_stylus();
++	mutex_unlock(&ts->lock);
++
++	/* an IC without firmware has nothing to report */
++	if (ret) {
++		NVT_ERR("boot firmware update failed (%d), IRQ left off\n", ret);
++		return;
++	}
++
++	nvt_irq_enable(true);
++	nvt_power_supply_restore();
++}
++#endif /* BOOT_UPDATE_FIRMWARE */
+diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx_mem_map.h b/drivers/input/touchscreen/nt36532e/nt36xxx_mem_map.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..f141d42fee6263eb440666cd05d8ff119ae07557
+--- /dev/null
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx_mem_map.h
+@@ -0,0 +1,733 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++
++/*
++ * Copyright (C) 2010 - 2022 Novatek, Inc.
++ *
++ * $Revision: 97627 $
++ * $Date: 2022-04-06 15:02:09 +0800 (週三, 06 四月 2022) $
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++ * more details.
++ *
++ */
++
++
++typedef struct nvt_ts_reg {
++	uint32_t addr; /* byte in which address */
++	uint8_t mask; /* in which bits of that byte */
++} nvt_ts_reg_t;
++
++struct nvt_ts_mem_map {
++	uint32_t EVENT_BUF_ADDR;
++	uint32_t RAW_PIPE0_ADDR;
++	uint32_t RAW_PIPE1_ADDR;
++	uint32_t BASELINE_ADDR;
++	uint32_t BASELINE_BTN_ADDR;
++	uint32_t DIFF_PIPE0_ADDR;
++	uint32_t DIFF_PIPE1_ADDR;
++	uint32_t RAW_BTN_PIPE0_ADDR;
++	uint32_t RAW_BTN_PIPE1_ADDR;
++	uint32_t DIFF_BTN_PIPE0_ADDR;
++	uint32_t DIFF_BTN_PIPE1_ADDR;
++	uint32_t PEN_2D_BL_TIP_X_ADDR;
++	uint32_t PEN_2D_BL_TIP_Y_ADDR;
++	uint32_t PEN_2D_BL_RING_X_ADDR;
++	uint32_t PEN_2D_BL_RING_Y_ADDR;
++	uint32_t PEN_2D_DIFF_TIP_X_ADDR;
++	uint32_t PEN_2D_DIFF_TIP_Y_ADDR;
++	uint32_t PEN_2D_DIFF_RING_X_ADDR;
++	uint32_t PEN_2D_DIFF_RING_Y_ADDR;
++	uint32_t PEN_2D_RAW_TIP_X_ADDR;
++	uint32_t PEN_2D_RAW_TIP_Y_ADDR;
++	uint32_t PEN_2D_RAW_RING_X_ADDR;
++	uint32_t PEN_2D_RAW_RING_Y_ADDR;
++	uint32_t PEN_1D_DIFF_TIP_X_ADDR;
++	uint32_t PEN_1D_DIFF_TIP_Y_ADDR;
++	uint32_t PEN_1D_DIFF_RING_X_ADDR;
++	uint32_t PEN_1D_DIFF_RING_Y_ADDR;
++	nvt_ts_reg_t ENB_CASC_REG;
++	/* FW History */
++	uint32_t MMAP_HISTORY_EVENT0;
++	uint32_t MMAP_HISTORY_EVENT1;
++	/* START for flash FW update */
++	uint32_t READ_FLASH_CHECKSUM_ADDR;
++	uint32_t RW_FLASH_DATA_ADDR;
++	/* END for FW Update Use */
++	/* Phase 2 Host Download */
++	uint32_t BOOT_RDY_ADDR;
++	uint32_t POR_CD_ADDR;
++	uint32_t TX_AUTO_COPY_EN;
++	uint32_t SPI_DMA_TX_INFO;
++	/* BLD CRC */
++	uint32_t BLD_LENGTH_ADDR;
++	uint32_t ILM_LENGTH_ADDR;
++	uint32_t DLM_LENGTH_ADDR;
++	uint32_t BLD_DES_ADDR;
++	uint32_t ILM_DES_ADDR;
++	uint32_t DLM_DES_ADDR;
++	uint32_t G_ILM_CHECKSUM_ADDR;
++	uint32_t G_DLM_CHECKSUM_ADDR;
++	uint32_t R_ILM_CHECKSUM_ADDR;
++	uint32_t R_DLM_CHECKSUM_ADDR;
++	uint32_t DMA_CRC_EN_ADDR;
++	uint32_t BLD_ILM_DLM_CRC_ADDR;
++	uint32_t DMA_CRC_FLAG_ADDR;
++	/* Xiaomi host touch computing (THP) polling info */
++	uint32_t XM_HTC_POLL_INFO_ADDR;
++};
++
++struct nvt_ts_hw_info {
++	uint8_t hw_crc;
++	uint8_t auto_copy;
++	bool use_gcm;
++	const struct nvt_ts_hw_reg_addr_info *hw_regs;
++};
++
++typedef enum {
++	HWCRC_NOSUPPORT  = 0x00,
++	HWCRC_LEN_2Bytes = 0x01,
++	HWCRC_LEN_3Bytes = 0x02,
++} HWCRCBankConfig;
++
++typedef enum {
++	AUTOCOPY_NOSUPPORT    = 0x00,
++	CHECK_SPI_DMA_TX_INFO = 0x01,
++	CHECK_TX_AUTO_COPY_EN = 0x02,
++} AUTOCOPYCheck;
++
++/* hw info reg*/
++struct nvt_ts_hw_reg_addr_info {
++    uint32_t chip_ver_trim_addr;
++    uint32_t swrst_sif_addr;
++    uint32_t crc_err_flag_addr;
++};
++
++static const struct nvt_ts_hw_reg_addr_info hw_reg_addr_info = {
++    .chip_ver_trim_addr = 0x1FB104,
++    .swrst_sif_addr = 0x1FB43E,
++    .crc_err_flag_addr = 0x1FB535,
++};
++
++static const struct nvt_ts_hw_reg_addr_info hw_reg_addr_info_old_w_isp = {
++    .chip_ver_trim_addr = 0x3F004,
++    .swrst_sif_addr = 0x3F0FE,
++    .crc_err_flag_addr = 0x3F135,
++};
++
++static const struct nvt_ts_hw_reg_addr_info hw_reg_addr_info_legacy_w_isp = {
++    .chip_ver_trim_addr = 0x1F64E,
++    .swrst_sif_addr = 0x1F01A,
++    .crc_err_flag_addr = 0,
++};
++
++/* tddi */
++static const struct nvt_ts_mem_map NT36532E_cascade_memory_map = {
++	.EVENT_BUF_ADDR           = 0x11C400,
++	.RAW_PIPE0_ADDR           = 0x10B200,
++	.RAW_PIPE1_ADDR           = 0x10B200,
++	.BASELINE_ADDR            = 0x109E00,
++	.BASELINE_BTN_ADDR        = 0,
++	.DIFF_PIPE0_ADDR          = 0x128140,
++	.DIFF_PIPE1_ADDR          = 0x129540,
++	.RAW_BTN_PIPE0_ADDR       = 0,
++	.RAW_BTN_PIPE1_ADDR       = 0,
++	.DIFF_BTN_PIPE0_ADDR      = 0,
++	.DIFF_BTN_PIPE1_ADDR      = 0,
++	.PEN_2D_BL_TIP_X_ADDR     = 0x10F940,
++	.PEN_2D_BL_TIP_Y_ADDR     = 0x10FD40,
++	.PEN_2D_BL_RING_X_ADDR    = 0x110140,
++	.PEN_2D_BL_RING_Y_ADDR    = 0x110540,
++	.PEN_2D_DIFF_TIP_X_ADDR   = 0x111140,
++	.PEN_2D_DIFF_TIP_Y_ADDR   = 0x111540,
++	.PEN_2D_DIFF_RING_X_ADDR  = 0x111940,
++	.PEN_2D_DIFF_RING_Y_ADDR  = 0x111D40,
++	.PEN_2D_RAW_TIP_X_ADDR    = 0x126E00,
++	.PEN_2D_RAW_TIP_Y_ADDR    = 0x127210,
++	.PEN_2D_RAW_RING_X_ADDR   = 0x127620,
++	.PEN_2D_RAW_RING_Y_ADDR   = 0x127A30,
++	.PEN_1D_DIFF_TIP_X_ADDR   = 0x127E40,
++	.PEN_1D_DIFF_TIP_Y_ADDR   = 0x127EC0,
++	.PEN_1D_DIFF_RING_X_ADDR  = 0x127F40,
++	.PEN_1D_DIFF_RING_Y_ADDR  = 0x127FC0,
++	.ENB_CASC_REG             = {.addr = 0x1FB12C, .mask = 0x01},
++	/* FW History */
++	.MMAP_HISTORY_EVENT0      = 0x121AFC,
++	.MMAP_HISTORY_EVENT1      = 0x121B3C,
++	/* Phase 2 Host Download */
++	.BOOT_RDY_ADDR            = 0x1FB50D,
++	.TX_AUTO_COPY_EN          = 0x1FC925,
++	.SPI_DMA_TX_INFO          = 0x1FC914,
++	/* BLD CRC */
++	.BLD_LENGTH_ADDR          = 0x1FB538,	//0x1FB538 ~ 0x1FB53A (3 bytes)
++	.ILM_LENGTH_ADDR          = 0x1FB518,	//0x1FB518 ~ 0x1FB51A (3 bytes)
++	.DLM_LENGTH_ADDR          = 0x1FB530,	//0x1FB530 ~ 0x1FB532 (3 bytes)
++	.BLD_DES_ADDR             = 0x1FB514,	//0x1FB514 ~ 0x1FB516 (3 bytes)
++	.ILM_DES_ADDR             = 0x1FB528,	//0x1FB528 ~ 0x1FB52A (3 bytes)
++	.DLM_DES_ADDR             = 0x1FB52C,	//0x1FB52C ~ 0x1FB52E (3 bytes)
++	.G_ILM_CHECKSUM_ADDR      = 0x1FB500,   //0x1FB500 ~ 0x1FB503 (4 bytes)
++	.G_DLM_CHECKSUM_ADDR      = 0x1FB504,	//0x1FB504 ~ 0x1FB507 (4 bytes)
++	.R_ILM_CHECKSUM_ADDR      = 0x1FB520,	//0x1FB520 ~ 0x1FB523 (4 bytes)
++	.R_DLM_CHECKSUM_ADDR      = 0x1FB524,	//0x1FB524 ~ 0x1FB527 (4 bytes)
++	.DMA_CRC_EN_ADDR          = 0x1FB536,
++	.BLD_ILM_DLM_CRC_ADDR     = 0x1FB533,
++	.DMA_CRC_FLAG_ADDR        = 0x1FB534,
++	/* Xiaomi host touch computing */
++	.XM_HTC_POLL_INFO_ADDR    = 0x1093D8,
++};
++
++static const struct nvt_ts_mem_map NT36532_cascade_memory_map = {
++	/* THP firmware event buffer (Xiaomi p81/piano, cascade chip) */
++	.EVENT_BUF_ADDR           = 0x11C400,
++	.RAW_PIPE0_ADDR           = 0x10B200,
++	.RAW_PIPE1_ADDR           = 0x10B200,
++	.BASELINE_ADDR            = 0x109E00,
++	.BASELINE_BTN_ADDR        = 0,
++	.DIFF_PIPE0_ADDR          = 0x128140,
++	.DIFF_PIPE1_ADDR          = 0x129540,
++	.RAW_BTN_PIPE0_ADDR       = 0,
++	.RAW_BTN_PIPE1_ADDR       = 0,
++	.DIFF_BTN_PIPE0_ADDR      = 0,
++	.DIFF_BTN_PIPE1_ADDR      = 0,
++	.PEN_2D_BL_TIP_X_ADDR     = 0x10F940,
++	.PEN_2D_BL_TIP_Y_ADDR     = 0x10FD40,
++	.PEN_2D_BL_RING_X_ADDR    = 0x110140,
++	.PEN_2D_BL_RING_Y_ADDR    = 0x110540,
++	.PEN_2D_DIFF_TIP_X_ADDR   = 0x111140,
++	.PEN_2D_DIFF_TIP_Y_ADDR   = 0x111540,
++	.PEN_2D_DIFF_RING_X_ADDR  = 0x111940,
++	.PEN_2D_DIFF_RING_Y_ADDR  = 0x111D40,
++	.PEN_2D_RAW_TIP_X_ADDR    = 0x126E00,
++	.PEN_2D_RAW_TIP_Y_ADDR    = 0x127210,
++	.PEN_2D_RAW_RING_X_ADDR   = 0x127620,
++	.PEN_2D_RAW_RING_Y_ADDR   = 0x127A30,
++	.PEN_1D_DIFF_TIP_X_ADDR   = 0x127E40,
++	.PEN_1D_DIFF_TIP_Y_ADDR   = 0x127EC0,
++	.PEN_1D_DIFF_RING_X_ADDR  = 0x127F40,
++	.PEN_1D_DIFF_RING_Y_ADDR  = 0x127FC0,
++	.ENB_CASC_REG             = {.addr = 0x1FB12C, .mask = 0x01},
++	/* FW History */
++	.MMAP_HISTORY_EVENT0      = 0x121AFC,
++	.MMAP_HISTORY_EVENT1      = 0x121B3C,
++	/* Phase 2 Host Download */
++	.BOOT_RDY_ADDR            = 0x1FB50D,
++	.TX_AUTO_COPY_EN          = 0x1FC925,
++	.SPI_DMA_TX_INFO          = 0x1FC914,
++	/* BLD CRC */
++	.BLD_LENGTH_ADDR          = 0x1FB538,	//0x1FB538 ~ 0x1FB53A (3 bytes)
++	.ILM_LENGTH_ADDR          = 0x1FB518,	//0x1FB518 ~ 0x1FB51A (3 bytes)
++	.DLM_LENGTH_ADDR          = 0x1FB530,	//0x1FB530 ~ 0x1FB532 (3 bytes)
++	.BLD_DES_ADDR             = 0x1FB514,	//0x1FB514 ~ 0x1FB516 (3 bytes)
++	.ILM_DES_ADDR             = 0x1FB528,	//0x1FB528 ~ 0x1FB52A (3 bytes)
++	.DLM_DES_ADDR             = 0x1FB52C,	//0x1FB52C ~ 0x1FB52E (3 bytes)
++	.G_ILM_CHECKSUM_ADDR      = 0x1FB500,   //0x1FB500 ~ 0x1FB503 (4 bytes)
++	.G_DLM_CHECKSUM_ADDR      = 0x1FB504,	//0x1FB504 ~ 0x1FB507 (4 bytes)
++	.R_ILM_CHECKSUM_ADDR      = 0x1FB520,	//0x1FB520 ~ 0x1FB523 (4 bytes)
++	.R_DLM_CHECKSUM_ADDR      = 0x1FB524,	//0x1FB524 ~ 0x1FB527 (4 bytes)
++	.DMA_CRC_EN_ADDR          = 0x1FB536,
++	.BLD_ILM_DLM_CRC_ADDR     = 0x1FB533,
++	.DMA_CRC_FLAG_ADDR        = 0x1FB534,
++	/* Xiaomi host touch computing */
++	.XM_HTC_POLL_INFO_ADDR    = 0x1093D8,
++};
++
++static const struct nvt_ts_mem_map NT36532_single_memory_map = {
++	.EVENT_BUF_ADDR           = 0x125800,
++	.RAW_PIPE0_ADDR           = 0x10C1EC,
++	.RAW_PIPE1_ADDR           = 0x10C1EC,
++	.BASELINE_ADDR            = 0x10B1EC,
++	.BASELINE_BTN_ADDR        = 0,
++	.DIFF_PIPE0_ADDR          = 0x11BFC4,
++	.DIFF_PIPE1_ADDR          = 0x11CFC4,
++	.RAW_BTN_PIPE0_ADDR       = 0,
++	.RAW_BTN_PIPE1_ADDR       = 0,
++	.DIFF_BTN_PIPE0_ADDR      = 0,
++	.DIFF_BTN_PIPE1_ADDR      = 0,
++	.PEN_2D_BL_TIP_X_ADDR     = 0x11E5EC,
++	.PEN_2D_BL_TIP_Y_ADDR     = 0x126C00,
++	.PEN_2D_BL_RING_X_ADDR    = 0x11E7EC,
++	.PEN_2D_BL_RING_Y_ADDR    = 0x126E00,
++	.PEN_2D_DIFF_TIP_X_ADDR   = 0x11E1EC,
++	.PEN_2D_DIFF_TIP_Y_ADDR   = 0x11E9EC,
++	.PEN_2D_DIFF_RING_X_ADDR  = 0x11E3EC,
++	.PEN_2D_DIFF_RING_Y_ADDR  = 0x11EBEC,
++	.PEN_2D_RAW_TIP_X_ADDR    = 0x120CEC,
++	.PEN_2D_RAW_TIP_Y_ADDR    = 0x120EFC,
++	.PEN_2D_RAW_RING_X_ADDR   = 0x12110C,
++	.PEN_2D_RAW_RING_Y_ADDR   = 0x12131C,
++	.PEN_1D_DIFF_TIP_X_ADDR   = 0x126A00,
++	.PEN_1D_DIFF_TIP_Y_ADDR   = 0x126A80,
++	.PEN_1D_DIFF_RING_X_ADDR  = 0x126B00,
++	.PEN_1D_DIFF_RING_Y_ADDR  = 0x126B80,
++	.ENB_CASC_REG             = {.addr = 0x1FB12C, .mask = 0x01},
++	/* FW History */
++	.MMAP_HISTORY_EVENT0      = 0x122930,
++	.MMAP_HISTORY_EVENT1      = 0x122970,
++	/* Phase 2 Host Download */
++	.BOOT_RDY_ADDR            = 0x1FB50D,
++	.TX_AUTO_COPY_EN          = 0x1FC925,
++	.SPI_DMA_TX_INFO          = 0x1FC914,
++	/* BLD CRC */
++	.BLD_LENGTH_ADDR          = 0x1FB538,	//0x1FB538 ~ 0x1FB53A (3 bytes)
++	.ILM_LENGTH_ADDR          = 0x1FB518,	//0x1FB518 ~ 0x1FB51A (3 bytes)
++	.DLM_LENGTH_ADDR          = 0x1FB530,	//0x1FB530 ~ 0x1FB532 (3 bytes)
++	.BLD_DES_ADDR             = 0x1FB514,	//0x1FB514 ~ 0x1FB516 (3 bytes)
++	.ILM_DES_ADDR             = 0x1FB528,	//0x1FB528 ~ 0x1FB52A (3 bytes)
++	.DLM_DES_ADDR             = 0x1FB52C,	//0x1FB52C ~ 0x1FB52E (3 bytes)
++	.G_ILM_CHECKSUM_ADDR      = 0x1FB500,   //0x1FB500 ~ 0x1FB503 (4 bytes)
++	.G_DLM_CHECKSUM_ADDR      = 0x1FB504,	//0x1FB504 ~ 0x1FB507 (4 bytes)
++	.R_ILM_CHECKSUM_ADDR      = 0x1FB520,	//0x1FB520 ~ 0x1FB523 (4 bytes)
++	.R_DLM_CHECKSUM_ADDR      = 0x1FB524,	//0x1FB524 ~ 0x1FB527 (4 bytes)
++	.DMA_CRC_EN_ADDR          = 0x1FB536,
++	.BLD_ILM_DLM_CRC_ADDR     = 0x1FB533,
++	.DMA_CRC_FLAG_ADDR        = 0x1FB534,
++};
++
++static const struct nvt_ts_mem_map NT36523N_memory_map = {
++	.EVENT_BUF_ADDR           = 0x2FD00,
++	.RAW_PIPE0_ADDR           = 0x30FA0,
++	.RAW_PIPE1_ADDR           = 0x30FA0,
++	.BASELINE_ADDR            = 0x36510,
++	.BASELINE_BTN_ADDR        = 0,
++	.DIFF_PIPE0_ADDR          = 0x373E8,
++	.DIFF_PIPE1_ADDR          = 0x38068,
++	.RAW_BTN_PIPE0_ADDR       = 0,
++	.RAW_BTN_PIPE1_ADDR       = 0,
++	.DIFF_BTN_PIPE0_ADDR      = 0,
++	.DIFF_BTN_PIPE1_ADDR      = 0,
++	.PEN_2D_BL_TIP_X_ADDR     = 0x2988A,
++	.PEN_2D_BL_TIP_Y_ADDR     = 0x29A1A,
++	.PEN_2D_BL_RING_X_ADDR    = 0x29BAA,
++	.PEN_2D_BL_RING_Y_ADDR    = 0x29D3A,
++	.PEN_2D_DIFF_TIP_X_ADDR   = 0x29ECA,
++	.PEN_2D_DIFF_TIP_Y_ADDR   = 0x2A05A,
++	.PEN_2D_DIFF_RING_X_ADDR  = 0x2A1EA,
++	.PEN_2D_DIFF_RING_Y_ADDR  = 0x2A37A,
++	.PEN_2D_RAW_TIP_X_ADDR    = 0x2A50A,
++	.PEN_2D_RAW_TIP_Y_ADDR    = 0x2A69A,
++	.PEN_2D_RAW_RING_X_ADDR   = 0x2A82A,
++	.PEN_2D_RAW_RING_Y_ADDR   = 0x2A9BA,
++	.PEN_1D_DIFF_TIP_X_ADDR   = 0x2AB4A,
++	.PEN_1D_DIFF_TIP_Y_ADDR   = 0x2ABAE,
++	.PEN_1D_DIFF_RING_X_ADDR  = 0x2AC12,
++	.PEN_1D_DIFF_RING_Y_ADDR  = 0x2AC76,
++	/* FW History */
++	.MMAP_HISTORY_EVENT0      = 0x38D54,
++	.MMAP_HISTORY_EVENT1      = 0x38D94,
++	/* Phase 2 Host Download */
++	.BOOT_RDY_ADDR            = 0x3F10D,
++	.TX_AUTO_COPY_EN          = 0x3F7E8,
++	.SPI_DMA_TX_INFO          = 0x3F7F1,
++	/* BLD CRC */
++	.BLD_LENGTH_ADDR          = 0x3F138,	//0x3F138 ~ 0x3F13A	(3 bytes)
++	.ILM_LENGTH_ADDR          = 0x3F118,	//0x3F118 ~ 0x3F11A	(3 bytes)
++	.DLM_LENGTH_ADDR          = 0x3F130,	//0x3F130 ~ 0x3F132	(3 bytes)
++	.BLD_DES_ADDR             = 0x3F114,	//0x3F114 ~ 0x3F116	(3 bytes)
++	.ILM_DES_ADDR             = 0x3F128,	//0x3F128 ~ 0x3F12A	(3 bytes)
++	.DLM_DES_ADDR             = 0x3F12C,	//0x3F12C ~ 0x3F12E	(3 bytes)
++	.G_ILM_CHECKSUM_ADDR      = 0x3F100,	//0x3F100 ~ 0x3F103	(4 bytes)
++	.G_DLM_CHECKSUM_ADDR      = 0x3F104,	//0x3F104 ~ 0x3F107	(4 bytes)
++	.R_ILM_CHECKSUM_ADDR      = 0x3F120,	//0x3F120 ~ 0x3F123 (4 bytes)
++	.R_DLM_CHECKSUM_ADDR      = 0x3F124,	//0x3F124 ~ 0x3F127 (4 bytes)
++	.DMA_CRC_EN_ADDR          = 0x3F136,
++	.BLD_ILM_DLM_CRC_ADDR     = 0x3F133,
++	.DMA_CRC_FLAG_ADDR        = 0x3F134,
++};
++
++static const struct nvt_ts_mem_map NT36528_memory_map = {
++	.EVENT_BUF_ADDR           = 0x22D00,
++	.RAW_PIPE0_ADDR           = 0x24000,
++	.RAW_PIPE1_ADDR           = 0x24000,
++	.BASELINE_ADDR            = 0x21880,
++	.BASELINE_BTN_ADDR        = 0,
++	.DIFF_PIPE0_ADDR          = 0x20B00,
++	.DIFF_PIPE1_ADDR          = 0x24B00,
++	.RAW_BTN_PIPE0_ADDR       = 0,
++	.RAW_BTN_PIPE1_ADDR       = 0,
++	.DIFF_BTN_PIPE0_ADDR      = 0,
++	.DIFF_BTN_PIPE1_ADDR      = 0,
++	/* FW History */
++	.MMAP_HISTORY_EVENT0      = 0x23768,
++	.MMAP_HISTORY_EVENT1      = 0x237A8,
++	/* Phase 2 Host Download */
++	.BOOT_RDY_ADDR            = 0x3F10D,
++	/* BLD CRC */
++	.BLD_LENGTH_ADDR          = 0x3F138,	//0x3F138 ~ 0x3F13A	(3 bytes)
++	.ILM_LENGTH_ADDR          = 0x3F118,	//0x3F118 ~ 0x3F11A	(3 bytes)
++	.DLM_LENGTH_ADDR          = 0x3F130,	//0x3F130 ~ 0x3F132	(3 bytes)
++	.BLD_DES_ADDR             = 0x3F114,	//0x3F114 ~ 0x3F116	(3 bytes)
++	.ILM_DES_ADDR             = 0x3F128,	//0x3F128 ~ 0x3F12A	(3 bytes)
++	.DLM_DES_ADDR             = 0x3F12C,	//0x3F12C ~ 0x3F12E	(3 bytes)
++	.G_ILM_CHECKSUM_ADDR      = 0x3F100,	//0x3F100 ~ 0x3F103	(4 bytes)
++	.G_DLM_CHECKSUM_ADDR      = 0x3F104,	//0x3F104 ~ 0x3F107	(4 bytes)
++	.R_ILM_CHECKSUM_ADDR      = 0x3F120,	//0x3F120 ~ 0x3F123 (4 bytes)
++	.R_DLM_CHECKSUM_ADDR      = 0x3F124,	//0x3F124 ~ 0x3F127 (4 bytes)
++	.DMA_CRC_EN_ADDR          = 0x3F136,
++	.BLD_ILM_DLM_CRC_ADDR     = 0x3F133,
++	.DMA_CRC_FLAG_ADDR        = 0x3F134,
++};
++
++static const struct nvt_ts_mem_map NT36523_memory_map = {
++	.EVENT_BUF_ADDR           = 0x2FE00,
++	.RAW_PIPE0_ADDR           = 0x30FA0,
++	.RAW_PIPE1_ADDR           = 0x30FA0,
++	.BASELINE_ADDR            = 0x36510,
++	.BASELINE_BTN_ADDR        = 0,
++	.DIFF_PIPE0_ADDR          = 0x373E8,
++	.DIFF_PIPE1_ADDR          = 0x38068,
++	.RAW_BTN_PIPE0_ADDR       = 0,
++	.RAW_BTN_PIPE1_ADDR       = 0,
++	.DIFF_BTN_PIPE0_ADDR      = 0,
++	.DIFF_BTN_PIPE1_ADDR      = 0,
++	.PEN_2D_BL_TIP_X_ADDR     = 0x2988A,
++	.PEN_2D_BL_TIP_Y_ADDR     = 0x29A1A,
++	.PEN_2D_BL_RING_X_ADDR    = 0x29BAA,
++	.PEN_2D_BL_RING_Y_ADDR    = 0x29D3A,
++	.PEN_2D_DIFF_TIP_X_ADDR   = 0x29ECA,
++	.PEN_2D_DIFF_TIP_Y_ADDR   = 0x2A05A,
++	.PEN_2D_DIFF_RING_X_ADDR  = 0x2A1EA,
++	.PEN_2D_DIFF_RING_Y_ADDR  = 0x2A37A,
++	.PEN_2D_RAW_TIP_X_ADDR    = 0x2A50A,
++	.PEN_2D_RAW_TIP_Y_ADDR    = 0x2A69A,
++	.PEN_2D_RAW_RING_X_ADDR   = 0x2A82A,
++	.PEN_2D_RAW_RING_Y_ADDR   = 0x2A9BA,
++	.PEN_1D_DIFF_TIP_X_ADDR   = 0x2AB4A,
++	.PEN_1D_DIFF_TIP_Y_ADDR   = 0x2ABAE,
++	.PEN_1D_DIFF_RING_X_ADDR  = 0x2AC12,
++	.PEN_1D_DIFF_RING_Y_ADDR  = 0x2AC76,
++	/* FW History */
++	.MMAP_HISTORY_EVENT0      = 0x38D54,
++	.MMAP_HISTORY_EVENT1      = 0x38D94,
++	/* Phase 2 Host Download */
++	.BOOT_RDY_ADDR            = 0x3F10D,
++	.TX_AUTO_COPY_EN          = 0x3F7E8,
++	.SPI_DMA_TX_INFO          = 0x3F7F1,
++	/* BLD CRC */
++	.BLD_LENGTH_ADDR          = 0x3F138,	//0x3F138 ~ 0x3F13A	(3 bytes)
++	.ILM_LENGTH_ADDR          = 0x3F118,	//0x3F118 ~ 0x3F11A	(3 bytes)
++	.DLM_LENGTH_ADDR          = 0x3F130,	//0x3F130 ~ 0x3F132	(3 bytes)
++	.BLD_DES_ADDR             = 0x3F114,	//0x3F114 ~ 0x3F116	(3 bytes)
++	.ILM_DES_ADDR             = 0x3F128,	//0x3F128 ~ 0x3F12A	(3 bytes)
++	.DLM_DES_ADDR             = 0x3F12C,	//0x3F12C ~ 0x3F12E	(3 bytes)
++	.G_ILM_CHECKSUM_ADDR      = 0x3F100,	//0x3F100 ~ 0x3F103	(4 bytes)
++	.G_DLM_CHECKSUM_ADDR      = 0x3F104,	//0x3F104 ~ 0x3F107	(4 bytes)
++	.R_ILM_CHECKSUM_ADDR      = 0x3F120,	//0x3F120 ~ 0x3F123 (4 bytes)
++	.R_DLM_CHECKSUM_ADDR      = 0x3F124,	//0x3F124 ~ 0x3F127 (4 bytes)
++	.DMA_CRC_EN_ADDR          = 0x3F136,
++	.BLD_ILM_DLM_CRC_ADDR     = 0x3F133,
++	.DMA_CRC_FLAG_ADDR        = 0x3F134,
++};
++
++static const struct nvt_ts_mem_map NT36526_memory_map = {
++	.EVENT_BUF_ADDR           = 0x22D00,
++	.RAW_PIPE0_ADDR           = 0x24000,
++	.RAW_PIPE1_ADDR           = 0x24000,
++	.BASELINE_ADDR            = 0x21758,
++	.BASELINE_BTN_ADDR        = 0,
++	.DIFF_PIPE0_ADDR          = 0x20AB0,
++	.DIFF_PIPE1_ADDR          = 0x24AB0,
++	.RAW_BTN_PIPE0_ADDR       = 0,
++	.RAW_BTN_PIPE1_ADDR       = 0,
++	.DIFF_BTN_PIPE0_ADDR      = 0,
++	.DIFF_BTN_PIPE1_ADDR      = 0,
++	/* FW History */
++	.MMAP_HISTORY_EVENT0      = 0x23C38,
++	.MMAP_HISTORY_EVENT1      = 0x23C78,
++	/* Phase 2 Host Download */
++	.BOOT_RDY_ADDR            = 0x3F10D,
++	/* BLD CRC */
++	.BLD_LENGTH_ADDR          = 0x3F138,	//0x3F138 ~ 0x3F13A	(3 bytes)
++	.ILM_LENGTH_ADDR          = 0x3F118,	//0x3F118 ~ 0x3F11A	(3 bytes)
++	.DLM_LENGTH_ADDR          = 0x3F130,	//0x3F130 ~ 0x3F132	(3 bytes)
++	.BLD_DES_ADDR             = 0x3F114,	//0x3F114 ~ 0x3F116	(3 bytes)
++	.ILM_DES_ADDR             = 0x3F128,	//0x3F128 ~ 0x3F12A	(3 bytes)
++	.DLM_DES_ADDR             = 0x3F12C,	//0x3F12C ~ 0x3F12E	(3 bytes)
++	.G_ILM_CHECKSUM_ADDR      = 0x3F100,	//0x3F100 ~ 0x3F103	(4 bytes)
++	.G_DLM_CHECKSUM_ADDR      = 0x3F104,	//0x3F104 ~ 0x3F107	(4 bytes)
++	.R_ILM_CHECKSUM_ADDR      = 0x3F120,	//0x3F120 ~ 0x3F123 (4 bytes)
++	.R_DLM_CHECKSUM_ADDR      = 0x3F124,	//0x3F124 ~ 0x3F127 (4 bytes)
++	.DMA_CRC_EN_ADDR          = 0x3F136,
++	.BLD_ILM_DLM_CRC_ADDR     = 0x3F133,
++	.DMA_CRC_FLAG_ADDR        = 0x3F134,
++};
++
++
++static const struct nvt_ts_mem_map NT36675_memory_map = {
++	.EVENT_BUF_ADDR           = 0x22D00,
++	.RAW_PIPE0_ADDR           = 0x24000,
++	.RAW_PIPE1_ADDR           = 0x24000,
++	.BASELINE_ADDR            = 0x21B90,
++	.BASELINE_BTN_ADDR        = 0,
++	.DIFF_PIPE0_ADDR          = 0x20C60,
++	.DIFF_PIPE1_ADDR          = 0x24C60,
++	.RAW_BTN_PIPE0_ADDR       = 0,
++	.RAW_BTN_PIPE1_ADDR       = 0,
++	.DIFF_BTN_PIPE0_ADDR      = 0,
++	.DIFF_BTN_PIPE1_ADDR      = 0,
++	/* FW History */
++	.MMAP_HISTORY_EVENT0      = 0x23D10,
++	.MMAP_HISTORY_EVENT1      = 0x23D50,
++	/* Phase 2 Host Download */
++	.BOOT_RDY_ADDR            = 0x3F10D,
++	/* BLD CRC */
++	.BLD_LENGTH_ADDR          = 0x3F138,	//0x3F138 ~ 0x3F13A	(3 bytes)
++	.ILM_LENGTH_ADDR          = 0x3F118,	//0x3F118 ~ 0x3F11A	(3 bytes)
++	.DLM_LENGTH_ADDR          = 0x3F130,	//0x3F130 ~ 0x3F132	(3 bytes)
++	.BLD_DES_ADDR             = 0x3F114,	//0x3F114 ~ 0x3F116	(3 bytes)
++	.ILM_DES_ADDR             = 0x3F128,	//0x3F128 ~ 0x3F12A	(3 bytes)
++	.DLM_DES_ADDR             = 0x3F12C,	//0x3F12C ~ 0x3F12E	(3 bytes)
++	.G_ILM_CHECKSUM_ADDR      = 0x3F100,	//0x3F100 ~ 0x3F103	(4 bytes)
++	.G_DLM_CHECKSUM_ADDR      = 0x3F104,	//0x3F104 ~ 0x3F107	(4 bytes)
++	.R_ILM_CHECKSUM_ADDR      = 0x3F120,	//0x3F120 ~ 0x3F123 (4 bytes)
++	.R_DLM_CHECKSUM_ADDR      = 0x3F124,	//0x3F124 ~ 0x3F127 (4 bytes)
++	.DMA_CRC_EN_ADDR          = 0x3F136,
++	.BLD_ILM_DLM_CRC_ADDR     = 0x3F133,
++	.DMA_CRC_FLAG_ADDR        = 0x3F134,
++};
++
++static const struct nvt_ts_mem_map NT36672A_memory_map = {
++	.EVENT_BUF_ADDR           = 0x21C00,
++	.RAW_PIPE0_ADDR           = 0x20000,
++	.RAW_PIPE1_ADDR           = 0x23000,
++	.BASELINE_ADDR            = 0x20BFC,
++	.BASELINE_BTN_ADDR        = 0x23BFC,
++	.DIFF_PIPE0_ADDR          = 0x206DC,
++	.DIFF_PIPE1_ADDR          = 0x236DC,
++	.RAW_BTN_PIPE0_ADDR       = 0x20510,
++	.RAW_BTN_PIPE1_ADDR       = 0x23510,
++	.DIFF_BTN_PIPE0_ADDR      = 0x20BF0,
++	.DIFF_BTN_PIPE1_ADDR      = 0x23BF0,
++	/* FW History */
++	.MMAP_HISTORY_EVENT0      = 0x218D6,
++	.MMAP_HISTORY_EVENT1      = 0x24B2D,
++	/* Phase 2 Host Download */
++	.BOOT_RDY_ADDR            = 0x3F10D,
++	/* BLD CRC */
++	.BLD_LENGTH_ADDR          = 0x3F10E,	//0x3F10E ~ 0x3F10F	(2 bytes)
++	.ILM_LENGTH_ADDR          = 0x3F118,	//0x3F118 ~ 0x3F119	(2 bytes)
++	.DLM_LENGTH_ADDR          = 0x3F130,	//0x3F130 ~ 0x3F131	(2 bytes)
++	.BLD_DES_ADDR             = 0x3F114,	//0x3F114 ~ 0x3F116	(3 bytes)
++	.ILM_DES_ADDR             = 0x3F128,	//0x3F128 ~ 0x3F12A	(3 bytes)
++	.DLM_DES_ADDR             = 0x3F12C,	//0x3F12C ~ 0x3F12E	(3 bytes)
++	.G_ILM_CHECKSUM_ADDR      = 0x3F100,	//0x3F100 ~ 0x3F103	(4 bytes)
++	.G_DLM_CHECKSUM_ADDR      = 0x3F104,	//0x3F104 ~ 0x3F107	(4 bytes)
++	.R_ILM_CHECKSUM_ADDR      = 0x3F120,	//0x3F120 ~ 0x3F123 (4 bytes)
++	.R_DLM_CHECKSUM_ADDR      = 0x3F124,	//0x3F124 ~ 0x3F127 (4 bytes)
++	.DMA_CRC_EN_ADDR          = 0x3F132,
++	.BLD_ILM_DLM_CRC_ADDR     = 0x3F133,
++	.DMA_CRC_FLAG_ADDR        = 0x3F134,
++};
++
++static const struct nvt_ts_mem_map NT36772_memory_map = {
++	.EVENT_BUF_ADDR           = 0x11E00,
++	.RAW_PIPE0_ADDR           = 0x10000,
++	.RAW_PIPE1_ADDR           = 0x12000,
++	.BASELINE_ADDR            = 0x10E70,
++	.BASELINE_BTN_ADDR        = 0x12E70,
++	.DIFF_PIPE0_ADDR          = 0x10830,
++	.DIFF_PIPE1_ADDR          = 0x12830,
++	.RAW_BTN_PIPE0_ADDR       = 0x10E60,
++	.RAW_BTN_PIPE1_ADDR       = 0x12E60,
++	.DIFF_BTN_PIPE0_ADDR      = 0x10E68,
++	.DIFF_BTN_PIPE1_ADDR      = 0x12E68,
++	/* FW History */
++	.MMAP_HISTORY_EVENT0      = 0,
++	.MMAP_HISTORY_EVENT1      = 0,
++	/* Phase 2 Host Download */
++	.BOOT_RDY_ADDR            = 0x1F141,
++	.POR_CD_ADDR              = 0x1F61C,
++	/* BLD CRC */
++	.R_ILM_CHECKSUM_ADDR      = 0x1BF00,
++};
++
++static const struct nvt_ts_mem_map NT36525_memory_map = {
++	.EVENT_BUF_ADDR           = 0x11A00,
++	.RAW_PIPE0_ADDR           = 0x10000,
++	.RAW_PIPE1_ADDR           = 0x12000,
++	.BASELINE_ADDR            = 0x10B08,
++	.BASELINE_BTN_ADDR        = 0x12B08,
++	.DIFF_PIPE0_ADDR          = 0x1064C,
++	.DIFF_PIPE1_ADDR          = 0x1264C,
++	.RAW_BTN_PIPE0_ADDR       = 0x10634,
++	.RAW_BTN_PIPE1_ADDR       = 0x12634,
++	.DIFF_BTN_PIPE0_ADDR      = 0x10AFC,
++	.DIFF_BTN_PIPE1_ADDR      = 0x12AFC,
++	/* FW History */
++	.MMAP_HISTORY_EVENT0      = 0,
++	.MMAP_HISTORY_EVENT1      = 0,
++	/* Phase 2 Host Download */
++	.BOOT_RDY_ADDR            = 0x1F141,
++	.POR_CD_ADDR              = 0x1F61C,
++	/* BLD CRC */
++	.R_ILM_CHECKSUM_ADDR      = 0x1BF00,
++};
++
++static const struct nvt_ts_mem_map NT36676F_memory_map = {
++	.EVENT_BUF_ADDR           = 0x11A00,
++	.RAW_PIPE0_ADDR           = 0x10000,
++	.RAW_PIPE1_ADDR           = 0x12000,
++	.BASELINE_ADDR            = 0x10B08,
++	.BASELINE_BTN_ADDR        = 0x12B08,
++	.DIFF_PIPE0_ADDR          = 0x1064C,
++	.DIFF_PIPE1_ADDR          = 0x1264C,
++	.RAW_BTN_PIPE0_ADDR       = 0x10634,
++	.RAW_BTN_PIPE1_ADDR       = 0x12634,
++	.DIFF_BTN_PIPE0_ADDR      = 0x10AFC,
++	.DIFF_BTN_PIPE1_ADDR      = 0x12AFC,
++	/* FW History */
++	.MMAP_HISTORY_EVENT0      = 0,
++	.MMAP_HISTORY_EVENT1      = 0,
++	/* Phase 2 Host Download */
++	.BOOT_RDY_ADDR            = 0x1F141,
++	.POR_CD_ADDR              = 0x1F61C,
++	/* BLD CRC */
++	.R_ILM_CHECKSUM_ADDR      = 0x1BF00,
++};
++
++static struct nvt_ts_hw_info NT36532_hw_info = {
++	.hw_crc    = HWCRC_LEN_3Bytes,
++	.auto_copy = CHECK_TX_AUTO_COPY_EN,
++	.use_gcm   = 1,
++	.hw_regs   = &hw_reg_addr_info,
++};
++
++static struct nvt_ts_hw_info NT36528_hw_info = {
++	.hw_crc    = HWCRC_LEN_3Bytes,
++	.auto_copy = AUTOCOPY_NOSUPPORT,
++	.hw_regs   = &hw_reg_addr_info_old_w_isp,
++};
++
++static struct nvt_ts_hw_info NT36523_hw_info = {
++	.hw_crc    = HWCRC_LEN_3Bytes,
++	.auto_copy = CHECK_SPI_DMA_TX_INFO,
++	.hw_regs   = &hw_reg_addr_info_old_w_isp,
++};
++
++static struct nvt_ts_hw_info NT36526_hw_info = {
++	.hw_crc    = HWCRC_LEN_3Bytes,
++	.auto_copy = AUTOCOPY_NOSUPPORT,
++	.hw_regs   = &hw_reg_addr_info_old_w_isp,
++};
++
++static struct nvt_ts_hw_info NT36675_hw_info = {
++	.hw_crc    = HWCRC_LEN_3Bytes,
++	.auto_copy = AUTOCOPY_NOSUPPORT,
++	.hw_regs   = &hw_reg_addr_info_old_w_isp,
++};
++
++static struct nvt_ts_hw_info NT36672A_hw_info = {
++	.hw_crc    = HWCRC_LEN_2Bytes,
++	.auto_copy = AUTOCOPY_NOSUPPORT,
++	.hw_regs   = &hw_reg_addr_info_old_w_isp,
++};
++
++static struct nvt_ts_hw_info NT36772_hw_info = {
++	.hw_crc    = HWCRC_NOSUPPORT,
++	.auto_copy = AUTOCOPY_NOSUPPORT,
++	.hw_regs   = &hw_reg_addr_info_legacy_w_isp,
++};
++
++static struct nvt_ts_hw_info NT36525_hw_info = {
++	.hw_crc    = HWCRC_NOSUPPORT,
++	.auto_copy = AUTOCOPY_NOSUPPORT,
++	.hw_regs   = &hw_reg_addr_info_legacy_w_isp,
++};
++
++static struct nvt_ts_hw_info NT36676F_hw_info = {
++	.hw_crc    = HWCRC_NOSUPPORT,
++	.auto_copy = AUTOCOPY_NOSUPPORT,
++	.hw_regs   = &hw_reg_addr_info_legacy_w_isp,
++};
++
++#define NVT_ID_BYTE_MAX 6
++struct nvt_ts_trim_id_table {
++	uint8_t id[NVT_ID_BYTE_MAX];
++	uint8_t mask[NVT_ID_BYTE_MAX];
++	const struct nvt_ts_mem_map *mmap;
++	const struct nvt_ts_mem_map *mmap_casc;
++	const struct nvt_ts_hw_info *hwinfo;
++};
++
++static const struct nvt_ts_trim_id_table trim_id_table[] = {
++/* tddi */
++	{.id = {0x0E, 0xFF, 0xFF, 0x32, 0x65, 0x03}, .mask = {1, 0, 0, 1, 1, 1},
++		.mmap = &NT36532_single_memory_map, .mmap_casc = &NT36532E_cascade_memory_map, .hwinfo = &NT36532_hw_info},
++	{.id = {0xFF, 0xFF, 0xFF, 0x32, 0x65, 0x03}, .mask = {0, 0, 0, 1, 1, 1},
++		.mmap = &NT36532_single_memory_map, .mmap_casc = &NT36532_cascade_memory_map, .hwinfo = &NT36532_hw_info},
++	{.id = {0x17, 0xFF, 0xFF, 0x23, 0x65, 0x03}, .mask = {1, 0, 0, 1, 1, 1},
++		.mmap = &NT36523N_memory_map,  .hwinfo = &NT36523_hw_info},
++	{.id = {0xFF, 0xFF, 0xFF, 0x77, 0x66, 0x03}, .mask = {0, 0, 0, 1, 1, 1},
++		.mmap = &NT36675_memory_map,  .hwinfo = &NT36675_hw_info},
++	{.id = {0xFF, 0xFF, 0xFF, 0x28, 0x65, 0x03}, .mask = {0, 0, 0, 1, 1, 1},
++		.mmap = &NT36528_memory_map,  .hwinfo = &NT36528_hw_info},
++	{.id = {0x0D, 0xFF, 0xFF, 0x72, 0x66, 0x03}, .mask = {1, 0, 0, 1, 1, 1},
++		.mmap = &NT36675_memory_map,  .hwinfo = &NT36675_hw_info},
++	{.id = {0x20, 0xFF, 0xFF, 0x72, 0x66, 0x03}, .mask = {1, 0, 0, 1, 1, 1},
++		.mmap = &NT36675_memory_map,  .hwinfo = &NT36675_hw_info},
++	{.id = {0x00, 0xFF, 0xFF, 0x80, 0x66, 0x03}, .mask = {1, 0, 0, 1, 1, 1},
++		.mmap = &NT36675_memory_map,  .hwinfo = &NT36675_hw_info},
++	{.id = {0x0C, 0xFF, 0xFF, 0x25, 0x65, 0x03}, .mask = {1, 0, 0, 1, 1, 1},
++		.mmap = &NT36672A_memory_map, .hwinfo = &NT36672A_hw_info},
++	{.id = {0x0E, 0xFF, 0xFF, 0x72, 0x66, 0x03}, .mask = {1, 0, 0, 1, 1, 1},
++		.mmap = &NT36675_memory_map,  .hwinfo = &NT36675_hw_info},
++	{.id = {0x20, 0xFF, 0xFF, 0x23, 0x65, 0x03}, .mask = {1, 0, 0, 1, 1, 1},
++		.mmap = &NT36523_memory_map,  .hwinfo = &NT36523_hw_info},
++	{.id = {0x0C, 0xFF, 0xFF, 0x23, 0x65, 0x03}, .mask = {1, 0, 0, 1, 1, 1},
++		.mmap = &NT36523_memory_map,  .hwinfo = &NT36523_hw_info},
++	{.id = {0x0B, 0xFF, 0xFF, 0x23, 0x65, 0x03}, .mask = {1, 0, 0, 1, 1, 1},
++		.mmap = &NT36523_memory_map,  .hwinfo = &NT36523_hw_info},
++	{.id = {0x0A, 0xFF, 0xFF, 0x23, 0x65, 0x03}, .mask = {1, 0, 0, 1, 1, 1},
++		.mmap = &NT36523_memory_map,  .hwinfo = &NT36523_hw_info},
++	{.id = {0xFF, 0xFF, 0xFF, 0x23, 0x65, 0x03}, .mask = {0, 0, 0, 1, 1, 1},
++		.mmap = &NT36523_memory_map,  .hwinfo = &NT36523_hw_info},
++	{.id = {0x0C, 0xFF, 0xFF, 0x72, 0x66, 0x03}, .mask = {1, 0, 0, 1, 1, 1},
++		.mmap = &NT36675_memory_map,  .hwinfo = &NT36675_hw_info},
++	{.id = {0xFF, 0xFF, 0xFF, 0x26, 0x65, 0x03}, .mask = {0, 0, 0, 1, 1, 1},
++		.mmap = &NT36526_memory_map,  .hwinfo = &NT36526_hw_info},
++	{.id = {0xFF, 0xFF, 0xFF, 0x75, 0x66, 0x03}, .mask = {0, 0, 0, 1, 1, 1},
++		.mmap = &NT36675_memory_map,  .hwinfo = &NT36675_hw_info},
++	{.id = {0x0B, 0xFF, 0xFF, 0x72, 0x66, 0x03}, .mask = {1, 0, 0, 1, 1, 1},
++		.mmap = &NT36672A_memory_map, .hwinfo = &NT36672A_hw_info},
++	{.id = {0x0B, 0xFF, 0xFF, 0x82, 0x66, 0x03}, .mask = {1, 0, 0, 1, 1, 1},
++		.mmap = &NT36672A_memory_map, .hwinfo = &NT36672A_hw_info},
++	{.id = {0x0B, 0xFF, 0xFF, 0x25, 0x65, 0x03}, .mask = {1, 0, 0, 1, 1, 1},
++		.mmap = &NT36672A_memory_map, .hwinfo = &NT36672A_hw_info},
++	{.id = {0x0A, 0xFF, 0xFF, 0x72, 0x65, 0x03}, .mask = {1, 0, 0, 1, 1, 1},
++		.mmap = &NT36672A_memory_map, .hwinfo = &NT36672A_hw_info},
++	{.id = {0x0A, 0xFF, 0xFF, 0x72, 0x66, 0x03}, .mask = {1, 0, 0, 1, 1, 1},
++		.mmap = &NT36672A_memory_map, .hwinfo = &NT36672A_hw_info},
++	{.id = {0x0A, 0xFF, 0xFF, 0x82, 0x66, 0x03}, .mask = {1, 0, 0, 1, 1, 1},
++		.mmap = &NT36672A_memory_map, .hwinfo = &NT36672A_hw_info},
++	{.id = {0x0A, 0xFF, 0xFF, 0x70, 0x66, 0x03}, .mask = {1, 0, 0, 1, 1, 1},
++		.mmap = &NT36672A_memory_map, .hwinfo = &NT36672A_hw_info},
++	{.id = {0x0B, 0xFF, 0xFF, 0x70, 0x66, 0x03}, .mask = {1, 0, 0, 1, 1, 1},
++		.mmap = &NT36672A_memory_map, .hwinfo = &NT36672A_hw_info},
++	{.id = {0x0A, 0xFF, 0xFF, 0x72, 0x67, 0x03}, .mask = {1, 0, 0, 1, 1, 1},
++		.mmap = &NT36672A_memory_map, .hwinfo = &NT36672A_hw_info},
++	{.id = {0x55, 0x00, 0xFF, 0x00, 0x00, 0x00}, .mask = {1, 1, 0, 1, 1, 1},
++		.mmap = &NT36772_memory_map,  .hwinfo = &NT36772_hw_info},
++	{.id = {0x55, 0x72, 0xFF, 0x00, 0x00, 0x00}, .mask = {1, 1, 0, 1, 1, 1},
++		.mmap = &NT36772_memory_map,  .hwinfo = &NT36772_hw_info},
++	{.id = {0xAA, 0x00, 0xFF, 0x00, 0x00, 0x00}, .mask = {1, 1, 0, 1, 1, 1},
++		.mmap = &NT36772_memory_map,  .hwinfo = &NT36772_hw_info},
++	{.id = {0xAA, 0x72, 0xFF, 0x00, 0x00, 0x00}, .mask = {1, 1, 0, 1, 1, 1},
++		.mmap = &NT36772_memory_map,  .hwinfo = &NT36772_hw_info},
++	{.id = {0xFF, 0xFF, 0xFF, 0x72, 0x67, 0x03}, .mask = {0, 0, 0, 1, 1, 1},
++		.mmap = &NT36772_memory_map,  .hwinfo = &NT36772_hw_info},
++	{.id = {0xFF, 0xFF, 0xFF, 0x70, 0x66, 0x03}, .mask = {0, 0, 0, 1, 1, 1},
++		.mmap = &NT36772_memory_map,  .hwinfo = &NT36772_hw_info},
++	{.id = {0xFF, 0xFF, 0xFF, 0x70, 0x67, 0x03}, .mask = {0, 0, 0, 1, 1, 1},
++		.mmap = &NT36772_memory_map,  .hwinfo = &NT36772_hw_info},
++	{.id = {0xFF, 0xFF, 0xFF, 0x72, 0x66, 0x03}, .mask = {0, 0, 0, 1, 1, 1},
++		.mmap = &NT36772_memory_map,  .hwinfo = &NT36772_hw_info},
++	{.id = {0xFF, 0xFF, 0xFF, 0x25, 0x65, 0x03}, .mask = {0, 0, 0, 1, 1, 1},
++		.mmap = &NT36525_memory_map,  .hwinfo = &NT36525_hw_info},
++	{.id = {0xFF, 0xFF, 0xFF, 0x76, 0x66, 0x03}, .mask = {0, 0, 0, 1, 1, 1},
++		.mmap = &NT36676F_memory_map, .hwinfo = &NT36676F_hw_info}
++};
+diff --git a/drivers/input/touchscreen/nt36532e/test_thp_control.py b/drivers/input/touchscreen/nt36532e/test_thp_control.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..52c11349b630cdec6c02d958f39a8c83f7b3e004
+--- /dev/null
++++ b/drivers/input/touchscreen/nt36532e/test_thp_control.py
+@@ -0,0 +1,325 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: GPL-2.0
++"""Exercise the real THP control functions with a scripted SPI/IRQ transport.
++
++Run with python3 test_thp_control.py. No device access or kernel build is used.
++The harness compiles functions extracted from nt36xxx.c, so it tests production
++retry/cleanup/state transitions rather than a second protocol implementation.
++"""
++from pathlib import Path
++import os
++import re
++import subprocess
++import tempfile
++
++
++def function(source, name):
++    match = re.search(r"^(?:static )?(?:int|bool|void|ssize_t) " + name +
++                      r"\(", source, re.MULTILINE)
++    if not match:
++        raise RuntimeError("Missing production function: " + name)
++    opening = source.index("{", match.start())
++    depth = 1
++    cursor = opening + 1
++    while depth:
++        depth += (source[cursor] == "{") - (source[cursor] == "}")
++        cursor += 1
++    return source[match.start():cursor]
++
++
++PRELUDE = r"""
++#include <assert.h>
++#include <errno.h>
++#include <stdbool.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/types.h>
++typedef uint8_t u8;
++typedef uint16_t u16;
++typedef uint32_t u32;
++#define EVENT_MAP_HOST_CMD 0x50
++#define NVT_IC_SUSPEND_IN 1
++#define NVT_IC_SUSPEND_OUT 2
++#define __user
++#define NVT_ERR(...) do {} while (0)
++struct file {};
++struct spi_device { int irq; };
++struct nvt_ts_mem_map { u32 EVENT_BUF_ADDR; };
++struct nvt_ts_data {
++    struct spi_device *client;
++    struct nvt_ts_mem_map *mmap;
++    int lock, ic_state;
++    bool dev_pm_suspend, irq_enabled, thp_firmware_ready;
++    bool thp_game_valid, thp_game_prior_valid;
++    u8 fw_ver, thp_game_fw_ver, thp_game_requested, thp_game_prior;
++    u16 nvt_pid, thp_game_fw_pid;
++    u32 thp_firmware_crc, thp_game_fw_crc;
++};
++static struct spi_device client = { .irq = 7 };
++static struct nvt_ts_mem_map mmap = { .EVENT_BUF_ADDR = 0x11c400 };
++static struct nvt_ts_data state, *ts = &state;
++static u8 bTouchIsAwake;
++static int irq_depth, sleeps;
++struct step {
++    char kind;
++    int error, len;
++    u8 cmd, status;
++    bool read;
++    u16 value;
++    u32 addr;
++};
++static struct step steps[256];
++static int step_count, step_cursor;
++static struct step *take(char kind)
++{
++    assert(step_cursor < step_count);
++    struct step *s = &steps[step_cursor++];
++    assert(s->kind == kind);
++    return s;
++}
++static void plan_page(u32 addr, int error)
++{
++    steps[step_count++] = (struct step){ .kind='P', .addr=addr, .error=error };
++}
++static void plan_write(u8 cmd, bool read, u16 value, int error)
++{
++    steps[step_count++] = (struct step){
++        .kind='W', .cmd=cmd, .read=read, .value=value, .error=error };
++}
++static void plan_read(bool read, u8 status, u16 value, int error)
++{
++    steps[step_count++] = (struct step){
++        .kind='R', .len=read ? 6 : 2, .status=status, .value=value, .error=error };
++}
++static void plan_command(u8 cmd, bool read, u16 value, u16 response)
++{
++    plan_page(mmap.EVENT_BUF_ADDR | 0x50, 0);
++    plan_write(cmd, read, value, 0);
++    plan_read(read, 0, response, 0);
++    plan_page(mmap.EVENT_BUF_ADDR, 0);
++}
++static void plan_game(bool read, u16 value)
++{
++    plan_command(0x0f, read, read ? 0 : value, read ? value : 0);
++}
++static void plan_game_write_error(u16 value)
++{
++    plan_page(mmap.EVENT_BUF_ADDR | 0x50, 0);
++    plan_write(0x0f, false, value, -EIO);
++    plan_page(mmap.EVENT_BUF_ADDR, 0);
++}
++static int nvt_set_page(u32 addr)
++{
++    struct step *s = take('P');
++    assert(s->addr == addr);
++    return s->error;
++}
++static int CTP_SPI_WRITE(struct spi_device *dev, u8 *buf, int len)
++{
++    struct step *s = take('W');
++    assert(dev == &client && len == (s->read ? 4 : 6));
++    assert(buf[0] == 0x50 && buf[1] == 0xbf && buf[2] == s->cmd);
++    assert(buf[3] == (s->read ? 1 : 0));
++    if (!s->read)
++        assert(buf[4] == (s->value & 255) && buf[5] == (s->value >> 8));
++    buf[0] |= 0x80; /* The production SPI wrapper mutates the write offset. */
++    return s->error;
++}
++static int CTP_SPI_READ(struct spi_device *dev, u8 *buf, int len)
++{
++    struct step *s = take('R');
++    assert(dev == &client && len == s->len);
++    assert(buf[0] == 0x50 && buf[1] == 0xff);
++    for (int i=2; i<len; i++) assert(buf[i] == 0);
++    if (!s->error) {
++        buf[1] = s->status;
++        if (len == 6) { buf[4] = s->value & 255; buf[5] = s->value >> 8; }
++    }
++    return s->error;
++}
++static void usleep_range(int lower, int upper)
++{
++    assert(lower == 10000 && upper == 11000);
++    sleeps++;
++}
++static u16 get_unaligned_le16(const void *ptr)
++{
++    const u8 *p = ptr;
++    return p[0] | (p[1] << 8);
++}
++static void disable_irq(int irq) { assert(irq == 7); irq_depth++; }
++static void enable_irq(int irq) { assert(irq == 7 && irq_depth > 0); irq_depth--; }
++static void mutex_lock(int *lock) { assert(!*lock); *lock = 1; }
++static void mutex_unlock(int *lock) { assert(*lock); *lock = 0; }
++static int kstrtou8_from_user(const char *buf, size_t count, int base, u8 *value)
++{
++    char tmp[32], *end;
++    if (!count || count >= sizeof(tmp)) return -EINVAL;
++    memcpy(tmp, buf, count); tmp[count]=0;
++    unsigned long result = strtoul(tmp, &end, base);
++    if (end == tmp || (*end && strcmp(end, "\n")) || result > 255) return -EINVAL;
++    *value = result;
++    return 0;
++}
++static void reset(void)
++{
++    assert(step_cursor == step_count);
++    state = (struct nvt_ts_data){
++        .client=&client, .mmap=&mmap, .irq_enabled=true,
++        .thp_firmware_ready=true, .fw_ver=0x13, .nvt_pid=0x59b0,
++        .thp_firmware_crc=0x12345678 };
++    bTouchIsAwake=1; irq_depth=0; step_count=0; step_cursor=0; sleeps=0;
++}
++static void confirmed_request(u8 value)
++{
++    ts->thp_game_valid=true; ts->thp_game_requested=value;
++    ts->thp_game_fw_crc=ts->thp_firmware_crc;
++    ts->thp_game_fw_ver=ts->fw_ver; ts->thp_game_fw_pid=ts->nvt_pid;
++}
++"""
++
++TESTS = r"""
++int main(void)
++{
++    u16 value=0x9999;
++    reset();
++    plan_command(0x0a, true, 0, 0x0168);
++    assert(!nvt_thp_extended_cmd(0x0a, true, &value) && value == 360);
++    assert(sleeps == 1); /* A returned 360 is data, not a guessed setter. */
++
++    reset();
++    plan_page(mmap.EVENT_BUF_ADDR | 0x50, 0);
++    plan_write(0x09, true, 0, 0);
++    plan_read(true, 0xbf, 0, 0); plan_read(true, 0xbf, 0, 0);
++    plan_read(true, 0, 0xabcd, 0); plan_page(mmap.EVENT_BUF_ADDR, 0);
++    assert(!nvt_thp_extended_cmd(0x09, true, &value) && value == 0xabcd);
++    assert(sleeps == 3); /* Pending requests are polled without resubmission. */
++
++    reset();
++    plan_page(mmap.EVENT_BUF_ADDR | 0x50, 0);
++    plan_write(0x08, true, 0, 0); plan_read(true, 0x7f, 0, 0);
++    plan_write(0x08, true, 0, 0); plan_read(true, 0, 4, 0);
++    plan_page(mmap.EVENT_BUF_ADDR, 0);
++    assert(!nvt_thp_extended_cmd(0x08, true, &value) && value == 4);
++
++    reset(); value=123;
++    plan_page(mmap.EVENT_BUF_ADDR | 0x50, 0); plan_write(0x0a, true, 0, 0);
++    for (int i=0; i<10; i++) plan_read(true, 0xbf, 0, 0);
++    plan_page(mmap.EVENT_BUF_ADDR, 0);
++    assert(nvt_thp_extended_cmd(0x0a, true, &value) == -ETIMEDOUT);
++    assert(value == 123 && sleeps == 10);
++
++    reset();
++    plan_page(mmap.EVENT_BUF_ADDR | 0x50, -EIO);
++    plan_page(mmap.EVENT_BUF_ADDR, -ENOSPC);
++    assert(nvt_thp_extended_cmd(0x0a, true, &value) == -EIO);
++    reset();
++    plan_page(mmap.EVENT_BUF_ADDR | 0x50, 0); plan_write(0x0a, true, 0, -EIO);
++    plan_page(mmap.EVENT_BUF_ADDR, 0);
++    assert(nvt_thp_extended_cmd(0x0a, true, &value) == -EIO);
++    reset();
++    plan_page(mmap.EVENT_BUF_ADDR | 0x50, 0); plan_write(0x0a, true, 0, 0);
++    plan_read(true, 0, 360, -EIO); plan_page(mmap.EVENT_BUF_ADDR, 0);
++    assert(nvt_thp_extended_cmd(0x0a, true, &value) == -EIO && value == 123);
++    reset();
++    plan_page(mmap.EVENT_BUF_ADDR | 0x50, 0); plan_write(0x0a, true, 0, 0);
++    plan_read(true, 0, 360, 0); plan_page(mmap.EVENT_BUF_ADDR, -ENOSPC);
++    assert(nvt_thp_extended_cmd(0x0a, true, &value) == -ENOSPC && value == 123);
++    puts("PASS: vendor packets, pending/resubmit ACKs, timeout, SPI/page cleanup");
++
++    reset(); ts->thp_firmware_ready=false;
++    assert(nvt_thp_control_begin() == -EAGAIN && !irq_depth && !ts->lock);
++    reset(); bTouchIsAwake=0;
++    assert(nvt_thp_control_begin() == -EAGAIN && !irq_depth && !ts->lock);
++    reset(); ts->dev_pm_suspend=true;
++    assert(nvt_thp_control_begin() == -EAGAIN && !irq_depth && !ts->lock);
++    reset(); ts->ic_state=NVT_IC_SUSPEND_IN;
++    assert(nvt_thp_control_begin() == -EAGAIN && !irq_depth && !ts->lock);
++    reset(); irq_depth=1; ts->irq_enabled=false;
++    assert(!nvt_thp_control_begin() && irq_depth == 2 && ts->lock);
++    nvt_thp_control_end();
++    assert(irq_depth == 1 && !ts->lock && !ts->irq_enabled);
++    puts("PASS: not-ready/suspend gates and preservation of an existing IRQ disable");
++
++    reset();
++    assert(nvt_thp_game_write(NULL, "2", 1, NULL) == -EINVAL && !irq_depth);
++    assert(nvt_thp_game_rollback_write(NULL, "1", 1, NULL) == -ENODATA);
++    assert(!irq_depth && !ts->lock);
++    plan_game(true, 0); plan_game(false, 1); plan_game(true, 1);
++    assert(nvt_thp_game_write(NULL, "1", 1, NULL) == 1);
++    assert(ts->thp_game_valid && ts->thp_game_prior_valid);
++    assert(ts->thp_game_requested == 1 && ts->thp_game_prior == 0);
++    assert(!irq_depth && !ts->lock);
++    plan_game(true, 1); plan_game(false, 1); plan_game(true, 1);
++    assert(nvt_thp_game_write(NULL, "1", 1, NULL) == 1);
++    assert(ts->thp_game_prior == 0); /* Idempotent writes keep the baseline. */
++    plan_game(true, 1); plan_game(false, 0); plan_game(true, 0);
++    assert(nvt_thp_game_write(NULL, "0", 1, NULL) == 1);
++    assert(ts->thp_game_prior == 0); /* Opposite writes also keep the baseline. */
++    plan_game(true, 0); plan_game(false, 0); plan_game(true, 0);
++    assert(nvt_thp_game_rollback_write(NULL, "1", 1, NULL) == 1);
++    assert(!ts->thp_game_prior_valid && ts->thp_game_requested == 0);
++    assert(!irq_depth && !ts->lock);
++    puts("PASS: typed 0/1 writes, readback validation, oldest baseline and rollback");
++
++    reset();
++    plan_game(true, 2);
++    assert(nvt_thp_game_write(NULL, "1", 1, NULL) == -ERANGE);
++    assert(!ts->thp_game_valid && !irq_depth && !ts->lock);
++    reset();
++    plan_game(true, 0); plan_game(false, 1); plan_game(true, 0);
++    plan_game(false, 0); plan_game(true, 0);
++    assert(nvt_thp_game_write(NULL, "1", 1, NULL) == -EIO);
++    assert(!ts->thp_game_valid && !irq_depth && !ts->lock);
++    reset(); confirmed_request(0); ts->thp_game_prior_valid=true;
++    plan_game(true, 0); plan_game_write_error(1); plan_game_write_error(0);
++    assert(nvt_thp_game_write(NULL, "1", 1, NULL) == -EIO);
++    assert(!ts->thp_game_valid && !ts->thp_game_prior_valid);
++    assert(!irq_depth && !ts->lock);
++    puts("PASS: out-of-range/readback failures and uncertain rollback invalidate state");
++
++    reset(); nvt_thp_restore_game(); /* Default: no automatic command. */
++    confirmed_request(1); ts->thp_firmware_crc++;
++    nvt_thp_restore_game();
++    assert(!ts->thp_game_valid && !ts->thp_game_prior_valid);
++    reset(); confirmed_request(1); ts->fw_ver++;
++    nvt_thp_restore_game(); assert(!ts->thp_game_valid);
++    reset(); confirmed_request(1); ts->nvt_pid++;
++    nvt_thp_restore_game(); assert(!ts->thp_game_valid);
++    reset(); confirmed_request(1); ts->thp_firmware_ready=false;
++    nvt_thp_restore_game(); assert(!ts->thp_game_valid);
++    reset(); confirmed_request(1); ts->thp_game_prior_valid=true; ts->thp_game_prior=0;
++    plan_game(true, 0); plan_game(false, 1); plan_game(true, 1);
++    nvt_thp_restore_game();
++    assert(ts->thp_game_valid && ts->thp_game_requested == 1);
++    assert(ts->thp_game_prior_valid && ts->thp_game_prior == 0);
++    assert(step_cursor == step_count);
++    puts("PASS: restore only a validated request for matching downloaded firmware");
++    return 0;
++}
++"""
++
++
++def main():
++    source = Path(__file__).with_name("nt36xxx.c").read_text()
++    names = [
++        "nvt_thp_extended_cmd", "nvt_thp_control_begin", "nvt_thp_control_end",
++        "nvt_thp_game_firmware_matches", "nvt_thp_game_forget",
++        "nvt_thp_game_get", "nvt_thp_game_apply", "nvt_thp_restore_game",
++        "nvt_thp_game_write", "nvt_thp_game_rollback_write",
++    ]
++    with tempfile.TemporaryDirectory(prefix="nvt-thp-control-") as directory:
++        path = Path(directory)
++        c = path / "test.c"
++        c.write_text(PRELUDE + "\n".join(function(source, n) for n in names) + TESTS)
++        executable = path / "test"
++        subprocess.run([os.environ.get("CC", "cc"), "-std=gnu11", "-Wall", "-Wextra",
++                        "-Werror", "-Wno-unused-parameter", str(c), "-o",
++                        str(executable)], check=True)
++        subprocess.run([str(executable)], check=True)
++
++
++if __name__ == "__main__":
++    main()

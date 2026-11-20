@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: soc: qcom: select Piano PMIC GLINK support
+
+Connect the Piano device compatible to the PMIC GLINK transport.
+
+The port retains changes from these linux-piano commits:
+piano: NT36532 THP touch bring-up (milestone-touch) (#11) (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+
+Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/00b055cd9c1634371cd501530ba5c29de4ab91d4
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ drivers/soc/qcom/pmic_glink.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/soc/qcom/pmic_glink.c b/drivers/soc/qcom/pmic_glink.c
+index 3042261578aad8dcb45e8803fd2ffb249aeace26..0cbc55d799e3aeb98021234c7c25df1bd932c9e8 100644
+--- a/drivers/soc/qcom/pmic_glink.c
++++ b/drivers/soc/qcom/pmic_glink.c
+@@ -407,6 +407,8 @@ static const struct of_device_id pmic_glink_of_match[] = {
+ 	{ .compatible = "qcom,glymur-pmic-glink", .data = &pmic_glink_soccp_data },
+ 	{ .compatible = "qcom,kaanapali-pmic-glink", .data = &pmic_glink_soccp_data },
+ 	{ .compatible = "qcom,pmic-glink", .data = &pmic_glink_adsp_data },
++	/* piano: the stock vendor node uses qcom,qti-pmic-glink */
++	{ .compatible = "qcom,qti-pmic-glink", .data = &pmic_glink_adsp_data },
+ 	{}
+ };
+ MODULE_DEVICE_TABLE(of, pmic_glink_of_match);

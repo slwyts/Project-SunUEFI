@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Aniket Randive <aniket.randive@oss.qualcomm.com>
+Date: Wed, 19 Aug 2026 11:39:31 +0000
+Subject: dmaengine: qcom: gpi: Fix resource leaks as part of channel clean up
+
+The gpi_ch_init() error handling paths do not fully clean up resources
+when channel initialization fails.
+
+The unwind paths iterate over the original channel pointer instead of
+the channels stored in gpii->gchan[], preventing previously initialized
+sibling channels from being properly reset and deallocated.
+
+In addition, gpi_alloc_chan_resources() allocates ch_ring before calling
+gpi_ch_init(), but does not release it when initialization fails,
+resulting in a memory leak.
+
+The event ring cleanup path also leaves the PM state unchanged after
+freeing the ring. As a result, subsequent cleanup may incorrectly assume
+that the ring is still allocated, leading to a redundant EV_CMD_DEALLOC
+command and an attempt to deallocate an already released ring.
+
+Fix the unwind paths to operate on the correct channels, release
+ch_ring when channel initialization fails, and restore the event ring
+PM state after freeing the ring.
+
+Signed-off-by: Aniket Randive <aniket.randive@oss.qualcomm.com>
+Reviewed-by: Frank Li <Frank.Li@nxp.com>
+Reviewed-by: Mukesh Kumar Savaliya <mukesh.savaliya@oss.qualcomm.com>
+Reviewed-by: Praveen Talari <praveen.talari@oss.qualcomm.com>
+Link: https://patch.msgid.link/20260810-gpi_bug_fix-v2-1-60555394cbf9@oss.qualcomm.com
+Link: https://patch.msgid.link/20260819-gpi_bug_fix-v3-1-4c97333e6f5b@oss.qualcomm.com
+Signed-off-by: Vinod Koul <vkoul@kernel.org>
+Link: https://github.com/torvalds/linux/commit/dd27c3f4d6108556b74b5f3f4d1d885269e7ffa3
+---
+ drivers/dma/qcom/gpi.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/dma/qcom/gpi.c b/drivers/dma/qcom/gpi.c
+index a5055a6273af62543532c41620556503dab35ea0..c41bfac65ddf3fef39cf1ff61e91af45894267f6 100644
+--- a/drivers/dma/qcom/gpi.c
++++ b/drivers/dma/qcom/gpi.c
+@@ -1965,16 +1965,19 @@ static int gpi_ch_init(struct gchan *gchan)
+ error_start_chan:
+ 	for (i = i - 1; i >= 0; i--) {
+ 		gpi_stop_chan(&gpii->gchan[i]);
+-		gpi_send_cmd(gpii, gchan, GPI_CH_CMD_RESET);
++		gpi_send_cmd(gpii, &gpii->gchan[i], GPI_CH_CMD_RESET);
+ 	}
+ 	i = 2;
+ error_alloc_chan:
+ 	for (i = i - 1; i >= 0; i--)
+-		gpi_reset_chan(gchan, GPI_CH_CMD_DE_ALLOC);
++		gpi_reset_chan(&gpii->gchan[i], GPI_CH_CMD_DE_ALLOC);
+ error_alloc_ev_ring:
+ 	gpi_disable_interrupts(gpii);
+ error_config_int:
+ 	gpi_free_ring(&gpii->ev_ring, gpii);
++	write_lock_irq(&gpii->pm_lock);
++	gpii->pm_state = DISABLE_STATE;
++	write_unlock_irq(&gpii->pm_lock);
+ exit_gpi_init:
+ 	return ret;
+ }
+@@ -2065,6 +2068,8 @@ static int gpi_alloc_chan_resources(struct dma_chan *chan)
+ 		goto xfer_alloc_err;
+ 
+ 	ret = gpi_ch_init(gchan);
++	if (ret)
++		gpi_free_ring(&gchan->ch_ring, gpii);
+ 
+ 	mutex_unlock(&gpii->ctrl_lock);
+ 

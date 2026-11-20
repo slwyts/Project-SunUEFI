@@ -1,0 +1,107 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: dt-bindings: input: describe Nanosic WN8030
+
+Document the Nanosic keyboard cover controller binding.
+
+The port retains changes from these linux-piano commits:
+piano: Nanosic WN8030 keyboard cover driver with the piano variant (#17) (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+
+Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/f8afe7ff7127f46f5339fdaf5c24ecbffbfbb92b
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ .../bindings/input/nanosic,wn8030.yaml        | 82 +++++++++++++++++++
+ 1 file changed, 82 insertions(+)
+ create mode 100644 Documentation/devicetree/bindings/input/nanosic,wn8030.yaml
+
+diff --git a/Documentation/devicetree/bindings/input/nanosic,wn8030.yaml b/Documentation/devicetree/bindings/input/nanosic,wn8030.yaml
+new file mode 100644
+index 0000000000000000000000000000000000000000..b4286d91ce6be91ac38d146672347caaaee0384f
+--- /dev/null
++++ b/Documentation/devicetree/bindings/input/nanosic,wn8030.yaml
+@@ -0,0 +1,82 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/input/nanosic,wn8030.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Nanosic WN8030 keyboard cover MCU
++
++maintainers:
++  - bluseliu50 <bluseliu50@gmail.com>
++
++description:
++  The WN8030 is an I2C-attached microcontroller that bridges a detachable
++  keyboard cover (keyboard, touchpad and their LEDs) to the host over pogo
++  pins. It boots from RAM, so the host downloads its firmware through the
++  MCU bootloader every time the MCU is powered up or reset. The keyboard
++  and touchpad are then exposed as HID devices. The board variant selects
++  the report descriptors, the command register and the power-up timing.
++
++properties:
++  compatible:
++    enum:
++      - nanosic,wn8030-piano
++      - nanosic,wn8030-sheng
++
++  reg:
++    maxItems: 1
++
++  interrupts:
++    maxItems: 1
++    description: Data-ready line, rising edge.
++
++  reset-gpios:
++    maxItems: 1
++
++  sleep-gpios:
++    maxItems: 1
++    description: Keeps the MCU awake while deasserted.
++
++  status-gpios:
++    maxItems: 1
++    description: Cover attach status reported by the MCU.
++
++  vddio-supply:
++    description: 1.8 V I/O and I2C pull-up supply.
++
++  dvdd-supply:
++    description: 3.3 V MCU supply. It is switched on only after vddio.
++
++required:
++  - compatible
++  - reg
++  - interrupts
++  - reset-gpios
++  - sleep-gpios
++  - status-gpios
++  - vddio-supply
++  - dvdd-supply
++
++additionalProperties: false
++
++examples:
++  - |
++    #include <dt-bindings/gpio/gpio.h>
++    #include <dt-bindings/interrupt-controller/irq.h>
++
++    i2c {
++        #address-cells = <1>;
++        #size-cells = <0>;
++
++        keyboard@4c {
++            compatible = "nanosic,wn8030-piano";
++            reg = <0x4c>;
++            interrupts-extended = <&tlmm 97 IRQ_TYPE_EDGE_RISING>;
++            reset-gpios = <&tlmm 188 GPIO_ACTIVE_LOW>;
++            sleep-gpios = <&tlmm 3 GPIO_ACTIVE_LOW>;
++            status-gpios = <&tlmm 95 GPIO_ACTIVE_HIGH>;
++            vddio-supply = <&vreg_l11b_1p8>;
++            dvdd-supply = <&vreg_l14b_3p3>;
++        };
++    };
++...

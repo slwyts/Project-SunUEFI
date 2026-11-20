@@ -1,0 +1,95 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: dt-bindings: backlight: describe Piano KTZ8866 supplies
+
+Describe the two backlight controllers and their supply sequencing.
+
+The port retains changes from these linux-piano commits:
+piano: native display (NT36532 DSC) and Adreno 830 GPU (#14) (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+
+Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/5c2c95fddbe9c29720b7b4e84119357358e9f0cb
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ .../leds/backlight/kinetic,ktz8866.yaml       | 59 ++++++++++++++++++-
+ 1 file changed, 56 insertions(+), 3 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/leds/backlight/kinetic,ktz8866.yaml b/Documentation/devicetree/bindings/leds/backlight/kinetic,ktz8866.yaml
+index c914e12769825f9436657c8f9153cbee32ecc5cf..78d0f039bd5febbc6062dc59e69b5b73d24e7eb6 100644
+--- a/Documentation/devicetree/bindings/leds/backlight/kinetic,ktz8866.yaml
++++ b/Documentation/devicetree/bindings/leds/backlight/kinetic,ktz8866.yaml
+@@ -55,12 +55,37 @@ properties:
+     description: Set if we want to output bias power supply for LCD.
+     type: boolean
+ 
++  kinetic,secondary-backlight:
++    description:
++      Second KTZ8866 driving the other half of the LED strings of the same
++      panel. Every register write to this chip is mirrored to it.
++    $ref: /schemas/types.yaml#/definitions/phandle
++
++  kinetic,secondary:
++    description:
++      This chip is programmed only through the primary chip that references
++      it with kinetic,secondary-backlight and does not provide a backlight
++      device on its own.
++    type: boolean
++
+ required:
+   - compatible
+   - reg
+-  - vddpos-supply
+-  - vddneg-supply
+-  - enable-gpios
++
++if:
++  required:
++    - kinetic,secondary
++then:
++  properties:
++    vddpos-supply: false
++    vddneg-supply: false
++    enable-gpios: false
++    kinetic,secondary-backlight: false
++else:
++  required:
++    - vddpos-supply
++    - vddneg-supply
++    - enable-gpios
+ 
+ unevaluatedProperties: false
+ 
+@@ -84,3 +109,31 @@ examples:
+             kinetic,enable-lcd-bias;
+         };
+     };
++  - |
++    #include <dt-bindings/gpio/gpio.h>
++
++    i2c {
++        #address-cells = <1>;
++        #size-cells = <0>;
++
++        backlight@11 {
++            compatible = "kinetic,ktz8866";
++            reg = <0x11>;
++            vddpos-supply = <&bl_vddpos>;
++            vddneg-supply = <&bl_vddneg>;
++            enable-gpios = <&tlmm 2 GPIO_ACTIVE_HIGH>;
++            current-num-sinks = <6>;
++            kinetic,secondary-backlight = <&backlight_secondary>;
++        };
++    };
++
++    i2c-1 {
++        #address-cells = <1>;
++        #size-cells = <0>;
++
++        backlight_secondary: backlight@11 {
++            compatible = "kinetic,ktz8866";
++            reg = <0x11>;
++            kinetic,secondary;
++        };
++    };

@@ -1,0 +1,301 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Tue, 10 Nov 2026 23:43:19 +0800
+Subject: power: supply: restore BQ polling after a failed suspend
+
+Rearm gauge work when disabling fast-charge mode fails during suspend, since PM rollback does not resume the failed device. Cover both MAC write failures and successful/no-key paths with the actual PM callback under UML.
+
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+---
+ drivers/power/supply/Kconfig                |  11 +
+ drivers/power/supply/bq27xxx_battery.c      |   7 +
+ drivers/power/supply/bq27xxx_battery_test.c | 233 ++++++++++++++++++++
+ 3 files changed, 251 insertions(+)
+ create mode 100644 drivers/power/supply/bq27xxx_battery_test.c
+
+diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
+index fd3caba7ccc9a228add5f5c996b94f943c1c83ae..4db04f8a4a2cee23f133be68766945b3ec159911 100644
+--- a/drivers/power/supply/Kconfig
++++ b/drivers/power/supply/Kconfig
+@@ -349,6 +349,17 @@ config BATTERY_BQ27XXX
+ 	help
+ 	  Say Y here to enable support for batteries with BQ27xxx chips.
+ 
++config BATTERY_BQ27XXX_KUNIT_TEST
++	bool "KUnit tests for BQ27xxx suspend recovery" if !KUNIT_ALL_TESTS
++	depends on KUNIT=y && UML && PM_SLEEP
++	select BATTERY_BQ27XXX
++	default KUNIT_ALL_TESTS
++	help
++	  Exercise the actual gauge suspend callback with a virtual MAC bus.
++	  Check that a failed fast-charge-mode write restores polling after
++	  an aborted suspend. Verify both MAC writes and the normal suspend
++	  path. Run only in UML to avoid real battery hardware.
++
+ config BATTERY_BQ27XXX_I2C
+ 	tristate "BQ27xxx I2C support"
+ 	depends on BATTERY_BQ27XXX
+diff --git a/drivers/power/supply/bq27xxx_battery.c b/drivers/power/supply/bq27xxx_battery.c
+index 3e667dbe346c75f2d4110cca71c362ee785361db..49222970c1aac10fbd6f966968b18251d4a19fe8 100644
+--- a/drivers/power/supply/bq27xxx_battery.c
++++ b/drivers/power/supply/bq27xxx_battery.c
+@@ -2514,6 +2514,9 @@ static int bq27xxx_battery_suspend(struct device *dev)
+ 		ret = bq27z561_set_charge_mode(di, false);
+ 		mutex_unlock(&di->lock);
+ 	}
++	/* A failed suspend is not followed by this device's resume callback. */
++	if (ret)
++		schedule_delayed_work(&di->work, 0);
+ 	return ret;
+ }
+ 
+@@ -2537,6 +2540,10 @@ SIMPLE_DEV_PM_OPS(bq27xxx_battery_battery_pm_ops,
+ 		  bq27xxx_battery_suspend, bq27xxx_battery_resume);
+ EXPORT_SYMBOL_GPL(bq27xxx_battery_battery_pm_ops);
+ 
++#if IS_ENABLED(CONFIG_BATTERY_BQ27XXX_KUNIT_TEST)
++#include "bq27xxx_battery_test.c"
++#endif
++
+ MODULE_AUTHOR("Rodolfo Giometti <giometti@linux.it>");
+ MODULE_DESCRIPTION("BQ27xxx battery monitor driver");
+ MODULE_LICENSE("GPL");
+diff --git a/drivers/power/supply/bq27xxx_battery_test.c b/drivers/power/supply/bq27xxx_battery_test.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..eb8267223a3606dde290c447d80586080b78a086
+--- /dev/null
++++ b/drivers/power/supply/bq27xxx_battery_test.c
+@@ -0,0 +1,233 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* Included by the core to exercise its actual static PM callback and MAC I/O. */
++#include <kunit/device.h>
++#include <kunit/test.h>
++
++struct bq27xxx_suspend_test {
++	struct bq27xxx_device_info di;
++	struct completion polled;
++	atomic_t polls;
++	u8 key[SHA256_DIGEST_SIZE];
++	u8 command[4], trailer[2];
++	unsigned int writes, fail_write;
++	int current_now, current_avg, current_flags;
++	unsigned int current_now_reads, current_avg_reads;
++};
++
++static void bq27xxx_suspend_test_poll(struct work_struct *work)
++{
++	struct bq27xxx_device_info *di =
++		container_of(to_delayed_work(work), struct bq27xxx_device_info, work);
++	struct bq27xxx_suspend_test *fixture =
++		container_of(di, struct bq27xxx_suspend_test, di);
++
++	atomic_inc(&fixture->polls);
++	complete(&fixture->polled);
++}
++
++static int bq27xxx_suspend_test_write(struct bq27xxx_device_info *di, u8 reg,
++				     u8 *data, int len)
++{
++	struct bq27xxx_suspend_test *fixture =
++		container_of(di, struct bq27xxx_suspend_test, di);
++
++	fixture->writes++;
++	if (fixture->writes == fixture->fail_write)
++		return -EIO;
++	if (reg == BQ27Z561_ALT_MAC && len == sizeof(fixture->command))
++		memcpy(fixture->command, data, len);
++	else if (reg == BQ27Z561_MAC_CHECKSUM && len == sizeof(fixture->trailer))
++		memcpy(fixture->trailer, data, len);
++	else
++		return -EINVAL;
++	return 0;
++}
++
++static int bq27xxx_suspend_test_init(struct kunit *test)
++{
++	struct bq27xxx_suspend_test *fixture;
++	struct bq27xxx_device_info *di;
++
++	fixture = kunit_kzalloc(test, sizeof(*fixture), GFP_KERNEL);
++	if (!fixture)
++		return -ENOMEM;
++	test->priv = fixture;
++	di = &fixture->di;
++	di->dev = kunit_device_register(test, "bq27xxx-suspend");
++	if (IS_ERR(di->dev))
++		return PTR_ERR(di->dev);
++	dev_set_drvdata(di->dev, di);
++	mutex_init(&di->lock);
++	INIT_DELAYED_WORK(&di->work, bq27xxx_suspend_test_poll);
++	init_completion(&fixture->polled);
++	atomic_set(&fixture->polls, 0);
++	di->auth_key = fixture->key;
++	di->authentic = true;
++	di->fast_charge = true;
++	di->charge_mode_known = true;
++	di->bus.write_bulk = bq27xxx_suspend_test_write;
++	/* Suspend must cancel this old poll before deciding whether to restore it. */
++	schedule_delayed_work(&di->work, 60 * HZ);
++	return 0;
++}
++
++static void bq27xxx_suspend_test_exit(struct kunit *test)
++{
++	struct bq27xxx_suspend_test *fixture = test->priv;
++
++	cancel_delayed_work_sync(&fixture->di.work);
++}
++
++static void bq27xxx_suspend_failure_test(struct kunit *test, unsigned int fail)
++{
++	struct bq27xxx_suspend_test *fixture = test->priv;
++
++	fixture->fail_write = fail;
++	KUNIT_ASSERT_EQ(test, bq27xxx_battery_suspend(fixture->di.dev), -EIO);
++	KUNIT_EXPECT_EQ(test, fixture->writes, fail);
++	KUNIT_EXPECT_FALSE(test, fixture->di.charge_mode_known);
++	KUNIT_EXPECT_TRUE(test, fixture->di.fast_charge);
++	/* No resume call: the failed callback must have restored the actual work. */
++	KUNIT_ASSERT_NE(test, wait_for_completion_timeout(&fixture->polled, HZ), 0UL);
++	KUNIT_EXPECT_EQ(test, atomic_read(&fixture->polls), 1);
++}
++
++static void bq27xxx_suspend_command_failure_test(struct kunit *test)
++{
++	bq27xxx_suspend_failure_test(test, 1);
++}
++
++static void bq27xxx_suspend_checksum_failure_test(struct kunit *test)
++{
++	bq27xxx_suspend_failure_test(test, 2);
++}
++
++static void bq27xxx_suspend_disables_fast_test(struct kunit *test)
++{
++	struct bq27xxx_suspend_test *fixture = test->priv;
++	static const u8 command[] = { 0x3f, 0, 0, 0 };
++	static const u8 trailer[] = { 0xc0, 6 };
++
++	KUNIT_ASSERT_EQ(test, bq27xxx_battery_suspend(fixture->di.dev), 0);
++	KUNIT_EXPECT_EQ(test, fixture->writes, 2U);
++	KUNIT_EXPECT_MEMEQ(test, fixture->command, command, sizeof(command));
++	KUNIT_EXPECT_MEMEQ(test, fixture->trailer, trailer, sizeof(trailer));
++	KUNIT_EXPECT_FALSE(test, fixture->di.fast_charge);
++	KUNIT_EXPECT_TRUE(test, fixture->di.charge_mode_known);
++	KUNIT_EXPECT_FALSE(test, delayed_work_pending(&fixture->di.work));
++	KUNIT_EXPECT_EQ(test, atomic_read(&fixture->polls), 0);
++}
++
++static void bq27xxx_suspend_without_key_test(struct kunit *test)
++{
++	struct bq27xxx_suspend_test *fixture = test->priv;
++
++	fixture->di.auth_key = NULL;
++	KUNIT_ASSERT_EQ(test, bq27xxx_battery_suspend(fixture->di.dev), 0);
++	KUNIT_EXPECT_EQ(test, fixture->writes, 0U);
++	KUNIT_EXPECT_FALSE(test, delayed_work_pending(&fixture->di.work));
++	KUNIT_EXPECT_EQ(test, atomic_read(&fixture->polls), 0);
++}
++
++static int bq27xxx_current_test_read(struct bq27xxx_device_info *di, u8 reg, bool single)
++{
++	struct bq27xxx_suspend_test *f =
++		container_of(di, struct bq27xxx_suspend_test, di);
++
++	if (single)
++		return -EINVAL;
++	switch (reg) {
++	case 0x0a:
++		return f->current_flags;
++	case 0x0c:
++		f->current_now_reads++;
++		return f->current_now;
++	case 0x14:
++		f->current_avg_reads++;
++		return f->current_avg;
++	default:
++		return -EINVAL;
++	}
++}
++
++static void bq27z561_current_properties_test(struct kunit *test)
++{
++	struct bq27xxx_suspend_test *f = test->priv;
++	struct power_supply psy = { .drv_data = &f->di };
++	union power_supply_propval value;
++	int ret;
++
++	f->di.chip = BQ27Z561;
++	f->di.regs = bq27z561_regs;
++	f->di.opts = BQ27Z561_O_BITS;
++	f->di.bus.read = bq27xxx_current_test_read;
++	f->di.last_update = jiffies;
++	f->current_now = (u16)(s16)-123;
++	f->current_avg = 456;
++
++	ret = bq27xxx_battery_get_property(&psy, POWER_SUPPLY_PROP_CURRENT_NOW, &value);
++	KUNIT_ASSERT_EQ(test, ret, 0);
++	KUNIT_EXPECT_EQ(test, value.intval, -123000);
++	KUNIT_EXPECT_EQ(test, f->current_now_reads, 1U);
++	KUNIT_EXPECT_EQ(test, f->current_avg_reads, 0U);
++	ret = bq27xxx_battery_get_property(&psy, POWER_SUPPLY_PROP_CURRENT_AVG, &value);
++	KUNIT_ASSERT_EQ(test, ret, 0);
++	KUNIT_EXPECT_EQ(test, value.intval, 456000);
++	ret = bq27xxx_battery_get_property(&psy, POWER_SUPPLY_PROP_STATUS, &value);
++	KUNIT_ASSERT_EQ(test, ret, 0);
++	KUNIT_EXPECT_EQ(test, value.intval, POWER_SUPPLY_STATUS_CHARGING);
++	KUNIT_EXPECT_EQ(test, f->current_now_reads, 1U);
++	KUNIT_EXPECT_EQ(test, f->current_avg_reads, 2U);
++
++	f->current_now = 17;
++	f->current_avg = (u16)(s16)-32768;
++	ret = bq27xxx_battery_get_property(&psy, POWER_SUPPLY_PROP_CURRENT_NOW, &value);
++	KUNIT_ASSERT_EQ(test, ret, 0);
++	KUNIT_EXPECT_EQ(test, value.intval, 17000);
++	ret = bq27xxx_battery_get_property(&psy, POWER_SUPPLY_PROP_CURRENT_AVG, &value);
++	KUNIT_ASSERT_EQ(test, ret, 0);
++	KUNIT_EXPECT_EQ(test, value.intval, -32768000);
++	ret = bq27xxx_battery_get_property(&psy, POWER_SUPPLY_PROP_STATUS, &value);
++	KUNIT_ASSERT_EQ(test, ret, 0);
++	KUNIT_EXPECT_EQ(test, value.intval, POWER_SUPPLY_STATUS_DISCHARGING);
++
++	f->current_now = -EREMOTEIO;
++	f->current_avg = -EIO;
++	value.intval = 42;
++	ret = bq27xxx_battery_get_property(&psy, POWER_SUPPLY_PROP_CURRENT_NOW, &value);
++	KUNIT_EXPECT_EQ(test, ret, -EREMOTEIO);
++	ret = bq27xxx_battery_get_property(&psy, POWER_SUPPLY_PROP_CURRENT_AVG, &value);
++	KUNIT_EXPECT_EQ(test, ret, -EIO);
++	KUNIT_EXPECT_EQ(test, value.intval, 42);
++	f->current_avg = 27;
++	f->current_flags = -ENXIO;
++	ret = bq27xxx_battery_get_property(&psy, POWER_SUPPLY_PROP_CURRENT_AVG, &value);
++	KUNIT_EXPECT_EQ(test, ret, -ENXIO);
++	KUNIT_EXPECT_EQ(test, value.intval, 42);
++
++	/* BQ28Z610 shares the status flags but keeps its existing current. */
++	f->di.chip = BQ28Z610;
++	f->di.regs = bq28z610_regs;
++	f->current_flags = 0;
++	ret = bq27xxx_battery_get_property(&psy, POWER_SUPPLY_PROP_CURRENT_NOW, &value);
++	KUNIT_ASSERT_EQ(test, ret, 0);
++	KUNIT_EXPECT_EQ(test, value.intval, 27000);
++	KUNIT_EXPECT_EQ(test, f->writes, 0U);
++}
++
++static struct kunit_case bq27xxx_suspend_cases[] = {
++	KUNIT_CASE(bq27z561_current_properties_test),
++	KUNIT_CASE(bq27xxx_suspend_command_failure_test),
++	KUNIT_CASE(bq27xxx_suspend_checksum_failure_test),
++	KUNIT_CASE(bq27xxx_suspend_disables_fast_test),
++	KUNIT_CASE(bq27xxx_suspend_without_key_test),
++	{}
++};
++
++static struct kunit_suite bq27xxx_suspend_suite = {
++	.name = "bq27xxx-suspend",
++	.init = bq27xxx_suspend_test_init,
++	.exit = bq27xxx_suspend_test_exit,
++	.test_cases = bq27xxx_suspend_cases,
++};
++kunit_test_suite(bq27xxx_suspend_suite);

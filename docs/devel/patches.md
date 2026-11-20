@@ -30,7 +30,7 @@ python3 build/firmware-workspace/tools/prepare_nv_runtime_guard.py verify
 
 Linux 内核补丁按内核版本分目录维护在 `patches/linux/`，通过 `patches/linux/7.3/series.json` 登记，在 `./build.sh linux` 阶段自动应用。补丁详情见[内核与调度配置](linux/kernel.md)。
 
-平台、显示、输入与无线、媒体和音频的前五个主题包仍是组合下游移植，没有拆成可逐项提交的子系统系列。清单逐个记录替换它们所需的硬件能力与检查，这些包不是已被主线接收或可直接提交的系列。
+Linux 系列按已合入、邮件列表、外部项目和本地改动维护。板级移植中的驱动和绑定保存各自的来源链接。投稿时，以目标维护树的基线和前置补丁重放。
 
 `original_commit`、`original_parent` 和 `tree` 用于复现本地补丁链；上游状态以各条目的 `upstream` 为准。参考了公开补丁系列的本地改写仍可标为 `downstream`，参考链接不表示这份改写已经提交。来源元数据不替代补丁头的作者、签名和逐文件许可声明，也不补造缺失的签名。
 

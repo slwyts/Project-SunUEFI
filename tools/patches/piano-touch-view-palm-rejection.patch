@@ -29,7 +29,7 @@ which libinput uses to place its pen arbitration area.
  #define TYPE_PROBE_FRAMES 16
  #define SCREEN_W 3200
  #define SCREEN_H 2136
-+/* PIANO_MODE width_mm/height_mm in patches/linux/7.3/0002-display.patch */
++/* PIANO_MODE width_mm/height_mm in panel-novatek-nt36532.c */
 +#define PANEL_W_MM 239
 +#define PANEL_H_MM 163
 +/* touch units per mm, 3200/239 and 2136/163 */

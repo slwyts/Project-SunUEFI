@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Sun, 8 Nov 2026 01:57:31 +0800
+Subject: Bluetooth: qca: defer when the power sequencer is not ready
+
+Source: Cryolitia/xiaomi-piano-nixos, packages/kernel/patches/bluetooth-qca-defer-power-sequencer.patch
+
+Link: https://github.com/Cryolitia/xiaomi-piano-nixos/commit/b06301d14f50ee09e995aae50ecbaac05e89f55e
+---
+ drivers/bluetooth/hci_qca.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/bluetooth/hci_qca.c b/drivers/bluetooth/hci_qca.c
+index ba3697dc49cf9e109440d7326f2302bbcf1bf7ff..3e921e19703b6da4245a21cab8847d01d9b3330c 100644
+--- a/drivers/bluetooth/hci_qca.c
++++ b/drivers/bluetooth/hci_qca.c
+@@ -2741,6 +2741,9 @@ static int qca_serdev_probe(struct serdev_device *serdev)
+ 			 * through the power sequence. In such cases, fall through
+ 			 * to follow the legacy flow.
+ 			 */
++			if (PTR_ERR_OR_ZERO(qcadev->bt_power->pwrseq) == -EPROBE_DEFER)
++				return -EPROBE_DEFER;
++
+ 			if (IS_ERR(qcadev->bt_power->pwrseq))
+ 				qcadev->bt_power->pwrseq = NULL;
+ 			else

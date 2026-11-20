@@ -1,0 +1,114 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 22:41:04 +0800
+Subject: media: camss: adapt video streaming callbacks to the Linux 7.3 port
+
+Carry forward the stream teardown and media pipeline handling from
+the Piano Linux 7.3 migration. Use the same cleanup on normal stop
+and start failure.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ .../media/platform/qcom/camss/camss-video.c   | 61 +++++++++++--------
+ 1 file changed, 35 insertions(+), 26 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-video.c b/drivers/media/platform/qcom/camss/camss-video.c
+index 60602d1f18a02e31387d1c47698aed9a3b74f7d0..7ebbed354f46f1af1f30988e718d9d044c570707 100644
+--- a/drivers/media/platform/qcom/camss/camss-video.c
++++ b/drivers/media/platform/qcom/camss/camss-video.c
+@@ -251,6 +251,37 @@ static int video_prepare_streaming(struct vb2_queue *q)
+ 	return ret;
+ }
+ 
++/* Also unwinds already enabled receivers after a sensor start failure. */
++static void video_stop_subdevs(struct camss_video *video, unsigned int count)
++{
++	struct video_device *vdev = &video->vdev;
++	struct media_entity *entity;
++	struct media_pad *pad;
++	struct v4l2_subdev *subdev;
++	int ret;
++
++	entity = &vdev->entity;
++	while (count--) {
++		pad = &entity->pads[0];
++		if (!(pad->flags & MEDIA_PAD_FL_SINK))
++			break;
++
++		pad = media_pad_remote_pad_first(pad);
++		if (!pad || !is_media_entity_v4l2_subdev(pad->entity))
++			break;
++
++		entity = pad->entity;
++		subdev = media_entity_to_v4l2_subdev(entity);
++
++		ret = v4l2_subdev_call(subdev, video, s_stream, 0);
++
++		if (ret && ret != -ENOIOCTLCMD)
++			dev_err(video->camss->dev,
++				"Video pipeline stop failed at %s: %d\n",
++				subdev->name, ret);
++	}
++}
++
+ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
+ {
+ 	struct camss_video *video = vb2_get_drv_priv(q);
+@@ -258,6 +289,7 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
+ 	struct media_entity *entity;
+ 	struct media_pad *pad;
+ 	struct v4l2_subdev *subdev;
++	unsigned int started = 0;
+ 	int ret;
+ 
+ 	ret = video_device_pipeline_alloc_start(vdev);
+@@ -286,11 +318,13 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
+ 		ret = v4l2_subdev_call(subdev, video, s_stream, 1);
+ 		if (ret < 0 && ret != -ENOIOCTLCMD)
+ 			goto error;
++		started++;
+ 	}
+ 
+ 	return 0;
+ 
+ error:
++	video_stop_subdevs(video, started);
+ 	video_device_pipeline_stop(vdev);
+ 
+ flush_buffers:
+@@ -303,34 +337,9 @@ static void video_stop_streaming(struct vb2_queue *q)
+ {
+ 	struct camss_video *video = vb2_get_drv_priv(q);
+ 	struct video_device *vdev = &video->vdev;
+-	struct media_entity *entity;
+-	struct media_pad *pad;
+-	struct v4l2_subdev *subdev;
+-	int ret;
+-
+-	entity = &vdev->entity;
+-	while (1) {
+-		pad = &entity->pads[0];
+-		if (!(pad->flags & MEDIA_PAD_FL_SINK))
+-			break;
+-
+-		pad = media_pad_remote_pad_first(pad);
+-		if (!pad || !is_media_entity_v4l2_subdev(pad->entity))
+-			break;
+-
+-		entity = pad->entity;
+-		subdev = media_entity_to_v4l2_subdev(entity);
+-
+-		ret = v4l2_subdev_call(subdev, video, s_stream, 0);
+-
+-		if (ret) {
+-			dev_err(video->camss->dev, "Video pipeline stop failed: %d\n", ret);
+-			return;
+-		}
+-	}
+ 
++	video_stop_subdevs(video, UINT_MAX);
+ 	video_device_pipeline_stop(vdev);
+-
+ 	video->ops->flush_buffers(video, VB2_BUF_STATE_ERROR);
+ }
+ 

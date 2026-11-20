@@ -1,0 +1,1071 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: iommu: arm-smmu: retain the SM8750 firmware DMA handoff
+
+Carry the firmware DMA context and the matching IOMMU attach interfaces used on Piano.
+
+The port retains changes from these linux-piano commits:
+piano: native display (NT36532 DSC) and Adreno 830 GPU (#14) (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+
+The cited SunUEFI changes were carried through the 7.3 port.
+
+Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/5c2c95fddbe9c29720b7b4e84119357358e9f0cb
+Link: https://github.com/slwyts/Project-SunUEFI/commit/c85b24616d84a5fc68814e0090fa2b2d41acdfbc
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ .../ABI/testing/sysfs-devices-piano-dma-route |  46 +++
+ .../arm/arm-smmu/arm-smmu-qcom-handoff.h      | 103 ++++++
+ drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c    | 190 ++++++++---
+ drivers/iommu/arm/arm-smmu/arm-smmu.c         | 315 +++++++++++++++++-
+ drivers/iommu/arm/arm-smmu/arm-smmu.h         |   5 +
+ drivers/iommu/iommu.c                         |  47 ++-
+ include/linux/iommu.h                         |   4 +-
+ .../selftests/iommu/qcom-handoff-snapshot.c   | 108 ++++++
+ 8 files changed, 755 insertions(+), 63 deletions(-)
+ create mode 100644 Documentation/ABI/testing/sysfs-devices-piano-dma-route
+ create mode 100644 drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h
+ create mode 100644 tools/testing/selftests/iommu/qcom-handoff-snapshot.c
+
+diff --git a/Documentation/ABI/testing/sysfs-devices-piano-dma-route b/Documentation/ABI/testing/sysfs-devices-piano-dma-route
+new file mode 100644
+index 0000000000000000000000000000000000000000..bbe9261da7446fb2df449e93790553679fec1ae7
+--- /dev/null
++++ b/Documentation/ABI/testing/sysfs-devices-piano-dma-route
+@@ -0,0 +1,46 @@
++What:           /sys/devices/.../piano_dma_route
++Date:           October 2026
++Contact:        Linux IOMMU developers <iommu@lists.linux.dev>
++Description:
++                Read-only diagnostic for an actual ARM SMMU configured master
++                attached to the driver's identity domain. Returns EAGAIN when
++                not attached and an error for changed/faulted hardware.
++
++                The first line is "piano-dma-route-v1 domain=identity ids=N".
++                Subsequent lines contain sid, mask, slot, origin, actual smr,
++                actual s2cr, kernel-private expected hardware encoding, cb,
++                sctlr, cbar and fsr. Origin is firmware-adopted or
++                kernel-installed, preserving that ownership distinction.
++                QCOM's emulated bypass bank is compared using its real
++                hardware encoding. Hardware is read twice under stream-map
++                serialization; faults are observed, never cleared.
++
++                This snapshot is not a DMA completion, boot-ready flag,
++                external firmware lease or memory ownership authorization.
++                It does not allocate or program routes. Runtime PM uses
++                the driver's normal resource APIs while reading registers.
++
++What:           /sys/devices/.../piano_dma_context
++Date:           October 2026
++Contact:        Linux IOMMU developers <iommu@lists.linux.dev>
++Description:
++                Admin-only readback of an actually attached ARM64 stage1 DMA
++                or unmanaged domain. Group serialization pins the attached
++                domain, and the driver's init/stream locks protect private
++                state. The getter compares actual SMR/S2CR, TTBR0/TTBR1,
++                TCR/TCR2 and MAIR with that owning domain's programmed state.
++                It rejects firmware-adopted routes, invalid table roots,
++                disabled translation, faults, mismatches and changes across
++                repeated hardware/private-state reads. No register is written
++                by the getter; normal runtime PM may power the bound provider.
++
++                The first line is
++                "piano-dma-context-v1 domain=stage1 ids=N", followed by at most
++                eight stream records. The prior identity route fields remain,
++                with ttbr0/ttbr1 (16 hexadecimal digits) and tcr/tcr2/mair0/mair1
++                (eight hexadecimal digits). All records belong to one context.
++                Context fields are diagnostics, not CPU read permission,
++                a successful device transfer or global hardware readiness.
++
++                The identity getter also uses group serialization so a domain
++                cannot be detached/freed during either readback callback.
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..470fd9fb638fdd6518e08388ddb0684ea6c3c8cd
+--- /dev/null
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h
+@@ -0,0 +1,103 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef ARM_SMMU_QCOM_HANDOFF_H
++#define ARM_SMMU_QCOM_HANDOFF_H
++
++/* Raw bounded architectural observations; these selectors grant no DMA lease. */
++#ifdef __KERNEL__
++#include <linux/types.h>
++#else
++#include <stdbool.h>
++#include <stdint.h>
++typedef uint32_t u32;
++typedef uint64_t u64;
++#endif
++
++#define QCOM_HANDOFF_MAX_SMR 128
++#define QCOM_HANDOFF_MAX_CB 256
++#define QCOM_HANDOFF_SMR_VALID (1U << 31)
++#define QCOM_HANDOFF_SCTLR_M 1U
++
++struct qcom_smmu_handoff_snapshot {
++	unsigned int num_smr, num_cb, num_s2_cb;
++	u32 smr[QCOM_HANDOFF_MAX_SMR];
++	u32 s2cr[QCOM_HANDOFF_MAX_SMR];
++	u32 sctlr[QCOM_HANDOFF_MAX_CB];
++};
++
++/* Stage-1 readback versus the real owning domain's programmed state. */
++struct piano_smmu_context_snapshot {
++	u64 ttbr[2];
++	u32 tcr[2], mair[2];
++	u32 sctlr, cbar, cba2r, fsr;
++};
++
++static inline bool piano_smmu_stage1_equal(const struct piano_smmu_context_snapshot *hw,
++					 const struct piano_smmu_context_snapshot *owned)
++{
++	return hw && owned && (hw->sctlr & 1) && !((hw->fsr) & 0xc00001feU) &&
++		!((hw->sctlr ^ owned->sctlr) & 0x1017U) &&
++		(hw->cba2r & 1) && hw->cba2r == owned->cba2r &&
++		((hw->cbar >> 16) & 3) == 1 &&
++		hw->ttbr[0] == owned->ttbr[0] && hw->ttbr[1] == owned->ttbr[1] &&
++		hw->tcr[0] == owned->tcr[0] && hw->tcr[1] == owned->tcr[1] &&
++		hw->mair[0] == owned->mair[0] && hw->mair[1] == owned->mair[1] &&
++		(!(hw->tcr[0] & (1U << 7)) || !(hw->tcr[0] & (1U << 23))) &&
++		((hw->tcr[0] & (1U << 7)) || (hw->ttbr[0] & 0x0000fffffffff000ULL)) &&
++		((hw->tcr[0] & (1U << 23)) || (hw->ttbr[1] & 0x0000fffffffff000ULL));
++}
++
++/* Compare actual hardware with kernel-private expected register encodings. */
++static inline bool qcom_smmu_handoff_route_equal(u32 smr, u32 wanted_smr,
++					       u32 s2cr, u32 expected_s2cr,
++					       u32 smr_mask, u32 s2cr_mask)
++{
++	return (smr & smr_mask) == wanted_smr &&
++		(s2cr & s2cr_mask) == expected_s2cr;
++}
++
++static inline bool qcom_smmu_handoff_geometry(const struct qcom_smmu_handoff_snapshot *s)
++{
++	return s && s->num_smr && s->num_smr <= QCOM_HANDOFF_MAX_SMR &&
++		s->num_cb && s->num_cb <= QCOM_HANDOFF_MAX_CB && s->num_s2_cb <= s->num_cb;
++}
++
++static inline bool qcom_smmu_handoff_cb_referenced(const struct qcom_smmu_handoff_snapshot *s,
++						 unsigned int cb)
++{
++	unsigned int i;
++
++	if (!qcom_smmu_handoff_geometry(s) || cb >= s->num_cb)
++		return true;
++	for (i = 0; i < s->num_smr; i++)
++		if ((s->smr[i] & QCOM_HANDOFF_SMR_VALID) &&
++		    ((s->s2cr[i] >> 16) & 3) == 0 && (s->s2cr[i] & 0xff) == cb)
++			return true;
++	return false;
++}
++
++static inline int qcom_smmu_handoff_probe_slot(const struct qcom_smmu_handoff_snapshot *s)
++{
++	unsigned int i;
++
++	if (!qcom_smmu_handoff_geometry(s))
++		return -1;
++	for (i = 0; i < s->num_smr; i++)
++		if (!(s->smr[i] & QCOM_HANDOFF_SMR_VALID))
++			return i;
++	return -1;
++}
++
++static inline int qcom_smmu_handoff_bypass_cb(const struct qcom_smmu_handoff_snapshot *s)
++{
++	unsigned int i;
++
++	if (!qcom_smmu_handoff_geometry(s))
++		return -1;
++	for (i = s->num_cb; i-- > s->num_s2_cb;)
++		if (!(s->sctlr[i] & QCOM_HANDOFF_SCTLR_M) &&
++		    !qcom_smmu_handoff_cb_referenced(s, i))
++			return i;
++	return -1;
++}
++
++#endif
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
+index 795e8ec7e8faf32ecfe1ff1ed06b98b05649361e..0ae8efe8998547c664072e4f015c6e0440173900 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
+@@ -13,6 +13,7 @@
+ 
+ #include "arm-smmu.h"
+ #include "arm-smmu-qcom.h"
++#include "arm-smmu-qcom-handoff.h"
+ 
+ #define QCOM_DUMMY_VAL	-1
+ 
+@@ -451,7 +452,11 @@ static int qcom_smmu_init_context(struct arm_smmu_domain *smmu_domain,
+ static int qcom_smmu_cfg_probe(struct arm_smmu_device *smmu)
+ {
+ 	struct qcom_smmu *qsmmu = to_qcom_smmu(smmu);
+-	unsigned int last_s2cr;
++	struct qcom_smmu_handoff_snapshot *state;
++	unsigned int probe_s2cr;
++	int probe_idx, bypass_cb;
++	bool bypass_va64;
++	u32 cba2r_before = 0, cba2r_after = 0;
+ 	u32 reg;
+ 	u32 smr;
+ 	int i;
+@@ -470,64 +475,121 @@ static int qcom_smmu_cfg_probe(struct arm_smmu_device *smmu)
+ 			smmu->num_context_banks = 13;
+ 	}
+ 
+-	/*
+-	 * Some platforms support more than the Arm SMMU architected maximum of
+-	 * 128 stream matching groups. The additional registers appear to have
+-	 * the same behavior as the architected registers in the hardware.
+-	 * However, on some firmware versions, the hypervisor does not
+-	 * correctly trap and emulate accesses to the additional registers,
+-	 * resulting in unexpected behavior.
+-	 *
+-	 * If there are more than 128 groups, use the last reliable group to
+-	 * detect if we need to apply the bypass quirk.
++	/* Read and reserve every live route before probing firmware behaviour.
++	 * A last-slot probe is not safe when firmware occupies that slot, and
++	 * the last CB is not necessarily free even with translation disabled.
+ 	 */
+-	if (smmu->num_mapping_groups > 128)
+-		last_s2cr = ARM_SMMU_GR0_S2CR(127);
+-	else
+-		last_s2cr = ARM_SMMU_GR0_S2CR(smmu->num_mapping_groups - 1);
++	state = devm_kzalloc(smmu->dev, sizeof(*state), GFP_KERNEL);
++	if (!state)
++		return -ENOMEM;
++	state->num_smr = smmu->num_mapping_groups;
++	state->num_cb = smmu->num_context_banks;
++	state->num_s2_cb = smmu->num_s2_context_banks;
++	BUILD_BUG_ON(QCOM_HANDOFF_SMR_VALID != ARM_SMMU_SMR_VALID);
++	BUILD_BUG_ON(QCOM_HANDOFF_SCTLR_M != ARM_SMMU_SCTLR_M);
++	if (!qcom_smmu_handoff_geometry(state))
++		return dev_err_probe(smmu->dev, -EOPNOTSUPP,
++				     "unsupported bounded firmware route geometry\n");
++
++	for (i = 0; i < state->num_smr; i++) {
++		state->smr[i] = arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_SMR(i));
++		state->s2cr[i] = arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_S2CR(i));
++		if (!(state->smr[i] & ARM_SMMU_SMR_VALID))
++			continue;
++		reg = FIELD_GET(ARM_SMMU_S2CR_TYPE, state->s2cr[i]);
++		if (reg > S2CR_TYPE_FAULT ||
++		    (reg == S2CR_TYPE_TRANS &&
++		     FIELD_GET(ARM_SMMU_S2CR_CBNDX, state->s2cr[i]) >= state->num_cb))
++			return dev_err_probe(smmu->dev, -EINVAL,
++					     "invalid live firmware route %d\n", i);
++	}
++	for (i = 0; i < state->num_cb; i++) {
++		state->sctlr[i] = arm_smmu_cb_read(smmu, i, ARM_SMMU_CB_SCTLR);
++		if ((state->sctlr[i] & ARM_SMMU_SCTLR_M) ||
++		    qcom_smmu_handoff_cb_referenced(state, i)) {
++			set_bit(i, smmu->boot_cbs);
++			set_bit(i, smmu->context_map);
++		}
++	}
++	for (i = 0; i < state->num_smr; i++) {
++		if (!(state->smr[i] & ARM_SMMU_SMR_VALID))
++			continue;
++		smr = state->smr[i] & ~ARM_SMMU_SMR_VALID;
++		smmu->smrs[i].id = FIELD_GET(ARM_SMMU_SMR_ID, smr);
++		smmu->smrs[i].mask = FIELD_GET(ARM_SMMU_SMR_MASK, smr);
++		smmu->smrs[i].valid = true;
++		smmu->s2crs[i].type = FIELD_GET(ARM_SMMU_S2CR_TYPE, state->s2cr[i]);
++		smmu->s2crs[i].privcfg = FIELD_GET(ARM_SMMU_S2CR_PRIVCFG, state->s2cr[i]);
++		smmu->s2crs[i].cbndx = FIELD_GET(ARM_SMMU_S2CR_CBNDX, state->s2cr[i]);
++		smmu->s2crs[i].boot = true;
++	}
+ 
+-	/*
+-	 * With some firmware versions writes to S2CR of type FAULT are
+-	 * ignored, and writing BYPASS will end up written as FAULT in the
+-	 * register. Perform a write to S2CR to detect if this is the case and
+-	 * if so reserve a context bank to emulate bypass streams.
+-	 */
++	probe_idx = qcom_smmu_handoff_probe_slot(state);
++	if (probe_idx < 0)
++		return dev_err_probe(smmu->dev, -ENOSPC,
++				     "no idle stream slot for bypass probe\n");
++	probe_s2cr = ARM_SMMU_GR0_S2CR(probe_idx);
++	/* Refresh the selected invalid row before its only temporary write. */
++	if (arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_SMR(probe_idx)) != state->smr[probe_idx] ||
++	    arm_smmu_gr0_read(smmu, probe_s2cr) != state->s2cr[probe_idx])
++		return -EBUSY;
+ 	reg = FIELD_PREP(ARM_SMMU_S2CR_TYPE, S2CR_TYPE_BYPASS) |
+ 	      FIELD_PREP(ARM_SMMU_S2CR_CBNDX, 0xff) |
+ 	      FIELD_PREP(ARM_SMMU_S2CR_PRIVCFG, S2CR_PRIVCFG_DEFAULT);
+-	arm_smmu_gr0_write(smmu, last_s2cr, reg);
+-	reg = arm_smmu_gr0_read(smmu, last_s2cr);
++	arm_smmu_gr0_write(smmu, probe_s2cr, reg);
++	reg = arm_smmu_gr0_read(smmu, probe_s2cr);
++	/* Restore the idle probe row; it must never replace a live SMR route. */
++	arm_smmu_gr0_write(smmu, probe_s2cr, state->s2cr[probe_idx]);
++	if (arm_smmu_gr0_read(smmu, probe_s2cr) != state->s2cr[probe_idx])
++		return dev_err_probe(smmu->dev, -EIO,
++				     "idle bypass probe row did not restore\n");
+ 	if (FIELD_GET(ARM_SMMU_S2CR_TYPE, reg) != S2CR_TYPE_BYPASS) {
++		bypass_cb = qcom_smmu_handoff_bypass_cb(state);
++		if (bypass_cb < 0)
++			return dev_err_probe(smmu->dev, -ENOSPC,
++					     "no unreferenced disabled bypass CB\n");
++		/* Firmware routes may have changed while the quirk was tested. */
++		for (i = 0; i < state->num_smr; i++)
++			if (arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_SMR(i)) != state->smr[i] ||
++			    arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_S2CR(i)) != state->s2cr[i])
++				return -EBUSY;
++		if (arm_smmu_cb_read(smmu, bypass_cb, ARM_SMMU_CB_SCTLR) != state->sctlr[bypass_cb])
++			return -EBUSY;
+ 		qsmmu->bypass_quirk = true;
+-		qsmmu->bypass_cbndx = smmu->num_context_banks - 1;
+-
+-		set_bit(qsmmu->bypass_cbndx, smmu->context_map);
+-
+-		arm_smmu_cb_write(smmu, qsmmu->bypass_cbndx, ARM_SMMU_CB_SCTLR, 0);
+-
+-		reg = FIELD_PREP(ARM_SMMU_CBAR_TYPE, CBAR_TYPE_S1_TRANS_S2_BYPASS);
+-		arm_smmu_gr1_write(smmu, ARM_SMMU_GR1_CBAR(qsmmu->bypass_cbndx), reg);
+-
+-		if (smmu->num_mapping_groups > 128) {
+-			dev_notice(smmu->dev, "\tLimiting the stream matching groups to 128\n");
+-			smmu->num_mapping_groups = 128;
+-		}
+-	}
+-
+-	for (i = 0; i < smmu->num_mapping_groups; i++) {
+-		smr = arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_SMR(i));
+-
+-		if (FIELD_GET(ARM_SMMU_SMR_VALID, smr)) {
+-			/* Ignore valid bit for SMR mask extraction. */
+-			smr &= ~ARM_SMMU_SMR_VALID;
+-			smmu->smrs[i].id = FIELD_GET(ARM_SMMU_SMR_ID, smr);
+-			smmu->smrs[i].mask = FIELD_GET(ARM_SMMU_SMR_MASK, smr);
+-			smmu->smrs[i].valid = true;
+-
+-			smmu->s2crs[i].type = S2CR_TYPE_BYPASS;
+-			smmu->s2crs[i].privcfg = S2CR_PRIVCFG_DEFAULT;
+-			smmu->s2crs[i].cbndx = 0xff;
++		qsmmu->bypass_cbndx = bypass_cb;
++		set_bit(bypass_cb, smmu->context_map);
++		arm_smmu_cb_write(smmu, bypass_cb, ARM_SMMU_CB_SCTLR, 0);
++		/*
++		 * Emulated bypass still passes through a stage-1 context. IHI
++		 * 0062D.c table 3-1 requires VA64 for inputs above 32 bits even
++		 * with SCTLR.M clear. Only this new, unreferenced bank is owned;
++		 * select its format before any stream can be routed through it.
++		 */
++		bypass_va64 = smmu->version > ARM_SMMU_V1 &&
++			(smmu->features & (ARM_SMMU_FEAT_FMT_AARCH64_4K |
++					   ARM_SMMU_FEAT_FMT_AARCH64_16K |
++					   ARM_SMMU_FEAT_FMT_AARCH64_64K));
++		if (smmu->version > ARM_SMMU_V1) {
++			cba2r_before = arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBA2R(bypass_cb));
++			reg = bypass_va64 ? ARM_SMMU_CBA2R_VA64 : 0;
++			arm_smmu_gr1_write(smmu, ARM_SMMU_GR1_CBA2R(bypass_cb), reg);
++			cba2r_after = arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBA2R(bypass_cb));
++			if (cba2r_after != reg)
++				return dev_err_probe(smmu->dev, -EIO,
++						     "owned bypass CB address format did not read back\n");
+ 		}
++		reg = FIELD_PREP(ARM_SMMU_CBAR_TYPE, CBAR_TYPE_S1_TRANS_S2_BYPASS);
++		arm_smmu_gr1_write(smmu, ARM_SMMU_GR1_CBAR(bypass_cb), reg);
++		if ((arm_smmu_cb_read(smmu, bypass_cb, ARM_SMMU_CB_SCTLR) & ARM_SMMU_SCTLR_M) ||
++		    FIELD_GET(ARM_SMMU_CBAR_TYPE,
++			      arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBAR(bypass_cb))) !=
++		    CBAR_TYPE_S1_TRANS_S2_BYPASS)
++			return dev_err_probe(smmu->dev, -EIO,
++					     "owned bypass CB configuration did not read back\n");
++		dev_notice(smmu->dev,
++			   "owned bypass CB %d from idle route snapshot: format=%s cba2r=%08x->%08x\n",
++			   bypass_cb, bypass_va64 ? "AArch64" : "AArch32",
++			   cba2r_before, cba2r_after);
+ 	}
+ 
+ 	return 0;
+@@ -546,6 +608,22 @@ static int qcom_adreno_smmuv2_cfg_probe(struct arm_smmu_device *smmu)
+ 	return 0;
+ }
+ 
++/* Expected hardware encoding, including the hypervisor bypass emulation. */
++static u32 qcom_smmu_expected_s2cr(struct arm_smmu_device *smmu, int idx)
++{
++	struct arm_smmu_s2cr *s2cr = smmu->s2crs + idx;
++	struct qcom_smmu *qsmmu = to_qcom_smmu(smmu);
++	u32 type = s2cr->type, cbndx = s2cr->cbndx;
++
++	if (!s2cr->boot && qsmmu->bypass_quirk && type == S2CR_TYPE_BYPASS) {
++		type = S2CR_TYPE_TRANS;
++		cbndx = qsmmu->bypass_cbndx;
++	}
++	return FIELD_PREP(ARM_SMMU_S2CR_TYPE, type) |
++		FIELD_PREP(ARM_SMMU_S2CR_CBNDX, cbndx) |
++		FIELD_PREP(ARM_SMMU_S2CR_PRIVCFG, s2cr->privcfg);
++}
++
+ static void qcom_smmu_write_s2cr(struct arm_smmu_device *smmu, int idx)
+ {
+ 	struct arm_smmu_s2cr *s2cr = smmu->s2crs + idx;
+@@ -583,9 +661,16 @@ static void qcom_smmu_write_s2cr(struct arm_smmu_device *smmu, int idx)
+ 
+ static int qcom_smmu_def_domain_type(struct device *dev)
+ {
++	struct iommu_fwspec *fwspec = dev_iommu_fwspec_get(dev);
+ 	const struct of_device_id *match =
+ 		of_match_device(qcom_smmu_client_of_match, dev);
+ 
++	/* FastRPC describes imported scatter-gather buffers as one DMA range. */
++	if (fwspec && of_device_is_compatible(dev->of_node, "qcom,fastrpc-compute-cb") &&
++	    of_device_is_compatible(to_of_node(fwspec->iommu_fwnode),
++				    "qcom,sm8750-smmu-500"))
++		return IOMMU_DOMAIN_DMA;
++
+ 	return match ? IOMMU_DOMAIN_IDENTITY : 0;
+ }
+ 
+@@ -613,6 +698,7 @@ static const struct arm_smmu_impl qcom_smmu_v2_impl = {
+ 	.cfg_probe = qcom_smmu_cfg_probe,
+ 	.def_domain_type = qcom_smmu_def_domain_type,
+ 	.write_s2cr = qcom_smmu_write_s2cr,
++	.expected_s2cr = qcom_smmu_expected_s2cr,
+ 	.tlb_sync = qcom_smmu_tlb_sync,
+ };
+ 
+@@ -622,6 +708,7 @@ static const struct arm_smmu_impl qcom_smmu_500_impl = {
+ 	.def_domain_type = qcom_smmu_def_domain_type,
+ 	.reset = arm_mmu500_reset,
+ 	.write_s2cr = qcom_smmu_write_s2cr,
++	.expected_s2cr = qcom_smmu_expected_s2cr,
+ 	.tlb_sync = qcom_smmu_tlb_sync,
+ #ifdef CONFIG_ARM_SMMU_QCOM_DEBUG
+ 	.context_fault = qcom_smmu_context_fault,
+@@ -635,6 +722,7 @@ static const struct arm_smmu_impl sdm845_smmu_500_impl = {
+ 	.def_domain_type = qcom_smmu_def_domain_type,
+ 	.reset = qcom_sdm845_smmu500_reset,
+ 	.write_s2cr = qcom_smmu_write_s2cr,
++	.expected_s2cr = qcom_smmu_expected_s2cr,
+ 	.tlb_sync = qcom_smmu_tlb_sync,
+ #ifdef CONFIG_ARM_SMMU_QCOM_DEBUG
+ 	.context_fault = qcom_smmu_context_fault,
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu.c b/drivers/iommu/arm/arm-smmu/arm-smmu.c
+index 889a0966d36cdba2c2c6478cf71a1e0894ca42a3..54a379ccf12311ed7629495fcf4e48642e79b1b1 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu.c
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu.c
+@@ -39,6 +39,7 @@
+ #include <linux/fsl/mc.h>
+ 
+ #include "arm-smmu.h"
++#include "arm-smmu-qcom-handoff.h"
+ #include "../../dma-iommu.h"
+ 
+ /*
+@@ -1069,7 +1070,7 @@ static int arm_smmu_find_sme(struct arm_smmu_device *smmu, u16 id, u16 mask)
+ 
+ static bool arm_smmu_free_sme(struct arm_smmu_device *smmu, int idx)
+ {
+-	if (--smmu->s2crs[idx].count)
++	if (--smmu->s2crs[idx].count || smmu->s2crs[idx].boot)
+ 		return false;
+ 
+ 	smmu->s2crs[idx] = s2cr_init_val;
+@@ -1114,7 +1115,8 @@ static int arm_smmu_master_alloc_smes(struct device *dev)
+ 
+ 	/* It worked! Now, poke the actual hardware */
+ 	for_each_cfg_sme(cfg, fwspec, i, idx)
+-		arm_smmu_write_sme(smmu, idx);
++		if (!smmu->s2crs[idx].boot)
++			arm_smmu_write_sme(smmu, idx);
+ 
+ 	mutex_unlock(&smmu->stream_map_mutex);
+ 	return 0;
+@@ -1151,15 +1153,24 @@ static void arm_smmu_master_install_s2crs(struct arm_smmu_master_cfg *cfg,
+ 	struct arm_smmu_s2cr *s2cr = smmu->s2crs;
+ 	int i, idx;
+ 
++	mutex_lock(&smmu->stream_map_mutex);
+ 	for_each_cfg_sme(cfg, fwspec, i, idx) {
+ 		if (type == s2cr[idx].type && cbndx == s2cr[idx].cbndx)
+ 			continue;
+ 
++		/* An inherited route already bypasses translation. */
++		if (s2cr[idx].boot) {
++			if (type == S2CR_TYPE_BYPASS && s2cr[idx].type != S2CR_TYPE_FAULT)
++				continue;
++			s2cr[idx].boot = false;
++		}
++
+ 		s2cr[idx].type = type;
+ 		s2cr[idx].privcfg = S2CR_PRIVCFG_DEFAULT;
+ 		s2cr[idx].cbndx = cbndx;
+ 		arm_smmu_write_s2cr(smmu, idx);
+ 	}
++	mutex_unlock(&smmu->stream_map_mutex);
+ }
+ 
+ static int arm_smmu_attach_dev(struct iommu_domain *domain, struct device *dev,
+@@ -1428,6 +1439,292 @@ struct arm_smmu_device *arm_smmu_get_by_fwnode(struct fwnode_handle *fwnode)
+ 	return dev ? dev_get_drvdata(dev) : NULL;
+ }
+ 
++/* Read-only per-master evidence. No route/context programming or ready file. */
++static ssize_t piano_dma_identity_read(struct device *dev, char *buf)
++{
++	struct arm_smmu_master_cfg *cfg = dev_iommu_priv_get(dev);
++	struct iommu_fwspec *fw = dev_iommu_fwspec_get(dev);
++	struct iommu_domain *domain = iommu_get_domain_for_dev(dev);
++	struct arm_smmu_device *smmu;
++	unsigned int i;
++	ssize_t len = 0;
++	int idx, ret;
++
++	if (!cfg || !fw || domain != &arm_smmu_identity_domain)
++		return -EAGAIN;
++	smmu = cfg->smmu;
++	if (!smmu->smrs || fw->num_ids > 16)
++		return -EOPNOTSUPP;
++	ret = arm_smmu_rpm_get(smmu);
++	if (ret < 0)
++		return ret;
++	mutex_lock(&smmu->stream_map_mutex);
++	len = sysfs_emit(buf, "piano-dma-route-v1 domain=identity ids=%u\n", fw->num_ids);
++	for (i = 0; i < fw->num_ids; i++) {
++		struct arm_smmu_s2cr *route;
++		u32 smr, s2cr, expected, sctlr = 0, cbar = 0, fsr = 0;
++		u32 smrmask = ARM_SMMU_SMR_VALID | ARM_SMMU_SMR_ID | ARM_SMMU_SMR_MASK;
++		u32 s2mask = ARM_SMMU_S2CR_TYPE | ARM_SMMU_S2CR_CBNDX | ARM_SMMU_S2CR_PRIVCFG;
++		u32 wanted_smr, cb, type;
++
++		idx = cfg->smendx[i];
++		if (idx < 0 || idx >= smmu->num_mapping_groups || !smmu->smrs[idx].valid) {
++			ret = -ENODATA;
++			goto out;
++		}
++		route = &smmu->s2crs[idx];
++		wanted_smr = FIELD_PREP(ARM_SMMU_SMR_ID, smmu->smrs[idx].id) |
++			FIELD_PREP(ARM_SMMU_SMR_MASK, smmu->smrs[idx].mask) | ARM_SMMU_SMR_VALID;
++		expected = FIELD_PREP(ARM_SMMU_S2CR_TYPE, route->type) |
++			FIELD_PREP(ARM_SMMU_S2CR_CBNDX, route->cbndx) |
++			FIELD_PREP(ARM_SMMU_S2CR_PRIVCFG, route->privcfg);
++		if (smmu->impl && smmu->impl->expected_s2cr)
++			expected = smmu->impl->expected_s2cr(smmu, idx);
++		smr = arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_SMR(idx));
++		s2cr = arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_S2CR(idx));
++		if (!qcom_smmu_handoff_route_equal(smr, wanted_smr, s2cr, expected,
++						 smrmask, s2mask)) {
++			ret = -ESTALE;
++			goto out;
++		}
++		type = FIELD_GET(ARM_SMMU_S2CR_TYPE, s2cr);
++		cb = FIELD_GET(ARM_SMMU_S2CR_CBNDX, s2cr);
++		if (type == S2CR_TYPE_TRANS) {
++			if (cb >= smmu->num_context_banks) {
++				ret = -ERANGE;
++				goto out;
++			}
++			sctlr = arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_SCTLR);
++			cbar = arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBAR(cb));
++			fsr = arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_FSR);
++			if ((sctlr & ARM_SMMU_SCTLR_M) || (fsr & ARM_SMMU_CB_FSR_FAULT) ||
++			    FIELD_GET(ARM_SMMU_CBAR_TYPE, cbar) != CBAR_TYPE_S1_TRANS_S2_BYPASS) {
++				/* Preserve the latched fault; these observations never ack it. */
++				dev_err_ratelimited(dev,
++					"identity route invalid sid=%x slot=%d cb=%u sctlr=%08x cbar=%08x cba2r=%08x tcr=%08x tcr2=%08x fsr=%08x far=%016llx fsynr0=%08x fsynr1=%08x\n",
++					(u32)FIELD_GET(ARM_SMMU_SMR_ID, fw->ids[i]), idx, cb,
++					sctlr, cbar,
++					arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBA2R(cb)),
++					arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_TCR),
++					arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_TCR2), fsr,
++					arm_smmu_cb_readq(smmu, cb, ARM_SMMU_CB_FAR),
++					arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_FSYNR0),
++					arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_FSYNR1));
++				ret = -EIO;
++				goto out;
++			}
++		} else if (type != S2CR_TYPE_BYPASS) {
++			ret = -EIO;
++			goto out;
++		}
++		if (smr != arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_SMR(idx)) ||
++		    s2cr != arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_S2CR(idx)) ||
++		    (type == S2CR_TYPE_TRANS &&
++		     (sctlr != arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_SCTLR) ||
++		      cbar != arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBAR(cb)) ||
++		      fsr != arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_FSR)))) {
++			ret = -ESTALE;
++			goto out;
++		}
++		len += sysfs_emit_at(buf, len,
++			"sid=%x mask=%x slot=%d origin=%s smr=%08x s2cr=%08x expected=%08x ",
++			(u32)FIELD_GET(ARM_SMMU_SMR_ID, fw->ids[i]),
++			(u32)FIELD_GET(ARM_SMMU_SMR_MASK, fw->ids[i]), idx,
++			route->boot ? "firmware-adopted" : "kernel-installed",
++			smr, s2cr, expected);
++		len += sysfs_emit_at(buf, len, "cb=%u sctlr=%08x cbar=%08x fsr=%08x\n",
++				     cb, sctlr, cbar, fsr);
++	}
++	ret = 0;
++out:
++	mutex_unlock(&smmu->stream_map_mutex);
++	arm_smmu_rpm_put(smmu);
++	return ret ? ret : len;
++}
++static void piano_context_owned(struct arm_smmu_cb *cb,
++				struct piano_smmu_context_snapshot *state)
++{
++	memset(state, 0, sizeof(*state));
++	state->ttbr[0] = READ_ONCE(cb->ttbr[0]);
++	state->ttbr[1] = READ_ONCE(cb->ttbr[1]);
++	state->tcr[0] = READ_ONCE(cb->tcr[0]);
++	state->tcr[1] = READ_ONCE(cb->tcr[1]);
++	state->mair[0] = READ_ONCE(cb->mair[0]);
++	state->mair[1] = READ_ONCE(cb->mair[1]);
++}
++
++static void piano_context_hardware(struct arm_smmu_device *smmu, unsigned int cb,
++				   struct piano_smmu_context_snapshot *state)
++{
++	memset(state, 0, sizeof(*state));
++	state->ttbr[0] = arm_smmu_cb_readq(smmu, cb, ARM_SMMU_CB_TTBR0);
++	state->ttbr[1] = arm_smmu_cb_readq(smmu, cb, ARM_SMMU_CB_TTBR1);
++	state->tcr[0] = arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_TCR);
++	state->tcr[1] = arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_TCR2);
++	state->mair[0] = arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_S1_MAIR0);
++	state->mair[1] = arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_S1_MAIR1);
++	state->sctlr = arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_SCTLR);
++	state->cbar = arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBAR(cb));
++	state->cba2r = arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBA2R(cb));
++	state->fsr = arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_FSR);
++}
++
++static ssize_t piano_dma_stage1_read(struct device *dev, char *buf)
++{
++	struct arm_smmu_master_cfg *cfg = dev_iommu_priv_get(dev);
++	struct iommu_fwspec *fw = dev_iommu_fwspec_get(dev);
++	struct iommu_domain *domain = iommu_get_domain_for_dev(dev);
++	struct arm_smmu_domain *owned;
++	struct arm_smmu_device *smmu;
++	struct arm_smmu_cb *bank;
++	struct piano_smmu_context_snapshot expected, fresh, first, second;
++	unsigned int i, cb;
++	ssize_t len;
++	int ret;
++
++	/* Group mutex pins this actual attached domain across the callback. */
++	if (!cfg || !fw || !domain || domain->owner != &arm_smmu_ops ||
++	    !(iommu_is_dma_domain(domain) || domain->type == IOMMU_DOMAIN_UNMANAGED))
++		return -EAGAIN;
++	owned = to_smmu_domain(domain);
++	smmu = cfg->smmu;
++	if (!smmu->smrs || !fw->num_ids || fw->num_ids > 8 || smmu->version <= ARM_SMMU_V1)
++		return -EOPNOTSUPP;
++	ret = arm_smmu_rpm_get(smmu);
++	if (ret < 0)
++		return ret;
++	mutex_lock(&owned->init_mutex);
++	if (owned->smmu != smmu || !owned->pgtbl_ops ||
++	    owned->stage != ARM_SMMU_DOMAIN_S1 || owned->cfg.fmt != ARM_SMMU_CTX_FMT_AARCH64 ||
++	    owned->cfg.cbar != CBAR_TYPE_S1_TRANS_S2_BYPASS ||
++	    owned->cfg.cbndx >= smmu->num_context_banks) {
++		ret = -EOPNOTSUPP;
++		goto out_domain;
++	}
++	cb = owned->cfg.cbndx;
++	bank = &smmu->cbs[cb];
++	if (READ_ONCE(bank->cfg) != &owned->cfg || !test_bit(cb, smmu->context_map)) {
++		ret = -ESTALE;
++		goto out_domain;
++	}
++	mutex_lock(&smmu->stream_map_mutex);
++	piano_context_owned(bank, &expected);
++	expected.cba2r = ARM_SMMU_CBA2R_VA64;
++	if (smmu->features & ARM_SMMU_FEAT_VMID16)
++		expected.cba2r |= FIELD_PREP(ARM_SMMU_CBA2R_VMID16, owned->cfg.vmid);
++	expected.sctlr = ARM_SMMU_SCTLR_S1_ASIDPNE | ARM_SMMU_SCTLR_AFE |
++		ARM_SMMU_SCTLR_TRE | ARM_SMMU_SCTLR_M;
++	if (IS_ENABLED(CONFIG_CPU_BIG_ENDIAN))
++		expected.sctlr |= ARM_SMMU_SCTLR_E;
++	piano_context_hardware(smmu, cb, &first);
++	if (!piano_smmu_stage1_equal(&first, &expected)) {
++		ret = -EIO;
++		goto out_stream;
++	}
++	len = sysfs_emit(buf, "piano-dma-context-v1 domain=stage1 ids=%u\n", fw->num_ids);
++	for (i = 0; i < fw->num_ids; i++) {
++		int idx = cfg->smendx[i];
++		struct arm_smmu_s2cr *route;
++		u32 smr, s2cr, wanted_smr, wanted_s2cr;
++		u32 smr_mask = ARM_SMMU_SMR_VALID | ARM_SMMU_SMR_ID | ARM_SMMU_SMR_MASK;
++		u32 s2cr_mask = ARM_SMMU_S2CR_TYPE | ARM_SMMU_S2CR_CBNDX | ARM_SMMU_S2CR_PRIVCFG;
++
++		if (idx < 0 || idx >= smmu->num_mapping_groups || !smmu->smrs[idx].valid) {
++			ret = -ENODATA;
++			goto out_stream;
++		}
++		route = &smmu->s2crs[idx];
++		if (route->boot || route->type != S2CR_TYPE_TRANS || route->cbndx != cb) {
++			ret = -ESTALE;
++			goto out_stream;
++		}
++		wanted_smr = FIELD_PREP(ARM_SMMU_SMR_ID, smmu->smrs[idx].id) |
++			FIELD_PREP(ARM_SMMU_SMR_MASK, smmu->smrs[idx].mask) | ARM_SMMU_SMR_VALID;
++		wanted_s2cr = FIELD_PREP(ARM_SMMU_S2CR_TYPE, route->type) |
++			FIELD_PREP(ARM_SMMU_S2CR_CBNDX, route->cbndx) |
++			FIELD_PREP(ARM_SMMU_S2CR_PRIVCFG, route->privcfg);
++		smr = arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_SMR(idx));
++		s2cr = arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_S2CR(idx));
++		if (!qcom_smmu_handoff_route_equal(smr, wanted_smr, s2cr, wanted_s2cr,
++						 smr_mask, s2cr_mask) ||
++		    smr != arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_SMR(idx)) ||
++		    s2cr != arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_S2CR(idx))) {
++			ret = -ESTALE;
++			goto out_stream;
++		}
++		len += sysfs_emit_at(buf, len,
++			"sid=%x mask=%x slot=%d origin=kernel-installed smr=%08x s2cr=%08x expected=%08x cb=%u ",
++			(u32)FIELD_GET(ARM_SMMU_SMR_ID, fw->ids[i]),
++			(u32)FIELD_GET(ARM_SMMU_SMR_MASK, fw->ids[i]),
++			idx, smr, s2cr, wanted_s2cr, cb);
++		len += sysfs_emit_at(buf, len,
++			"sctlr=%08x cbar=%08x fsr=%08x ttbr0=%016llx ttbr1=%016llx tcr=%08x tcr2=%08x mair0=%08x mair1=%08x\n",
++			first.sctlr, first.cbar, first.fsr, first.ttbr[0], first.ttbr[1],
++			first.tcr[0], first.tcr[1], first.mair[0], first.mair[1]);
++	}
++	piano_context_owned(bank, &fresh);
++	fresh.cba2r = expected.cba2r;
++	fresh.sctlr = expected.sctlr;
++	piano_context_hardware(smmu, cb, &second);
++	if (memcmp(&expected, &fresh, sizeof(expected)) ||
++	    memcmp(&first, &second, sizeof(first)) ||
++	    READ_ONCE(bank->cfg) != &owned->cfg) {
++		ret = -ESTALE;
++		goto out_stream;
++	}
++	ret = len;
++out_stream:
++	mutex_unlock(&smmu->stream_map_mutex);
++out_domain:
++	mutex_unlock(&owned->init_mutex);
++	arm_smmu_rpm_put(smmu);
++	return ret;
++}
++
++struct piano_dma_read {
++	struct device *target;
++	char *buffer;
++	bool context, seen;
++	ssize_t length;
++};
++
++static int piano_dma_group_read(struct device *dev, void *opaque)
++{
++	struct piano_dma_read *read = opaque;
++
++	if (dev != read->target)
++		return 0;
++	read->seen = true;
++	read->length = read->context ? piano_dma_stage1_read(dev, read->buffer) :
++		piano_dma_identity_read(dev, read->buffer);
++	return read->length < 0 ? read->length : 0;
++}
++
++static ssize_t piano_dma_read_serialized(struct device *dev, char *buffer, bool context)
++{
++	struct iommu_group *group = iommu_group_get(dev);
++	struct piano_dma_read read = { .target = dev, .buffer = buffer, .context = context };
++	int ret;
++
++	if (!group)
++		return -EAGAIN;
++	ret = iommu_group_for_each_dev_trylock(group, &read, piano_dma_group_read);
++	iommu_group_put(group);
++	return ret ? ret : read.seen ? read.length : -ENODEV;
++}
++
++static ssize_t piano_dma_route_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	return piano_dma_read_serialized(dev, buf, false);
++}
++static DEVICE_ATTR_RO(piano_dma_route);
++
++static ssize_t piano_dma_context_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	return piano_dma_read_serialized(dev, buf, true);
++}
++static DEVICE_ATTR_ADMIN_RO(piano_dma_context);
++
+ static struct iommu_device *arm_smmu_probe_device(struct device *dev)
+ {
+ 	struct arm_smmu_device *smmu = NULL;
+@@ -1488,6 +1785,13 @@ static struct iommu_device *arm_smmu_probe_device(struct device *dev)
+ 	if (ret)
+ 		goto out_cfg_free;
+ 
++	ret = device_create_file(dev, &dev_attr_piano_dma_route);
++	if (ret)
++		dev_warn(dev, "DMA route readback attribute unavailable: %d\n", ret);
++	ret = device_create_file(dev, &dev_attr_piano_dma_context);
++	if (ret)
++		dev_warn(dev, "DMA context readback attribute unavailable: %d\n", ret);
++
+ 	device_link_add(dev, smmu->dev,
+ 			DL_FLAG_PM_RUNTIME | DL_FLAG_AUTOREMOVE_SUPPLIER);
+ 
+@@ -1505,6 +1809,8 @@ static void arm_smmu_release_device(struct device *dev)
+ 	struct arm_smmu_master_cfg *cfg = dev_iommu_priv_get(dev);
+ 	int ret;
+ 
++	device_remove_file(dev, &dev_attr_piano_dma_route);
++	device_remove_file(dev, &dev_attr_piano_dma_context);
+ 	ret = arm_smmu_rpm_get(cfg->smmu);
+ 	if (ret < 0)
+ 		return;
+@@ -1669,10 +1975,13 @@ static void arm_smmu_device_reset(struct arm_smmu_device *smmu)
+ 	 * invalid and all S2CRn as bypass unless overridden.
+ 	 */
+ 	for (i = 0; i < smmu->num_mapping_groups; ++i)
+-		arm_smmu_write_sme(smmu, i);
++		if (!smmu->s2crs[i].boot)
++			arm_smmu_write_sme(smmu, i);
+ 
+ 	/* Make sure all context banks are disabled and clear CB_FSR  */
+ 	for (i = 0; i < smmu->num_context_banks; ++i) {
++		if (test_bit(i, smmu->boot_cbs))
++			continue;
+ 		arm_smmu_write_context_bank(smmu, i);
+ 		arm_smmu_cb_write(smmu, i, ARM_SMMU_CB_FSR, ARM_SMMU_CB_FSR_FAULT);
+ 	}
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu.h b/drivers/iommu/arm/arm-smmu/arm-smmu.h
+index 26d2e33cd328b8278888585fc07a31485d9397e2..096b87aae0fd7d1923aff7b442691ebd7973acb7 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu.h
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu.h
+@@ -277,6 +277,8 @@ struct arm_smmu_s2cr {
+ 	enum arm_smmu_s2cr_type		type;
+ 	enum arm_smmu_s2cr_privcfg	privcfg;
+ 	u8				cbndx;
++	/* Route inherited from the bootloader, left as is while set */
++	bool				boot;
+ };
+ 
+ struct arm_smmu_smr {
+@@ -316,6 +318,8 @@ struct arm_smmu_device {
+ 	u32				num_context_banks;
+ 	u32				num_s2_context_banks;
+ 	DECLARE_BITMAP(context_map, ARM_SMMU_MAX_CBS);
++	/* Context banks used by inherited (boot) routes, never reset */
++	DECLARE_BITMAP(boot_cbs, ARM_SMMU_MAX_CBS);
+ 	struct arm_smmu_cb		*cbs;
+ 	atomic_t			irptndx;
+ 
+@@ -453,6 +457,7 @@ struct arm_smmu_impl {
+ 				  struct arm_smmu_device *smmu,
+ 				  struct device *dev, int start);
+ 	void (*write_s2cr)(struct arm_smmu_device *smmu, int idx);
++	u32 (*expected_s2cr)(struct arm_smmu_device *smmu, int idx);
+ 	void (*write_sctlr)(struct arm_smmu_device *smmu, int idx, u32 reg);
+ 	void (*probe_finalize)(struct arm_smmu_device *smmu, struct device *dev);
+ };
+diff --git a/drivers/iommu/iommu.c b/drivers/iommu/iommu.c
+index cd1bca7ede9af63b5817ddf0d666ee138438c836..8e417d80bc4e62ed143e586c0e9839ec04d4bd7f 100644
+--- a/drivers/iommu/iommu.c
++++ b/drivers/iommu/iommu.c
+@@ -1389,6 +1389,20 @@ static struct device *iommu_group_first_dev(struct iommu_group *group)
+ 	return list_first_entry(&group->devices, struct group_device, list)->dev;
+ }
+ 
++static int iommu_group_for_each_dev_locked(struct iommu_group *group, void *data,
++					 int (*fn)(struct device *, void *))
++{
++	struct group_device *device;
++	int ret = 0;
++
++	for_each_group_device(group, device) {
++		ret = fn(device->dev, data);
++		if (ret)
++			break;
++	}
++	return ret;
++}
++
+ /**
+  * iommu_group_for_each_dev - iterate over each device in the group
+  * @group: the group
+@@ -1403,21 +1417,38 @@ static struct device *iommu_group_first_dev(struct iommu_group *group)
+ int iommu_group_for_each_dev(struct iommu_group *group, void *data,
+ 			     int (*fn)(struct device *, void *))
+ {
+-	struct group_device *device;
+-	int ret = 0;
++	int ret;
+ 
+ 	mutex_lock(&group->mutex);
+-	for_each_group_device(group, device) {
+-		ret = fn(device->dev, data);
+-		if (ret)
+-			break;
+-	}
++	ret = iommu_group_for_each_dev_locked(group, data, fn);
+ 	mutex_unlock(&group->mutex);
+-
+ 	return ret;
+ }
+ EXPORT_SYMBOL_GPL(iommu_group_for_each_dev);
+ 
++/**
++ * iommu_group_for_each_dev_trylock - nonblocking serialized group iteration
++ * @group: referenced group
++ * @data: callback data
++ * @fn: callback executed with the group mutex held
++ *
++ * For observational callbacks whose own lifetime is drained while removal
++ * holds the group mutex. Returning -EAGAIN avoids waiting for that mutex and
++ * deadlocking with the callback drain. The caller must hold a group reference.
++ */
++int iommu_group_for_each_dev_trylock(struct iommu_group *group, void *data,
++				     int (*fn)(struct device *, void *))
++{
++	int ret;
++
++	if (!mutex_trylock(&group->mutex))
++		return -EAGAIN;
++	ret = iommu_group_for_each_dev_locked(group, data, fn);
++	mutex_unlock(&group->mutex);
++	return ret;
++}
++EXPORT_SYMBOL_GPL(iommu_group_for_each_dev_trylock);
++
+ /**
+  * iommu_group_get - Return the group for a device and increment reference
+  * @dev: get the group that this device belongs to
+diff --git a/include/linux/iommu.h b/include/linux/iommu.h
+index ac43b8b93f14aa4853e794eec5e6ca39d1eac0f1..4edd8ee58ba386755241cb9c7c87ee745ad85d76 100644
+--- a/include/linux/iommu.h
++++ b/include/linux/iommu.h
+@@ -987,7 +987,9 @@ extern int iommu_group_add_device(struct iommu_group *group,
+ 				  struct device *dev);
+ extern void iommu_group_remove_device(struct device *dev);
+ extern int iommu_group_for_each_dev(struct iommu_group *group, void *data,
+-				    int (*fn)(struct device *, void *));
++				  int (*fn)(struct device *, void *));
++extern int iommu_group_for_each_dev_trylock(struct iommu_group *group, void *data,
++					  int (*fn)(struct device *, void *));
+ extern struct iommu_group *iommu_group_get(struct device *dev);
+ extern struct iommu_group *iommu_group_ref_get(struct iommu_group *group);
+ extern void iommu_group_put(struct iommu_group *group);
+diff --git a/tools/testing/selftests/iommu/qcom-handoff-snapshot.c b/tools/testing/selftests/iommu/qcom-handoff-snapshot.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..80ee8421bf5defc15cad82177362acbc304ae31c
+--- /dev/null
++++ b/tools/testing/selftests/iommu/qcom-handoff-snapshot.c
+@@ -0,0 +1,108 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* cc -Wall -Wextra -Werror -fsanitize=address,undefined qcom-handoff-snapshot.c */
++#include <assert.h>
++#include <stdio.h>
++#include <string.h>
++#include "../../../../drivers/iommu/arm/arm-smmu/arm-smmu-qcom-handoff.h"
++
++static struct qcom_smmu_handoff_snapshot s;
++
++int main(void)
++{
++	unsigned int i;
++	struct piano_smmu_context_snapshot owned = {
++		.ttbr = { 0x00070000bd980000ULL, 0x0007000000000000ULL },
++		.tcr = { 1U << 23, 0x70014 }, .mair = { 0xff44, 0 },
++		.sctlr = 0x1007, .cba2r = 1,
++	};
++	struct piano_smmu_context_snapshot hw = owned;
++
++	hw.sctlr = 0x1007;
++	hw.cbar = 1U << 16;
++	hw.fsr = 0x400; /* FORMAT is not a fault. */
++	assert(piano_smmu_stage1_equal(&hw, &owned));
++	assert(!piano_smmu_stage1_equal(NULL, &owned));
++	for (i = 1; i <= 8; i <<= 1) {
++		hw.fsr = i << 1;
++		assert(!piano_smmu_stage1_equal(&hw, &owned));
++	}
++	hw.fsr = 0x400;
++	hw.ttbr[0] ^= 0x1000;
++	assert(!piano_smmu_stage1_equal(&hw, &owned));
++	hw.ttbr[0] = owned.ttbr[0];
++	hw.tcr[1] ^= 1;
++	assert(!piano_smmu_stage1_equal(&hw, &owned));
++	hw.tcr[1] = owned.tcr[1];
++	hw.mair[0] ^= 1;
++	assert(!piano_smmu_stage1_equal(&hw, &owned));
++	hw.mair[0] = owned.mair[0];
++	hw.sctlr = 0;
++	assert(!piano_smmu_stage1_equal(&hw, &owned));
++	hw.sctlr = 0x1007;
++	hw.cba2r = 0;
++	assert(!piano_smmu_stage1_equal(&hw, &owned));
++	hw.cba2r = 1;
++	hw.sctlr |= 0x10; /* Wrong endian despite a matching table root. */
++	assert(!piano_smmu_stage1_equal(&hw, &owned));
++	hw.sctlr = 0x1007;
++	hw.cbar = 0;
++	assert(!piano_smmu_stage1_equal(&hw, &owned));
++	hw.cbar = 1U << 16;
++	/* Reject enabled table with only an ASID, or both walks disabled. */
++	owned.ttbr[0] = hw.ttbr[0] = 0x0007000000000000ULL;
++	assert(!piano_smmu_stage1_equal(&hw, &owned));
++	owned.tcr[0] = hw.tcr[0] = (1U << 23) | (1U << 7);
++	assert(!piano_smmu_stage1_equal(&hw, &owned));
++	/* GPU TTBR1-only configuration is a real stage1 domain too. */
++	owned.tcr[0] = hw.tcr[0] = 1U << 7;
++	owned.ttbr[1] = hw.ttbr[1] = 0x00070000bd982000ULL;
++	assert(piano_smmu_stage1_equal(&hw, &owned));
++
++	s.num_smr = 4;
++	s.num_cb = 4;
++	s.num_s2_cb = 1;
++	assert(qcom_smmu_handoff_geometry(&s));
++	assert(qcom_smmu_handoff_probe_slot(&s) == 0);
++	assert(qcom_smmu_handoff_bypass_cb(&s) == 3);
++	assert(qcom_smmu_handoff_route_equal(0x80000040, 0x80000040,
++					    3, 3, 0xffffffff, 0x030300ff));
++	assert(!qcom_smmu_handoff_route_equal(0x40, 0x80000040,
++					     3, 3, 0xffffffff, 0x030300ff));
++	assert(!qcom_smmu_handoff_route_equal(0x80000040, 0x80000040,
++					     0x01000003, 3, 0xffffffff, 0x030300ff));
++	/* Last bank is live even with M=0: reference alone reserves it. */
++	s.smr[3] = QCOM_HANDOFF_SMR_VALID | 0x800;
++	s.s2cr[3] = 3;
++	assert(qcom_smmu_handoff_cb_referenced(&s, 3));
++	assert(qcom_smmu_handoff_bypass_cb(&s) == 2);
++	/* Enabled but unreferenced firmware context must not be reclaimed. */
++	s.sctlr[2] = QCOM_HANDOFF_SCTLR_M;
++	assert(qcom_smmu_handoff_bypass_cb(&s) == 1);
++	s.sctlr[1] = QCOM_HANDOFF_SCTLR_M;
++	assert(qcom_smmu_handoff_bypass_cb(&s) == -1);
++	/* Stage-2-only CB0 is not an alternative when all stage1 banks are busy. */
++	assert(s.sctlr[0] == 0);
++	for (i = 0; i < s.num_smr; ++i)
++		s.smr[i] = QCOM_HANDOFF_SMR_VALID | i;
++	assert(qcom_smmu_handoff_probe_slot(&s) == -1);
++	/* Empty row keeps the live last row intact; no fixed last-slot policy. */
++	s.smr[1] = 0;
++	assert(qcom_smmu_handoff_probe_slot(&s) == 1);
++	s.num_smr = 129;
++	assert(!qcom_smmu_handoff_geometry(&s));
++	assert(qcom_smmu_handoff_probe_slot(&s) == -1);
++	s.num_smr = 4;
++	s.num_cb = 257;
++	assert(!qcom_smmu_handoff_geometry(&s));
++	s.num_cb = 4;
++	s.num_s2_cb = 5;
++	assert(!qcom_smmu_handoff_geometry(&s));
++	s.num_s2_cb = 1;
++	/* FAULT/BYPASS type fields do not name a translating context bank. */
++	s.s2cr[3] = (1U << 16) | 3;
++	assert(!qcom_smmu_handoff_cb_referenced(&s, 3));
++	s.sctlr[3] = 0;
++	assert(qcom_smmu_handoff_bypass_cb(&s) == 3);
++	puts("qcom SMMU handoff and real stage1 register comparator assertions passed.");
++	return 0;
++}

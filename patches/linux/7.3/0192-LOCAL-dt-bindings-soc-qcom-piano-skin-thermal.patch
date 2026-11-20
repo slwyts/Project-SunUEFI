@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Wed, 11 Nov 2026 00:25:30 +0800
+Subject: dt-bindings: soc: qcom: describe Piano skin temperature inputs
+
+Describe the two BQ27Z561 temperature channels, four thermistors and
+computed skin temperature used by the Piano charging policy.
+
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+Link: https://github.com/slwyts/Project-SunUEFI/commit/097c92ce69e530138a2afacb237d7acf4e12eb7c
+---
+ .../bindings/soc/qcom/qcom,pmic-glink.yaml    | 24 +++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml b/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
+index 05dd684064aa6b0854522c2acc9ba4c4361bc68f..3f4170c920d18553c549ce5cc946a494dc14d7a2 100644
+--- a/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
++++ b/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
+@@ -66,6 +66,28 @@ properties:
+       2, inserting one property before the data-role and source-PDO controls.
+       This must match the ADSP firmware shipped with the operating system.
+ 
++  io-channels:
++    items:
++      - description: First BQ27Z561 original battery temperature
++      - description: Second BQ27Z561 original battery temperature
++      - description: PMIH010x quiet thermistor
++      - description: PMIH010x charger thermistor
++      - description: PM8550 Wi-Fi thermistor
++      - description: PM8550 CPU thermistor
++
++  io-channel-names:
++    items:
++      - const: battery0
++      - const: battery1
++      - const: quiet-therm
++      - const: charger-therm
++      - const: wifi-therm
++      - const: cpu-therm
++
++  '#thermal-sensor-cells':
++    const: 0
++    description: Calibrated Piano skin temperature used by the charging policy.
++
+   '#cooling-cells':
+     const: 2
+ 
+@@ -131,6 +153,8 @@ required:
+ additionalProperties: false
+ 
+ dependencies:
++  io-channels: [io-channel-names]
++  io-channel-names: [io-channels]
+   xiaomi,charge-current-limits-microamp: ['#cooling-cells']
+ 
+ examples:

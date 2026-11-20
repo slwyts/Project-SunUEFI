@@ -1,0 +1,671 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: Bluetooth: hci_qca: support the Piano Brahma controller
+
+Carry the controller firmware, UART and power sequencing changes for Piano.
+
+The port retains changes from these linux-piano commits:
+piano: bt/geni: speed override and UART clock-choice markers (bring-up) (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+piano: bt: piano_retries module parameter; drop the SE clock table dump (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+BACKPORT-ELDEN: wifi/bt/pwrseq: Peach v2 (WCN7861) support from the Lenovo Y700 Gen4 port (GEEKiDoS <geek_ds@foxmail.com>)
+piano: bt: btqca: log the controller board ID (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+piano: bt: hci_qca: patch the Brahma PERI subsystem before the BT rampatch (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+piano: bt: hci_qca: wake BT and re-read its version after PERI activation (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+piano: bt: hci_qca: move the Brahma UART to 8 Mbaud through PERI (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+
+Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+Co-authored-by: GEEKiDoS <geek_ds@foxmail.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/de7b4418162df2a1d32f93096ed8b253a506f8ac
+Link: https://github.com/blu-sharky/linux-piano/commit/11cf0361cba3fdeb34666ac7166a27e9329a31bf
+Link: https://github.com/blu-sharky/linux-piano/commit/d2f590d28247dd751bf5c413d94625271ae394a4
+Link: https://github.com/blu-sharky/linux-piano/commit/5e8d92e1d9d249cee2e66e40699e6bb3bee28399
+Link: https://github.com/blu-sharky/linux-piano/commit/a8d5fc73d0c590a60d746c448da3494062b4b5c4
+Link: https://github.com/blu-sharky/linux-piano/commit/2b3e35c62eb025cdefe763064a0ca52a7894145c
+Link: https://github.com/blu-sharky/linux-piano/commit/c7626aaf3a19af05567de737a61120a6874440a7
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ drivers/bluetooth/btqca.c   |  47 +++++-
+ drivers/bluetooth/btqca.h   |   6 +
+ drivers/bluetooth/hci_qca.c | 287 +++++++++++++++++++++++++++++++++++-
+ 3 files changed, 327 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/bluetooth/btqca.c b/drivers/bluetooth/btqca.c
+index 22b08ab05b829bef2452cacad9c25eb8a63cda19..34e536ed55d483fcdba87ed30c940980bd41026d 100644
+--- a/drivers/bluetooth/btqca.c
++++ b/drivers/bluetooth/btqca.c
+@@ -13,6 +13,10 @@
+ 
+ #include "btqca.h"
+ 
++/* set by hci_qca once the Peach PERI has moved the UART to its operating rate */
++bool qca_peach_fast_uart;
++EXPORT_SYMBOL_GPL(qca_peach_fast_uart);
++
+ int qca_read_soc_version(struct hci_dev *hdev, struct qca_btsoc_version *ver,
+ 			 enum qca_btsoc_type soc_type)
+ {
+@@ -226,7 +230,7 @@ static int qca_read_fw_board_id(struct hci_dev *hdev, u16 *bid)
+ 	}
+ 
+ 	*bid = (edl->data[1] << 8) + edl->data[2];
+-	bt_dev_dbg(hdev, "%s: bid = %x", __func__, *bid);
++	bt_dev_info(hdev, "QCA board ID: 0x%04x", *bid);
+ 
+ out:
+ 	kfree_skb(skb);
+@@ -459,7 +463,8 @@ static int qca_tlv_check_data(struct hci_dev *hdev,
+ 
+ static int qca_tlv_send_segment(struct hci_dev *hdev, int seg_size,
+ 				const u8 *data, enum qca_tlv_dnld_mode mode,
+-				enum qca_btsoc_type soc_type)
++				enum qca_btsoc_type soc_type,
++				bool current_baud_download)
+ {
+ 	struct sk_buff *skb;
+ 	struct edl_event_hdr *edl;
+@@ -474,9 +479,20 @@ static int qca_tlv_send_segment(struct hci_dev *hdev, int seg_size,
+ 	cmd[1] = seg_size;
+ 	memcpy(cmd + 2, data, seg_size);
+ 
+-	if (mode == QCA_SKIP_EVT_VSE_CC || mode == QCA_SKIP_EVT_VSE)
+-		return __hci_cmd_send(hdev, EDL_PATCH_CMD_OPCODE, seg_size + 2,
+-				      cmd);
++	if (mode == QCA_SKIP_EVT_VSE_CC || mode == QCA_SKIP_EVT_VSE) {
++		err = __hci_cmd_send(hdev, EDL_PATCH_CMD_OPCODE, seg_size + 2,
++				     cmd);
++		/*
++		 * The Peach tuple exemption keeps the live transport at 115200.
++		 * Pace unacknowledged packets so the final synchronous command is
++		 * not queued behind the entire 219-KiB rampatch while its fixed HCI
++		 * command timer is already running.
++		 */
++		if (!err && current_baud_download)
++			usleep_range(24000, 25000);
++
++		return err;
++	}
+ 
+ 	/* Unlike other SoC's sending version command response as payload to
+ 	 * VSE event. WCN3991 sends version command response as a payload to
+@@ -612,7 +628,8 @@ static int qca_download_firmware(struct hci_dev *hdev,
+ 			config->dnld_mode = QCA_SKIP_EVT_NONE;
+ 
+ 		ret = qca_tlv_send_segment(hdev, segsize, segment,
+-					   config->dnld_mode, soc_type);
++					   config->dnld_mode, soc_type,
++					   config->current_baud_download);
+ 		if (ret)
+ 			goto out;
+ 
+@@ -764,6 +781,17 @@ int qca_uart_setup(struct hci_dev *hdev, uint8_t baudrate,
+ 	bt_dev_info(hdev, "QCA controller version 0x%08x", soc_ver);
+ 
+ 	config.user_baud_rate = baudrate;
++	if (soc_type == QCA_WCN7861) {
++		u32 product_id = le32_to_cpu(ver.product_id);
++		u32 soc_id = le32_to_cpu(ver.soc_id);
++		u16 tuple_rom = le16_to_cpu(ver.rom_ver);
++
++		config.current_baud_download =
++			((soc_id == 0x40210100 && tuple_rom == 0x0100) ||
++			 (soc_id == 0x40210200 && tuple_rom == 0x0200)) &&
++			(product_id == 0x1e || product_id == 0x21) &&
++			!qca_peach_fast_uart;
++	}
+ 
+ 	/* Firmware files to download are based on ROM version.
+ 	 * ROM version is derived from last two bytes of soc_ver.
+@@ -823,6 +851,7 @@ int qca_uart_setup(struct hci_dev *hdev, uint8_t baudrate,
+ 				 "qca/wcnhpbtfw%02x.tlv", rom_ver);
+ 			break;
+ 		case QCA_WCN7850:
++	case QCA_WCN7861:
+ 			snprintf(config.fwname, sizeof(config.fwname),
+ 				 "qca/hmtbtfw%02x.tlv", rom_ver);
+ 			break;
+@@ -859,7 +888,8 @@ int qca_uart_setup(struct hci_dev *hdev, uint8_t baudrate,
+ 	/* Give the controller some time to get ready to receive the NVM */
+ 	msleep(10);
+ 
+-	if (soc_type == QCA_QCA2066 || soc_type == QCA_WCN7850)
++	if (soc_type == QCA_QCA2066 || soc_type == QCA_WCN7850 ||
++	    soc_type == QCA_WCN7861)
+ 		qca_read_fw_board_id(hdev, &boardid);
+ 
+ 	/* Download NVM configuration */
+@@ -917,6 +947,7 @@ int qca_uart_setup(struct hci_dev *hdev, uint8_t baudrate,
+ 						  "wcnhpnv", soc_type, ver, rom_ver, boardid);
+ 			break;
+ 		case QCA_WCN7850:
++	case QCA_WCN7861:
+ 			qca_get_nvm_name_by_board(config.fwname, sizeof(config.fwname),
+ 				 "hmtnv", soc_type, ver, rom_ver, boardid);
+ 			break;
+@@ -946,6 +977,7 @@ int qca_uart_setup(struct hci_dev *hdev, uint8_t baudrate,
+ 	case QCA_WCN6750:
+ 	case QCA_WCN6855:
+ 	case QCA_WCN7850:
++	case QCA_WCN7861:
+ 		err = qca_disable_soc_logging(hdev);
+ 		if (err < 0)
+ 			return err;
+@@ -983,6 +1015,7 @@ int qca_uart_setup(struct hci_dev *hdev, uint8_t baudrate,
+ 	case QCA_WCN6750:
+ 	case QCA_WCN6855:
+ 	case QCA_WCN7850:
++	case QCA_WCN7861:
+ 		/* get fw build info */
+ 		err = qca_read_fw_build_info(hdev);
+ 		if (err < 0)
+diff --git a/drivers/bluetooth/btqca.h b/drivers/bluetooth/btqca.h
+index 8f3c1b1c77b3de8e7c86578aa3af17aefe99dab3..e1fbe99aadd42f5739eaa289e9d76a783e705239 100644
+--- a/drivers/bluetooth/btqca.h
++++ b/drivers/bluetooth/btqca.h
+@@ -74,6 +74,8 @@ enum qca_baudrate {
+ 	QCA_BAUDRATE_1600000,
+ 	QCA_BAUDRATE_3200000,
+ 	QCA_BAUDRATE_3500000,
++	/* Brahma v2 uses Qualcomm vendor baud code 0x15 for 8 Mbaud. */
++	QCA_BAUDRATE_8000000	= 0x15,
+ 	QCA_BAUDRATE_AUTO	= 0xFE,
+ 	QCA_BAUDRATE_RESERVED
+ };
+@@ -97,6 +99,7 @@ struct qca_fw_config {
+ 	uint8_t user_baud_rate;
+ 	enum qca_tlv_dnld_mode dnld_mode;
+ 	enum qca_tlv_dnld_mode dnld_type;
++	bool current_baud_download;
+ 	bdaddr_t bdaddr;
+ };
+ 
+@@ -158,11 +161,14 @@ enum qca_btsoc_type {
+ 	QCA_WCN6750,
+ 	QCA_WCN6855,
+ 	QCA_WCN7850,
++	QCA_WCN7861,
+ };
+ 
+ #if IS_ENABLED(CONFIG_BT_QCA)
+ 
+ int qca_set_bdaddr_rome(struct hci_dev *hdev, const bdaddr_t *bdaddr);
++extern bool qca_peach_fast_uart;
++
+ int qca_uart_setup(struct hci_dev *hdev, uint8_t baudrate,
+ 		   enum qca_btsoc_type soc_type, struct qca_btsoc_version ver,
+ 		   const char *firmware_name, const char *rampatch_name);
+diff --git a/drivers/bluetooth/hci_qca.c b/drivers/bluetooth/hci_qca.c
+index 7089e9b639b2aad2d5ad2d43b07f495833757805..ba3697dc49cf9e109440d7326f2302bbcf1bf7ff 100644
+--- a/drivers/bluetooth/hci_qca.c
++++ b/drivers/bluetooth/hci_qca.c
+@@ -21,6 +21,7 @@
+ #include <linux/debugfs.h>
+ #include <linux/delay.h>
+ #include <linux/devcoredump.h>
++#include <linux/firmware.h>
+ #include <linux/device.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/module.h>
+@@ -253,6 +254,20 @@ static enum qca_btsoc_type qca_soc_type(struct hci_uart *hu)
+ 	return soc_type;
+ }
+ 
++/*
++ * Piano bring-up only: override the DT max-speed so that several UART
++ * operating speeds can be tried in one boot (modprobe hci_uart
++ * piano_speed=N).  0 keeps the DT value.
++ */
++static unsigned int piano_speed;
++module_param(piano_speed, uint, 0444);
++MODULE_PARM_DESC(piano_speed, "piano bring-up: QCA operating UART speed override");
++
++/* Piano bring-up only: each failed setup retry costs ~30 s of timeouts. */
++static unsigned int piano_retries = MAX_INIT_RETRIES;
++module_param(piano_retries, uint, 0444);
++MODULE_PARM_DESC(piano_retries, "piano bring-up: setup power-cycle retries");
++
+ static const char *qca_get_firmware_name(struct hci_uart *hu)
+ {
+ 	if (hu->serdev) {
+@@ -1216,7 +1231,6 @@ static int qca_recv_event(struct hci_dev *hdev, struct sk_buff *skb)
+ 
+ 	if (test_bit(QCA_DROP_VENDOR_EVENT, &qca->flags)) {
+ 		struct hci_event_hdr *hdr = (void *)skb->data;
+-
+ 		/* For the WCN3990 the vendor command for a baudrate change
+ 		 * isn't sent as synchronous HCI command, because the
+ 		 * controller sends the corresponding vendor event with the
+@@ -1267,6 +1281,121 @@ static int qca_recv_event(struct hci_dev *hdev, struct sk_buff *skb)
+ 	.lsize = 0, \
+ 	.maxlen = HCI_MAX_IBS_SIZE
+ 
++
++/*
++ * piano bring-up: Brahma PERI subsystem probing.  The UART is owned by a
++ * peripheral (PERI) subsystem that talks its own H4 packet type 0x34
++ * (host id, event, length, payload); commands go out as type 0x31 (host
++ * id, opcode, length, payload).  piano_peri is a bitmask of steps run
++ * before the BT rampatch: 1 = version, 2 = arbitration, 4 = activate BT
++ * subsystem (after setup).  Every PERI frame is logged.
++ */
++static unsigned int piano_peri;
++module_param(piano_peri, uint, 0644);
++MODULE_PARM_DESC(piano_peri, "piano bring-up: PERI steps bitmask (1 ver, 2 arbitrate, 4 activate BT, 8 patch+nvm+reset)");
++
++static unsigned int piano_peri_baud = 8000000;
++module_param(piano_peri_baud, uint, 0644);
++MODULE_PARM_DESC(piano_peri_baud, "piano bring-up: PERI operating UART rate (piano_peri bit 64)");
++
++static DECLARE_COMPLETION(piano_peri_rx);
++static u8 piano_peri_last[64];
++static int piano_peri_last_len;
++
++static bool piano_peri_quiet;
++
++static int qca_recv_peri(struct hci_dev *hdev, struct sk_buff *skb)
++{
++	/* crash dumps (event 0x04) arrive as hundreds of frames: first/last only */
++	bool dump = skb->len > 6 && skb->data[3] == 0xf0 && skb->data[4] == 0x04;
++	u16 seq = dump ? get_unaligned_le16(skb->data + 5) : 0;
++
++	if (!piano_peri_quiet && (!dump || seq == 0 || seq == 0xffff))
++		bt_dev_info(hdev, "PERI rx: %*ph", min_t(int, skb->len, 48), skb->data);
++	piano_peri_last_len = min_t(int, skb->len, sizeof(piano_peri_last));
++	memcpy(piano_peri_last, skb->data, piano_peri_last_len);
++	complete(&piano_peri_rx);
++	kfree_skb(skb);
++	return 0;
++}
++
++#define QCA_PERI_EVENT \
++	.type = 0x34, \
++	.hlen = 3, \
++	.loff = 2, \
++	.lsize = 1, \
++	.maxlen = HCI_MAX_EVENT_SIZE
++
++/* send one PERI command, then log every PERI frame for up to @ms */
++static int piano_peri_cmd(struct hci_uart *hu, const char *name,
++			  const u8 *cmd, int len, int ms)
++{
++	struct hci_dev *hdev = hu->hdev;
++	int n = 0;
++
++	reinit_completion(&piano_peri_rx);
++	bt_dev_info(hdev, "PERI tx %s: %*ph", name, len, cmd);
++	serdev_device_write_buf(hu->serdev, cmd, len);
++	serdev_device_wait_until_sent(hu->serdev, 0);
++	while (wait_for_completion_timeout(&piano_peri_rx, msecs_to_jiffies(ms))) {
++		reinit_completion(&piano_peri_rx);
++		n++;
++		ms = 300;	/* collect trailing notifications */
++	}
++	if (!n)
++		bt_dev_info(hdev, "PERI %s: no reply", name);
++	return n;
++}
++
++/*
++ * Stream a PERI TLV (patch or NVM) as EDL 0x06 segments of up to 243
++ * bytes: 31 00 f0 ff <n+3> 06 00 <n> <data>.  Each segment waits up to
++ * 200 ms for an acknowledgement; replies are counted, not required.
++ */
++static int piano_peri_tlv(struct hci_uart *hu, const char *fwname)
++{
++	struct hci_dev *hdev = hu->hdev;
++	const struct firmware *fw;
++	u8 pkt[8 + 243];
++	size_t off;
++	int acks = 0, segs = 0, ret;
++
++	ret = request_firmware(&fw, fwname, &hdev->dev);
++	if (ret) {
++		bt_dev_err(hdev, "PERI: %s not loaded (%d)", fwname, ret);
++		return ret;
++	}
++	bt_dev_info(hdev, "PERI: downloading %s (%zu bytes)", fwname, fw->size);
++	piano_peri_quiet = true;
++	for (off = 0; off < fw->size; off += 243, segs++) {
++		int n = min_t(size_t, 243, fw->size - off);
++
++		pkt[0] = 0x31; pkt[1] = 0x00; pkt[2] = 0xf0; pkt[3] = 0xff;
++		pkt[4] = n + 3; pkt[5] = 0x06; pkt[6] = 0x00; pkt[7] = n;
++		memcpy(pkt + 8, fw->data + off, n);
++		reinit_completion(&piano_peri_rx);
++		serdev_device_write(hu->serdev, pkt, 8 + n, MAX_SCHEDULE_TIMEOUT);
++		/* patch TLVs ack only the last segment, NVM TLVs every one */
++		if (wait_for_completion_timeout(&piano_peri_rx,
++				msecs_to_jiffies(off + n >= fw->size ? 1000 :
++						   qca_peach_fast_uart ? 2 : 30))) {
++			acks++;
++			if (acks == 1 || off + n >= fw->size ||
++			    (piano_peri_last_len > 9 && piano_peri_last[9]))
++				bt_dev_info(hdev, "PERI seg %d ack: %*ph", segs,
++					    piano_peri_last_len, piano_peri_last);
++		}
++	}
++	piano_peri_quiet = false;
++	bt_dev_info(hdev, "PERI: %s sent, %d segments, %d acks", fwname, segs, acks);
++	release_firmware(fw);
++	/* collect a trailing notification, if any */
++	if (wait_for_completion_timeout(&piano_peri_rx, msecs_to_jiffies(500)))
++		bt_dev_info(hdev, "PERI after %s: %*ph", fwname,
++			    piano_peri_last_len, piano_peri_last);
++	return 0;
++}
++
+ static const struct h4_recv_pkt qca_recv_pkts[] = {
+ 	{ H4_RECV_ACL,             .recv = qca_recv_acl_data },
+ 	{ H4_RECV_SCO,             .recv = hci_recv_frame    },
+@@ -1275,6 +1404,7 @@ static const struct h4_recv_pkt qca_recv_pkts[] = {
+ 	{ QCA_IBS_WAKE_IND_EVENT,  .recv = qca_ibs_wake_ind  },
+ 	{ QCA_IBS_WAKE_ACK_EVENT,  .recv = qca_ibs_wake_ack  },
+ 	{ QCA_IBS_SLEEP_IND_EVENT, .recv = qca_ibs_sleep_ind },
++	{ QCA_PERI_EVENT,          .recv = qca_recv_peri     },
+ };
+ 
+ static int qca_recv(struct hci_uart *hu, const void *data, int count)
+@@ -1334,6 +1464,8 @@ static uint8_t qca_get_baudrate_value(int speed)
+ 		return QCA_BAUDRATE_3200000;
+ 	case 3500000:
+ 		return QCA_BAUDRATE_3500000;
++	case 8000000:
++		return QCA_BAUDRATE_8000000;
+ 	default:
+ 		return QCA_BAUDRATE_115200;
+ 	}
+@@ -1346,7 +1478,7 @@ static int qca_set_baudrate(struct hci_dev *hdev, uint8_t baudrate)
+ 	struct sk_buff *skb;
+ 	u8 cmd[] = { 0x01, 0x48, 0xFC, 0x01, 0x00 };
+ 
+-	if (baudrate > QCA_BAUDRATE_3200000)
++	if (baudrate > QCA_BAUDRATE_8000000)
+ 		return -EINVAL;
+ 
+ 	cmd[4] = baudrate;
+@@ -1383,6 +1515,7 @@ static int qca_set_baudrate(struct hci_dev *hdev, uint8_t baudrate)
+ 	case QCA_WCN6750:
+ 	case QCA_WCN6855:
+ 	case QCA_WCN7850:
++	case QCA_WCN7861:
+ 		usleep_range(1000, 10000);
+ 		break;
+ 
+@@ -1470,6 +1603,7 @@ static int qca_check_speeds(struct hci_uart *hu)
+ 	case QCA_WCN6750:
+ 	case QCA_WCN6855:
+ 	case QCA_WCN7850:
++	case QCA_WCN7861:
+ 		if (!qca_get_speed(hu, QCA_INIT_SPEED) &&
+ 		    !qca_get_speed(hu, QCA_OPER_SPEED))
+ 			return -EINVAL;
+@@ -1864,6 +1998,7 @@ static int qca_power_on(struct hci_dev *hdev)
+ 	case QCA_WCN6750:
+ 	case QCA_WCN6855:
+ 	case QCA_WCN7850:
++	case QCA_WCN7861:
+ 		ret = qca_regulator_init(hu);
+ 		break;
+ 
+@@ -1908,6 +2043,24 @@ static int qca_configure_hfp_offload(struct hci_dev *hdev)
+ 	return 0;
+ }
+ 
++static bool
++qca_wcn7861_uses_current_baudrate(const struct qca_btsoc_version *ver)
++{
++	u32 product_id = le32_to_cpu(ver->product_id);
++	u32 soc_id = le32_to_cpu(ver->soc_id);
++	u16 rom_ver = le16_to_cpu(ver->rom_ver);
++
++	/*
++	 * The Qualcomm Peach HAL deliberately skips SetBaudRateReq for these
++	 * four product/ROM tuples and starts the TLV download at the UART rate
++	 * which was used successfully for the version request.  Sending 0xfc48
++	 * here instead leaves the Elden Peach v2 controller silent.
++	 */
++	return ((soc_id == 0x40210100 && rom_ver == 0x0100) ||
++		(soc_id == 0x40210200 && rom_ver == 0x0200)) &&
++	       (product_id == 0x1e || product_id == 0x21);
++}
++
+ static int qca_setup(struct hci_uart *hu)
+ {
+ 	struct hci_dev *hdev = hu->hdev;
+@@ -1960,6 +2113,7 @@ static int qca_setup(struct hci_uart *hu)
+ 		break;
+ 
+ 	case QCA_WCN7850:
++	case QCA_WCN7861:
+ 		soc_name = "wcn7850";
+ 		break;
+ 
+@@ -1986,6 +2140,7 @@ retry:
+ 	case QCA_WCN6750:
+ 	case QCA_WCN6855:
+ 	case QCA_WCN7850:
++	case QCA_WCN7861:
+ 		if (qcadev && qcadev->bdaddr_property_broken)
+ 			hci_set_quirk(hdev, HCI_QUIRK_BDADDR_PROPERTY_BROKEN);
+ 
+@@ -2002,12 +2157,24 @@ retry:
+ 
+ 	/* Setup user speed if needed */
+ 	speed = qca_get_speed(hu, QCA_OPER_SPEED);
+-	if (speed) {
++	if (speed &&
++	    !(soc_type == QCA_WCN7861 &&
++	      qca_wcn7861_uses_current_baudrate(&ver))) {
+ 		ret = qca_set_speed(hu, QCA_OPER_SPEED);
+ 		if (ret)
+ 			goto out;
+ 
+ 		qca_baudrate = qca_get_baudrate_value(speed);
++	} else if (speed) {
++		/*
++		 * Stock still writes the configured operating-rate code into the
++		 * new-format NVM HCI tag.  This value does not change the live UART
++		 * used to download rampatch and NVM.
++		 */
++		qca_baudrate = qca_get_baudrate_value(speed);
++		bt_dev_info(hdev,
++			    "QCA Peach downloads at current UART rate; skipping 0xfc48 (NVM baud 0x%02x)",
++			    qca_baudrate);
+ 	}
+ 
+ 	switch (soc_type) {
+@@ -2019,6 +2186,7 @@ retry:
+ 	case QCA_WCN6750:
+ 	case QCA_WCN6855:
+ 	case QCA_WCN7850:
++	case QCA_WCN7861:
+ 		break;
+ 
+ 	default:
+@@ -2028,9 +2196,90 @@ retry:
+ 			goto out;
+ 	}
+ 
++	qca_peach_fast_uart = false;
++	if (soc_type == QCA_WCN7861 && hu->serdev && (piano_peri & 64)) {
++		/*
++		 * PERI generic 0x02: switch the UART rate.  Flow off, command,
++		 * 20 ms, host switch, flow on; the reply comes at the new rate.
++		 */
++		u8 baud[] = { 0x31, 0x00, 0xf1, 0xff, 0x02, 0x02,
++			      qca_get_baudrate_value(piano_peri_baud) };
++
++		reinit_completion(&piano_peri_rx);
++		bt_dev_info(hdev, "PERI tx set-baud %u: %*ph", piano_peri_baud,
++			    (int)sizeof(baud), baud);
++		hci_uart_set_flow_control(hu, true);
++		serdev_device_write(hu->serdev, baud, sizeof(baud), MAX_SCHEDULE_TIMEOUT);
++		serdev_device_wait_until_sent(hu->serdev, 0);
++		msleep(20);
++		host_set_baudrate(hu, piano_peri_baud);
++		hci_uart_set_flow_control(hu, false);
++		if (wait_for_completion_timeout(&piano_peri_rx, msecs_to_jiffies(1000))) {
++			qca_peach_fast_uart = true;
++			bt_dev_info(hdev, "PERI now at %u baud", piano_peri_baud);
++		} else {
++			bt_dev_err(hdev, "PERI set-baud: no reply at %u", piano_peri_baud);
++		}
++	}
++	if (soc_type == QCA_WCN7861 && hu->serdev && (piano_peri & 0xb)) {
++		static const u8 act[] = { 0x31, 0x00, 0xf1, 0xff, 0x03, 0x00, 0x01, 0x01 };
++		static const u8 pver[] = { 0x31, 0x00, 0xf0, 0xff, 0x02, 0x05, 0x00 };
++		static const u8 arb[] = { 0x31, 0x00, 0xf0, 0xff, 0x03, 0x08, 0x00, 0x00 };
++
++		if (piano_peri & 1)
++			piano_peri_cmd(hu, "peri-getver", pver, sizeof(pver), 1000);
++		bool patched = false;
++
++		if (piano_peri & 2) {
++			piano_peri_cmd(hu, "peri-arbitrate", arb, sizeof(arb), 2000);
++			/* cmd complete ... f0 ff <status> 08 <state>: 0x17 = patched */
++			patched = piano_peri_last_len >= 11 && piano_peri_last[10] == 0x17;
++			if (patched)
++				bt_dev_info(hdev, "PERI already patched, skipping download");
++		}
++		if (piano_peri & 16) {
++			static const u8 tarb[] = { 0x31, 0x00, 0xf0, 0xff, 0x03, 0x08, 0x03, 0x00 };
++
++			piano_peri_cmd(hu, "tme-arbitrate", tarb, sizeof(tarb), 2000);
++		}
++		if ((piano_peri & 8) && patched) {
++			piano_peri_cmd(hu, "peri-activate-bt", act, sizeof(act), 2000);
++		} else if (piano_peri & 8) {
++			static const u8 bid[] = { 0x31, 0x00, 0xf0, 0xff, 0x01, 0x0a };
++			static const u8 bld[] = { 0x31, 0x00, 0xf0, 0xff, 0x02, 0x09, 0x00 };
++			static const u8 rst[] = { 0x31, 0x00, 0xf1, 0xff, 0x01, 0x03 };
++
++			if (!piano_peri_tlv(hu, "qca/brhperifw20.tlv")) {
++				piano_peri_cmd(hu, "peri-boardid", bid, sizeof(bid), 1000);
++				piano_peri_tlv(hu, "qca/brhperinv20.bin");
++				piano_peri_cmd(hu, "peri-buildinfo", bld, sizeof(bld), 1000);
++				piano_peri_cmd(hu, "peri-reset", rst, sizeof(rst), 3000);
++				/* patching PERI deactivates the BT subsystem */
++				piano_peri_cmd(hu, "peri-activate-bt", act, sizeof(act), 2000);
++			}
++		}
++		if (piano_peri & 32) {
++			/* wake the freshly activated BT side, then re-read its version */
++			static const u8 wake = 0xfd;
++
++			serdev_device_write_buf(hu->serdev, &wake, 1);
++			serdev_device_wait_until_sent(hu->serdev, 0);
++			msleep(100);
++			ret = qca_read_soc_version(hdev, &ver, soc_type);
++			bt_dev_info(hdev, "PERI: BT version after activation: %d", ret);
++			if (ret)
++				goto out;
++		}
++	}
++
+ 	/* Setup patch / NVM configurations */
+ 	ret = qca_uart_setup(hdev, qca_baudrate, soc_type, ver,
+ 			firmware_name, rampatch_name);
++	if (!ret && soc_type == QCA_WCN7861 && hu->serdev && (piano_peri & 4)) {
++		static const u8 act[] = { 0x31, 0x00, 0xf1, 0xff, 0x03, 0x00, 0x01, 0x01 };
++
++		piano_peri_cmd(hu, "peri-activate-bt", act, sizeof(act), 2000);
++	}
+ 	if (!ret) {
+ 		clear_bit(QCA_IBS_DISABLED, &qca->flags);
+ 		qca_debugfs_init(hdev);
+@@ -2057,7 +2306,7 @@ out:
+ 	if (ret) {
+ 		qca_power_off(hu);
+ 
+-		if (retries < MAX_INIT_RETRIES) {
++		if (retries < piano_retries) {
+ 			bt_dev_warn(hdev, "Retry BT power ON:%d", retries);
+ 			if (hu->serdev) {
+ 				serdev_device_close(hu->serdev);
+@@ -2219,6 +2468,21 @@ static const struct qca_device_data qca_soc_data_wcn7850 __maybe_unused = {
+ 			QCA_CAP_HFP_HW_OFFLOAD,
+ };
+ 
++static const struct qca_device_data qca_soc_data_wcn7861 __maybe_unused = {
++	.soc_type = QCA_WCN7861,
++	.vregs = (struct qca_vreg []) {
++		{ "vddio", 5000 },
++		{ "vddaon", 26000 },
++		{ "vdddig", 126000 },
++		{ "vddrfa0p8", 102000 },
++		{ "vddrfa1p2", 257000 },
++		{ "vddrfa1p9", 302000 },
++	},
++	.num_vregs = 6,
++	.capabilities = QCA_CAP_WIDEBAND_SPEECH | QCA_CAP_VALID_LE_STATES |
++			QCA_CAP_HFP_HW_OFFLOAD,
++};
++
+ static void qca_power_off(struct hci_uart *hu)
+ {
+ 	struct qca_serdev *qcadev;
+@@ -2414,6 +2678,11 @@ static int qca_serdev_probe(struct serdev_device *serdev)
+ 					 qcadev->firmware_name, ARRAY_SIZE(qcadev->firmware_name));
+ 	device_property_read_u32(&serdev->dev, "max-speed",
+ 				 &qcadev->oper_speed);
++	if (piano_speed) {
++		dev_info(&serdev->dev, "piano-dbg: operating speed %u (DT %u)\n",
++			 piano_speed, qcadev->oper_speed);
++		qcadev->oper_speed = piano_speed;
++	}
+ 	if (!qcadev->oper_speed)
+ 		BT_DBG("UART will pick default operating speed");
+ 
+@@ -2435,6 +2704,7 @@ static int qca_serdev_probe(struct serdev_device *serdev)
+ 	case QCA_WCN6750:
+ 	case QCA_WCN6855:
+ 	case QCA_WCN7850:
++	case QCA_WCN7861:
+ 		qcadev->bt_power = devm_kzalloc(&serdev->dev,
+ 						sizeof(struct qca_power),
+ 						GFP_KERNEL);
+@@ -2454,6 +2724,7 @@ static int qca_serdev_probe(struct serdev_device *serdev)
+ 	case QCA_WCN6750:
+ 	case QCA_WCN6855:
+ 	case QCA_WCN7850:
++	case QCA_WCN7861:
+ 		if (!device_property_present(&serdev->dev, "enable-gpios")) {
+ 			/*
+ 			 * Backward compatibility with old DT sources. If the
+@@ -2496,7 +2767,8 @@ static int qca_serdev_probe(struct serdev_device *serdev)
+ 		if (!qcadev->bt_en &&
+ 		    (data->soc_type == QCA_WCN6750 ||
+ 		     data->soc_type == QCA_WCN6855 ||
+-		     data->soc_type == QCA_WCN7850))
++		     data->soc_type == QCA_WCN7850 ||
++		     data->soc_type == QCA_WCN7861))
+ 			power_ctrl_enabled = false;
+ 
+ 		qcadev->sw_ctrl = devm_gpiod_get_optional(&serdev->dev, "swctrl",
+@@ -2504,7 +2776,8 @@ static int qca_serdev_probe(struct serdev_device *serdev)
+ 		if (IS_ERR(qcadev->sw_ctrl) &&
+ 		    (data->soc_type == QCA_WCN6750 ||
+ 		     data->soc_type == QCA_WCN6855 ||
+-		     data->soc_type == QCA_WCN7850)) {
++		     data->soc_type == QCA_WCN7850 ||
++		     data->soc_type == QCA_WCN7861)) {
+ 			dev_err(&serdev->dev, "failed to acquire SW_CTRL gpio\n");
+ 			return PTR_ERR(qcadev->sw_ctrl);
+ 		}
+@@ -2589,6 +2862,7 @@ static void qca_serdev_remove(struct serdev_device *serdev)
+ 	case QCA_WCN6750:
+ 	case QCA_WCN6855:
+ 	case QCA_WCN7850:
++	case QCA_WCN7861:
+ 		if (power->vregs_on)
+ 			qca_power_off(&qcadev->serdev_hu);
+ 		break;
+@@ -2791,6 +3065,7 @@ static const struct of_device_id qca_bluetooth_of_match[] = {
+ 	{ .compatible = "qcom,wcn6750-bt", .data = &qca_soc_data_wcn6750},
+ 	{ .compatible = "qcom,wcn6855-bt", .data = &qca_soc_data_wcn6855},
+ 	{ .compatible = "qcom,wcn7850-bt", .data = &qca_soc_data_wcn7850},
++	{ .compatible = "qcom,wcn7861-bt", .data = &qca_soc_data_wcn7861},
+ 	{ /* sentinel */ }
+ };
+ MODULE_DEVICE_TABLE(of, qca_bluetooth_of_match);

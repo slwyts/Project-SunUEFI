@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: ASoC: qcom: support mono voice capture on Piano
+
+Enable the single voice-assistant decimator used on Piano and adjust the front-end and back-end capture limits.
+
+The port retains changes from these linux-piano commits:
+piano: FS19xx speakers on LPAIF TDM and the q6v5 handover IRQ fixes (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+
+Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/2f6c29345edf991b04ce15d2231e6060412335aa
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ sound/soc/qcom/qdsp6/q6apm-dai.c        |  7 ++++++-
+ sound/soc/qcom/qdsp6/q6apm-lpass-dais.c | 15 +++++++++++++++
+ 2 files changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6apm-dai.c b/sound/soc/qcom/qdsp6/q6apm-dai.c
+index 033197bdd8705eaf1eafa7bd73264d5bca4a5952..8a1c171b98b0a9533d3e8eac62433d0fe5ad7c2f 100644
+--- a/sound/soc/qcom/qdsp6/q6apm-dai.c
++++ b/sound/soc/qcom/qdsp6/q6apm-dai.c
+@@ -398,8 +398,13 @@ static int q6apm_dai_open(struct snd_soc_component *component,
+ 
+ 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+ 		runtime->hw = q6apm_dai_hardware_playback;
+-	else if (substream->stream == SNDRV_PCM_STREAM_CAPTURE)
++	else if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
+ 		runtime->hw = q6apm_dai_hardware_capture;
++		/* Piano enables one VA decimator; other cards retain their limits. */
++		if (of_device_is_compatible(soc_prtd->card->dev->of_node,
++					    "xiaomi,piano-sndcard"))
++			runtime->hw.channels_min = 1;
++	}
+ 
+ 	/* Ensure that buffer size is a multiple of period size */
+ 	ret = snd_pcm_hw_constraint_integer(runtime, SNDRV_PCM_HW_PARAM_PERIODS);
+diff --git a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c b/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c
+index e204fd59e5129f42ee967b06979f12b164810d82..196dd640c83a99d5162b3510bc60cecf00ca790c 100644
+--- a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c
++++ b/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c
+@@ -74,6 +74,8 @@ static int q6dma_set_channel_map(struct snd_soc_dai *dai,
+ 
+ 	struct q6apm_lpass_dai_data *dai_data = dev_get_drvdata(dai->dev);
+ 	struct audioreach_module_config *cfg = &dai_data->module_config[dai->id];
++	const unsigned int *ch_mask;
++	unsigned int num;
+ 	int i;
+ 
+ 	switch (dai->id) {
+@@ -126,6 +128,18 @@ static int q6dma_set_channel_map(struct snd_soc_dai *dai,
+ 		for (i = 0; i < rx_num; i++)
+ 			cfg->channel_map[i] = rx_ch_mask[i];
+ 
++		break;
++	case PRIMARY_TDM_RX_0 ... QUINARY_TDM_TX_7:
++		num = (dai->id & 0x1) ? tx_num : rx_num;
++		ch_mask = (dai->id & 0x1) ? tx_ch_mask : rx_ch_mask;
++		if (!ch_mask || num > AR_PCM_MAX_NUM_CHANNEL) {
++			dev_err(dai->dev, "invalid channel map for dai id 0x%x\n", dai->id);
++			return -EINVAL;
++		}
++		memset(cfg->channel_map, 0, sizeof(cfg->channel_map));
++		for (i = 0; i < num; i++)
++			cfg->channel_map[i] = ch_mask[i];
++
+ 		break;
+ 	default:
+ 		dev_err(dai->dev, "%s: invalid dai id 0x%x\n",
+@@ -439,6 +453,7 @@ static const struct snd_soc_dai_ops q6tdm_ops = {
+ 	.startup	= q6apm_lpass_dai_startup,
+ 	.shutdown	= q6i2s_lpass_dai_shutdown,
+ 	.set_tdm_slot	= q6tdm_set_tdm_slot,
++	.set_channel_map  = q6dma_set_channel_map,
+ 	.hw_params	= q6dma_hw_params,
+ 	.set_fmt	= q6i2s_set_fmt,
+ 	.set_sysclk	= q6i2s_set_sysclk,

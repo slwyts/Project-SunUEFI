@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Sun, 8 Nov 2026 01:57:31 +0800
+Subject: rpmsg: use channel aliases for nodes without compatible
+
+Source: Cryolitia/xiaomi-piano-nixos, packages/kernel/patches/rpmsg-channel-modalias-fallback.patch
+
+Link: https://github.com/Cryolitia/xiaomi-piano-nixos/commit/b06301d14f50ee09e995aae50ecbaac05e89f55e
+---
+ drivers/rpmsg/rpmsg_core.c | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/rpmsg/rpmsg_core.c b/drivers/rpmsg/rpmsg_core.c
+index 04bfcc75f05b4ae93381587b1447163ed17ee734..e48217bead29c03addaecade617e61c5aaafb284 100644
+--- a/drivers/rpmsg/rpmsg_core.c
++++ b/drivers/rpmsg/rpmsg_core.c
+@@ -417,9 +417,11 @@ static int rpmsg_uevent(const struct device *dev, struct kobj_uevent_env *env)
+ 	const struct rpmsg_device *rpdev = to_rpmsg_device(dev);
+ 	int ret;
+ 
+-	ret = of_device_uevent_modalias(dev, env);
+-	if (ret != -ENODEV)
+-		return ret;
++	if (of_property_present(dev->of_node, "compatible")) {
++		ret = of_device_uevent_modalias(dev, env);
++		if (ret != -ENODEV)
++			return ret;
++	}
+ 
+ 	return add_uevent_var(env, "MODALIAS=" RPMSG_DEVICE_MODALIAS_FMT,
+ 					rpdev->id.name);

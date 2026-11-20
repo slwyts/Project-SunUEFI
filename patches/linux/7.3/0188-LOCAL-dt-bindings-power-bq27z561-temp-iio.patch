@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Wed, 11 Nov 2026 00:25:30 +0800
+Subject: dt-bindings: power: supply: bq27xxx: describe original temperature
+ IIO
+
+Describe the BQ27Z561 original temperature as channel 0 of an optional
+IIO provider. Leave the standard power-supply temperature unchanged.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/cc2d1c459735db0e1962239b5959fc02527ac4fa
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+Link: https://github.com/slwyts/Project-SunUEFI/commit/097c92ce69e530138a2afacb237d7acf4e12eb7c
+---
+ .../devicetree/bindings/power/supply/bq27xxx.yaml          | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml b/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml
+index 547ef2a662f603ebd4311432a0cf507c2b1aa62a..8e51cac14a0fd4c5fdebecefe43ac9f2f5c6fe4c 100644
+--- a/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml
++++ b/Documentation/devicetree/bindings/power/supply/bq27xxx.yaml
+@@ -69,6 +69,12 @@ properties:
+ 
+   power-supplies: true
+ 
++  "#io-channel-cells":
++    const: 1
++    description: |
++      BQ27Z561 IIO channel 0 provides its original temperature. The standard
++      power supply temperature measurement remains unchanged.
++
+   ti,cell-monitor:
+     type: boolean
+     description: |
+@@ -98,6 +104,7 @@ allOf:
+     then:
+       properties:
+         ti,authentication-key: false
++        "#io-channel-cells": false
+   - if:
+       properties:
+         compatible:

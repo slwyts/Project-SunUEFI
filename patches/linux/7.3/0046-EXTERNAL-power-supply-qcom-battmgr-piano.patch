@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: power: supply: let Piano select its MCA driver
+
+Keep the generic battery manager from competing for the Piano GLINK transport.
+
+piano: NT36532 THP touch bring-up (milestone-touch) (#11) (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+
+Link: https://github.com/blu-sharky/linux-piano/commit/00b055cd9c1634371cd501530ba5c29de4ab91d4
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ drivers/power/supply/qcom_battmgr.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
+index 7716eb9e1aff58c32911a03f855d6b1e164973ed..74ee7ae03c88b3a491797fd372c2709b4eb25d53 100644
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -1618,6 +1618,8 @@ static const struct of_device_id qcom_battmgr_of_variants[] = {
+ 	{ .compatible = "qcom,sc8280xp-pmic-glink", .data = (void *)QCOM_BATTMGR_SC8280XP },
+ 	{ .compatible = "qcom,sm8550-pmic-glink", .data = (void *)QCOM_BATTMGR_SM8550 },
+ 	{ .compatible = "qcom,x1e80100-pmic-glink", .data = (void *)QCOM_BATTMGR_X1E80100 },
++	/* piano: the stock vendor node uses qcom,qti-pmic-glink */
++	{ .compatible = "qcom,qti-pmic-glink", .data = (void *)QCOM_BATTMGR_SM8550 },
+ 	/* Unmatched devices falls back to QCOM_BATTMGR_SM8350 */
+ 	{}
+ };

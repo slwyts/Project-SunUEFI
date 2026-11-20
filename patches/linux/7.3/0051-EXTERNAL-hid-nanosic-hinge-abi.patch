@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: HID: document the Piano Nanosic hinge interface
+
+Carry the definitions consumed by the Nanosic driver.
+
+The port retains changes from these linux-piano commits:
+piano: Nanosic WN8030 keyboard cover driver with the piano variant (#17) (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+
+Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/f8afe7ff7127f46f5339fdaf5c24ecbffbfbb92b
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ include/uapi/linux/nanosic_hinge.h | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+ create mode 100644 include/uapi/linux/nanosic_hinge.h
+
+diff --git a/include/uapi/linux/nanosic_hinge.h b/include/uapi/linux/nanosic_hinge.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..be64a878667e2953de8f61847125fb5dcdd51c01
+--- /dev/null
++++ b/include/uapi/linux/nanosic_hinge.h
+@@ -0,0 +1,28 @@
++/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
++#ifndef _UAPI_LINUX_NANOSIC_HINGE_H
++#define _UAPI_LINUX_NANOSIC_HINGE_H
++
++#include <linux/types.h>
++
++#define NANOSIC_HINGE_ABI_VERSION	1
++
++#define NANOSIC_HINGE_SAMPLE_ATTACHED	(1U << 0)
++#define NANOSIC_HINGE_SAMPLE_VALID	(1U << 1)
++
++#define NANOSIC_HINGE_CONTROL_ENABLE	(1U << 0)
++
++struct nanosic_hinge_sample {
++	__u16 version;
++	__u16 flags;
++	__s16 x;
++	__s16 y;
++	__s16 z;
++	__s16 reserved;
++};
++
++struct nanosic_hinge_control {
++	__u16 version;
++	__u16 flags;
++};
++
++#endif /* _UAPI_LINUX_NANOSIC_HINGE_H */

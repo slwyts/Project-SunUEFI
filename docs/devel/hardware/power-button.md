@@ -16,7 +16,7 @@ Debian GNOME 和 KDE 镜像都允许挂起到内存（`mem/deep`）。磁盘休�
 
 ## 内核适配
 
-- 显示 PLL 保存恢复、双 DSI 关闭顺序、DPU 停止顺序和 PHY 运行时时钟由 `patches/linux/7.3/0002-display.patch` 处理。
+- 显示 PLL 保存恢复、双 DSI 关闭顺序和 PHY 运行时时钟由 `patches/linux/7.3/0053-EXTERNAL-drm-msm-dsi-bonded-piano.patch` 处理。DPU 停止顺序由 `patches/linux/7.3/0059-EXTERNAL-drm-msm-dpu-video-stop-order.patch` 处理。
 - `0029-sm8750-pcie-active-wakeup.patch` 在唤醒链路上保留 PCIe 电源域，避免恢复后 Wi-Fi 的 PCI 配置不可读。
 - `0030-soc-qcom-smp2p-sleepstate.patch` 向原厂固件通知 AP 睡眠状态；它不能单独解决全部 ADSP 恢复问题。
 - `0032-asoc-q6apm-clear-global-on-remove.patch` 修正 ADSP 重启时的全局对象生命周期。

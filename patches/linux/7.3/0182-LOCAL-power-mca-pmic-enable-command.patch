@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Tue, 10 Nov 2026 23:43:19 +0800
+Subject: power: supply: piano_mca: reapply the complete PMIC enable command
+
+The enable property reports only CHG_EN, but the setter also sets DCDC
+modes. Send the complete command even when the reported enable bit
+matches. Keep the conservative failure handling and cover an already
+matched enable bit and a timed-out command in KUnit.
+
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+Link: https://github.com/slwyts/Project-SunUEFI/commit/097c92ce69e530138a2afacb237d7acf4e12eb7c
+---
+ drivers/power/supply/piano_mca.c      |  3 +--
+ drivers/power/supply/piano_mca_test.c | 19 +++++++++++++++++++
+ 2 files changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index 80a9b6e042cad553cd4709fb0dd34ea7c60b044a..4136cc69badf4799af5e35ce55dfa6ac209d2a6c 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -2080,11 +2080,10 @@ static int piano_mca_normal_enable(struct piano_mca *mca, bool enable,
+ 
+ 	ret = piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_CHARGE_ENABLE,
+ 			     &actual, sizeof(actual), generation, connection);
+-	if (!ret && actual == requested)
+-		return 0;
+ 	/* An unreadable charger may still be stopped, but must not be enabled. */
+ 	if (ret && enable)
+ 		return ret;
++	/* The getter covers CHG_EN only; the setter also configures DCDC modes. */
+ 	ret = piano_mca_write_session(mca, MCA_PROP_CHARGE_ENABLE,
+ 				      &requested, sizeof(requested),
+ 				      generation, connection);
+diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
+index f376ae1908dffcaa29514caf71f16b14213d53ea..53d805c24fbc2ec703093b437ab73f55196c570c 100644
+--- a/drivers/power/supply/piano_mca_test.c
++++ b/drivers/power/supply/piano_mca_test.c
+@@ -2125,7 +2125,26 @@ static void piano_mca_limit_during_suspend_test(struct kunit *test)
+ 	KUNIT_EXPECT_EQ(test, piano_mca_charge_limit(&f->mca), 1000U);
+ }
+ 
++static void piano_mca_composite_enable_is_reapplied_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_api_prepare(test), 0);
++	f->pmic_enabled = false;
++	KUNIT_ASSERT_EQ(test, piano_mca_normal_enable(&f->mca, false,
++		f->remote_generation, 0), 0);
++	KUNIT_EXPECT_EQ(test, f->pmic_disable_writes, 1U);
++	f->pmic_enabled = true;
++	KUNIT_ASSERT_EQ(test, piano_mca_normal_enable(&f->mca, true,
++		f->remote_generation, 0), 0);
++	KUNIT_EXPECT_EQ(test, f->pmic_enable_writes, 1U);
++	f->lose_pmic_enable_ack = true;
++	KUNIT_EXPECT_EQ(test, piano_mca_normal_enable(&f->mca, true,
++		f->remote_generation, 0), -ETIMEDOUT);
++}
++
+ static struct kunit_case piano_mca_test_cases[] = {
++	KUNIT_CASE(piano_mca_composite_enable_is_reapplied_test),
+ 	KUNIT_CASE(piano_mca_limit_preserves_inhibition_test),
+ 	KUNIT_CASE(piano_mca_limit_during_suspend_test),
+ 	KUNIT_CASE(piano_mca_uses_average_battery_current_test),

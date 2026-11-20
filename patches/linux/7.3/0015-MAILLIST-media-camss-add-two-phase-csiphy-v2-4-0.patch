@@ -1,0 +1,314 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+Date: Mon, 1 Jun 2026 08:31:10 -0700
+Subject: media: qcom: camss: csiphy: Add support for v2.4.0 two-phase CSIPHY
+
+Add more detailed resource information for CSIPHY devices in the camss
+driver along with the support for v2.4.0 in the 2 phase CSIPHY driver
+that is responsible for the PHY lane register configuration, module
+reset and interrupt handling.
+
+Reviewed-by: Bryan O'Donoghue <bryan.odonoghue@linaro.org>
+Signed-off-by: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+
+Link: https://lore.kernel.org/20260601-kaanapali-camss-v14-3-e76f26aa6691@oss.qualcomm.com/
+Link: https://github.com/blu-sharky/linux-piano/commit/cb8311542abc6a598ceca63aef9ec2b6f2a061d8
+---
+ .../qcom/camss/camss-csiphy-3ph-1-0.c         | 124 +++++++++++++++++
+ drivers/media/platform/qcom/camss/camss.c     | 125 ++++++++++++++++++
+ 2 files changed, 249 insertions(+)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-csiphy-3ph-1-0.c b/drivers/media/platform/qcom/camss/camss-csiphy-3ph-1-0.c
+index dac8d2ecf79957dc05c5524dc439791ce097c785..a219fbf0ce3d10bc2bcb918771068c7cb2222140 100644
+--- a/drivers/media/platform/qcom/camss/camss-csiphy-3ph-1-0.c
++++ b/drivers/media/platform/qcom/camss/camss-csiphy-3ph-1-0.c
+@@ -804,6 +804,123 @@ csiphy_lane_regs lane_regs_sm8650[] = {
+ 	{0x0c10, 0x52, 0x00, CSIPHY_DEFAULT_PARAMS},
+ };
+ 
++/* 3nm 2PH v 2.4.0 2p5Gbps 4 lane DPHY mode */
++static const struct
++csiphy_lane_regs lane_regs_2_4_0[] = {
++	/* LN 0 */
++	{0x0094, 0x00, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x00A0, 0x00, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0090, 0x0F, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0098, 0x08, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0094, 0x07, 0xD1, CSIPHY_DEFAULT_PARAMS},
++	{0x0030, 0x00, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0000, 0x8C, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0038, 0xFE, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x002C, 0x01, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0034, 0x0F, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x001C, 0x0A, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0014, 0x60, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x003C, 0xB8, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0004, 0x0C, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0020, 0x00, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0008, 0x19, 0x00, CSIPHY_SETTLE_CNT_LOWER_BYTE},
++	{0x0010, 0x52, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0094, 0xD7, 0x00, CSIPHY_SKEW_CAL},
++	{0x005C, 0x54, 0x00, CSIPHY_SKEW_CAL},
++	{0x0060, 0xFD, 0x00, CSIPHY_SKEW_CAL},
++	{0x0064, 0x7F, 0x00, CSIPHY_SKEW_CAL},
++
++	/* LN 2 */
++	{0x0494, 0x00, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x04A0, 0x00, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0490, 0x0F, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0498, 0x08, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0494, 0x07, 0xD1, CSIPHY_DEFAULT_PARAMS},
++	{0x0430, 0x00, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0400, 0x8C, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0438, 0xFE, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x042C, 0x01, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0434, 0x0F, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x041C, 0x0A, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0414, 0x60, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x043C, 0xB8, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0404, 0x0C, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0420, 0x00, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0408, 0x19, 0x00, CSIPHY_SETTLE_CNT_LOWER_BYTE},
++	{0x0410, 0x52, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0494, 0xD7, 0x00, CSIPHY_SKEW_CAL},
++	{0x045C, 0x54, 0x00, CSIPHY_SKEW_CAL},
++	{0x0460, 0xFD, 0x00, CSIPHY_SKEW_CAL},
++	{0x0464, 0x7F, 0x00, CSIPHY_SKEW_CAL},
++
++	/* LN 4 */
++	{0x0894, 0x00, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x08A0, 0x00, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0890, 0x0F, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0898, 0x08, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0894, 0x07, 0xD1, CSIPHY_DEFAULT_PARAMS},
++	{0x0830, 0x00, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0800, 0x8C, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0838, 0xFE, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x082C, 0x01, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0834, 0x0F, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x081C, 0x0A, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0814, 0x60, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x083C, 0xB8, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0804, 0x0C, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0820, 0x00, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0808, 0x19, 0x00, CSIPHY_SETTLE_CNT_LOWER_BYTE},
++	{0x0810, 0x52, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0894, 0xD7, 0x00, CSIPHY_SKEW_CAL},
++	{0x085C, 0x54, 0x00, CSIPHY_SKEW_CAL},
++	{0x0860, 0xFD, 0x00, CSIPHY_SKEW_CAL},
++	{0x0864, 0x7F, 0x00, CSIPHY_SKEW_CAL},
++
++	/* LN 6 */
++	{0x0C94, 0x00, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0CA0, 0x00, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0C90, 0x0F, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0C98, 0x08, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0C94, 0x07, 0xD1, CSIPHY_DEFAULT_PARAMS},
++	{0x0C30, 0x00, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0C00, 0x8C, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0C38, 0xFE, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0C2C, 0x01, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0C34, 0x0F, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0C1C, 0x0A, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0C14, 0x60, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0C3C, 0xB8, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0C04, 0x0C, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0C20, 0x00, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0C08, 0x19, 0x00, CSIPHY_SETTLE_CNT_LOWER_BYTE},
++	{0x0C10, 0x52, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0C94, 0xD7, 0x00, CSIPHY_SKEW_CAL},
++	{0x0C5C, 0x54, 0x00, CSIPHY_SKEW_CAL},
++	{0x0C60, 0xFD, 0x00, CSIPHY_SKEW_CAL},
++	{0x0C64, 0x7F, 0x00, CSIPHY_SKEW_CAL},
++
++	/* LN CLK */
++	{0x0E94, 0x00, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0EA0, 0x00, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0E90, 0x0F, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0E98, 0x08, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0E94, 0x07, 0xD1, CSIPHY_DEFAULT_PARAMS},
++	{0x0E30, 0x00, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0E28, 0x04, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0E00, 0x80, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0E0C, 0xFF, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0E38, 0x1F, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0E2C, 0x01, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0E34, 0x0F, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0E1C, 0x0A, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0E14, 0x60, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0E3C, 0xB8, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0E04, 0x0C, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0E20, 0x00, 0x00, CSIPHY_DEFAULT_PARAMS},
++	{0x0E08, 0x19, 0x00, CSIPHY_SETTLE_CNT_LOWER_BYTE},
++	{0x0E10, 0x52, 0x00, CSIPHY_DEFAULT_PARAMS},
++};
++
+ /* 4nm 2PH v 2.1.2 2p5Gbps 4 lane DPHY mode */
+ static const struct
+ csiphy_lane_regs lane_regs_x1e80100[] = {
+@@ -1140,6 +1257,7 @@ static bool csiphy_is_gen2(u32 version)
+ 	case CAMSS_8550:
+ 	case CAMSS_8650:
+ 	case CAMSS_8775P:
++	case CAMSS_KAANAPALI:
+ 	case CAMSS_X1E80100:
+ 		ret = true;
+ 		break;
+@@ -1259,6 +1377,12 @@ static int csiphy_init(struct csiphy_device *csiphy)
+ 		regs->lane_regs = &lane_regs_sa8775p[0];
+ 		regs->lane_array_size = ARRAY_SIZE(lane_regs_sa8775p);
+ 		break;
++	case CAMSS_KAANAPALI:
++		regs->lane_regs = &lane_regs_2_4_0[0];
++		regs->lane_array_size = ARRAY_SIZE(lane_regs_2_4_0);
++		regs->offset = 0x1000;
++		regs->common_status_offset = 0x138;
++		break;
+ 	default:
+ 		break;
+ 	}
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index 40d74966ef9b632f514231dba2a0fbdd84844484..45a09fd38c3067158fdfc6299813cccaef29b322 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -34,6 +34,129 @@
+ 
+ static const struct parent_dev_ops vfe_parent_dev_ops;
+ 
++static const struct camss_subdev_resources csiphy_res_kaanapali[] = {
++	/* CSIPHY0 */
++	{
++		.regulators = {
++			{ .supply = "vdd-csiphy0-0p8", .init_load_uA = 151020 },
++			{ .supply = "vdd-csiphy0-1p2", .init_load_uA = 14660 }
++		},
++		.clock = { "csiphy0", "csiphy0_timer",
++			   "cpas_ahb", "cpas_fast_ahb" },
++		.clock_rate = { { 400000000, 480000000 },
++				{ 400000000 },
++				{ 0 },
++				{ 0 } },
++		.reg = { "csiphy0" },
++		.interrupt = { "csiphy0" },
++		.csiphy = {
++			.id = 0,
++			.hw_ops = &csiphy_ops_3ph_1_0,
++			.formats = &csiphy_formats_sdm845
++		}
++	},
++	/* CSIPHY1 */
++	{
++		.regulators = {
++			{ .supply = "vdd-csiphy1-0p8", .init_load_uA = 151020 },
++			{ .supply = "vdd-csiphy1-1p2", .init_load_uA = 14660 }
++		},
++		.clock = { "csiphy1", "csiphy1_timer",
++			   "cpas_ahb", "cpas_fast_ahb" },
++		.clock_rate = { { 400000000, 480000000 },
++				{ 400000000 },
++				{ 0 },
++				{ 0 } },
++		.reg = { "csiphy1" },
++		.interrupt = { "csiphy1" },
++		.csiphy = {
++			.id = 1,
++			.hw_ops = &csiphy_ops_3ph_1_0,
++			.formats = &csiphy_formats_sdm845
++		}
++	},
++	/* CSIPHY2 */
++	{
++		.regulators = {
++			{ .supply = "vdd-csiphy2-0p8", .init_load_uA = 151020 },
++			{ .supply = "vdd-csiphy2-1p2", .init_load_uA = 14660 }
++		},
++		.clock = { "csiphy2", "csiphy2_timer",
++			   "cpas_ahb", "cpas_fast_ahb" },
++		.clock_rate = { { 400000000, 480000000 },
++				{ 400000000 },
++				{ 0 },
++				{ 0 } },
++		.reg = { "csiphy2" },
++		.interrupt = { "csiphy2" },
++		.csiphy = {
++			.id = 2,
++			.hw_ops = &csiphy_ops_3ph_1_0,
++			.formats = &csiphy_formats_sdm845
++		}
++	},
++	/* CSIPHY3 */
++	{
++		.regulators = {
++			{ .supply = "vdd-csiphy3-0p8", .init_load_uA = 151020 },
++			{ .supply = "vdd-csiphy3-1p2", .init_load_uA = 14660 }
++		},
++		.clock = { "csiphy3", "csiphy3_timer",
++			   "cpas_ahb", "cpas_fast_ahb" },
++		.clock_rate = { { 400000000, 480000000 },
++				{ 400000000 },
++				{ 0 },
++				{ 0 } },
++		.reg = { "csiphy3" },
++		.interrupt = { "csiphy3" },
++		.csiphy = {
++			.id = 3,
++			.hw_ops = &csiphy_ops_3ph_1_0,
++			.formats = &csiphy_formats_sdm845
++		}
++	},
++	/* CSIPHY4 */
++	{
++		.regulators = {
++			{ .supply = "vdd-csiphy4-0p8", .init_load_uA = 151020 },
++			{ .supply = "vdd-csiphy4-1p2", .init_load_uA = 14660 }
++		},
++		.clock = { "csiphy4", "csiphy4_timer",
++			   "cpas_ahb", "cpas_fast_ahb" },
++		.clock_rate = { { 400000000, 480000000 },
++				{ 400000000 },
++				{ 0 },
++				{ 0 } },
++		.reg = { "csiphy4" },
++		.interrupt = { "csiphy4" },
++		.csiphy = {
++			.id = 4,
++			.hw_ops = &csiphy_ops_3ph_1_0,
++			.formats = &csiphy_formats_sdm845
++		}
++	},
++	/* CSIPHY5 */
++	{
++		.regulators = {
++			{ .supply = "vdd-csiphy5-0p8", .init_load_uA = 151020 },
++			{ .supply = "vdd-csiphy5-1p2", .init_load_uA = 14660 }
++		},
++		.clock = { "csiphy5", "csiphy5_timer",
++			   "cpas_ahb", "cpas_fast_ahb" },
++		.clock_rate = { { 400000000, 480000000 },
++				{ 400000000 },
++				{ 0 },
++				{ 0 } },
++		.reg = { "csiphy5" },
++		.interrupt = { "csiphy5" },
++		.csiphy = {
++			.id = 5,
++			.hw_ops = &csiphy_ops_3ph_1_0,
++			.formats = &csiphy_formats_sdm845
++		}
++	},
++};
++
+ static const struct resources_icc icc_res_kaanapali[] = {
+ 	{
+ 		.name = "ahb",
+@@ -5524,8 +5647,10 @@ static void camss_remove(struct platform_device *pdev)
+ static const struct camss_resources kaanapali_resources = {
+ 	.version = CAMSS_KAANAPALI,
+ 	.pd_name = "top",
++	.csiphy_res = csiphy_res_kaanapali,
+ 	.icc_res = icc_res_kaanapali,
+ 	.icc_path_num = ARRAY_SIZE(icc_res_kaanapali),
++	.csiphy_num = ARRAY_SIZE(csiphy_res_kaanapali),
+ };
+ 
+ static const struct camss_resources msm8916_resources = {

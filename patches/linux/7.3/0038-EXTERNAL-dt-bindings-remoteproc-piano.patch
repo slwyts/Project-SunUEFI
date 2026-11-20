@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: dt-bindings: remoteproc: qcom: describe Piano PAS resources
+
+Describe the resource differences for the downstream SM8750 PAS nodes.
+
+The port retains changes from these linux-piano commits:
+piano: NT36532 THP touch bring-up (milestone-touch) (#11) (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+
+Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/00b055cd9c1634371cd501530ba5c29de4ab91d4
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ .../devicetree/bindings/remoteproc/qcom,sm8550-pas.yaml    | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/remoteproc/qcom,sm8550-pas.yaml b/Documentation/devicetree/bindings/remoteproc/qcom,sm8550-pas.yaml
+index c58e8a6c7fe1063f7eb3762115e16fdd06914b21..07d88d27ad279db384b00e3e8e738fa7e57b3ca3 100644
+--- a/Documentation/devicetree/bindings/remoteproc/qcom,sm8550-pas.yaml
++++ b/Documentation/devicetree/bindings/remoteproc/qcom,sm8550-pas.yaml
+@@ -70,6 +70,13 @@ properties:
+       - description: Firmware name of the Hexagon core
+       - description: Firmware name of the Hexagon Devicetree
+ 
++  qcom,no-auto-boot:
++    type: boolean
++    description:
++      Do not start the remote processor automatically when the PAS driver
++      probes.  This is intended for controlled bring-up of vendor firmware
++      whose handover may affect shared board resources.
++
+   memory-region:
+     minItems: 2
+     items:

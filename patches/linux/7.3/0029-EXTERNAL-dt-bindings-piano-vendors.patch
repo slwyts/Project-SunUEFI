@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: dt-bindings: vendor-prefixes: add Piano component vendors
+
+Document the vendors used in the Piano board bindings.
+
+The port retains changes from these linux-piano commits:
+piano: Nanosic WN8030 keyboard cover driver with the piano variant (#17) (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+piano: SC8541 switched-capacitor stage and direct charging (#27) (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+
+Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/f8afe7ff7127f46f5339fdaf5c24ecbffbfbb92b
+Link: https://github.com/blu-sharky/linux-piano/commit/7a33c60fd6eda8a9c20dfda636d4e0a4efa4cbb8
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ Documentation/devicetree/bindings/vendor-prefixes.yaml | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/vendor-prefixes.yaml b/Documentation/devicetree/bindings/vendor-prefixes.yaml
+index ba2002969373433b1f48118872c46cf7bcfff276..1eab5c5f9ffe8a6505487b95144c933040892bc2 100644
+--- a/Documentation/devicetree/bindings/vendor-prefixes.yaml
++++ b/Documentation/devicetree/bindings/vendor-prefixes.yaml
+@@ -1162,6 +1162,8 @@ patternProperties:
+     description: Macronix International Co., Ltd.
+   "^myir,.*":
+     description: MYIR Tech Limited
++  "^nanosic,.*":
++    description: Nanosic Technology Co., Ltd.
+   "^national,.*":
+     description: National Semiconductor
+   "^neardi,.*":
+@@ -1597,6 +1599,8 @@ patternProperties:
+     description: Sophgo Technology Inc.
+   "^sourceparts,.*":
+     description: Source Parts Inc.
++  "^southchip,.*":
++    description: Southchip Semiconductor Technology (Shanghai) Co., Ltd.
+   "^spacemit,.*":
+     description: SpacemiT (Hangzhou) Technology Co. Ltd
+   "^spansion,.*":

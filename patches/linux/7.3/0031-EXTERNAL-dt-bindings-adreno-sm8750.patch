@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: dt-bindings: display: msm: describe SM8750 Adreno and GMU
+
+Describe the GPU and management unit resources used on Piano.
+
+The port retains changes from these linux-piano commits:
+piano: native display (NT36532 DSC) and Adreno 830 GPU (#14) (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+
+Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/5c2c95fddbe9c29720b7b4e84119357358e9f0cb
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ Documentation/devicetree/bindings/display/msm/gmu.yaml | 4 +++-
+ Documentation/devicetree/bindings/display/msm/gpu.yaml | 2 ++
+ 2 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/display/msm/gmu.yaml b/Documentation/devicetree/bindings/display/msm/gmu.yaml
+index 9e459f12ce3f57e2d239d9d8a8b90242251ad0f3..f1e609b7e1c7e7a717594a9cea53bca7b21d8d0c 100644
+--- a/Documentation/devicetree/bindings/display/msm/gmu.yaml
++++ b/Documentation/devicetree/bindings/display/msm/gmu.yaml
+@@ -305,7 +305,9 @@ allOf:
+       properties:
+         compatible:
+           contains:
+-            const: qcom,adreno-gmu-810.0
++            enum:
++              - qcom,adreno-gmu-810.0
++              - qcom,adreno-gmu-830.1
+     then:
+       properties:
+         reg:
+diff --git a/Documentation/devicetree/bindings/display/msm/gpu.yaml b/Documentation/devicetree/bindings/display/msm/gpu.yaml
+index e5efe2d35ddcce30e83ec14f8771e79c2cb28603..1c4a6f17c1bf783bce72fe4d43aa99e3fba23d20 100644
+--- a/Documentation/devicetree/bindings/display/msm/gpu.yaml
++++ b/Documentation/devicetree/bindings/display/msm/gpu.yaml
+@@ -414,6 +414,7 @@ allOf:
+           contains:
+             enum:
+               - qcom,adreno-44010000
++              - qcom,adreno-44050001
+               - qcom,adreno-44050a01
+               - qcom,adreno-44070001
+     then:
+@@ -451,6 +452,7 @@ allOf:
+               - qcom,adreno-43050c01
+               - qcom,adreno-43051401
+               - qcom,adreno-44010000
++              - qcom,adreno-44050001
+               - qcom,adreno-44050a01
+               - qcom,adreno-44070001
+ 

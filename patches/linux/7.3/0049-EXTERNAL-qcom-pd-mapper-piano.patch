@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: soc: qcom: support the Piano PD mapper
+
+Provide the service entries consumed by the Piano remote processors.
+
+The port retains changes from these linux-piano commits:
+piano: NT36532 THP touch bring-up (milestone-touch) (#11) (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+
+Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/00b055cd9c1634371cd501530ba5c29de4ab91d4
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ drivers/soc/qcom/qcom_pd_mapper.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/drivers/soc/qcom/qcom_pd_mapper.c b/drivers/soc/qcom/qcom_pd_mapper.c
+index 64ca99d7fad92075aa0060acc9375478045c7d42..26882be4ab2d58e9b12ffc37f11f14f6ed6e7d7c 100644
+--- a/drivers/soc/qcom/qcom_pd_mapper.c
++++ b/drivers/soc/qcom/qcom_pd_mapper.c
+@@ -665,6 +665,16 @@ static const struct of_device_id qcom_pdm_domains[] __maybe_unused = {
+ 	{ .compatible = "qcom,sm8750", .data = sm8550_domains, },
+ 	{ .compatible = "qcom,x1e80100", .data = x1e80100_domains, },
+ 	{ .compatible = "qcom,x1p42100", .data = x1e80100_domains, },
++	/*
++	 * piano: the stock sun/sunp device tree keeps Xiaomi's marketing
++	 * codename as the machine compatible, so the upstream sm8750 entry
++	 * never matches and pd-mapper fails with -ENODEV ("no support for
++	 * the platform").  Without it the ADSP charger protection domain is
++	 * never served, pmic-glink never reaches SERVREG up, and the
++	 * battery reads time out forever.
++	 */
++	{ .compatible = "qcom,sun", .data = sm8550_domains, },
++	{ .compatible = "qcom,sunp", .data = sm8550_domains, },
+ 	{},
+ };
+ 

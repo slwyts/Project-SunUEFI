@@ -1,0 +1,832 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: ASoC: codecs: add the Piano FS19xx speaker codec
+
+Carry the FS19xx codec used for Piano speaker playback.
+
+The port retains changes from these linux-piano commits:
+piano: FS19xx speakers on LPAIF TDM and the q6v5 handover IRQ fixes (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+
+Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/2f6c29345edf991b04ce15d2231e6060412335aa
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ sound/soc/codecs/Kconfig  |  13 +
+ sound/soc/codecs/Makefile |   2 +
+ sound/soc/codecs/fs19xx.c | 754 ++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 769 insertions(+)
+ create mode 100644 sound/soc/codecs/fs19xx.c
+
+diff --git a/sound/soc/codecs/Kconfig b/sound/soc/codecs/Kconfig
+index 8e251e1d84b4bcbb2ac7229ed38e4c71c57516e9..fdae389578232bdc5e9549b0d0caae42031c9ba0 100644
+--- a/sound/soc/codecs/Kconfig
++++ b/sound/soc/codecs/Kconfig
+@@ -127,6 +127,7 @@ config SND_SOC_ALL_CODECS
+ 	imply SND_SOC_ES7134
+ 	imply SND_SOC_ES7241
+ 	imply SND_SOC_FRAMER
++	imply SND_SOC_FS19XX
+ 	imply SND_SOC_FS210X
+ 	imply SND_SOC_GTM601
+ 	imply SND_SOC_HDAC_HDMI
+@@ -1339,6 +1340,18 @@ config SND_SOC_FS_AMP_LIB
+ 	select CRC16
+ 	tristate
+ 
++config SND_SOC_FS19XX
++	tristate "FourSemi FS19xx smart amplifier"
++	depends on I2C
++	select CRC16
++	select REGMAP_I2C
++	help
++	  Enable support for the FourSemi FS1958/FS19xx boosted class-D
++	  speaker amplifiers with I2S/TDM input and voltage/current sense.
++	  The board specific register setup, including the TDM slot
++	  selection, is loaded from the vendor preset file (fs19xx.fsm).
++	  Say M to build it as a module named snd-soc-fs19xx.
++
+ config SND_SOC_FS210X
+ 	tristate 'FourSemi FS2104/5S digital audio amplifier'
+ 	depends on I2C
+diff --git a/sound/soc/codecs/Makefile b/sound/soc/codecs/Makefile
+index 3d122ace75adee2d9b4584e2357e49ed2a30037d..4c49512777c73fa9fa2eacf59b0c6b7bc27b956b 100644
+--- a/sound/soc/codecs/Makefile
++++ b/sound/soc/codecs/Makefile
+@@ -143,6 +143,7 @@ snd-soc-es8389-y := es8389.o
+ snd-soc-es9356-y := es9356.o
+ snd-soc-framer-y := framer-codec.o
+ snd-soc-fs-amp-lib-y := fs-amp-lib.o
++snd-soc-fs19xx-y := fs19xx.o
+ snd-soc-fs210x-y := fs210x.o
+ snd-soc-gtm601-y := gtm601.o
+ snd-soc-hdac-hdmi-y := hdac_hdmi.o
+@@ -587,6 +588,7 @@ obj-$(CONFIG_SND_SOC_ES8389)    += snd-soc-es8389.o
+ obj-$(CONFIG_SND_SOC_ES9356)    += snd-soc-es9356.o
+ obj-$(CONFIG_SND_SOC_FRAMER)	+= snd-soc-framer.o
+ obj-$(CONFIG_SND_SOC_FS_AMP_LIB)+= snd-soc-fs-amp-lib.o
++obj-$(CONFIG_SND_SOC_FS19XX)	+= snd-soc-fs19xx.o
+ obj-$(CONFIG_SND_SOC_FS210X)	+= snd-soc-fs210x.o
+ obj-$(CONFIG_SND_SOC_GTM601)    += snd-soc-gtm601.o
+ obj-$(CONFIG_SND_SOC_HDAC_HDMI) += snd-soc-hdac-hdmi.o
+diff --git a/sound/soc/codecs/fs19xx.c b/sound/soc/codecs/fs19xx.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..2a8f45c81fa50bc5ab2f6d50bf75cbe682da063e
+--- /dev/null
++++ b/sound/soc/codecs/fs19xx.c
+@@ -0,0 +1,754 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * FourSemi FS19xx smart amplifier driver
++ *
++ * The FS19xx is a boosted class-D speaker amplifier on an I2S/TDM bus
++ * with 16-bit registers behind 8-bit addresses.  Everything specific to
++ * a board (slot assignment, boost, EQ, protection thresholds) comes from
++ * the vendor preset file ("fs19xx.fsm"), which holds one block per
++ * amplifier, selected by I2C address.  Each block carries a common
++ * register table and scene tables; this driver writes the common table
++ * and the music scene, then only powers the amplifier up and down around
++ * playback.
++ *
++ * Register and preset layout follow the FourSemi vendor driver
++ * (Copyright (C) Fourier Semiconductor Inc. 2016-2020).
++ */
++
++#include <linux/bitfield.h>
++#include <linux/crc16.h>
++#include <linux/delay.h>
++#include <linux/firmware.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/iopoll.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/regmap.h>
++#include <linux/regulator/consumer.h>
++#include <linux/unaligned.h>
++#include <linux/workqueue.h>
++#include <sound/pcm_params.h>
++#include <sound/soc.h>
++#include <sound/tlv.h>
++
++#define FS19XX_DEVID		0x03
++#define FS19XX_REVID		0x04
++#define FS19XX_OTPACC		0x0b
++#define FS19XX_CHIPINI		0x0e
++#define FS19XX_PWRCTRL		0x10
++#define FS19XX_PWRCTRL_PWDN	BIT(0)
++#define FS19XX_PWRCTRL_I2CR	BIT(1)
++#define FS19XX_SYSCTRL		0x11
++#define FS19XX_SPKCOEF		0x14
++#define FS19XX_VOLCTRL		0x16
++#define FS19XX_I2SCTRL		0x17
++#define FS19XX_I2SCTRL_SR	GENMASK(15, 12)
++#define FS19XX_I2SCTRL_DOE	BIT(11)
++#define FS19XX_DACCTRL		0x30
++#define FS19XX_TSCTRL		0x4c
++#define FS19XX_TSCTRL_TSEN	BIT(3)
++#define FS19XX_PLLCTRL1		0xa1
++#define FS19XX_PLLCTRL2		0xa2
++#define FS19XX_PLLCTRL3		0xa3
++#define FS19XX_MAX_REG		0xff
++
++#define FS19XX_OTPACC_KEY	0xca91
++#define FS19XX_SYSCTRL_ALL_ON	0x00ef
++#define FS19XX_DACCTRL_UNMUTE	0x0210
++#define FS19XX_DACCTRL_MUTE	0x0310
++
++#define FS1958_DEV_ID		0x17
++#define FS19XX_DEV_ID		0x29
++
++#define FS19XX_START_DELAY_MS	5
++/* 0.375 dB per step, 0xff is 0 dB */
++#define FS19XX_VOLUME_MAX	0xff
++/* About -24 dB: the stack has no speaker protection yet */
++#define FS19XX_VOLUME_DEFAULT	0xc0
++
++/* Preset file layout (little endian, packed) */
++#define FSM_HDR_SIZE_OFF	22
++#define FSM_HDR_CRC_OFF		24
++#define FSM_HDR_NDEV_OFF	26
++#define FSM_HDR_LEN		28
++#define FSM_DEV_VER_OFF		0
++#define FSM_DEV_LEN_OFF		26
++#define FSM_DEV_ADDR_OFF	30
++#define FSM_DEV_TYPE_OFF	32
++#define FSM_DEV_LEN		40
++
++#define FSM_DSC_DEV_INFO	0
++#define FSM_DSC_SPK_INFO	1
++#define FSM_DSC_REG_COMMON	2
++#define FSM_DSC_REG_SCENES	3
++
++#define FSM_INFO_TEMPR_COEF	1
++#define FSM_SCENE_MUSIC		BIT(0)
++
++/* Register unit: addr[7:0], pos[11:8], len[15:12], then a 16-bit value */
++#define FSM_REG_ADDR		GENMASK(7, 0)
++#define FSM_REG_POS		GENMASK(11, 8)
++#define FSM_REG_LEN		GENMASK(15, 12)
++#define FSM_REG_SPECIAL_POS	0xf
++#define FSM_REG_OP_DELAY	1
++#define FSM_REG_OP_WAIT		2
++
++struct fs19xx_pll {
++	unsigned int bclk;
++	u16 c1, c2, c3;
++};
++
++static const struct fs19xx_pll fs19xx_pll_tbl[] = {
++	{   256000, 0x0260, 0x0540, 0x0001 },
++	{   512000, 0x0260, 0x0540, 0x0002 },
++	{  1024000, 0x0260, 0x0540, 0x0004 },
++	{  1411200, 0x0260, 0x0460, 0x0005 },
++	{  1536000, 0x0260, 0x0540, 0x0006 },
++	{  2822400, 0x0260, 0x0460, 0x000a },
++	{  3072000, 0x0260, 0x0540, 0x000c },
++	{  6144000, 0x0260, 0x0540, 0x0018 },
++	{ 12288000, 0x0260, 0x02a0, 0x0018 },
++};
++
++static const struct {
++	unsigned int rate;
++	u16 sr;
++} fs19xx_rates[] = {
++	{  8000, 0x1 },
++	{ 16000, 0x3 },
++	{ 32000, 0x7 },
++	{ 44100, 0x8 },
++	{ 48000, 0x9 },
++	{ 88200, 0xa },
++	{ 96000, 0xb },
++};
++
++struct fs19xx_priv {
++	struct device *dev;
++	struct regmap *regmap;
++	struct gpio_desc *reset;
++	struct regulator *vdd;
++	struct delayed_work start_work;
++	/* Serialises the power sequences and the stream parameters */
++	struct mutex lock;
++	const char *fw_name;
++
++	/* Copied from the preset block of this amplifier */
++	u8 *common;
++	unsigned int ncommon;
++	u8 *scene;
++	unsigned int nscene;
++	u16 tcoef;
++
++	u8 devid;
++	u8 revid;
++	unsigned int rate;
++	unsigned int bclk;
++	unsigned int volume;
++	bool inited;
++	bool playing;
++};
++
++static int fs19xx_update_unit(struct fs19xx_priv *fs, u16 unit, u16 value)
++{
++	unsigned int reg = FIELD_GET(FSM_REG_ADDR, unit);
++	unsigned int pos = FIELD_GET(FSM_REG_POS, unit);
++	unsigned int len = FIELD_GET(FSM_REG_LEN, unit);
++	unsigned int val, mask;
++	int i, ret;
++
++	if (pos == FSM_REG_SPECIAL_POS && len) {
++		switch (len) {
++		case FSM_REG_OP_DELAY:
++			msleep(value);
++			return 0;
++		case FSM_REG_OP_WAIT:
++			/* value: expected[7:0], pos[11:8], len[15:12] */
++			pos = FIELD_GET(FSM_REG_POS, value);
++			mask = GENMASK(FIELD_GET(FSM_REG_LEN, value), 0);
++			for (i = 0; i < 35; i++) {
++				usleep_range(1000, 1500);
++				ret = regmap_read(fs->regmap, reg, &val);
++				if (ret)
++					return ret;
++				if (((val >> pos) & mask) == (value & 0xff))
++					return 0;
++			}
++			return 0;
++		default:
++			return 0;
++		}
++	}
++
++	if (pos == 0 && len == 15)
++		return regmap_write(fs->regmap, reg, value);
++
++	mask = GENMASK(min(pos + len, 15U), pos);
++	return regmap_update_bits(fs->regmap, reg, mask, value << pos);
++}
++
++static int fs19xx_write_common(struct fs19xx_priv *fs)
++{
++	unsigned int i;
++	int ret;
++
++	for (i = 0; i < fs->ncommon; i++) {
++		const u8 *u = fs->common + 4 * i;
++
++		ret = fs19xx_update_unit(fs, get_unaligned_le16(u),
++					 get_unaligned_le16(u + 2));
++		if (ret)
++			return ret;
++	}
++
++	return 0;
++}
++
++static int fs19xx_write_scene(struct fs19xx_priv *fs, u16 scene)
++{
++	unsigned int i;
++	int ret;
++
++	for (i = 0; i < fs->nscene; i++) {
++		const u8 *u = fs->scene + 6 * i;
++
++		if (!(get_unaligned_le16(u) & scene))
++			continue;
++		ret = fs19xx_update_unit(fs, get_unaligned_le16(u + 2),
++					 get_unaligned_le16(u + 4));
++		if (ret)
++			return ret;
++	}
++
++	return 0;
++}
++
++/* Find the data list of @type in the block of this amplifier */
++static const u8 *fs19xx_block_list(const u8 *blk, size_t blk_max, u16 type,
++				   unsigned int unit, unsigned int *count)
++{
++	unsigned int n = get_unaligned_le16(blk + FSM_DEV_LEN_OFF);
++	const u8 *index = blk + FSM_DEV_LEN;
++	unsigned int i, off, len;
++
++	if (FSM_DEV_LEN + 4 * n > blk_max)
++		return NULL;
++
++	for (i = 0; i < n; i++) {
++		if (get_unaligned_le16(index + 4 * i + 2) != type)
++			continue;
++		off = FSM_DEV_LEN + get_unaligned_le16(index + 4 * i);
++		if (off + 2 > blk_max)
++			return NULL;
++		len = get_unaligned_le16(blk + off);
++		if (off + 2 + len * unit > blk_max)
++			return NULL;
++		*count = len;
++		return blk + off + 2;
++	}
++
++	return NULL;
++}
++
++static int fs19xx_parse_preset(struct fs19xx_priv *fs, const struct firmware *fw,
++			       unsigned int addr)
++{
++	const u8 *d = fw->data;
++	const u8 *blk = NULL, *list;
++	unsigned int ndev, i, off, count;
++	u16 type;
++
++	if (fw->size < FSM_HDR_LEN ||
++	    get_unaligned_le16(d + FSM_HDR_SIZE_OFF) != fw->size)
++		return dev_err_probe(fs->dev, -EINVAL, "bad preset size\n");
++
++	if (crc16(0, d + FSM_HDR_NDEV_OFF, fw->size - FSM_HDR_NDEV_OFF) !=
++	    get_unaligned_le16(d + FSM_HDR_CRC_OFF))
++		return dev_err_probe(fs->dev, -EINVAL, "bad preset checksum\n");
++
++	ndev = get_unaligned_le16(d + FSM_HDR_NDEV_OFF);
++	if (FSM_HDR_LEN + 4 * ndev > fw->size)
++		return -EINVAL;
++
++	for (i = 0; i < ndev; i++) {
++		off = get_unaligned_le16(d + FSM_HDR_LEN + 4 * i);
++		type = get_unaligned_le16(d + FSM_HDR_LEN + 4 * i + 2);
++		if (type != FSM_DSC_DEV_INFO || off + FSM_DEV_LEN > fw->size)
++			continue;
++		if (get_unaligned_le16(d + off + FSM_DEV_ADDR_OFF) == addr) {
++			blk = d + off;
++			break;
++		}
++	}
++	if (!blk)
++		return dev_err_probe(fs->dev, -ENOENT,
++				     "no preset for address 0x%02x\n", addr);
++
++	/* Bit 15 of the preset version marks a valid block */
++	if (!(get_unaligned_le16(blk + FSM_DEV_VER_OFF) & BIT(15)) ||
++	    (get_unaligned_le16(blk + FSM_DEV_TYPE_OFF) >> 8) != fs->devid)
++		return dev_err_probe(fs->dev, -EINVAL,
++				     "preset block does not match the device\n");
++
++	list = fs19xx_block_list(blk, d + fw->size - blk, FSM_DSC_SPK_INFO, 2, &count);
++	if (list && count > FSM_INFO_TEMPR_COEF)
++		fs->tcoef = get_unaligned_le16(list + 2 * FSM_INFO_TEMPR_COEF);
++
++	list = fs19xx_block_list(blk, d + fw->size - blk, FSM_DSC_REG_COMMON, 4, &count);
++	if (list) {
++		fs->common = devm_kmemdup(fs->dev, list, 4 * count, GFP_KERNEL);
++		if (!fs->common)
++			return -ENOMEM;
++		fs->ncommon = count;
++	}
++
++	list = fs19xx_block_list(blk, d + fw->size - blk, FSM_DSC_REG_SCENES, 6, &count);
++	if (list) {
++		fs->scene = devm_kmemdup(fs->dev, list, 6 * count, GFP_KERNEL);
++		if (!fs->scene)
++			return -ENOMEM;
++		fs->nscene = count;
++	}
++
++	return 0;
++}
++
++static int fs19xx_shut_down(struct fs19xx_priv *fs)
++{
++	int ret;
++
++	ret = regmap_write(fs->regmap, FS19XX_DACCTRL, FS19XX_DACCTRL_MUTE);
++	ret = ret ?: regmap_write(fs->regmap, FS19XX_PWRCTRL, FS19XX_PWRCTRL_PWDN);
++	msleep(35);
++	ret = ret ?: regmap_write(fs->regmap, FS19XX_SYSCTRL, 0);
++	fs->playing = false;
++
++	return ret;
++}
++
++static int fs19xx_soft_reset(struct fs19xx_priv *fs)
++{
++	unsigned int val;
++	int i, ret;
++
++	for (i = 0; i < 5; i++) {
++		/* The reset request is not acknowledged on the bus */
++		regmap_write(fs->regmap, FS19XX_PWRCTRL, FS19XX_PWRCTRL_I2CR);
++		regmap_read(fs->regmap, FS19XX_PWRCTRL, &val);
++		usleep_range(15000, 16000);
++		ret = regmap_write(fs->regmap, FS19XX_PWRCTRL, FS19XX_PWRCTRL_PWDN);
++		ret = ret ?: regmap_read(fs->regmap, FS19XX_CHIPINI, &val);
++		if (!ret && (val == 0x0003 || val == 0x0300))
++			return 0;
++	}
++
++	return -ETIMEDOUT;
++}
++
++static int fs19xx_init_regs(struct fs19xx_priv *fs)
++{
++	int ret;
++
++	ret = fs19xx_soft_reset(fs);
++	if (ret)
++		return dev_err_probe(fs->dev, ret, "soft reset timed out\n");
++
++	ret = regmap_write(fs->regmap, FS19XX_SPKCOEF, fs->tcoef << 1);
++	ret = ret ?: fs19xx_write_common(fs);
++	ret = ret ?: fs19xx_write_scene(fs, FSM_SCENE_MUSIC);
++	ret = ret ?: fs19xx_shut_down(fs);
++	if (ret)
++		return dev_err_probe(fs->dev, ret, "register init failed\n");
++
++	fs->inited = true;
++	return 0;
++}
++
++static int fs19xx_start_up(struct fs19xx_priv *fs)
++{
++	const struct fs19xx_pll *pll = NULL;
++	unsigned int i, sr = 0, vol;
++	int ret;
++
++	for (i = 0; i < ARRAY_SIZE(fs19xx_rates); i++)
++		if (fs19xx_rates[i].rate == fs->rate)
++			sr = fs19xx_rates[i].sr;
++	for (i = 0; i < ARRAY_SIZE(fs19xx_pll_tbl); i++)
++		if (fs19xx_pll_tbl[i].bclk == fs->bclk)
++			pll = &fs19xx_pll_tbl[i];
++	if (!sr || !pll) {
++		dev_err(fs->dev, "unsupported rate %u / bclk %u\n", fs->rate, fs->bclk);
++		return -EINVAL;
++	}
++	if (fs->devid == FS1958_DEV_ID && fs->revid == 0xa1)
++		sr = 0x7;
++
++	ret = regmap_update_bits(fs->regmap, FS19XX_I2SCTRL,
++				 FS19XX_I2SCTRL_SR | FS19XX_I2SCTRL_DOE,
++				 FIELD_PREP(FS19XX_I2SCTRL_SR, sr) | FS19XX_I2SCTRL_DOE);
++
++	ret = ret ?: regmap_write(fs->regmap, FS19XX_OTPACC, FS19XX_OTPACC_KEY);
++	ret = ret ?: regmap_write(fs->regmap, FS19XX_PLLCTRL1, pll->c1);
++	ret = ret ?: regmap_write(fs->regmap, FS19XX_PLLCTRL2, pll->c2);
++	ret = ret ?: regmap_write(fs->regmap, FS19XX_PLLCTRL3, pll->c3);
++	ret = ret ?: regmap_write(fs->regmap, FS19XX_OTPACC, 0);
++
++	ret = ret ?: regmap_write(fs->regmap, FS19XX_SYSCTRL, FS19XX_SYSCTRL_ALL_ON);
++	ret = ret ?: regmap_write(fs->regmap, FS19XX_PWRCTRL, 0);
++
++	if (fs->devid == FS1958_DEV_ID)
++		vol = ((fs->volume << 1) + 1) << 7;
++	else
++		vol = (fs->volume << 8) | 0x00c0;
++	ret = ret ?: regmap_write(fs->regmap, FS19XX_VOLCTRL, vol);
++
++	ret = ret ?: regmap_write(fs->regmap, FS19XX_DACCTRL, FS19XX_DACCTRL_UNMUTE);
++	usleep_range(10000, 11000);
++	ret = ret ?: regmap_set_bits(fs->regmap, FS19XX_TSCTRL, FS19XX_TSCTRL_TSEN);
++	if (ret)
++		return ret;
++
++	fs->playing = true;
++	return 0;
++}
++
++static void fs19xx_start_work(struct work_struct *work)
++{
++	struct fs19xx_priv *fs = container_of(work, struct fs19xx_priv, start_work.work);
++	int ret;
++
++	mutex_lock(&fs->lock);
++	if (fs->inited && !fs->playing) {
++		ret = fs19xx_start_up(fs);
++		if (ret)
++			dev_err(fs->dev, "failed to start: %d\n", ret);
++	}
++	mutex_unlock(&fs->lock);
++}
++
++static int fs19xx_playback_event(struct snd_soc_dapm_widget *w,
++				 struct snd_kcontrol *kc, int event)
++{
++	struct snd_soc_component *cmpnt = snd_soc_dapm_to_component(w->dapm);
++	struct fs19xx_priv *fs = snd_soc_component_get_drvdata(cmpnt);
++
++	if (event != SND_SOC_DAPM_POST_PMD)
++		return 0;
++
++	cancel_delayed_work_sync(&fs->start_work);
++	mutex_lock(&fs->lock);
++	if (fs->playing)
++		fs19xx_shut_down(fs);
++	mutex_unlock(&fs->lock);
++
++	return 0;
++}
++
++static int fs19xx_dai_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
++{
++	/* The frame layout and slot selection come from the preset */
++	if ((fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) != SND_SOC_DAIFMT_CBC_CFC)
++		return -EINVAL;
++
++	return 0;
++}
++
++static int fs19xx_dai_set_tdm_slot(struct snd_soc_dai *dai, unsigned int tx_mask,
++				   unsigned int rx_mask, int slots, int slot_width)
++{
++	return 0;
++}
++
++static int fs19xx_dai_set_sysclk(struct snd_soc_dai *dai, int clk_id,
++				 unsigned int freq, int dir)
++{
++	struct fs19xx_priv *fs = snd_soc_component_get_drvdata(dai->component);
++
++	/* The PLL runs from the bit clock */
++	mutex_lock(&fs->lock);
++	fs->bclk = freq;
++	mutex_unlock(&fs->lock);
++
++	return 0;
++}
++
++static int fs19xx_dai_hw_params(struct snd_pcm_substream *substream,
++				struct snd_pcm_hw_params *params,
++				struct snd_soc_dai *dai)
++{
++	struct fs19xx_priv *fs = snd_soc_component_get_drvdata(dai->component);
++
++	mutex_lock(&fs->lock);
++	fs->rate = params_rate(params);
++	if (!fs->bclk)
++		fs->bclk = snd_soc_params_to_bclk(params);
++	mutex_unlock(&fs->lock);
++
++	return 0;
++}
++
++static int fs19xx_dai_trigger(struct snd_pcm_substream *substream, int cmd,
++			      struct snd_soc_dai *dai)
++{
++	struct fs19xx_priv *fs = snd_soc_component_get_drvdata(dai->component);
++
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_START:
++	case SNDRV_PCM_TRIGGER_RESUME:
++	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
++		/* The bit clock must run and settle before the PLL starts */
++		schedule_delayed_work(&fs->start_work,
++				      msecs_to_jiffies(FS19XX_START_DELAY_MS));
++		break;
++	default:
++		break;
++	}
++
++	return 0;
++}
++
++static int fs19xx_dai_mute(struct snd_soc_dai *dai, int mute, int stream)
++{
++	struct fs19xx_priv *fs = snd_soc_component_get_drvdata(dai->component);
++
++	if (!mute)
++		return 0;
++
++	/* Power down while the bit clock still runs */
++	cancel_delayed_work_sync(&fs->start_work);
++	mutex_lock(&fs->lock);
++	if (fs->playing)
++		fs19xx_shut_down(fs);
++	mutex_unlock(&fs->lock);
++
++	return 0;
++}
++
++static const struct snd_soc_dai_ops fs19xx_dai_ops = {
++	.set_fmt	= fs19xx_dai_set_fmt,
++	.set_tdm_slot	= fs19xx_dai_set_tdm_slot,
++	.set_sysclk	= fs19xx_dai_set_sysclk,
++	.hw_params	= fs19xx_dai_hw_params,
++	.trigger	= fs19xx_dai_trigger,
++	.mute_stream	= fs19xx_dai_mute,
++	.no_capture_mute = 1,
++};
++
++#define FS19XX_RATES	(SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_16000 | \
++			 SNDRV_PCM_RATE_32000 | SNDRV_PCM_RATE_44100 | \
++			 SNDRV_PCM_RATE_48000 | SNDRV_PCM_RATE_88200 | \
++			 SNDRV_PCM_RATE_96000)
++#define FS19XX_FORMATS	(SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S24_LE | \
++			 SNDRV_PCM_FMTBIT_S32_LE)
++
++static struct snd_soc_dai_driver fs19xx_dai = {
++	.name = "fs19xx-aif",
++	.playback = {
++		.stream_name = "Playback",
++		.channels_min = 1,
++		.channels_max = 8,
++		.rates = FS19XX_RATES,
++		.formats = FS19XX_FORMATS,
++	},
++	.ops = &fs19xx_dai_ops,
++};
++
++static int fs19xx_volume_get(struct snd_kcontrol *kc, struct snd_ctl_elem_value *uc)
++{
++	struct snd_soc_component *cmpnt = snd_kcontrol_chip(kc);
++	struct fs19xx_priv *fs = snd_soc_component_get_drvdata(cmpnt);
++
++	uc->value.integer.value[0] = fs->volume;
++	return 0;
++}
++
++static int fs19xx_volume_put(struct snd_kcontrol *kc, struct snd_ctl_elem_value *uc)
++{
++	struct snd_soc_component *cmpnt = snd_kcontrol_chip(kc);
++	struct fs19xx_priv *fs = snd_soc_component_get_drvdata(cmpnt);
++	long vol = uc->value.integer.value[0];
++
++	if (vol < 0 || vol > FS19XX_VOLUME_MAX)
++		return -EINVAL;
++
++	mutex_lock(&fs->lock);
++	if (fs->volume == vol) {
++		mutex_unlock(&fs->lock);
++		return 0;
++	}
++	/* Applied at the next start */
++	fs->volume = vol;
++	mutex_unlock(&fs->lock);
++
++	return 1;
++}
++
++static const DECLARE_TLV_DB_MINMAX(fs19xx_volume_tlv, -9563, 0);
++
++static const struct snd_kcontrol_new fs19xx_controls[] = {
++	SOC_SINGLE_EXT_TLV("Amp Volume", SND_SOC_NOPM, 0, FS19XX_VOLUME_MAX, 0,
++			   fs19xx_volume_get, fs19xx_volume_put, fs19xx_volume_tlv),
++};
++
++static const struct snd_soc_dapm_widget fs19xx_widgets[] = {
++	SND_SOC_DAPM_AIF_IN_E("AIF IN", "Playback", 0, SND_SOC_NOPM, 0, 0,
++			      fs19xx_playback_event, SND_SOC_DAPM_POST_PMD),
++	SND_SOC_DAPM_OUTPUT("OUT"),
++};
++
++static const struct snd_soc_dapm_route fs19xx_routes[] = {
++	{ "OUT", NULL, "AIF IN" },
++};
++
++static int fs19xx_component_probe(struct snd_soc_component *cmpnt)
++{
++	struct fs19xx_priv *fs = snd_soc_component_get_drvdata(cmpnt);
++	struct i2c_client *i2c = to_i2c_client(fs->dev);
++	const struct firmware *fw;
++	int ret;
++
++	ret = request_firmware(&fw, fs->fw_name, fs->dev);
++	if (ret)
++		return dev_err_probe(fs->dev, ret, "failed to load %s\n", fs->fw_name);
++
++	ret = fs19xx_parse_preset(fs, fw, i2c->addr);
++	release_firmware(fw);
++	if (ret)
++		return ret;
++
++	mutex_lock(&fs->lock);
++	ret = fs19xx_init_regs(fs);
++	mutex_unlock(&fs->lock);
++
++	return ret;
++}
++
++static void fs19xx_component_remove(struct snd_soc_component *cmpnt)
++{
++	struct fs19xx_priv *fs = snd_soc_component_get_drvdata(cmpnt);
++
++	cancel_delayed_work_sync(&fs->start_work);
++	mutex_lock(&fs->lock);
++	if (fs->playing)
++		fs19xx_shut_down(fs);
++	fs->inited = false;
++	mutex_unlock(&fs->lock);
++}
++
++static const struct snd_soc_component_driver fs19xx_component = {
++	.probe = fs19xx_component_probe,
++	.remove = fs19xx_component_remove,
++	.controls = fs19xx_controls,
++	.num_controls = ARRAY_SIZE(fs19xx_controls),
++	.dapm_widgets = fs19xx_widgets,
++	.num_dapm_widgets = ARRAY_SIZE(fs19xx_widgets),
++	.dapm_routes = fs19xx_routes,
++	.num_dapm_routes = ARRAY_SIZE(fs19xx_routes),
++	.endianness = 1,
++};
++
++static const struct regmap_config fs19xx_regmap = {
++	.reg_bits = 8,
++	.val_bits = 16,
++	.max_register = FS19XX_MAX_REG,
++	.val_format_endian = REGMAP_ENDIAN_BIG,
++	.cache_type = REGCACHE_NONE,
++};
++
++static void fs19xx_power_off(void *data)
++{
++	struct fs19xx_priv *fs = data;
++
++	gpiod_set_value_cansleep(fs->reset, 1);
++	regulator_disable(fs->vdd);
++}
++
++static int fs19xx_i2c_probe(struct i2c_client *i2c)
++{
++	struct device *dev = &i2c->dev;
++	struct fs19xx_priv *fs;
++	unsigned int id, rev;
++	int ret, err;
++
++	fs = devm_kzalloc(dev, sizeof(*fs), GFP_KERNEL);
++	if (!fs)
++		return -ENOMEM;
++
++	fs->dev = dev;
++	fs->volume = FS19XX_VOLUME_DEFAULT;
++	mutex_init(&fs->lock);
++	INIT_DELAYED_WORK(&fs->start_work, fs19xx_start_work);
++	i2c_set_clientdata(i2c, fs);
++
++	if (device_property_read_string(dev, "firmware-name", &fs->fw_name))
++		fs->fw_name = "fs19xx.fsm";
++
++	fs->regmap = devm_regmap_init_i2c(i2c, &fs19xx_regmap);
++	if (IS_ERR(fs->regmap))
++		return PTR_ERR(fs->regmap);
++
++	fs->vdd = devm_regulator_get(dev, "vdd");
++	if (IS_ERR(fs->vdd))
++		return dev_err_probe(dev, PTR_ERR(fs->vdd), "failed to get vdd\n");
++
++	/* Asserted: the amplifier is held in shutdown */
++	fs->reset = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
++	if (IS_ERR(fs->reset))
++		return dev_err_probe(dev, PTR_ERR(fs->reset), "failed to get reset\n");
++
++	ret = regulator_enable(fs->vdd);
++	if (ret)
++		return ret;
++
++	ret = devm_add_action_or_reset(dev, fs19xx_power_off, fs);
++	if (ret)
++		return ret;
++
++	usleep_range(10000, 11000);
++	gpiod_set_value_cansleep(fs->reset, 0);
++
++	/*
++	 * The FS1958 answers on I2C about 2.5 ms after leaving shutdown, but
++	 * takes longer on its first power-up after a cold boot.
++	 */
++	ret = read_poll_timeout(regmap_read, err, !err, 5000, 100000, true,
++				fs->regmap, FS19XX_DEVID, &id);
++	ret = ret ? err : regmap_read(fs->regmap, FS19XX_REVID, &rev);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to read the device id\n");
++
++	fs->devid = id >> 8;
++	fs->revid = rev & 0xff;
++	if (fs->devid != FS1958_DEV_ID && fs->devid != FS19XX_DEV_ID)
++		return dev_err_probe(dev, -ENODEV, "unknown device id 0x%04x\n", id);
++
++	dev_dbg(dev, "device id 0x%04x rev 0x%02x\n", id, fs->revid);
++
++	return devm_snd_soc_register_component(dev, &fs19xx_component, &fs19xx_dai, 1);
++}
++
++static const struct of_device_id fs19xx_of_match[] = {
++	{ .compatible = "foursemi,fs19xx" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, fs19xx_of_match);
++
++static const struct i2c_device_id fs19xx_i2c_id[] = {
++	{ "fs19xx" },
++	{ }
++};
++MODULE_DEVICE_TABLE(i2c, fs19xx_i2c_id);
++
++static struct i2c_driver fs19xx_i2c_driver = {
++	.driver = {
++		.name = "fs19xx",
++		.of_match_table = fs19xx_of_match,
++	},
++	.probe = fs19xx_i2c_probe,
++	.id_table = fs19xx_i2c_id,
++};
++module_i2c_driver(fs19xx_i2c_driver);
++
++MODULE_DESCRIPTION("FourSemi FS19xx smart amplifier driver");
++MODULE_LICENSE("GPL");

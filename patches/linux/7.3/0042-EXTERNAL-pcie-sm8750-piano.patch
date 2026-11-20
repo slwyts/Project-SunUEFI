@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: PCI: retain the Piano bridge and power sequencing support
+
+Carry the PCI bridge and power sequencing paths used during board startup.
+
+Link: https://github.com/blu-sharky/linux-piano/commit/ad8dfe4e9b308230034defed83864d3bb21a30c5
+Link: https://github.com/blu-sharky/linux-piano/commit/2aeadb7826d18fd4c3faebd807a1fb01f39cd6f2
+Link: https://github.com/blu-sharky/linux-piano/commit/9420ddfb20d6b83b27966a2c589e23d22018fe12
+Link: https://github.com/blu-sharky/linux-piano/commit/687e1c26d72047c2289ff8635c8b8849be2bd413
+Link: https://github.com/blu-sharky/linux-piano/commit/2babeaa9937513bfe1838a7fe603a1c9421bdd67
+Link: https://github.com/blu-sharky/linux-piano/commit/41032ea8930362c9190756ef183cb3f253ed9d4d
+Link: https://github.com/blu-sharky/linux-piano/commit/25d7baec03a69c7af50d97974a088acbda04d482
+Link: https://github.com/blu-sharky/linux-piano/commit/d2f590d28247dd751bf5c413d94625271ae394a4
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ .../pci/controller/dwc/pcie-designware-host.c | 24 +++++++++++++++----
+ drivers/pci/pwrctrl/pci-pwrctrl-pwrseq.c      |  5 ++++
+ 2 files changed, 25 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/pci/controller/dwc/pcie-designware-host.c b/drivers/pci/controller/dwc/pcie-designware-host.c
+index f5a38e6fd8d799d8b1acb7dad016576f7e3cc66b..77a8a19e919783499ec8be061baff0ad40373071 100644
+--- a/drivers/pci/controller/dwc/pcie-designware-host.c
++++ b/drivers/pci/controller/dwc/pcie-designware-host.c
+@@ -588,9 +588,17 @@ int dw_pcie_host_init(struct dw_pcie_rp *pp)
+ 		return ret;
+ 
+ 	if (pci_msi_enabled()) {
+-		pp->use_imsi_rx = !(pp->ops->msi_init ||
+-				    of_property_present(np, "msi-parent") ||
+-				    of_property_present(np, "msi-map"));
++		int msi_parent_len = 0, msi_map_len = 0;
++
++		/*
++		 * piano: a DT overlay cannot delete a property, only empty it;
++		 * treat zero-length msi-parent/msi-map as absent so the
++		 * internal (iMSI-RX) controller is used.
++		 */
++		of_get_property(np, "msi-parent", &msi_parent_len);
++		of_get_property(np, "msi-map", &msi_map_len);
++		pp->use_imsi_rx = !(pp->ops->msi_init || msi_parent_len > 0 ||
++				    msi_map_len > 0);
+ 	}
+ 
+ 	if (pp->ops->init) {
+@@ -623,9 +631,11 @@ int dw_pcie_host_init(struct dw_pcie_rp *pp)
+ 		}
+ 	}
+ 
++	dev_info(dev, "piano-dbg: msi phase done (use_imsi_rx=%d)\n", pp->use_imsi_rx);
+ 	dw_pcie_version_detect(pci);
+-
++	dev_info(dev, "piano-dbg: version detect done\n");
+ 	dw_pcie_iatu_detect(pci);
++	dev_info(dev, "piano-dbg: iatu detect done\n");
+ 
+ 	if (pci->num_lanes < 1)
+ 		pci->num_lanes = dw_pcie_link_get_max_link_width(pci);
+@@ -646,20 +656,24 @@ int dw_pcie_host_init(struct dw_pcie_rp *pp)
+ 	if (pp->use_atu_msg)
+ 		dw_pcie_host_request_msg_tlp_res(pp);
+ 
++	dev_info(dev, "piano-dbg: before edma detect\n");
+ 	ret = dw_pcie_edma_detect(pci);
+ 	if (ret)
+ 		goto err_free_msi;
+ 
++	dev_info(dev, "piano-dbg: before setup_rc\n");
+ 	ret = dw_pcie_setup_rc(pp);
+ 	if (ret)
+ 		goto err_remove_edma;
+ 
++	dev_info(dev, "piano-dbg: before start_link\n");
+ 	if (!dw_pcie_link_up(pci)) {
+ 		ret = dw_pcie_start_link(pci);
+ 		if (ret)
+ 			goto err_remove_edma;
+ 	}
+ 
++	dev_info(dev, "piano-dbg: waiting for link\n");
+ 	/*
+ 	 * Only fail on timeout error. Other errors indicate the device may
+ 	 * become available later, so continue without failing.
+@@ -668,6 +682,8 @@ int dw_pcie_host_init(struct dw_pcie_rp *pp)
+ 	if (ret == -ETIMEDOUT)
+ 		goto err_stop_link;
+ 
++	dev_info(dev, "piano-dbg: before pci_host_probe (link=%d)\n",
++		 dw_pcie_link_up(pci));
+ 	ret = pci_host_probe(bridge);
+ 	if (ret)
+ 		goto err_stop_link;
+diff --git a/drivers/pci/pwrctrl/pci-pwrctrl-pwrseq.c b/drivers/pci/pwrctrl/pci-pwrctrl-pwrseq.c
+index c5ced87944b6ca3dc642692311ff504a650acec7..a7df7df1c920b103c091ea054f894db330bffa10 100644
+--- a/drivers/pci/pwrctrl/pci-pwrctrl-pwrseq.c
++++ b/drivers/pci/pwrctrl/pci-pwrctrl-pwrseq.c
+@@ -122,6 +122,11 @@ static const struct of_device_id pwrseq_pwrctrl_of_match[] = {
+ 		.compatible = "pci17cb,1107",
+ 		.data = &pwrseq_pwrctrl_qcom_wcn_pdata,
+ 	},
++	{
++		/* ATH12K Peach v2 (WCN7880 family): Lenovo elden, Xiaomi piano. */
++		.compatible = "pci17cb,110e",
++		.data = &pwrseq_pwrctrl_qcom_wcn_pdata,
++	},
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, pwrseq_pwrctrl_of_match);

@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: ci: build the Piano device tree
+
+Carry the native device-tree build workflow from linux-piano.
+
+The port retains changes from these linux-piano commits:
+ci: cache arm64 kernel builds with ccache (#5) (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+
+Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/7b43ed320b16dc139446a1d79c8e7793d8cdb521
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ .github/workflows/piano-dtb.yml | 58 +++++++++++++++++++++++++++++++++
+ 1 file changed, 58 insertions(+)
+ create mode 100644 .github/workflows/piano-dtb.yml
+
+diff --git a/.github/workflows/piano-dtb.yml b/.github/workflows/piano-dtb.yml
+new file mode 100644
+index 0000000000000000000000000000000000000000..d2f092d8fb44c1b18c680850dbaed201a7030ef2
+--- /dev/null
++++ b/.github/workflows/piano-dtb.yml
+@@ -0,0 +1,58 @@
++name: piano-dtb
++
++on:
++  pull_request:
++  push:
++    branches: ['piano-*']
++
++permissions:
++  contents: read
++
++jobs:
++  piano-dtb:
++    name: piano-dtb
++    runs-on: ubuntu-24.04-arm
++    steps:
++      - uses: actions/checkout@v5
++
++      - name: Install toolchain
++        run: |
++          sudo apt-get update
++          sudo apt-get install -y --no-install-recommends \
++              ccache \
++              clang lld llvm bc flex bison libssl-dev libelf-dev cpio \
++              dwarves device-tree-compiler
++
++      # Rolling compiler cache: every run saves a fresh entry (run_id key),
++      # restore falls back to the most recent one. First run is cold.
++      - name: Restore ccache
++        uses: actions/cache@v4
++        with:
++          path: ~/.cache/ccache
++          key: ccache-${{ runner.arch }}-${{ github.run_id }}
++          restore-keys: ccache-${{ runner.arch }}-
++
++      - name: Build piano_defconfig, Image and dtbs
++        env:
++          # Runner image clang updates must invalidate, not mis-hit
++          CCACHE_COMPILERCHECK: content
++        run: |
++          ccache --zero-stats
++          make ARCH=arm64 LLVM=1 CC="ccache clang" O=out piano_defconfig
++          make ARCH=arm64 LLVM=1 CC="ccache clang" O=out -j"$(nproc)" Image dtbs
++          ccache --show-stats
++
++      - name: Verify piano artifacts
++        run: |
++          test -s out/arch/arm64/boot/Image
++          test -s out/arch/arm64/boot/dts/qcom/sm8750-xiaomi-piano.dtb
++
++      - name: Upload artifacts
++        uses: actions/upload-artifact@v4
++        with:
++          name: piano-build
++          path: |
++            out/arch/arm64/boot/Image
++            out/arch/arm64/boot/dts/qcom/sm8750-xiaomi-piano.dtb
++          retention-days: 7
++          if-no-files-found: error

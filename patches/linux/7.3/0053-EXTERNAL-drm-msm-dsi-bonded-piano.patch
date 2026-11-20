@@ -1,0 +1,808 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 03:01:01 +0800
+Subject: drm/msm/dsi: support the Piano bonded DSI links
+
+Carry paired host startup, PLL restoration and PHY runtime clock handling.
+
+Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+Link: https://github.com/blu-sharky/linux-piano/commit/5c2c95fddbe9c29720b7b4e84119357358e9f0cb
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ drivers/gpu/drm/msm/dsi/dsi.h             |   3 +
+ drivers/gpu/drm/msm/dsi/dsi_host.c        | 154 +++++++++++++++---
+ drivers/gpu/drm/msm/dsi/dsi_manager.c     | 182 +++++++++++++++++++++-
+ drivers/gpu/drm/msm/dsi/phy/dsi_phy.c     |  47 ++++--
+ drivers/gpu/drm/msm/dsi/phy/dsi_phy.h     |   9 ++
+ drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c |  50 ++++++
+ 6 files changed, 405 insertions(+), 40 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dsi/dsi.h b/drivers/gpu/drm/msm/dsi/dsi.h
+index 93c028a122f3a59b1632da76472e0a3e781c6ae8..152dccc2240985f38050cef961f0b89c6bada28d 100644
+--- a/drivers/gpu/drm/msm/dsi/dsi.h
++++ b/drivers/gpu/drm/msm/dsi/dsi.h
+@@ -69,6 +69,8 @@ int msm_dsi_host_cmd_rx(struct mipi_dsi_host *host,
+ void msm_dsi_host_cmd_xfer_commit(struct mipi_dsi_host *host,
+ 					u32 dma_base, u32 len);
+ int msm_dsi_host_enable(struct mipi_dsi_host *host);
++int msm_dsi_host_enable_video(struct mipi_dsi_host *host);
++int msm_dsi_host_disable_video(struct mipi_dsi_host *host);
+ int msm_dsi_host_disable(struct mipi_dsi_host *host);
+ void msm_dsi_host_enable_irq(struct mipi_dsi_host *host);
+ void msm_dsi_host_disable_irq(struct mipi_dsi_host *host);
+@@ -76,6 +78,7 @@ int msm_dsi_host_power_on(struct mipi_dsi_host *host,
+ 			struct msm_dsi_phy_shared_timings *phy_shared_timings,
+ 			bool is_bonded_dsi, struct msm_dsi_phy *phy);
+ int msm_dsi_host_power_off(struct mipi_dsi_host *host);
++int msm_dsi_host_reset_after_phy_sync(struct mipi_dsi_host *host);
+ int msm_dsi_host_set_display_mode(struct mipi_dsi_host *host,
+ 				  const struct drm_display_mode *mode);
+ enum drm_mode_status msm_dsi_host_check_dsc(struct mipi_dsi_host *host,
+diff --git a/drivers/gpu/drm/msm/dsi/dsi_host.c b/drivers/gpu/drm/msm/dsi/dsi_host.c
+index b292dfd266d178a45ddc1c704b9f2a7063f793d8..7922d56b92c672c904d8707dd60321baae25ecfb 100644
+--- a/drivers/gpu/drm/msm/dsi/dsi_host.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_host.c
+@@ -186,6 +186,7 @@ struct msm_dsi_host {
+ 	bool registered;
+ 	bool power_on;
+ 	bool enabled;
++	bool video_enabled;
+ 	int irq;
+ };
+ 
+@@ -1164,6 +1165,7 @@ static void dsi_op_mode_config(struct msm_dsi_host *msm_host,
+ 	u32 dsi_ctrl;
+ 
+ 	dsi_ctrl = dsi_read(msm_host, REG_DSI_CTRL);
++	dsi_ctrl &= ~(DSI_CTRL_VID_MODE_EN | DSI_CTRL_CMD_MODE_EN);
+ 
+ 	if (!enable) {
+ 		dsi_ctrl &= ~(DSI_CTRL_ENABLE | DSI_CTRL_VID_MODE_EN |
+@@ -1173,6 +1175,7 @@ static void dsi_op_mode_config(struct msm_dsi_host *msm_host,
+ 	} else {
+ 		if (video_mode) {
+ 			dsi_ctrl |= DSI_CTRL_VID_MODE_EN;
++			dsi_intr_ctrl(msm_host, DSI_IRQ_MASK_CMD_MDP_DONE, 0);
+ 		} else {		/* command mode */
+ 			dsi_ctrl |= DSI_CTRL_CMD_MODE_EN;
+ 			dsi_intr_ctrl(msm_host, DSI_IRQ_MASK_CMD_MDP_DONE, 1);
+@@ -1183,6 +1186,18 @@ static void dsi_op_mode_config(struct msm_dsi_host *msm_host,
+ 	dsi_write(msm_host, REG_DSI_CTRL, dsi_ctrl);
+ }
+ 
++/* Keep the controller available for DMA commands without a timing engine. */
++static void dsi_video_idle(struct msm_dsi_host *msm_host)
++{
++	u32 dsi_ctrl = dsi_read(msm_host, REG_DSI_CTRL);
++
++	dsi_ctrl &= ~(DSI_CTRL_VID_MODE_EN | DSI_CTRL_CMD_MODE_EN);
++	dsi_ctrl |= DSI_CTRL_ENABLE;
++	dsi_intr_ctrl(msm_host, DSI_IRQ_MASK_CMD_MDP_DONE |
++				DSI_IRQ_MASK_VIDEO_DONE, 0);
++	dsi_write(msm_host, REG_DSI_CTRL, dsi_ctrl);
++}
++
+ static void dsi_set_tx_power_mode(int mode, struct msm_dsi_host *msm_host)
+ {
+ 	u32 data;
+@@ -1232,7 +1247,7 @@ static void dsi_wait4video_eng_busy(struct msm_dsi_host *msm_host)
+ 	if (!(data & DSI_STATUS0_VIDEO_MODE_ENGINE_BUSY))
+ 		return;
+ 
+-	if (msm_host->power_on && msm_host->enabled) {
++	if (msm_host->power_on && msm_host->video_enabled) {
+ 		dsi_wait4video_done(msm_host);
+ 		/* delay 4 ms to skip BLLP */
+ 		usleep_range(2000, 4000);
+@@ -1572,7 +1587,9 @@ static void dsi_err_worker(struct work_struct *work)
+ 		container_of(work, struct msm_dsi_host, err_work);
+ 	u32 status = msm_host->err_work_state;
+ 
+-	pr_err_ratelimited("%s: status=%x\n", __func__, status);
++	pr_err_ratelimited("%s: host=%d status=%x power_on=%u enabled=%u video=%u\n",
++			   __func__, msm_host->id, status, READ_ONCE(msm_host->power_on),
++			   READ_ONCE(msm_host->enabled), READ_ONCE(msm_host->video_enabled));
+ 	if (status & DSI_ERR_STATE_MDP_FIFO_UNDERFLOW)
+ 		dsi_sw_reset(msm_host);
+ 
+@@ -1633,6 +1650,9 @@ static void dsi_fifo_status(struct msm_dsi_host *msm_host)
+ 
+ 	/* fifo underflow, overflow */
+ 	if (status) {
++		pr_err_ratelimited("%s: host=%d raw_fifo=%08x power_on=%u enabled=%u video=%u\n",
++				   __func__, msm_host->id, status, READ_ONCE(msm_host->power_on),
++				   READ_ONCE(msm_host->enabled), READ_ONCE(msm_host->video_enabled));
+ 		dsi_write(msm_host, REG_DSI_FIFO_STATUS, status);
+ 		msm_host->err_work_state |= DSI_ERR_STATE_FIFO;
+ 		if (status & DSI_FIFO_STATUS_CMD_MDP_FIFO_UNDERFLOW)
+@@ -2437,37 +2457,77 @@ void msm_dsi_host_disable_irq(struct mipi_dsi_host *host)
+ int msm_dsi_host_enable(struct mipi_dsi_host *host)
+ {
+ 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
++	int ret = 0;
+ 
+-	dsi_op_mode_config(msm_host,
+-		!!(msm_host->mode_flags & MIPI_DSI_MODE_VIDEO), true);
+-
+-	/* TODO: clock should be turned off for command mode,
+-	 * and only turned on before MDP START.
+-	 * This part of code should be enabled once mdp driver support it.
+-	 */
+-	/* if (msm_panel->mode == MSM_DSI_CMD_MODE) {
+-	 *	dsi_link_clk_disable(msm_host);
+-	 *	pm_runtime_put(&msm_host->pdev->dev);
+-	 * }
+-	 */
++	mutex_lock(&msm_host->dev_mutex);
++	if (!msm_host->power_on) {
++		ret = -EINVAL;
++		goto unlock;
++	}
++	/* DMA transfers enable command mode temporarily in xfer_prepare. */
++	if (msm_host->mode_flags & MIPI_DSI_MODE_VIDEO)
++		dsi_video_idle(msm_host);
++	else
++		dsi_op_mode_config(msm_host, false, true);
+ 	msm_host->enabled = true;
+-	return 0;
++	msm_host->video_enabled = false;
++unlock:
++	mutex_unlock(&msm_host->dev_mutex);
++	return ret;
+ }
+ 
+-int msm_dsi_host_disable(struct mipi_dsi_host *host)
++int msm_dsi_host_enable_video(struct mipi_dsi_host *host)
+ {
+ 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
++	int ret = 0;
+ 
+-	msm_host->enabled = false;
+-	dsi_op_mode_config(msm_host,
+-		!!(msm_host->mode_flags & MIPI_DSI_MODE_VIDEO), false);
++	mutex_lock(&msm_host->dev_mutex);
++	if (!msm_host->power_on || !msm_host->enabled) {
++		ret = -EINVAL;
++		goto unlock;
++	}
++	if (msm_host->mode_flags & MIPI_DSI_MODE_VIDEO) {
++		dsi_op_mode_config(msm_host, true, true);
++		msm_host->video_enabled = true;
++	}
++unlock:
++	mutex_unlock(&msm_host->dev_mutex);
++	return ret;
++}
+ 
+-	/* Since we have disabled INTF, the video engine won't stop so that
+-	 * the cmd engine will be blocked.
+-	 * Reset to disable video engine so that we can send off cmd.
++int msm_dsi_host_disable_video(struct mipi_dsi_host *host)
++{
++	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
++
++	mutex_lock(&msm_host->dev_mutex);
++	if (!msm_host->power_on || !msm_host->video_enabled)
++		goto unlock;
++	/* Stop video before INTF stops; reset removes its command-engine block.
++	 * Keep command/IRQ/clock access for the panel's later unprepare DCS.
+ 	 */
++	dsi_op_mode_config(msm_host, true, false);
+ 	dsi_sw_reset(msm_host);
++	dsi_video_idle(msm_host);
++	msm_host->video_enabled = false;
++unlock:
++	mutex_unlock(&msm_host->dev_mutex);
++	return 0;
++}
++
++int msm_dsi_host_disable(struct mipi_dsi_host *host)
++{
++	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
+ 
++	mutex_lock(&msm_host->dev_mutex);
++	if (msm_host->power_on) {
++		dsi_op_mode_config(msm_host, false, false);
++		/* Command-mode panels retain the existing final controller reset. */
++		if (!(msm_host->mode_flags & MIPI_DSI_MODE_VIDEO))
++			dsi_sw_reset(msm_host);
++	}
++	msm_host->enabled = false;
++	msm_host->video_enabled = false;
++	mutex_unlock(&msm_host->dev_mutex);
+ 	return 0;
+ }
+ 
+@@ -2548,6 +2608,54 @@ unlock_ret:
+ 	return ret;
+ }
+ 
++/*
++ * SM8750 bonded video requires a controller reset after both HS clock paths
++ * and PHY retime FIFOs have settled. Do not reset the PHY here: that would
++ * discard the synchronization which the manager has just completed.
++ */
++int msm_dsi_host_reset_after_phy_sync(struct mipi_dsi_host *host)
++{
++	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
++	u32 ctrl, clk_ctrl;
++	int ret = 0;
++
++	if (!of_device_is_compatible(msm_host->pdev->dev.of_node,
++				     "qcom,sm8750-dsi-ctrl") ||
++	    !(msm_host->mode_flags & MIPI_DSI_MODE_VIDEO))
++		return 0;
++
++	mutex_lock(&msm_host->dev_mutex);
++	/* The manager calls before IRQs, panel commands or video are enabled. */
++	if (!msm_host->power_on || msm_host->enabled) {
++		ret = -EINVAL;
++		goto unlock;
++	}
++
++	ctrl = dsi_read(msm_host, REG_DSI_CTRL);
++	clk_ctrl = dsi_read(msm_host, REG_DSI_CLK_CTRL);
++	dsi_write(msm_host, REG_DSI_CTRL,
++		  ctrl & ~(DSI_CTRL_ENABLE | DSI_CTRL_VID_MODE_EN |
++			   DSI_CTRL_CMD_MODE_EN));
++	wmb();
++
++	/* MiCode v7.2 dynamic force-on mask; preserve every existing bit. */
++	dsi_write(msm_host, REG_DSI_CLK_CTRL,
++		  clk_ctrl | 0x23f | BIT(8) | BIT(9) | BIT(11) | BIT(21));
++	wmb();
++	dsi_write(msm_host, REG_DSI_RESET, 1);
++	wmb();
++	udelay(1);
++	dsi_write(msm_host, REG_DSI_RESET, 0);
++	wmb();
++	dsi_write(msm_host, REG_DSI_CLK_CTRL, clk_ctrl);
++	wmb();
++	dsi_write(msm_host, REG_DSI_CTRL, ctrl);
++	wmb();
++unlock:
++	mutex_unlock(&msm_host->dev_mutex);
++	return ret;
++}
++
+ int msm_dsi_host_power_off(struct mipi_dsi_host *host)
+ {
+ 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
+@@ -2560,6 +2668,8 @@ int msm_dsi_host_power_off(struct mipi_dsi_host *host)
+ 	}
+ 
+ 	dsi_ctrl_disable(msm_host);
++	msm_host->enabled = false;
++	msm_host->video_enabled = false;
+ 
+ 	pinctrl_pm_select_sleep_state(&msm_host->pdev->dev);
+ 
+diff --git a/drivers/gpu/drm/msm/dsi/dsi_manager.c b/drivers/gpu/drm/msm/dsi/dsi_manager.c
+index 959daa88b1d022da5f552bb21ca7c04006524fa4..3577f96eef8977d847a3b1845a43782243ced0ee 100644
+--- a/drivers/gpu/drm/msm/dsi/dsi_manager.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_manager.c
+@@ -3,10 +3,15 @@
+  * Copyright (c) 2015, The Linux Foundation. All rights reserved.
+  */
+ 
+-#include "drm/drm_bridge_connector.h"
++#include <linux/backlight.h>
++#include <linux/device.h>
++
++#include <drm/display/drm_dsc.h>
++#include <drm/drm_bridge_connector.h>
+ 
+ #include "msm_kms.h"
+ #include "dsi.h"
++#include "phy/dsi_phy.h"
+ 
+ #define DSI_CLOCK_MASTER	DSI_0
+ #define DSI_CLOCK_SLAVE		DSI_1
+@@ -198,6 +203,7 @@ static void dsi_mgr_phy_disable(int id)
+ struct dsi_bridge {
+ 	struct drm_bridge base;
+ 	int id;
++	bool link_ready;
+ };
+ 
+ #define to_dsi_bridge(x) container_of(x, struct dsi_bridge, base)
+@@ -240,6 +246,26 @@ static int dsi_mgr_bridge_power_on(struct drm_bridge *bridge)
+ 		}
+ 	}
+ 
++	/* Both HS clock paths are ready: synchronize both PHYs first. */
++	msm_dsi_phy_toggle_resync_fifo(msm_dsi->phy);
++	if (is_bonded_dsi && msm_dsi1)
++		msm_dsi_phy_toggle_resync_fifo(msm_dsi1->phy);
++
++	/* Release D-PHY CLK_EN_SEL only after both FIFOs are synchronized. */
++	msm_dsi_phy_reset_clk_en_sel(msm_dsi->phy);
++	if (is_bonded_dsi && msm_dsi1)
++		msm_dsi_phy_reset_clk_en_sel(msm_dsi1->phy);
++
++	/* OEM bonded-video prepare resets both controllers after PHY resync. */
++	if (is_bonded_dsi && msm_dsi1) {
++		ret = msm_dsi_host_reset_after_phy_sync(host);
++		if (ret)
++			goto host_sync_fail;
++		ret = msm_dsi_host_reset_after_phy_sync(msm_dsi1->host);
++		if (ret)
++			goto host_sync_fail;
++	}
++
+ 	/*
+ 	 * Enable before preparing the panel, disable after unpreparing, so
+ 	 * that the panel can communicate over the DSI link.
+@@ -250,6 +276,8 @@ static int dsi_mgr_bridge_power_on(struct drm_bridge *bridge)
+ 
+ 	return 0;
+ 
++host_sync_fail:
++	msm_dsi_host_power_off(msm_dsi1->host);
+ host1_on_fail:
+ 	msm_dsi_host_power_off(host);
+ host_on_fail:
+@@ -291,6 +319,7 @@ static void dsi_mgr_bridge_pre_enable(struct drm_bridge *bridge,
+ 	if (is_bonded_dsi && !IS_MASTER_DSI_LINK(id))
+ 		return;
+ 
++	to_dsi_bridge(bridge)->link_ready = false;
+ 	ret = dsi_mgr_bridge_power_on(bridge);
+ 	if (ret) {
+ 		dev_err(&msm_dsi->pdev->dev, "Power on failed: %d\n", ret);
+@@ -311,6 +340,7 @@ static void dsi_mgr_bridge_pre_enable(struct drm_bridge *bridge,
+ 		}
+ 	}
+ 
++	to_dsi_bridge(bridge)->link_ready = true;
+ 	return;
+ 
+ host1_en_fail:
+@@ -319,6 +349,52 @@ host_en_fail:
+ 	dsi_mgr_bridge_power_off(bridge);
+ }
+ 
++static void dsi_mgr_bridge_enable(struct drm_bridge *bridge,
++				 struct drm_atomic_commit *commit)
++{
++	int id = dsi_mgr_bridge_get_id(bridge);
++	struct msm_dsi *msm_dsi = dsi_mgr_get_dsi(id);
++	struct msm_dsi *msm_dsi1 = dsi_mgr_get_dsi(DSI_1);
++	bool bonded = IS_BONDED_DSI();
++	int ret;
++
++	if ((bonded && !IS_MASTER_DSI_LINK(id)) || !to_dsi_bridge(bridge)->link_ready)
++		return;
++	/* The standard panel bridge has now completed prepare/DCS/PPS. */
++	ret = msm_dsi_host_enable_video(msm_dsi->host);
++	if (ret)
++		goto failed;
++	if (bonded && msm_dsi1) {
++		ret = msm_dsi_host_enable_video(msm_dsi1->host);
++		if (ret) {
++			msm_dsi_host_disable_video(msm_dsi->host);
++			goto failed;
++		}
++	}
++	return;
++failed:
++	/* Do not power off a prepared panel: keep command access for unprepare. */
++	pr_err("%s: video enable failed, %d\n", __func__, ret);
++}
++
++static void dsi_mgr_bridge_disable(struct drm_bridge *bridge,
++				  struct drm_atomic_commit *commit)
++{
++	int id = dsi_mgr_bridge_get_id(bridge);
++	struct msm_dsi *msm_dsi = dsi_mgr_get_dsi(id);
++	struct msm_dsi *msm_dsi1 = dsi_mgr_get_dsi(DSI_1);
++	bool bonded = IS_BONDED_DSI();
++
++	if ((bonded && !IS_MASTER_DSI_LINK(id)) || !to_dsi_bridge(bridge)->link_ready)
++		return;
++	/* Stop the peer before its master, keeping link/command/IRQ access until
++	 * the panel's standard post-disable has sent its off/sleep DCS.
++	 */
++	if (bonded && msm_dsi1)
++		msm_dsi_host_disable_video(msm_dsi1->host);
++	msm_dsi_host_disable_video(msm_dsi->host);
++}
++
+ void msm_dsi_manager_tpg_enable(void)
+ {
+ 	struct msm_dsi *m_dsi = dsi_mgr_get_dsi(DSI_0);
+@@ -351,6 +427,9 @@ static void dsi_mgr_bridge_post_disable(struct drm_bridge *bridge,
+ 	 */
+ 	if (is_bonded_dsi && !IS_MASTER_DSI_LINK(id))
+ 		goto disable_phy;
++	if (!to_dsi_bridge(bridge)->link_ready)
++		goto disable_phy;
++	to_dsi_bridge(bridge)->link_ready = false;
+ 
+ 	ret = msm_dsi_host_disable(host);
+ 	if (ret)
+@@ -368,11 +447,14 @@ static void dsi_mgr_bridge_post_disable(struct drm_bridge *bridge,
+ 
+ 	/* Save PHY status if it is a clock source */
+ 	msm_dsi_phy_pll_save_state(msm_dsi->phy);
++	if (is_bonded_dsi && msm_dsi1 &&
++	    msm_dsi1->phy->cfg->restore_slave_pll)
++		msm_dsi_phy_pll_save_state(msm_dsi1->phy);
+ 
+-	ret = msm_dsi_host_power_off(host);
+-	if (ret)
+-		pr_err("%s: host %d power off failed,%d\n", __func__, id, ret);
+-
++	/* Keep the clock-source host running until the bonded slave's link
++	 * clocks have stopped. Match the reverse power-on order and the
++	 * existing dsi_mgr_bridge_power_off() unwind path.
++	 */
+ 	if (is_bonded_dsi && msm_dsi1) {
+ 		ret = msm_dsi_host_power_off(msm_dsi1->host);
+ 		if (ret)
+@@ -380,6 +462,10 @@ static void dsi_mgr_bridge_post_disable(struct drm_bridge *bridge,
+ 								__func__, ret);
+ 	}
+ 
++	ret = msm_dsi_host_power_off(host);
++	if (ret)
++		pr_err("%s: host %d power off failed,%d\n", __func__, id, ret);
++
+ disable_phy:
+ 	dsi_mgr_phy_disable(id);
+ }
+@@ -435,15 +521,70 @@ static enum drm_mode_status dsi_mgr_bridge_mode_valid(struct drm_bridge *bridge,
+ 	return msm_dsi_host_check_dsc(host, mode);
+ }
+ 
++static int dsi_mgr_link_panel_backlight(struct drm_bridge *bridge,
++				       const struct drm_bridge *next_bridge)
++{
++	struct device *dev = bridge->dev->dev;
++	struct backlight_device *backlight;
++	struct device_node *node;
++
++	if (!IS_REACHABLE(CONFIG_BACKLIGHT_CLASS_DEVICE) ||
++	    !next_bridge || !drm_bridge_is_panel(next_bridge))
++		return 0;
++
++	node = of_parse_phandle(next_bridge->of_node, "backlight", 0);
++	if (!node)
++		return 0;
++
++	backlight = of_find_backlight_by_node(node);
++	of_node_put(node);
++	if (!backlight)
++		return dev_err_probe(dev, -EPROBE_DEFER, "panel backlight not registered\n");
++
++	/*
++	 * KMS shuts down the panel through the bridge chain. Keep the
++	 * external backlight and its bus available until that completes.
++	 */
++	if (!device_link_add(dev, &backlight->dev, DL_FLAG_STATELESS)) {
++		put_device(&backlight->dev);
++		return dev_err_probe(dev, -EINVAL, "failed to link panel backlight\n");
++	}
++
++	bridge->driver_private = &backlight->dev;
++
++	return 0;
++}
++
++static void dsi_mgr_bridge_detach(struct drm_bridge *bridge)
++{
++	struct device *backlight = bridge->driver_private;
++
++	if (!backlight)
++		return;
++
++	/* The device core might already have purged the link. */
++	device_link_remove(bridge->dev->dev, backlight);
++	put_device(backlight);
++	bridge->driver_private = NULL;
++}
++
+ static int dsi_mgr_bridge_attach(struct drm_bridge *bridge,
+ 				 struct drm_encoder *encoder,
+ 				 enum drm_bridge_attach_flags flags)
+ {
+ 	int id = dsi_mgr_bridge_get_id(bridge);
+ 	struct msm_dsi *msm_dsi = dsi_mgr_get_dsi(id);
++	int ret;
++
++	ret = dsi_mgr_link_panel_backlight(bridge, msm_dsi->next_bridge);
++	if (ret)
++		return ret;
+ 
+-	return drm_bridge_attach(encoder, msm_dsi->next_bridge,
+-				 bridge, flags);
++	ret = drm_bridge_attach(encoder, msm_dsi->next_bridge, bridge, flags);
++	if (ret)
++		dsi_mgr_bridge_detach(bridge);
++
++	return ret;
+ }
+ 
+ static const struct drm_bridge_funcs dsi_mgr_bridge_funcs = {
+@@ -451,7 +592,10 @@ static const struct drm_bridge_funcs dsi_mgr_bridge_funcs = {
+ 	.atomic_destroy_state = drm_atomic_helper_bridge_destroy_state,
+ 	.atomic_duplicate_state = drm_atomic_helper_bridge_duplicate_state,
+ 	.attach = dsi_mgr_bridge_attach,
++	.detach = dsi_mgr_bridge_detach,
+ 	.atomic_pre_enable = dsi_mgr_bridge_pre_enable,
++	.atomic_enable = dsi_mgr_bridge_enable,
++	.atomic_disable = dsi_mgr_bridge_disable,
+ 	.atomic_post_disable = dsi_mgr_bridge_post_disable,
+ 	.mode_set = dsi_mgr_bridge_mode_set,
+ 	.mode_valid = dsi_mgr_bridge_mode_valid,
+@@ -465,6 +609,7 @@ int msm_dsi_manager_connector_init(struct msm_dsi *msm_dsi,
+ 	struct drm_bridge *bridge;
+ 	struct dsi_bridge *dsi_bridge;
+ 	struct drm_connector *connector;
++	struct drm_dsc_config *dsc;
+ 	int ret;
+ 
+ 	dsi_bridge = devm_drm_bridge_alloc(msm_dsi->dev->dev, struct dsi_bridge, base,
+@@ -490,6 +635,29 @@ int msm_dsi_manager_connector_init(struct msm_dsi *msm_dsi,
+ 		return PTR_ERR(connector);
+ 	}
+ 
++	/* DSC uses one fixed component depth from the attached panel. Expose
++	 * that exact depth; changing it would also require changing the PPS
++	 * and panel configuration. This does not advertise HDR or panel FRC.
++	 */
++	dsc = msm_dsi_host_get_dsc_config(msm_dsi->host);
++	if (connector->connector_type == DRM_MODE_CONNECTOR_DSI &&
++	    dsc && dsc->bits_per_component) {
++		if (!connector->state) {
++			struct drm_connector_state *state;
++
++			state = connector->funcs->atomic_create_state(connector);
++			if (IS_ERR(state))
++				return PTR_ERR(state);
++			connector->state = state;
++		}
++		ret = drm_connector_attach_max_bpc_property(connector,
++						     dsc->bits_per_component,
++						     dsc->bits_per_component);
++		if (ret)
++			return ret;
++		connector->max_bpc = dsc->bits_per_component;
++	}
++
+ 	return 0;
+ }
+ 
+diff --git a/drivers/gpu/drm/msm/dsi/phy/dsi_phy.c b/drivers/gpu/drm/msm/dsi/phy/dsi_phy.c
+index 1fb3899b88bf2638ff4075fffa867a3d33a0fac1..4c4f33945b592893d8c467b6b6e46a20a9fbed1b 100644
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy.c
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy.c
+@@ -5,7 +5,6 @@
+ 
+ #include <linux/clk-provider.h>
+ #include <linux/platform_device.h>
+-#include <linux/pm_clock.h>
+ #include <linux/pm_runtime.h>
+ #include <dt-bindings/phy/phy.h>
+ 
+@@ -687,13 +686,10 @@ static int dsi_phy_driver_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = devm_pm_clk_create(dev);
+-	if (ret)
+-		return ret;
+-
+-	ret = pm_clk_add(dev, "iface");
+-	if (ret < 0)
+-		return dev_err_probe(dev, ret, "Unable to get iface clk\n");
++	phy->ahb_clk = devm_clk_get(dev, "iface");
++	if (IS_ERR(phy->ahb_clk))
++		return dev_err_probe(dev, PTR_ERR(phy->ahb_clk),
++				     "Unable to get iface clk\n");
+ 
+ 	if (phy->cfg->ops.pll_init) {
+ 		ret = phy->cfg->ops.pll_init(phy);
+@@ -711,8 +707,24 @@ static int dsi_phy_driver_probe(struct platform_device *pdev)
+ 	return 0;
+ }
+ 
++static int dsi_phy_runtime_suspend(struct device *dev)
++{
++	struct msm_dsi_phy *phy = dev_get_drvdata(dev);
++
++	clk_disable_unprepare(phy->ahb_clk);
++
++	return 0;
++}
++
++static int dsi_phy_runtime_resume(struct device *dev)
++{
++	struct msm_dsi_phy *phy = dev_get_drvdata(dev);
++
++	return clk_prepare_enable(phy->ahb_clk);
++}
++
+ static const struct dev_pm_ops dsi_phy_pm_ops = {
+-	SET_RUNTIME_PM_OPS(pm_clk_suspend, pm_clk_resume, NULL)
++	RUNTIME_PM_OPS(dsi_phy_runtime_suspend, dsi_phy_runtime_resume, NULL)
+ };
+ 
+ static struct platform_driver dsi_phy_platform_driver = {
+@@ -720,7 +732,7 @@ static struct platform_driver dsi_phy_platform_driver = {
+ 	.driver     = {
+ 		.name   = "msm_dsi_phy",
+ 		.of_match_table = dsi_phy_dt_match,
+-		.pm = &dsi_phy_pm_ops,
++		.pm = pm_ptr(&dsi_phy_pm_ops),
+ 	},
+ };
+ 
+@@ -775,7 +787,8 @@ int msm_dsi_phy_enable(struct msm_dsi_phy *phy,
+ 	 * link clocks. Restore PLL status if its PLL is being used as clock
+ 	 * source.
+ 	 */
+-	if (phy->usecase != MSM_DSI_PHY_SLAVE) {
++	if (phy->usecase != MSM_DSI_PHY_SLAVE ||
++	    phy->cfg->restore_slave_pll) {
+ 		ret = msm_dsi_phy_pll_restore_state(phy);
+ 		if (ret) {
+ 			DRM_DEV_ERROR(dev, "%s: failed to restore phy state, %d\n",
+@@ -808,6 +821,18 @@ void msm_dsi_phy_disable(struct msm_dsi_phy *phy)
+ 	pm_runtime_put(&phy->pdev->dev);
+ }
+ 
++void msm_dsi_phy_toggle_resync_fifo(struct msm_dsi_phy *phy)
++{
++	if (phy && phy->cfg->ops.toggle_resync_fifo)
++		phy->cfg->ops.toggle_resync_fifo(phy);
++}
++
++void msm_dsi_phy_reset_clk_en_sel(struct msm_dsi_phy *phy)
++{
++	if (phy && phy->cfg->ops.reset_clk_en_sel)
++		phy->cfg->ops.reset_clk_en_sel(phy);
++}
++
+ void msm_dsi_phy_set_usecase(struct msm_dsi_phy *phy,
+ 			     enum msm_dsi_phy_usecase uc)
+ {
+diff --git a/drivers/gpu/drm/msm/dsi/phy/dsi_phy.h b/drivers/gpu/drm/msm/dsi/phy/dsi_phy.h
+index f5d3e806f8fd5146601e2a46fd38992c0ff1e21b..06af09ac2fb5291be5a1579f4a199ca35a4d165d 100644
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy.h
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy.h
+@@ -22,6 +22,8 @@ struct msm_dsi_phy_ops {
+ 	int (*restore_pll_state)(struct msm_dsi_phy *phy);
+ 	bool (*set_continuous_clock)(struct msm_dsi_phy *phy, bool enable);
+ 	int (*parse_dt_properties)(struct msm_dsi_phy *phy);
++	void (*toggle_resync_fifo)(struct msm_dsi_phy *phy);
++	void (*reset_clk_en_sel)(struct msm_dsi_phy *phy);
+ };
+ 
+ struct msm_dsi_phy_cfg {
+@@ -37,6 +39,8 @@ struct msm_dsi_phy_cfg {
+ 	const int quirks;
+ 	bool has_phy_regulator;
+ 	bool has_phy_lane;
++	/* Bonded slave has independently reset divider/mux registers. */
++	bool restore_slave_pll;
+ };
+ 
+ extern const struct msm_dsi_phy_cfg dsi_phy_28nm_hpm_cfgs;
+@@ -123,8 +127,13 @@ struct msm_dsi_phy {
+ 	struct clk_hw_onecell_data *provided_clocks;
+ 
+ 	bool state_saved;
++
++	struct clk *ahb_clk;
+ };
+ 
++void msm_dsi_phy_toggle_resync_fifo(struct msm_dsi_phy *phy);
++void msm_dsi_phy_reset_clk_en_sel(struct msm_dsi_phy *phy);
++
+ /*
+  * PHY internal functions
+  */
+diff --git a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
+index 5d805a797abdb1e0930e79d978a1e4c4ebb94058..52e3b53db5454c22478441e50c33b1b3c51dbc0e 100644
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
+@@ -84,6 +84,13 @@ struct dsi_pll_7nm {
+ 
+ 	u64 vco_current_rate;
+ 
++	/*
++	 * Set once dsi_pll_7nm_vco_set_rate() has programmed the PLL.  Not the
++	 * same as a non-zero vco_current_rate, which dsi_pll_7nm_vco_recalc_rate()
++	 * also fills in from whatever the bootloader left behind.
++	 */
++	bool vco_rate_programmed;
++
+ 	/* protects REG_DSI_7nm_PHY_CMN_CLK_CFG0 register */
+ 	spinlock_t postdiv_lock;
+ 
+@@ -355,6 +362,7 @@ static int dsi_pll_7nm_vco_set_rate(struct clk_hw *hw, unsigned long rate,
+ 	    parent_rate);
+ 
+ 	pll_7nm->vco_current_rate = rate;
++	pll_7nm->vco_rate_programmed = true;
+ 
+ 	dsi_pll_setup_config(&config);
+ 
+@@ -465,6 +473,29 @@ static void dsi_pll_cmn_clk_cfg1_update(struct dsi_pll_7nm *pll, u32 mask,
+ 	spin_unlock_irqrestore(&pll->pclk_mux_lock, flags);
+ }
+ 
++static void dsi_7nm_phy_toggle_resync_fifo(struct msm_dsi_phy *phy)
++{
++	void __iomem *base = phy->base;
++
++	writel(0, base + REG_DSI_7nm_PHY_CMN_RBUF_CTRL);
++	wmb();
++	writel(1, base + REG_DSI_7nm_PHY_CMN_RBUF_CTRL);
++	wmb();
++}
++
++static void dsi_7nm_phy_reset_clk_en_sel(struct msm_dsi_phy *phy)
++{
++	struct dsi_pll_7nm *pll = phy->pll_data;
++
++	/* C-PHY retains CLK_EN_SEL after retime synchronization. */
++	if (phy->cphy_mode)
++		return;
++
++	dsi_pll_cmn_clk_cfg1_update(pll,
++			DSI_7nm_PHY_CMN_CLK_CFG1_CLK_EN_SEL, 0);
++	wmb();
++}
++
+ static void dsi_pll_disable_global_clk(struct dsi_pll_7nm *pll)
+ {
+ 	dsi_pll_cmn_clk_cfg1_update(pll, DSI_7nm_PHY_CMN_CLK_CFG1_CLK_EN, 0);
+@@ -496,6 +527,18 @@ static int dsi_pll_7nm_vco_prepare(struct clk_hw *hw)
+ 	struct dsi_pll_7nm *pll_7nm = to_pll_7nm(hw);
+ 	int rc;
+ 
++	/*
++	 * The dispcc byte and pixel RCGs are flagged CLK_OPS_PARENT_ENABLE and
++	 * stay orphans until this PHY registers its clk provider.  When the
++	 * core finally reparents them it prepares and enables the whole PLL
++	 * chain even though the PHY is not powered up yet, and undoes that
++	 * again right afterwards.  The PLL cannot lock in that state - every
++	 * register reads back as zero - so keep the hardware untouched instead
++	 * of failing and leaving the prepare and enable counts unbalanced.
++	 */
++	if (!pll_7nm->vco_rate_programmed)
++		return 0;
++
+ 	dsi_pll_enable_pll_bias(pll_7nm);
+ 	if (pll_7nm->slave)
+ 		dsi_pll_enable_pll_bias(pll_7nm->slave);
+@@ -549,6 +592,10 @@ static void dsi_pll_7nm_vco_unprepare(struct clk_hw *hw)
+ {
+ 	struct dsi_pll_7nm *pll_7nm = to_pll_7nm(hw);
+ 
++	/* Never brought up, see dsi_pll_7nm_vco_prepare() */
++	if (!pll_7nm->vco_rate_programmed)
++		return;
++
+ 	/*
+ 	 * To avoid any stray glitches while abruptly powering down the PLL
+ 	 * make sure to gate the clock using the clock enable bit before
+@@ -1521,6 +1568,7 @@ const struct msm_dsi_phy_cfg dsi_phy_4nm_8650_cfgs = {
+ 
+ const struct msm_dsi_phy_cfg dsi_phy_3nm_8750_cfgs = {
+ 	.has_phy_lane = true,
++	.restore_slave_pll = true,
+ 	.regulator_data = dsi_phy_7nm_98000uA_regulators,
+ 	.num_regulators = ARRAY_SIZE(dsi_phy_7nm_98000uA_regulators),
+ 	.ops = {
+@@ -1530,6 +1578,8 @@ const struct msm_dsi_phy_cfg dsi_phy_3nm_8750_cfgs = {
+ 		.save_pll_state = dsi_7nm_pll_save_state,
+ 		.restore_pll_state = dsi_7nm_pll_restore_state,
+ 		.set_continuous_clock = dsi_7nm_set_continuous_clock,
++		.toggle_resync_fifo = dsi_7nm_phy_toggle_resync_fifo,
++		.reset_clk_en_sel = dsi_7nm_phy_reset_clk_en_sel,
+ 	},
+ 	.min_pll_rate = 600000000UL,
+ #ifdef CONFIG_64BIT
