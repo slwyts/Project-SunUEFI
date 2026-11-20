@@ -47,9 +47,11 @@ def verify_firmware_package(rootfs, package_format, metadata):
     if subprocess.check_output(['chroot', rootfs, *query], text=True).strip() != expected:
         raise ValueError(f'Installed {name} package version differs')
     rows = metadata['firmware']
-    package_bsp.conflict_check(rootfs, [(row, None) for row in rows.values()], name)
+    package_bsp.conflict_check(
+        rootfs, [(row, None) for row in rows.values()], name,
+        packaged_compressed_aliases=package_format == 'pacman' and name == package_bsp.KEYBOARD_PACKAGE)
     # Reject missing files as well as conflicts with another package.
-    for relative, row in rows.items():
+    for relative, row in {**rows, **metadata.get('compressed_firmware', {})}.items():
         relative = PurePosixPath(relative)
         path = guest_resolve(rootfs, relative.parent.as_posix()) / relative.name
         if (path.is_symlink() or not path.is_file() or
@@ -71,7 +73,9 @@ def install_firmware_package(source, rootfs, package_format, component, *, share
         _, metadata = overlay_packages.shared_bsp(package_format, component=component)
         verify_firmware_package(rootfs, package_format, metadata)
         return metadata
-    migration = package_bsp.conflict_check(rootfs, rows, name, adopt_identical=True)
+    migration = package_bsp.conflict_check(
+        rootfs, rows, name, adopt_identical=True,
+        packaged_compressed_aliases=package_format == 'pacman' and name == package_bsp.KEYBOARD_PACKAGE)
     tmp = guest_resolve(rootfs, '/var/tmp')
     tmp.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=f'sunuefi-{component}-', dir=tmp) as temporary:

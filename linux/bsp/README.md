@@ -67,8 +67,9 @@ Debian 默认 sid，Ubuntu 默认 noble，Arch Linux ARM 默认 rolling；Deepin
 安装它；手动构建用 `--keyboard-firmware vendor/firmware/piano-keyboard`。
 旧镜像里的原装文件可以直接接管。如果曾替换过原文件，Debian 不会覆盖它。
 将替换版移到 `/usr/lib/firmware/updates/nanosic/` 后重新安装即可。pacman
-保留原文件，并将包内版本另存为 `.pacnew`。长期使用自定义固件时，也应放在
-`updates/nanosic/`，不要修改包管理的文件。
+保留原文件，并将包内版本另存为 `.pacnew`。如果 `/usr/lib/firmware/nanosic/`
+已有同名的 `.xz` 或 `.zst` 文件，安装会报告冲突。自定义固件可以解压为 `MCU_Upgrade.bin`，
+放在 `/usr/lib/firmware/updates/nanosic/`，让内核优先加载。
 
 ### 本地安装的固件包
 

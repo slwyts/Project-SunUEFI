@@ -47,6 +47,7 @@ POWER_PROFILES = BSP / 'power-profiles'
 TOPOLOGY_SOURCES = ('debian-piano-current', 'audioreach-topology')
 FIRMWARE_PACKAGES = (*STOCK_FIRMWARE, TOPOLOGY_PACKAGE)
 FIRMWARE_ROOT = 'usr/lib/firmware/'
+FIRMWARE_COMPRESSION_SUFFIXES = ('.xz', '.zst')
 OLD_FPRINTD_DROP_IN = 'usr/lib/systemd/system/fprintd.service.d/20-piano.conf'
 OLD_FPRINTD_SHA256 = 'be5b439b5040f08ac2ed132dcf7179e2a2423b2357a11f8ffa3d04ad1190404b'
 
@@ -192,7 +193,8 @@ def owners(root):
     return result
 
 
-def conflict_check(root, rows, package=NAME, *, adopt_identical=False):
+def conflict_check(root, rows, package=NAME, *, adopt_identical=False,
+                   packaged_compressed_aliases=False):
     root = root.resolve()
     require(root.is_dir(), 'Conflict-check root does not exist')
     ownership, conflicts, adopted = owners(root), [], []
@@ -201,7 +203,7 @@ def conflict_check(root, rows, package=NAME, *, adopt_identical=False):
         names = [name]
         if package in FIRMWARE_PACKAGES and name.startswith(FIRMWARE_ROOT):
             names = [base + suffix for base in (name, name.removeprefix('usr/'))
-                     for suffix in ('', '.xz', '.zst')]
+                     for suffix in ('', *FIRMWARE_COMPRESSION_SUFFIXES)]
         resolved = {}
         for candidate in names:
             relative = PurePosixPath(candidate)
@@ -209,15 +211,19 @@ def conflict_check(root, rows, package=NAME, *, adopt_identical=False):
             if candidate == name:
                 destination = path
             resolved.setdefault(path, set()).update(ownership.get(candidate, ()))
+        own_paths = {destination}
+        if packaged_compressed_aliases:
+            own_paths.update(destination.with_name(destination.name + suffix)
+                             for suffix in FIRMWARE_COMPRESSION_SUFFIXES)
         for path, assigned in resolved.items():
-            own_destination = path == destination and assigned == {package}
+            own_path = path in own_paths and assigned == {package}
             existing = path.exists() or path.is_symlink()
             if (adopt_identical and path == destination and not assigned
                     and not path.is_symlink() and path.is_file() and path.stat().st_size == len(data)
                     and (path.stat().st_mode & 0o7777) == int(row['mode'], 8)
                     and path.read_bytes() == data):
                 adopted.append(path.relative_to(root).as_posix())
-            elif assigned - {package} or (existing and not own_destination):
+            elif assigned - {package} or (existing and not own_path):
                 conflicts.append({'path': path.relative_to(root).as_posix(),
                                   'owners': sorted(assigned) or ['unowned-existing-file']})
     require(not conflicts, 'Existing target files must not be overwritten: ' + json.dumps(conflicts))
@@ -241,7 +247,9 @@ def inspect_stock_firmware(args, suite, package, source):
     if 'source' in manifest:
         provenance['origin'] = manifest['source']
     version = overlay_release.debian_version(args.version) if published and args.format == 'deb' else args.version
-    conflicts = (conflict_check(args.against, rows, package, adopt_identical=package == KEYBOARD_PACKAGE)
+    conflicts = (conflict_check(args.against, rows, package,
+                                adopt_identical=package == KEYBOARD_PACKAGE,
+                                packaged_compressed_aliases=args.target == 'arch' and package == KEYBOARD_PACKAGE)
                  if args.against else {'performed': False, 'required_before_install': True})
     report = {
         'schema_version': 1,
@@ -555,6 +563,10 @@ def debian_package(output, tree, report, configuration):
     return artifact
 
 
+def pacman_bsp_release(package):
+    return overlay_release.pacman_release('2' if package == KEYBOARD_PACKAGE else '1')
+
+
 def pacman_sources(directory, tree, report, configuration):
     package = report['package']
     archive = directory / 'payload.tar'
@@ -573,8 +585,20 @@ def pacman_sources(directory, tree, report, configuration):
         migration.write_text(config_install_script('pacman'))
         subprocess.run(['/bin/sh', '-n', migration], check=True)
         install = f'install={migration.name}\n'
+    compress = ''
+    if package == KEYBOARD_PACKAGE:
+        firmware = ' '.join(map(shlex.quote, report['payload_files']))
+        # The raw file takes precedence over either compression format.
+        # Including both variants lets ALPM detect those conflicts before extraction.
+        compress = (
+            '  local firmware raw\n'
+            f'  for firmware in {firmware}; do\n'
+            '    raw="$pkgdir/$firmware"\n'
+            '    xz --check=crc32 -c -- "$raw" > "$raw.xz" || return\n'
+            '    zstd -q -c -- "$raw" > "$raw.zst" || return\n'
+            '  done\n')
     (directory / 'PKGBUILD').write_text(
-        f"pkgname={package}\npkgver={report['version']}\npkgrel={overlay_release.pacman_release('1')}\n"
+        f"pkgname={package}\npkgver={report['version']}\npkgrel={pacman_bsp_release(package)}\n"
         f'pkgdesc={shlex.quote(package_description(package))}\n'
         "url='https://github.com/slwyts/Project-SunUEFI'\n"
         f'arch=({report["package_architecture"]})\n'
@@ -585,6 +609,7 @@ def pacman_sources(directory, tree, report, configuration):
         f"sha256sums=('{sha(archive.read_bytes())}')\n"
         'package() {\n'
         '  bsdtar --no-same-owner -xf "$srcdir/payload.tar" -C "$pkgdir"\n'
+        f'{compress}'
         '  install -d "$pkgdir/usr/share/licenses/$pkgname"\n'
         '  ln -s "../../doc/$pkgname/copyright" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"\n'
         '}\n')
@@ -631,7 +656,7 @@ def pacman_package(output, tree, report, configuration):
         pacman_sources(work, tree, report, configuration)
         architecture = report['package_architecture']
         makepkg(work, architecture)
-        version = report['version'] + '-' + overlay_release.pacman_release('1')
+        version = report['version'] + '-' + pacman_bsp_release(report['package'])
         artifact = work / f"{report['package']}-{version}-{architecture}.pkg.tar.zst"
         require(artifact.is_file() and not artifact.is_symlink(),
                 'makepkg did not produce the Piano package')

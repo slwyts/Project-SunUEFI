@@ -1,17 +1,19 @@
 """Collect and verify completed native packages before assembling product images."""
 import hashlib
 import json
+import lzma
 import os
 from pathlib import Path
 import re
 import shutil
 import stat
 import subprocess
+import tarfile
 import tempfile
 
 from build import overlay_release
 from build_piano_ram_bootstrap import guest_resolve
-from package.archive import debian_identity, pacman_identity
+from package.archive import debian_identity, pacman_identity, pacman_info
 from package.download import download_pacman
 import package_bsp
 
@@ -40,6 +42,48 @@ BSP_TARGETS = {'debian': ('debian', 'deb', 'all'), 'pacman': ('arch', 'pacman', 
 def sha(path):
     with Path(path).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def pacman_keyboard_aliases(archive, rows):
+    raw = [row['path'] for row, _ in rows]
+    if pacman_info(archive).get('backup') != raw:
+        raise ValueError('Keyboard firmware package must preserve the original file with pacman backup')
+    expected = {row['path'] + suffix: (suffix, data) for row, data in rows
+                for suffix in ('', *package_bsp.FIRMWARE_COMPRESSION_SUFFIXES)}
+    aliases = {}
+    command = ['zstd', '-qdc', archive]
+    with subprocess.Popen(command, stdout=subprocess.PIPE) as process:
+        with tarfile.open(fileobj=process.stdout, mode='r|') as contents:
+            for member in contents:
+                name = member.name.removeprefix('./')
+                if member.isdir() or not name.startswith(package_bsp.FIRMWARE_ROOT):
+                    continue
+                if name not in expected or not member.isfile() or member.mode != 0o644:
+                    raise ValueError('Unexpected file in keyboard firmware package: ' + name)
+                suffix, original = expected.pop(name)
+                data = contents.extractfile(member).read()
+                try:
+                    if suffix == '.xz':
+                        decoder = lzma.LZMADecompressor(format=lzma.FORMAT_XZ)
+                        decoded = decoder.decompress(data, max_length=len(original) + 1)
+                        if not decoder.eof or decoder.check != lzma.CHECK_CRC32 or decoder.unused_data:
+                            raise ValueError('Invalid XZ stream for kernel firmware: ' + name)
+                    elif suffix == '.zst':
+                        decoded = subprocess.check_output(['zstd', '-qdc'], input=data)
+                    else:
+                        decoded = data
+                except (lzma.LZMAError, subprocess.CalledProcessError) as error:
+                    raise ValueError('Invalid compressed keyboard firmware: ' + name) from error
+                if decoded != original:
+                    raise ValueError('Keyboard firmware differs from the pinned source: ' + name)
+                if suffix:
+                    aliases[name] = {'path': name, 'type': 'file', 'mode': '0644',
+                                     'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+    if process.returncode:
+        raise subprocess.CalledProcessError(process.returncode, command)
+    if expected:
+        raise ValueError('Keyboard firmware package is missing: ' + ', '.join(expected))
+    return aliases
 
 
 def bsp_package(directory, package_format, *, component='config'):
@@ -89,6 +133,8 @@ def bsp_package(directory, package_format, *, component='config'):
         if record.get('payload_files') != payload or record.get('public_distribution') is not published:
             raise ValueError(description.capitalize() + ' package differs from the fixed source or publication policy')
         metadata['firmware'] = payload
+        if package_format == 'pacman' and name == package_bsp.KEYBOARD_PACKAGE:
+            metadata['compressed_firmware'] = pacman_keyboard_aliases(archive, rows)
     if component == 'power-profiles':
         payload = {row['path']: {**row, 'bytes': len(data)}
                    for row, data in package_bsp.power_profiles_payload()}

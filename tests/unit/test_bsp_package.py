@@ -1,6 +1,7 @@
 import hashlib
 import io
 import json
+import lzma
 import os
 from pathlib import Path, PurePosixPath
 import shutil
@@ -417,6 +418,85 @@ class BspPackageTests(unittest.TestCase):
         relative = 'usr/lib/firmware/nanosic/MCU_Upgrade.bin'
         self.assertEqual(pacman_info(archive).get('backup'), [relative])
         self.assertEqual(set(metadata['firmware']), {relative})
+
+    @unittest.skipUnless(all(shutil.which(tool) for tool in ('makepkg', 'bsdtar', 'pacman', 'fakeroot',
+                                                            'xz', 'zstd')),
+                         'native pacman packaging tools required')
+    def test_keyboard_pacman_detects_compressed_file_conflicts_before_install(self):
+        out = self.base / 'pacman'
+        bsp.build(self.args('package', '--target', 'arch', '--format', 'pacman', '--keyboard-firmware',
+                            str(bsp.KEYBOARD_MANIFEST.parent), '--output', str(out)))
+        archive, metadata = overlay_packages.bsp_package(out, 'pacman', component='keyboard-firmware')
+        relative, = metadata['firmware']
+        original = (bsp.KEYBOARD_MANIFEST.parent / 'MCU_Upgrade.bin').read_bytes()
+        compressed = {
+            '.xz': lzma.compress(b'local replacement', check=lzma.CHECK_CRC32),
+            '.zst': subprocess.check_output(['zstd', '-q', '-c'], input=b'local replacement'),
+        }
+        self.assertEqual(set(metadata['compressed_firmware']), {relative + suffix for suffix in compressed})
+        foreign = self.base / 'foreign-package'
+        foreign.mkdir()
+        foreign_name = 'local-keyboard-firmware'
+        for suffix, data in compressed.items():
+            (foreign / (Path(relative).name + suffix)).write_bytes(data)
+        (foreign / 'PKGBUILD').write_text(
+            f'pkgname={foreign_name}\npkgver=1\npkgrel=1\narch=(any)\n'
+            'package() {\n'
+            f'  for firmware in {Path(relative).name}.xz {Path(relative).name}.zst; do\n'
+            f'    install -Dm644 "$startdir/$firmware" "$pkgdir/{Path(relative).parent}/$firmware"\n'
+            '  done\n'
+            '}\n')
+        bsp.makepkg(foreign)
+        foreign_archive = foreign / f'{foreign_name}-1-1-any.pkg.tar.zst'
+        config = self.base / 'pacman.conf'
+        config.write_text('[options]\nSigLevel = Never\n')
+        hooks = self.base / 'hooks'
+        hooks.mkdir()
+        for label in ('stock', 'replacement', *compressed, 'foreign'):
+            with self.subTest(label=label):
+                root = self.base / label
+                database = root / 'var/lib/pacman'
+                database.mkdir(parents=True)
+                firmware = root / relative
+                firmware.parent.mkdir(parents=True)
+                (root / 'lib').symlink_to('usr/lib')
+                command = ['fakeroot', '--', 'pacman', '--root', str(root),
+                           '--dbpath', str(database), '--config', str(config),
+                           '--logfile', str(root / 'pacman.log'), '--hookdir', str(hooks),
+                           '--noconfirm']
+                if label == 'foreign':
+                    subprocess.run([*command, '-U', foreign_archive], check=True, capture_output=True)
+                elif label in compressed:
+                    firmware.with_name(firmware.name + label).write_bytes(compressed[label])
+                if label == 'foreign' or label in compressed:
+                    result = subprocess.run([*command, '-U', archive], text=True, capture_output=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(firmware.exists())
+                    suffixes = compressed if label == 'foreign' else (label,)
+                    for suffix in suffixes:
+                        path = firmware.with_name(firmware.name + suffix)
+                        self.assertIn(path.name + ' exists in filesystem', result.stderr)
+                        self.assertEqual(path.read_bytes(), compressed[suffix])
+                    query = subprocess.run([*command, '-Qq'], text=True, capture_output=True,
+                                           check=label == 'foreign')
+                    self.assertEqual(query.stdout.splitlines(), [foreign_name] if label == 'foreign' else [])
+                    continue
+                contents = original if label == 'stock' else b'local replacement'
+                firmware.write_bytes(contents)
+                subprocess.run([*command, '-U', archive], check=True, capture_output=True)
+                self.assertEqual(firmware.read_bytes(), contents)
+                pacnew = firmware.with_name(firmware.name + '.pacnew')
+                if label == 'stock':
+                    self.assertFalse(pacnew.exists())
+                else:
+                    self.assertEqual(pacnew.read_bytes(), original)
+                xz = firmware.with_name(firmware.name + '.xz')
+                zst = firmware.with_name(firmware.name + '.zst')
+                self.assertEqual(lzma.decompress(xz.read_bytes()), original)
+                self.assertEqual(subprocess.check_output(['zstd', '-q', '-d', '-c', zst]), original)
+                _, rows = bsp.local_firmware_payload(bsp.KEYBOARD_MANIFEST.parent,
+                                                      bsp.KEYBOARD_MANIFEST, 'keyboard firmware')
+                bsp.conflict_check(root, rows, bsp.KEYBOARD_PACKAGE, packaged_compressed_aliases=True)
 
     @unittest.skipUnless(shutil.which('dpkg-deb'), 'dpkg-deb unavailable; no fake deb test')
     def test_fingerprint_deb_preserves_all_raw_firmware_at_the_loader_paths(self):
