@@ -9,7 +9,8 @@ import sys
 import tempfile
 from types import SimpleNamespace
 
-from publish import REPOSITORIES, ROOT, Store, prepare_publication, sha, upload_publication
+from publish import (PACMAN_V4L2_LEGACY, REPOSITORIES, ROOT, Store, pacman_metadata,
+                     prepare_pacman_v4l2_withdrawal, prepare_publication, sha, upload_publication)
 from verify_public import verify_public
 
 sys.path.insert(0, str(ROOT / 'tools'))
@@ -21,6 +22,7 @@ from package.boot import PUBLIC_REPOSITORY_URL
 
 
 KERNEL_REPOSITORIES = {'debian': 'apt', 'pacman': 'sunuefi'}
+PUBLICATION_ORDER = ('apt', 'sunuefi-steamos', 'sunuefi')
 OVERLAY_REPOSITORIES = {
     'debian-gnome': 'apt',
     'debian-kde': 'apt',
@@ -134,24 +136,48 @@ def publication_batches(root, *, kernel, overlays):
             groups[repository][name] = (path, digest)
     if arch_targets:
         check_pacman_camera_coverage(arch_records['nyarch-gnome'], arch_records['steamos'])
-    # Expose the Valve builds before their Arch counterparts.
-    order = ('apt', 'sunuefi-steamos', 'sunuefi') if arch_targets else REPOSITORIES
     return {repository: dict(groups[repository][name] for name in sorted(groups[repository]))
-            for repository in order if groups[repository]}
+            for repository in PUBLICATION_ORDER if groups[repository]}
 
 
 def publish_products(batches, key, output, store):
     """Verify every selected repository before switching any public index."""
-    publications = []
-    for repository, packages in batches.items():
+    publications = {}
+    for repository in PUBLICATION_ORDER:
+        if repository not in batches:
+            continue
+        packages = batches[repository]
         options = SimpleNamespace(repo=repository, key=key, output=output / repository,
                                   packages=packages)
         digests = {path.name: digest for path, digest in packages.items()}
-        publications.append(prepare_publication(options, store, digests=digests))
-    for publication in publications:
+        publications[repository] = prepare_publication(options, store, digests=digests)
+
+    withdrawal = None
+    if 'sunuefi-steamos' in publications and 'sunuefi' in publications:
+        valve = publications['sunuefi-steamos']
+        names, _ = pacman_metadata(valve.output / 'sunuefi-steamos.db')
+        if 'pipewire' in names and PACMAN_V4L2_LEGACY not in names:
+            common, _ = pacman_metadata(publications['sunuefi'].output / 'sunuefi.db')
+            if PACMAN_V4L2_LEGACY in common:
+                raise ValueError('The shared index still offers the old Arch V4L2 plugin to SteamOS')
+            # On retry, the withdrawal may be committed but not yet verified
+            # at the client URLs. Check it before removing the Valve split.
+            withdrawal = prepare_pacman_v4l2_withdrawal(
+                output / 'sunuefi-v4l2-withdrawal', key, store,
+                check_existing=PACMAN_V4L2_LEGACY in valve.retired)
+
+    def upload_and_check(publication, **fields):
         result = upload_publication(publication, store)
         verify_public(PUBLIC_REPOSITORY_URL, publication.repo, publication.output)
-        print(json.dumps({**result, 'public_indexes_verified': True}, indent=2), flush=True)
+        print(json.dumps({**result, **fields, 'public_indexes_verified': True}, indent=2), flush=True)
+
+    for repository, publication in publications.items():
+        if repository == 'sunuefi-steamos' and withdrawal is not None:
+            if withdrawal.mutable:
+                upload_and_check(withdrawal, withdrawn=PACMAN_V4L2_LEGACY)
+            else:
+                verify_public(PUBLIC_REPOSITORY_URL, withdrawal.repo, withdrawal.output)
+        upload_and_check(publication)
 
 
 def main():

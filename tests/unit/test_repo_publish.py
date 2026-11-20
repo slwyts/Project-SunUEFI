@@ -191,6 +191,59 @@ class RepoPublishTests(unittest.TestCase):
         self.assertFalse(retired)
         self.assertIn('pacman/sunuefi/os/aarch64/' + arch.name, self.store.objects)
 
+    @unittest.skipUnless(all(shutil.which(tool) for tool in ('repo-add', 'repo-remove', 'bsdtar', 'vercmp')),
+                         'pacman tools required')
+    def test_shared_v4l2_withdrawal_is_verified_before_the_native_steamos_index(self):
+        base, valve = 'sunuefi', 'sunuefi-steamos'
+        legacy = 'pipewire-v4l2-source'
+        common_prefix = f'pacman/{base}/os/aarch64/'
+        valve_prefix = f'pacman/{valve}/os/aarch64/'
+        old_arch = self.pacman('1:1.6.11', legacy)
+        old_valve = self.pacman('1:1.6.8', legacy)
+        kernel = self.pacman('1', 'linux-piano')
+        repo.publish(self.args(base, [kernel, old_arch], 'old-arch'), self.store)
+        repo.publish(self.args(valve, [old_valve], 'old-valve'), self.store)
+        old_db = self.store.objects[common_prefix + base + '.db']
+        old_steam_db = self.store.objects[valve_prefix + valve + '.db']
+        libpipewire = self.pacman('1:1.6.11', 'libpipewire',
+                                  replaces=(legacy + '>=1:1.6.11-1',), conflicts=(legacy,))
+        pipewire = self.pacman('1:1.6.8', 'pipewire', replaces=(legacy,), conflicts=(legacy,))
+        inputs = {base: {libpipewire: repo.sha(libpipewire)}, valve: {pipewire: repo.sha(pipewire)}}
+        keyring = self.root / 'config/keys/sunuefi-archive-keyring.gpg'
+        checked = []
+        withdrawal_folder = self.root / 'resumed' / 'sunuefi-v4l2-withdrawal'
+
+        def verify_indexes(_, repository, directory):
+            prefix = f'pacman/{repository}/os/aarch64/'
+            database = directory / (repository + '.db')
+            repo.verify(database, directory / (repository + '.db.sig'), keyring)
+            self.assertEqual(self.store.objects[prefix + database.name], database.read_bytes())
+            indexed, _ = repo.pacman_metadata(database)
+            self.assertNotIn(legacy, indexed)
+            checked.append((repository, sorted(indexed)))
+            if list(indexed) == ['linux-piano']:
+                self.assertEqual(self.store.objects[valve_prefix + valve + '.db'], old_steam_db)
+            if repository == valve:
+                self.assertEqual(self.store.objects[common_prefix + base + '.db'],
+                                 (withdrawal_folder / (base + '.db')).read_bytes())
+
+        # The upload has finished but the public domain has not caught up.
+        with patch.object(products, 'verify_public', side_effect=ValueError('withdrawal not visible')):
+            with self.assertRaisesRegex(ValueError, 'withdrawal not visible'):
+                products.publish_products(inputs, self.key, self.root / 'interrupted', self.store)
+        self.assertEqual(self.store.objects[valve_prefix + valve + '.db'], old_steam_db)
+        self.assertNotIn(common_prefix + libpipewire.name, self.store.objects)
+        intermediate = self.store.objects[common_prefix + base + '.db']
+        self.assertEqual(intermediate, (self.root / 'interrupted' / 'sunuefi-v4l2-withdrawal'
+                                        / (base + '.db')).read_bytes())
+        with patch.object(products, 'verify_public', side_effect=verify_indexes):
+            products.publish_products(inputs, self.key, self.root / 'resumed', self.store)
+        self.assertEqual(checked, [(base, ['linux-piano']), (valve, ['pipewire']),
+                                   (base, ['libpipewire', 'linux-piano'])])
+        self.assertEqual(self.store.objects[common_prefix + old_arch.name], old_arch.read_bytes())
+        self.assertEqual(self.store.objects[common_prefix + 'by-hash/SHA256/' +
+                                            hashlib.sha256(old_db).hexdigest()], old_db)
+
     @unittest.skipUnless(shutil.which('repo-add') and shutil.which('bsdtar'), 'pacman tools required')
     def test_product_rejects_older_pacman_version_before_updating_any_index(self):
         base, overlay = 'sunuefi', 'sunuefi-steamos'

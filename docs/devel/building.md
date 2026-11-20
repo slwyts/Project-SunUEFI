@@ -185,7 +185,8 @@ CI 实际重编覆盖包时，使用该次运行和重试编号增加原生包�
 pacman 的发布清单可包含完整的应用和媒体拆包。组镜像时只装桌面默认包、
 它们的依赖，以及系统已安装的对应拆包；例如不会同时安装两种 JACK 实现。
 镜像完成后回读这一批实际装入的版本。Arch Linux ARM 与 SteamOS 的
-相机包共同提交发布，先更新并从公网验签 SteamOS 索引，再更新共用索引。
+相机包共同提交发布。首次换用标准 V4L2 模块时，先从共用索引撤下旧插件并验签回读，
+再切换并验签 SteamOS 索引，最后发布新的共用索引。旧包仍可用于回退。
 SteamOS 为共用源中的媒体运行包提供同名 Valve 构建，只有不依赖运行库的
 `libcamera-docs` 共用。
 
@@ -303,7 +304,7 @@ CPU 型号由 `linux/dts/piano-cpu-model.dtso` 给八个 CPU 节点加标准 `mo
 | Mesa、FFmpeg | 已有 Debian 和 pacman 原生包 | 保留目标发行版完整配方、功能和 ABI，按软件源正常更新 |
 | 传感器 | Debian 提供六个原生包；Nyarch 与 SteamOS 共用 `piano-sensors`，FastRPC、libssc 和 SensorProxy 按各自的库接口打包 | 继续通过标准 SensorProxy 接口提供照度和姿态 |
 | PipeWire | Debian、Arch Linux ARM 和 SteamOS 分别重建原生同版包组 | 保留发行版的依赖关系，升级到包含修复的上游版本后删除回移 |
-| 指纹 | libfprint／fprintd 使用目标发行版包；CLI 和服务配置另行安装 | 正常包拥有全部必要文件，标准认证结果仍取自 libfprint／fprintd |
+| 指纹 | libfprint／fprintd 使用目标发行版包，设备权限和模板目录配置归 `piano-device-config` | 继续归集固件和诊断工具，标准认证结果仍取自 libfprint／fprintd |
 | 相机 | 两种包管理器安装 `piano-camera`；`v4l2loopback` 随匹配内核安装 | 标准 libcamera 路径接管后移除过渡服务 |
 | 笔及诊断工具 | `piano-device-config` 安装笔的 BlueZ 服务和依赖；诊断工具仍由构建脚本复制 | 开发工具独立打包，不成为笔输入的依赖 |
 | GNOME／KDE／SteamOS 组件 | Mutter、GDM、GSD、libwacom、Gamescope 等已有原生包，默认设置和会话文件仍有 overlay | 通用修复维护一份补丁，设备配置与产品默认值分开，不覆盖用户设置 |
