@@ -74,6 +74,15 @@
         "url": "https://github.com/libcamera-org/libcamera/blob/df8e348d64b4932a0676256ed24f0da3ee9438bc/src/gstreamer/gstlibcamerasrc.cpp",
         "drop_when": "The GStreamer source negotiates a common frame interval from the configured camera's timing and every downstream stream."
       }
+    },
+    {
+      "file": "0009-log-output-internal-linkage.patch",
+      "sha256": "9851c38fa2acf34c92402daddcfb1f83a058929382ff280bd5b064e240d5e80a",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/libcamera-org/libcamera/blob/v0.8.0/src/libcamera/base/log.cpp",
+        "drop_when": "The packaged libcamera builds its logger with AArch64 GCC at -O2 without an array-bounds diagnostic."
+      }
     }
   ]
 }
