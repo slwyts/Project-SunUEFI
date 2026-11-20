@@ -1,0 +1,98 @@
+/** @file
+  MADT for Piano (SM8750).
+
+  Registers and MPIDR values come from vendor/piano/dtb/piano.dtb:
+  GICD 0x16000000, GICR 0x16080000 with a 0x40000 redistributor stride, and
+  eight CPUs at MPIDR 0x0-0x500, 0x10000, 0x10100. The GICC GICR base is
+  spelled out per CPU because the stride is not the architectural 0x20000.
+
+  SPDX-License-Identifier: BSD-2-Clause-Patent
+**/
+
+#include <IndustryStandard/Acpi60.h>
+
+#define PIANO_GICD_BASE       0x16000000
+#define PIANO_GICR_BASE       0x16080000
+#define PIANO_GICR_LENGTH     0x00200000
+#define PIANO_GICR_STRIDE     0x00040000
+#define PIANO_VGIC_MAINT_GSIV 25
+
+typedef struct {
+  EFI_ACPI_6_0_MULTIPLE_APIC_DESCRIPTION_TABLE_HEADER Header;
+  EFI_ACPI_6_0_GIC_STRUCTURE                          Gicc[8];
+  EFI_ACPI_6_0_GIC_DISTRIBUTOR_STRUCTURE              Gicd;
+  EFI_ACPI_6_0_GICR_STRUCTURE                         Gicr;
+} PIANO_MADT;
+
+PIANO_MADT Madt = {
+  {
+    {
+      EFI_ACPI_6_0_MULTIPLE_APIC_DESCRIPTION_TABLE_SIGNATURE,
+      sizeof (PIANO_MADT),
+      EFI_ACPI_6_0_MULTIPLE_APIC_DESCRIPTION_TABLE_REVISION,
+      0,
+      "SUNUEF",
+      "PIANO   ",
+      1,
+      "SUNU",
+      0x00010000
+    },
+    0,                          // LocalApicAddress
+    0                           // Flags
+  },
+  {
+    {
+      EFI_ACPI_6_0_GIC, sizeof (EFI_ACPI_6_0_GIC_STRUCTURE), 0,
+      0, 0, 1, 0, 0, 0, 0, 0, 0, PIANO_VGIC_MAINT_GSIV,
+      PIANO_GICR_BASE + 0 * PIANO_GICR_STRIDE, 0x0000000000000000
+    },
+    {
+      EFI_ACPI_6_0_GIC, sizeof (EFI_ACPI_6_0_GIC_STRUCTURE), 0,
+      1, 1, 1, 0, 0, 0, 0, 0, 0, PIANO_VGIC_MAINT_GSIV,
+      PIANO_GICR_BASE + 1 * PIANO_GICR_STRIDE, 0x0000000000000100
+    },
+    {
+      EFI_ACPI_6_0_GIC, sizeof (EFI_ACPI_6_0_GIC_STRUCTURE), 0,
+      2, 2, 1, 0, 0, 0, 0, 0, 0, PIANO_VGIC_MAINT_GSIV,
+      PIANO_GICR_BASE + 2 * PIANO_GICR_STRIDE, 0x0000000000000200
+    },
+    {
+      EFI_ACPI_6_0_GIC, sizeof (EFI_ACPI_6_0_GIC_STRUCTURE), 0,
+      3, 3, 1, 0, 0, 0, 0, 0, 0, PIANO_VGIC_MAINT_GSIV,
+      PIANO_GICR_BASE + 3 * PIANO_GICR_STRIDE, 0x0000000000000300
+    },
+    {
+      EFI_ACPI_6_0_GIC, sizeof (EFI_ACPI_6_0_GIC_STRUCTURE), 0,
+      4, 4, 1, 0, 0, 0, 0, 0, 0, PIANO_VGIC_MAINT_GSIV,
+      PIANO_GICR_BASE + 4 * PIANO_GICR_STRIDE, 0x0000000000000400
+    },
+    {
+      EFI_ACPI_6_0_GIC, sizeof (EFI_ACPI_6_0_GIC_STRUCTURE), 0,
+      5, 5, 1, 0, 0, 0, 0, 0, 0, PIANO_VGIC_MAINT_GSIV,
+      PIANO_GICR_BASE + 5 * PIANO_GICR_STRIDE, 0x0000000000000500
+    },
+    {
+      EFI_ACPI_6_0_GIC, sizeof (EFI_ACPI_6_0_GIC_STRUCTURE), 0,
+      6, 6, 1, 0, 0, 0, 0, 0, 0, PIANO_VGIC_MAINT_GSIV,
+      PIANO_GICR_BASE + 6 * PIANO_GICR_STRIDE, 0x0000000000010000
+    },
+    {
+      EFI_ACPI_6_0_GIC, sizeof (EFI_ACPI_6_0_GIC_STRUCTURE), 0,
+      7, 7, 1, 0, 0, 0, 0, 0, 0, PIANO_VGIC_MAINT_GSIV,
+      PIANO_GICR_BASE + 7 * PIANO_GICR_STRIDE, 0x0000000000010100
+    }
+  },
+  {
+    EFI_ACPI_6_0_GICD,
+    sizeof (EFI_ACPI_6_0_GIC_DISTRIBUTOR_STRUCTURE), 0,
+    0,
+    PIANO_GICD_BASE,
+    0, 3, { 0, 0, 0 }
+  },
+  {
+    EFI_ACPI_6_0_GICR,
+    sizeof (EFI_ACPI_6_0_GICR_STRUCTURE), 0,
+    PIANO_GICR_BASE,
+    PIANO_GICR_LENGTH
+  }
+};

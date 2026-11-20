@@ -10,7 +10,7 @@
 | `uefi/components/` | 手写源码 | 按功能拆分的组件（`os-boot`、`linux-loader`、`product-handoff` 等），直接修改 |
 | `uefi/handoff/` | 手写源码 | 前置选择器、BootShim 和冷启动早期内存代码，直接修改 |
 | `uefi/platforms/pianoPkg/` | 手写模板 | 基础平台描述与组件引用，修改前核对生成工具 |
-| `uefi/platforms/pianoProbePkg/` | 手写模板 | 诊断平台模板，也是产品组装的基线 |
+| `uefi/platforms/pianoProbePkg/` | 手写模板 | 诊断平台模板，也是产品组装的基线；ACPI 表在 `AcpiTables/` |
 | `uefi/platforms/pianoProductPkg/` | 脚本生成 | 产品构建的临时平台，不提交，不要手工修改里面的文件 |
 | `config/` | 手写配置 | 内核版本、固件清单、发行版依赖等配置，直接修改 |
 | `linux/configs/`、`linux/dts/` | 手写配置 | 内核配置片段与设备树 overlay，直接修改 |
