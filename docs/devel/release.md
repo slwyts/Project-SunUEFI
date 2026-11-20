@@ -131,10 +131,10 @@ Android。过程日志与采集留在本地构建目录，已确认的实现结�
 
 ### Linux 主线工作完成后：ACPI 和 Windows
 
-以同机 [Mu 平台移植](../../THIRD_PARTY.md)和原厂初始化记录为参考，先补齐
-ACPI 硬件描述及资源和电源管理，再用 ARM64 WinPE 检查设备枚举、存储和显示，
-逐项补 Windows 驱动。先用临时启动验证，不改变 Android 和 Linux 的分区布局；
-Linux 仍沿用已验证的设备树启动，并单独做启动与休眠回归。
+最小 ACPI 表集（FACP、MADT、GTDT、DSDT）已接入产品构建，覆盖处理器、GIC、
+UFS 和 xHCI，见 [ACPI 表](acpi.md)。下一步用 ARM64 WinPE 检查设备枚举、存储
+和显示，再按实测补 `_CRS` 和驱动。先用临时启动验证，不改变 Android 和 Linux
+的分区布局；Linux 仍沿用已验证的设备树启动，并单独做启动与休眠回归。
 
 ## 二进制分发说明
 

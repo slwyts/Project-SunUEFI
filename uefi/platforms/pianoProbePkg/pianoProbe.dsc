@@ -82,7 +82,8 @@
   #
   # ACPI Tables
   #
-  #piano/AcpiTables.inf
+  pianoProbePkg/AcpiTables/AcpiTables.inf
+  MdeModulePkg/Universal/Acpi/AcpiTableDxe/AcpiTableDxe.inf
 
 # Stage 0: no persistent variables, storage, capsules or OS boot.
 [PcdsFixedAtBuild]

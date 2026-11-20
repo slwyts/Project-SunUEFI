@@ -4,6 +4,7 @@
 #include <Library/BaseMemoryLib.h>
 #include <Library/BaseLib.h>
 #include <Library/DebugLib.h>
+#include <Protocol/DevicePath.h>
 #define LATE_SIG SIGNATURE_32('P','L','H','F')
 STATIC EFI_GUID mLateGuid=PIANO_PRODUCT_EXIT_PROTOCOL_GUID;
 
@@ -78,7 +79,11 @@ STATIC EFI_STATUS EFIAPI LateObserve(PIANO_PRODUCT_EXIT_PROTOCOL *P,EFI_HANDLE I
  PIANO_LATE_HANDOFF *S=BASE_CR(P,PIANO_LATE_HANDOFF,Protocol);
  if(S->Signature!=LATE_SIG||!Epoch||LateOverlap(Epoch,sizeof(*Epoch),S,sizeof(*S))||
     LateOverlap(Epoch,sizeof(*Epoch),S->Env.Owners,sizeof(*S->Env.Owners))||
-    S->Retained||S->Phase!=PianoExitClean||S->Busy||!LateIdentity(S,Image,L)||!LateClean(S))return EFI_COMPROMISED_DATA;
+    S->Retained||S->Phase!=PianoExitClean||S->Busy||!LateIdentity(S,Image,L))return EFI_COMPROMISED_DATA;
+ if(S->KeepDevices){
+  if(CompareMem(&S->Env.Owners->Config,&S->OwnerConfig,sizeof(S->OwnerConfig))||
+     !S->Env.Owners->Report.Initialized||S->Env.Owners->Report.Retained||S->Env.Owners->Report.ServicesLost)return EFI_COMPROMISED_DATA;
+ }else if(!LateClean(S))return EFI_COMPROMISED_DATA;
  if(S->RawMode&&!LateRaw(S))return EFI_COMPROMISED_DATA;
   *Epoch=S->RawMode?S->RawSnapshot.Epoch:S->ResetMode?1:S->Memory.BootEpoch;return EFI_SUCCESS; // no BS, HAL or provider lookup
 }
@@ -86,6 +91,34 @@ STATIC VOID EFIAPI LateFail(PIANO_PRODUCT_EXIT_PROTOCOL *P,EFI_STATUS E){
  PIANO_LATE_HANDOFF *S=BASE_CR(P,PIANO_LATE_HANDOFF,Protocol);
  LateResult(S,"native-fail",E,E);
  LateStop(S,E);
+}
+STATIC BOOLEAN LateTextHas(CONST CHAR16 *Text,CONST CHAR16 *Needle){
+ UINTN I,J;
+ for(I=0;Text[I];++I){
+  for(J=0;Needle[J];++J){
+   CHAR16 A=Text[I+J];
+   if(A>='A'&&A<='Z')A=(CHAR16)(A-'A'+'a');
+   if(A!=Needle[J])break;
+  }
+  if(!Needle[J])return TRUE;
+ }
+ return FALSE;
+}
+// Windows hands off from winload.efi, or from bootmgfw.efi when the boot
+// manager exits directly. Any other image keeps the Linux retirement path.
+STATIC BOOLEAN LateImageIsWindows(CONST EFI_LOADED_IMAGE_PROTOCOL *L){
+ CONST EFI_DEVICE_PATH_PROTOCOL *Node;
+ CONST FILEPATH_DEVICE_PATH *File;
+ if(!L||!L->FilePath)return FALSE;
+ for(Node=L->FilePath;!IsDevicePathEnd(Node);Node=NextDevicePathNode(Node)){
+  if(DevicePathType(Node)==MEDIA_DEVICE_PATH&&DevicePathSubType(Node)==MEDIA_FILEPATH_DP){
+   File=(CONST FILEPATH_DEVICE_PATH *)Node;
+   if(LateTextHas(File->PathName,L"winload.efi")||
+      LateTextHas(File->PathName,L"bootmgfw.efi")||
+      LateTextHas(File->PathName,L"bootmgr.efi"))return TRUE;
+  }
+ }
+ return FALSE;
 }
 STATIC EFI_STATUS LateArmCurrent(PIANO_LATE_HANDOFF *S,EFI_HANDLE Image,CONST EFI_LOADED_IMAGE_PROTOCOL *L){
  if(!S->Env.ValidateEfiImage||!Image||!L)return LateResult(S,"arm-arguments",EFI_ACCESS_DENIED,EFI_ACCESS_DENIED);
@@ -96,6 +129,14 @@ STATIC EFI_STATUS LateArmCurrent(PIANO_LATE_HANDOFF *S,EFI_HANDLE Image,CONST EF
 
  EFI_STATUS E=LateApp(S);
  if(E!=EFI_SUCCESS)return LateResult(S,"arm-tpl",E,E);
+ if(LateImageIsWindows(L)){
+  E=LateMemory(S,&S->Memory);if(E!=EFI_SUCCESS)return E;
+  S->Image=Image;S->Identity=L;S->Loaded=*L;S->OwnerConfig=S->Env.Owners->Config;
+  S->KeepDevices=TRUE;S->Phase=PianoExitArmed;
+  DEBUG((DEBUG_WARN,"PIANO_LATE_HANDOFF_TARGET target=windows keep=1\n"));
+  return LateResult(S,"armed-windows",EFI_SUCCESS,EFI_SUCCESS);
+ }
+ S->KeepDevices=FALSE;
  E=S->Env.ValidateEfiImage(S->Env.Context,Image,L);
  if(!LateLive(S))return LateResult(S,"arm-image-services",E,EFI_ABORTED);
  if(E!=EFI_SUCCESS)return LateResult(S,"arm-validate-image",E,EFI_ERROR(E)?E:EFI_DEVICE_ERROR);
@@ -132,6 +173,23 @@ STATIC EFI_STATUS EFIAPI LateEnter(PIANO_PRODUCT_EXIT_PROTOCOL *P,EFI_HANDLE Ima
     if(!LateLive(S)||(S->RawMode&&!LateRaw(S))||!LateClean(S))return LateResult(S,"pre-retired-state",EFI_ACCESS_DENIED,EFI_ACCESS_DENIED);
    S->CallerMapKey=MapKey;++S->ExitCalls;S->Phase=PianoExitClean;S->Status=EFI_SUCCESS;
    return LateResult(S,"ready",EFI_SUCCESS,EFI_SUCCESS);
+ }
+ // Windows has no driver that reinitializes the controllers this firmware
+ // brought up, so keep them live and hand over without retiring anything.
+ if(S->KeepDevices){
+  PIANO_LINUX_MEMORY_PROOF Fresh;
+  EFI_STATUS E=LateApp(S);
+  if(E!=EFI_SUCCESS)return LateRefuseBeforeRetire(S,LateResult(S,"exit-tpl",E,E));
+  if(CompareMem(&S->Env.Owners->Config,&S->OwnerConfig,sizeof(S->OwnerConfig)))
+   return LateRefuseBeforeRetire(S,LateResult(S,"owners-config",EFI_COMPROMISED_DATA,EFI_COMPROMISED_DATA));
+  E=LateMemory(S,&Fresh);
+  if(E!=EFI_SUCCESS){PianoLateHandoffDisarm(S);return E;}
+  if(Fresh.BootEpoch!=S->Memory.BootEpoch||Fresh.DramBytes!=S->Memory.DramBytes){
+   PianoLateHandoffDisarm(S);
+   return LateResult(S,"memory-epoch",EFI_NOT_READY,EFI_NOT_READY);
+  }
+  S->Memory=Fresh;S->CallerMapKey=MapKey;++S->ExitCalls;S->Phase=PianoExitClean;S->Status=EFI_SUCCESS;
+  return LateResult(S,"ready-windows",EFI_SUCCESS,EFI_SUCCESS);
  }
  EFI_STATUS E=LateApp(S);
  if(E!=EFI_SUCCESS)return LateRefuseBeforeRetire(S,LateResult(S,"exit-tpl",E,E));
@@ -177,7 +235,7 @@ EFI_STATUS PianoLateHandoffInitialize(PIANO_LATE_HANDOFF *S,CONST PIANO_LATE_HAN
   LateResult(S,"install",Status,Status==EFI_SUCCESS?EFI_COMPROMISED_DATA:Status);
   LateStop(S,Status==EFI_SUCCESS?EFI_COMPROMISED_DATA:Status);
  }
- S->Installed=TRUE;S->Phase=PianoExitUnarmed;return S->Status=EFI_SUCCESS;
+ S->Installed=TRUE;S->KeepDevices=FALSE;S->Phase=PianoExitUnarmed;return S->Status=EFI_SUCCESS;
 }
 EFI_STATUS PianoLateHandoffArm(PIANO_LATE_HANDOFF *S,EFI_HANDLE Image){
  if(!S||S->Signature!=LATE_SIG||!S->Installed||!Image||S->Retained)return EFI_INVALID_PARAMETER;
@@ -192,7 +250,7 @@ EFI_STATUS PianoLateHandoffArm(PIANO_LATE_HANDOFF *S,EFI_HANDLE Image){
  if(!L||L->Revision<EFI_LOADED_IMAGE_PROTOCOL_REVISION||L->ParentHandle!=S->Env.ParentImage||L->SystemTable!=S->Env.SystemTable||
     !L->ImageBase||!L->ImageSize||L->ImageCodeType!=EfiLoaderCode||L->ImageDataType!=EfiLoaderData)return EFI_COMPROMISED_DATA;
  E=LateMemory(S,&S->Memory);if(E!=EFI_SUCCESS)return E;
- S->Image=Image;S->Identity=L;S->Loaded=*L;S->OwnerConfig=O->Config;S->Phase=PianoExitArmed;return S->Status=EFI_SUCCESS;
+ S->Image=Image;S->Identity=L;S->Loaded=*L;S->OwnerConfig=O->Config;S->KeepDevices=FALSE;S->Phase=PianoExitArmed;return S->Status=EFI_SUCCESS;
 }
 EFI_STATUS PianoLateHandoffDisarm(PIANO_LATE_HANDOFF *S){
  if(!S||S->Signature!=LATE_SIG||!S->Installed)return EFI_INVALID_PARAMETER;
@@ -202,7 +260,7 @@ EFI_STATUS PianoLateHandoffDisarm(PIANO_LATE_HANDOFF *S){
    E=PianoProductOwnersCancelEfiBoot(S->Env.Owners,S->Image,S->Identity);if(E!=EFI_SUCCESS)return E;
  }
  S->Image=NULL;S->Identity=NULL;ZeroMem(&S->Loaded,sizeof(S->Loaded));ZeroMem(&S->Memory,sizeof(S->Memory));
- S->Phase=PianoExitUnarmed;return S->Status=EFI_SUCCESS;
+ S->KeepDevices=FALSE;S->Phase=PianoExitUnarmed;return S->Status=EFI_SUCCESS;
 }
 EFI_STATUS PianoLateHandoffArmRaw(PIANO_LATE_HANDOFF *S,EFI_HANDLE Image,CONST PIANO_RAW_LINUX_REPORT *R){
  if(!S||S->Signature!=LATE_SIG||!S->Installed||S->Retained||!R||!S->Env.ValidateRaw||!Image||R->ExitImage!=Image||R->Image!=S->Env.ParentImage)return EFI_ACCESS_DENIED;
