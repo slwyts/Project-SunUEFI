@@ -17,7 +17,7 @@
 #define ARB_CFG 0x0C42D000U
 #define ARB_OBS 0x0C440000U
 #define ARB_RW 0x0C500000U
-STATIC BOOLEAN mReasonLayout,mDownloadLayout;
+STATIC BOOLEAN mReasonLayout,mDownloadLayout,mSmcConduit;
 STATIC UINT32 Be(CONST UINT8 *P){return ((UINT32)P[0]<<24)|((UINT32)P[1]<<16)|((UINT32)P[2]<<8)|P[3];}
 STATIC BOOLEAN Cells(CONST VOID *F,INT32 N,CONST CHAR8 *Name,CONST UINT32 *V,UINTN Count){
   INT32 Len=0;CONST UINT8 *P=FdtGetProp(F,N,Name,&Len);
@@ -25,6 +25,7 @@ STATIC BOOLEAN Cells(CONST VOID *F,INT32 N,CONST CHAR8 *Name,CONST UINT32 *V,UIN
   for(UINTN I=0;I<Count;++I)if(Be(P+I*4)!=V[I])return FALSE;return TRUE;
 }
 EFI_STATUS PianoResetInitialize(CONST VOID *Fdt){
+  mReasonLayout=mDownloadLayout=mSmcConduit=FALSE;
   if(!Fdt||FdtCheckHeader(Fdt))return EFI_INVALID_PARAMETER;
   INT32 N=FdtPathOffset(Fdt,"/soc/qcom,spmi@c42d000/qcom,pmk8550@0/sdam@7100/restart@48");
   CONST UINT32 Reg[]={0x48,1},Bits[]={1,7};
@@ -35,6 +36,10 @@ EFI_STATUS PianoResetInitialize(CONST VOID *Fdt){
     N=FdtNodeOffsetByPhandle(Fdt,Be(P));CONST UINT32 Tcsr[]={0x1FC0000,0x30000};
     mDownloadLayout=N>=0&&Cells(Fdt,N,"reg",Tcsr,2);
   }
+  N=FdtNodeOffsetByCompatible(Fdt,-1,"arm,psci-1.0");
+  if(N<0)N=FdtNodeOffsetByCompatible(Fdt,-1,"arm,psci-0.2");
+  P=N<0?NULL:FdtGetProp(Fdt,N,"method",&Len);
+  mSmcConduit=P && Len==sizeof("smc") && !CompareMem(P,"smc",sizeof("smc"));
   return mReasonLayout&&mDownloadLayout?EFI_SUCCESS:EFI_UNSUPPORTED;
 }
 STATIC EFI_STATUS Wait(UINTN Base){
@@ -73,6 +78,38 @@ STATIC EFI_STATUS Download(VOID){
   S=Scm(0xC2000502,2,0x1FD9000,1,NULL);if(S!=EFI_SUCCESS)return S;
   S=Scm(0xC2000501,1,0x1FD9000,0,&Value);return S!=EFI_SUCCESS?S:Value==1?EFI_SUCCESS:EFI_DEVICE_ERROR;
 }
+
+// SMCCC vendor hypervisor calls used by the factory gh_virt_wdt driver.
+#define VENDOR_HYP_UID      0x8600ff01U
+#define GUNYAH_WDT_CONTROL  0x86000005U
+#define GUNYAH_WDT_STATUS   0x86000006U
+#define GUNYAH_WDT_PING     0x86000007U
+#define GUNYAH_WDT_SET_TIME 0x86000008U
+#define GUNYAH_WDT_DISABLE  BIT1
+#define GUNYAH_WDT_ENABLE   (BIT1 | BIT0)
+
+STATIC BOOLEAN GunyahWatchdogCall(UINT32 Function,UINT32 First,UINT32 Second) {
+  ARM_SMC_ARGS Args={.Arg0=Function,.Arg1=First,.Arg2=Second};
+  ArmCallSmc(&Args);
+  return (UINT32)Args.Arg0==0;
+}
+
+STATIC BOOLEAN GunyahWatchdogAvailable(VOID) {
+  ARM_SMC_ARGS Uid={.Arg0=VENDOR_HYP_UID};
+  ArmCallSmc(&Uid);
+  // SMCCC returns c1d58fcd-a453-5fdb-9265-ce36673d5f14 as little-endian words.
+  return (UINT32)Uid.Arg0==0xcd8fd5c1 && (UINT32)Uid.Arg1==0xdb5f53a4 &&
+         (UINT32)Uid.Arg2==0x36ce6592 && (UINT32)Uid.Arg3==0x145f3d67 &&
+         GunyahWatchdogCall(GUNYAH_WDT_STATUS,0,0);
+}
+
+STATIC BOOLEAN ArmGunyahReset(UINT32 Milliseconds) {
+  return GunyahWatchdogCall(GUNYAH_WDT_CONTROL,GUNYAH_WDT_DISABLE,0) &&
+         GunyahWatchdogCall(GUNYAH_WDT_SET_TIME,Milliseconds,Milliseconds) &&
+         GunyahWatchdogCall(GUNYAH_WDT_CONTROL,GUNYAH_WDT_ENABLE,0) &&
+         GunyahWatchdogCall(GUNYAH_WDT_PING,0,0);
+}
+
 EFI_STATUS PianoResetExecute(CONST PIANO_PRODUCT_OWNERS *O,EFI_HANDLE Image){
   if(!O||!Image||!O->Report.Clean||O->Report.Busy||O->Report.Retained||O->Report.ServicesLost||
      !O->Report.UfsStopped||!O->Report.InputStopped||!PianoProductOwnersUsbRetired(O)||
@@ -103,7 +140,14 @@ EFI_STATUS PianoResetExecute(CONST PIANO_PRODUCT_OWNERS *O,EFI_HANDLE Image){
     Size=Capacity;S=gBS->GetMemoryMap(&Size,Map,&Key,&Stride,&Version);
     if(S==EFI_SUCCESS)S=gBS->ExitBootServices(Image,Key);
   }
-  if(S==EFI_SUCCESS)Reset(Type,EFI_SUCCESS,0,NULL);
+  if(S==EFI_SUCCESS){
+    // Only a completed normal reboot may have a timed fallback. A stalled
+    // runtime reset then cannot strand the host, and no OS or shutdown path
+    // inherits our timer. All calls here are independent of Boot Services.
+    if(Target==PIANO_PRODUCT_RESET_NORMAL && mSmcConduit && GunyahWatchdogAvailable())
+      (VOID)ArmGunyahReset(8000);
+    Reset(Type,EFI_SUCCESS,0,NULL);
+  }
   CpuDeadLoop();
   while(TRUE){}
 }
