@@ -12,7 +12,7 @@
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
   "target_tree": "ab6b6c4720123bf1a8a9ab7a1d421c6a67daee33",
-  "original_target_commit": "719ebc84e33d08ffd22e6d3debd880fd63808d3c",
+  "original_target_commit": "cc7d5ca6cfeca258c8748c349030b71bae3c7e59",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -3339,8 +3339,8 @@
     },
     {
       "file": "0254-LOCAL-spi-geni-qcom-complete-gpi-transfer.patch",
-      "sha256": "3473e49a79a79ba49807cd8bc163b5c6c186e73f3f931aecb8774a1d95bcbdae",
-      "original_commit": "719ebc84e33d08ffd22e6d3debd880fd63808d3c",
+      "sha256": "e7b26b05a7568260f5c90ca3c336cbd0882b657ecd4890209a30788c55dcb73a",
+      "original_commit": "cc7d5ca6cfeca258c8748c349030b71bae3c7e59",
       "original_parent": "40d5287b1dfc59bc0821b88655a80404149dc5fb",
       "committer_date": "2026-11-21T02:35:25+08:00",
       "tree": "ab6b6c4720123bf1a8a9ab7a1d421c6a67daee33",

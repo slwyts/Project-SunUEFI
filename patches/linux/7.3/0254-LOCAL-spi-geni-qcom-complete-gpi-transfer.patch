@@ -20,7 +20,7 @@ existing transfer_one() model and the core's message handling.
 
 Fixes: 74b86d6af81b ("spi: qcom: geni: set the error code for gpi transfer")
 Link: https://lore.kernel.org/linux-spi/20261106-qspi_upstream_series-v1-1-21f43042dd60@oss.qualcomm.com/
-Generated-by: LLM
+Assisted-by: LLM
 ---
  drivers/spi/spi-geni-qcom.c | 20 ++++++++------------
  1 file changed, 8 insertions(+), 12 deletions(-)
