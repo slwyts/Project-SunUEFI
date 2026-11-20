@@ -73,11 +73,11 @@ importer 默认读取 `super` 的 primary metadata slot 0，并选择 `odm_a`、
 `system_heap` 暂不作为产品服务依赖。2026-10-08 的冷启动启用该 heap 后，反向 RPC 返回 `0xe`；之前 fastrpc ioctl fallback 能读 JSON。已确认的两条路径差异如下：
 
 * [FastRPC 1.0.7 rpcmem](https://github.com/qualcomm/fastrpc/blob/v1.0.7/src/rpcmem_linux.c) 优先打开 `/dev/dma_heap/system`；只有打开失败才改用 fastrpc 分配 ioctl。前者导入一般页组成的 DMA-BUF，后者来自 compute-cb 的 `dma_alloc_coherent`，受其 DMA mask 约束。
-* 当前 [fastrpc 映射](../../../patches/linux/7.3/0124-LOCAL-fastrpc-adjust-ssr-synchronisation.patch) 只取首段 SG DMA 地址，并用一个连续地址区间传给 DSP。identity/direct domain 下非连续物理 SG 不满足这一表示；translated DMA domain 可由 IOMMU 提供连续 IOVA。
+* 当前 [fastrpc 映射](../../../patches/linux/7.3/0128-LOCAL-fastrpc-adjust-ssr-synchronisation.patch) 只取首段 SG DMA 地址，并用一个连续地址区间传给 DSP。identity/direct domain 下非连续物理 SG 不满足这一表示；translated DMA domain 可由 IOMMU 提供连续 IOVA。
 * listener 最小 buffer 为4 KiB，所以还需核对单段情况。DMA32 的高物理页可能经 SWIOTLB bounce；system_heap 提供 CPU/device 同步回调，但当前 rpcmem/listener 未调用 DMA-BUF CPU 同步接口，fastrpc 也没有相应 SG 同步。未取得失败 buffer 的物理/DMA地址、SG段数和同步状态前，不把 bounce 作为已确认根因。
 * [AEE 错误定义](https://github.com/qualcomm/fastrpc/blob/v1.0.7/inc/AEEStdErr.h) 中 `0xe` 是 `AEE_EBADPARM`、`0x14` 是 `AEE_EUNSUPPORTED`；`mod_table` 日志不能直接解释为内核 `-EFAULT` 或 SMMU fault。
 
-`patches/linux/7.3/0053-EXTERNAL-iommu-arm-smmu-piano-handoff.patch` 为 SM8750 compute-cb 选择标准 DMA domain，保留其他设备的现有策略；只取消预加载不能覆盖摄像头等其他功能启用 heap 的情况。临时 namespace 只用于早先的一次分配路径对照，没有作为产品方案。
+`patches/linux/7.3/0057-EXTERNAL-iommu-arm-smmu-piano-handoff.patch` 为 SM8750 compute-cb 选择标准 DMA domain，保留其他设备的现有策略；只取消预加载不能覆盖摄像头等其他功能启用 heap 的情况。临时 namespace 只用于早先的一次分配路径对照，没有作为产品方案。
 
 本地 native 包已用 Debian trixie ARM64 sysroot、QEMU 与标准 `dpkg-buildpackage -b -us -uc -aarm64` 构建为 `5+sunuefi1`，保留 socinfo，去掉 system_heap 预加载。`build/sensors-patched/runtime` 复用官方 CI 的另外五包；父目录的 SOURCE、SHA256SUMS 与 BUILD.json 记录源码/补丁/包哈希及构建来源，可作为 `--sensors-dir` 输入。该包构建通过不代表上述 DMA 映射问题已解决。
 

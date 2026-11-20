@@ -85,15 +85,15 @@
       "mode": "0644",
       "uid": 0,
       "gid": 0,
-      "sha256": "531db7c6fa8446b5e2cec856183ab5c4813f1eb6325d5d5d57bd08842fba9776",
+      "sha256": "d944dcfaebf17e89632e1f9408dd7acb670036aa4dfb68a3a1f5acbee1bff448",
       "source": "rootfs/overlay/usr/share/alsa/ucm2/Qualcomm/sm8750/Xiaomi-Pad-8-Pro/HiFi.conf",
       "source_sha256": "ed1b91e6f7e4cef76f1f60cfe3dc01d249cfb0267bb983bfc362df8f4f97609c",
       "source_git_mode": "100644",
       "license": "MIT",
       "patch": "patches/0001-ucm-piano-microphone-and-speakers.patch",
-      "patch_sha256": "078e3f8a45de49dabb7d620c510f7ee2bba8a761efc8bcb0b99d686a03d55a6f",
+      "patch_sha256": "580059664918d3620a99f8696b98e94ae21ccff068c5dfc075a51e8d622d7be8",
       "derived_from": {
-        "path": "patches/linux/7.3/0078-EXTERNAL-asoc-qcom-piano-voice-mono.patch",
+        "path": "patches/linux/7.3/0082-EXTERNAL-asoc-qcom-piano-voice-mono.patch",
         "patch_id": "ba6a701bf6d5146f200e76a7513a97f266007bda",
         "scope": "CaptureChannels 1 requires the Piano-specific VA mono FE/BE kernel route"
       }

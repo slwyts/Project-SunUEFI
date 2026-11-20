@@ -138,7 +138,7 @@ def local_firmware_payload(source, manifest_path, description):
     return manifest, rows
 
 
-def topology_payload():
+def topology_payload(speaker_acdb=None):
     from build_piano_runtime_helpers import build_topology, repository
 
     policy = read_json(ROOT / 'config/release.json')['audio_topology']
@@ -153,23 +153,35 @@ def topology_payload():
     env.pop('M4PATH', None)
     with tempfile.TemporaryDirectory(prefix='sunuefi-topology-') as directory:
         work = Path(directory)
-        topology = build_topology(*checkouts, work, env=env)
+        topology = build_topology(*checkouts, work, env=env, speaker_acdb=speaker_acdb)
         data = topology.read_bytes()
         name = FIRMWARE_ROOT + topology.relative_to(work).as_posix()
-    require(sha(data) == policy['sha256'], 'Audio topology checksum mismatch')
-    return {
+    expected = policy['sha256'] if speaker_acdb is None else policy['speaker_dap']['sha256']
+    require(sha(data) == expected, 'Audio topology checksum mismatch')
+    source = {
         'source': policy['source'],
         'repositories': sources,
-    }, [({'path': name, 'type': 'file', 'mode': '0644', 'sha256': policy['sha256']}, data)]
+    }
+    if speaker_acdb is not None:
+        source['speaker_calibration'] = {
+            'source': policy['speaker_dap']['source'],
+            'acdb_sha256': sha(speaker_acdb.read_bytes()),
+        }
+    return source, [({'path': name, 'type': 'file', 'mode': '0644', 'sha256': expected}, data)]
 
 
 def topology_copyright(source):
     macros = ROOT / 'upstream' / TOPOLOGY_SOURCES[1]
     sources = '\n'.join(f" {record['url']} ({record['commit']})"
                         for record in source['repositories'].values())
+    calibration = ''
+    if 'speaker_calibration' in source:
+        calibration = ('The DAP parameters are extracted from the original Xiaomi ACDB supplied at build time.\n'
+                       'The BSD-3-Clause license below applies to the topology source.\n\n')
     return ('AudioReach topology for Xiaomi Pad 8 Pro, licensed BSD-3-Clause.\n'
             f'SunUEFI source: {source["source"]}\n'
             f'Upstream layout and macros:\n{sources}\n\n'
+            + calibration
             + (macros / 'LICENSE.BSD-3-Clause').read_text())
 
 
@@ -269,7 +281,7 @@ def inspect_stock_firmware(args, suite, package, source):
 
 
 def inspect_audio_topology(args, suite):
-    source, rows = topology_payload()
+    source, rows = topology_payload(args.speaker_acdb)
     report = {
         'schema_version': 1,
         'component': 'audio-topology',
@@ -278,7 +290,7 @@ def inspect_audio_topology(args, suite):
         'target': {'distro': args.target, 'suite': suite, 'arch': args.arch},
         'package_architecture': 'any' if args.target == 'arch' else 'all',
         'source': source,
-        'public_distribution': True,
+        'public_distribution': args.speaker_acdb is None,
         'depends': [],
         'package_ready': False,
         'conflict_check': (conflict_check(args.against, rows, TOPOLOGY_PACKAGE) if args.against
@@ -290,6 +302,8 @@ def inspect_audio_topology(args, suite):
 
 
 def inspect(args):
+    require(args.speaker_acdb is None or args.audio_topology,
+            '--speaker-acdb requires --audio-topology')
     firmware = next(((package, source)
                   for package, (component, _) in STOCK_FIRMWARE.items()
                   if (source := getattr(args, component.replace('-', '_'))) is not None), None)
@@ -728,6 +742,8 @@ def parser():
                            help='Build the optional Goodix CLI from exported release kernel headers')
     component.add_argument('--audio-topology', action='store_true',
                            help='Build the AudioReach topology package from the fixed sources')
+    ap.add_argument('--speaker-acdb', type=Path, metavar='MI_ACDB',
+                    help='Include original Piano speaker DAP tuning in the audio topology')
     component.add_argument('--power-profiles', action='store_true',
                            help='Package the board-specific TuneD profiles and desktop mapping')
     ap.add_argument('--output', type=Path)

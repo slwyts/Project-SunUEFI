@@ -27,7 +27,7 @@ SunUEFI 站在这些项目之上：EDK2 / Mu-Silicium 提供 UEFI 基础和高�
 
 小米平板相关参考还包括 [code002-2/Xiaomi-pad-6s-pro-Linux](https://github.com/code002-2/Xiaomi-pad-6s-pro-Linux/tree/053169b1ed48335d8139694ea6ccaacf52462dd9) 及其引用的 [debian-sheng](https://github.com/ianchb/debian-sheng)、[xiaomi-mipps-auth](https://github.com/ianchb/xiaomi-mipps-auth/tree/9176efbdf276b874fc0a97912a914449a88155fb) 和 [xiaomi-sheng-fingerprint](https://github.com/ianchb/xiaomi-sheng-fingerprint/tree/76e7301163b0e708f609c9864b3e5833e9f57402)。分别用于多发行版集成、MiPPS 认证和标准 libfprint/fprintd 接入的参考。指纹项目使用 FPC1553，Piano 原厂使用 Goodix，不能直接互换传感器协议。MiPPS 工具标注 GPL-2.0-only；指纹后端为 Apache-2.0，libfprint/fprintd 补丁及 QTEE 依赖遵循各自许可。
 
-内核 MiPPS [补丁](patches/linux/7.3/0141-LOCAL-power-piano-mipps-authentication.patch)移植了上述 `xiaomi-mipps-auth` 的协议常量和摘要计算，并参考 [blu-sharky/piano-mipps-auth](https://github.com/blu-sharky/piano-mipps-auth) 对 Piano 固件漏报充电器身份的处理及原厂命令顺序，保留 GPL-2.0-only。认证在内核工作队列中完成，不安装上游的用户空间服务、状态文件和通知。来源提交记录在[内核补丁清单](patches/linux/7.3/series.json)的 `mipps_authentication` 中，协议与限制见[内核说明](docs/devel/linux/kernel.md#usb-type-c)。
+内核 MiPPS [补丁](patches/linux/7.3/0145-LOCAL-power-piano-mipps-authentication.patch)移植了上述 `xiaomi-mipps-auth` 的协议常量和摘要计算，并参考 [blu-sharky/piano-mipps-auth](https://github.com/blu-sharky/piano-mipps-auth) 对 Piano 固件漏报充电器身份的处理及原厂命令顺序，保留 GPL-2.0-only。认证在内核工作队列中完成，不安装上游的用户空间服务、状态文件和通知。来源提交记录在[内核补丁清单](patches/linux/7.3/series.json)的 `mipps_authentication` 中，协议与限制见[内核说明](docs/devel/linux/kernel.md#usb-type-c)。
 
 SM8750 温区的 include 方案参考 Cryolitia 的
 [Piano TSENS overlay](https://github.com/Cryolitia/nixos-config/blob/096e88bfc641784cc291dfe54695c4811d8c61e5/hosts/xiaomi-piano/piano-tsens-temperatures.dts)，
@@ -60,14 +60,14 @@ Gunyah 的 Android 驱动与主线接口适配来自
 [SuperTurtleDev/iceland-mainline-kernel-linux](https://github.com/SuperTurtleDev/iceland-mainline-kernel-linux/tree/fd503a492d381687c143b7085ea79ebce58dcdc7)。
 驱动上游为 Android common `android17-6.18-2026-06_r1`，提交
 `30c0eaeef78d5c19f687ad8418c27b76353ab261`。本地
-[`0040-EXTERNAL-virt-gunyah-android-port.patch`](patches/linux/7.3/0040-EXTERNAL-virt-gunyah-android-port.patch)保留原作者、
+[`0044-EXTERNAL-virt-gunyah-android-port.patch`](patches/linux/7.3/0044-EXTERNAL-virt-gunyah-android-port.patch)保留原作者、
 版权和 GPL-2.0-only 等逐文件声明；未引入其他平板的设备树或内存预留。
 它们用于接入设备已有的 Gunyah 固件，不替换高通 Hypervisor。
 
 BORE 6.8.0 来自 Masahito Suzuki 的调度器实现，以及
 [CachyOS/kernel-patches](https://github.com/CachyOS/kernel-patches/blob/6266b5f33f4e8caaa452174f0132c8c82f919267/7.3/sched/0001-bore-cachy.patch)
 中 Piotr Gorski 整理的 Linux 7.3 补丁。本地
-[`0041-EXTERNAL-sched-bore-cachy.patch`](patches/linux/7.3/0041-EXTERNAL-sched-bore-cachy.patch)只调整了
+[`0045-EXTERNAL-sched-bore-cachy.patch`](patches/linux/7.3/0045-EXTERNAL-sched-bore-cachy.patch)只调整了
 `CONFIG_CACHY` 专用默认值的上下文及空白格式，保留 BORE 算法和运行参数默认值。
 代码沿用 Linux 内核许可；原始补丁校验值和提交记录在
 [`series.json`](patches/linux/7.3/series.json)中。MGLRU、ZRAM、
@@ -75,7 +75,7 @@ BORE 6.8.0 来自 Masahito Suzuki 的调度器实现，以及
 
 FastRPC 的 DSP 重启清理修复参考高通 Jianping Li 提交的
 [三个上游补丁](https://github.com/qualcomm-linux/kernel/pull/1212)，
-本地适配为 [`0124-LOCAL-fastrpc-adjust-ssr-synchronisation.patch`](patches/linux/7.3/0124-LOCAL-fastrpc-adjust-ssr-synchronisation.patch)。
+本地适配为 [`0128-LOCAL-fastrpc-adjust-ssr-synchronisation.patch`](patches/linux/7.3/0128-LOCAL-fastrpc-adjust-ssr-synchronisation.patch)。
 修复设备开放时的初始化顺序、轮询调用的退出通知，以及活动调用尚未退出就拆除 DMA 映射的竞态。
 原始提交记录在补丁正文与内核来源清单中，沿用 Linux 源文件的 GPL-2.0-only 许可。
 这些改动处理 DSP 崩溃后的清理，不代表已经解决 DSP 最初的崩溃原因。

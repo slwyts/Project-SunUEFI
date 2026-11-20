@@ -1,9 +1,38 @@
 --- a/rootfs/overlay/usr/share/alsa/ucm2/Qualcomm/sm8750/Xiaomi-Pad-8-Pro/HiFi.conf
 +++ b/rootfs/overlay/usr/share/alsa/ucm2/Qualcomm/sm8750/Xiaomi-Pad-8-Pro/HiFi.conf
-@@ -11,7 +11,14 @@
+@@ -5,13 +5,42 @@
+ # landscape with the front camera at the top) and a four-channel stream
+ # (FL, FR, LS, RS) to all four.
+ 
++Define {
++	SpeakerPcm 0
++	SpeakerChannels 4
++	SpeakerRoute MultiMedia1
++	SpeakerRawPlay 1
++}
++
++If.SpeakerDap {
++	Condition {
++		Type ControlExists
++		Control "name='SECONDARY_TDM_RX_0 Audio Mixer MultiMedia4'"
++	}
++
++	True.Define {
++		SpeakerPcm 3
++		SpeakerChannels 2
++		SpeakerRoute MultiMedia4
++		SpeakerRawPlay 0
++	}
++}
++
+ SectionVerb {
+ 	# The front end to back end routes belong to the verb: the PCMs do not
+ 	# open without them, and PipeWire opens every PCM while it probes the
  	# verb, before any device is enabled.
  	EnableSequence [
- 		cset "name='SECONDARY_TDM_RX_0 Audio Mixer MultiMedia1' 1"
+-		cset "name='SECONDARY_TDM_RX_0 Audio Mixer MultiMedia1' 1"
++		cset "name='SECONDARY_TDM_RX_0 Audio Mixer MultiMedia1' ${var:SpeakerRawPlay}"
++		cset "name='SECONDARY_TDM_RX_0 Audio Mixer ${var:SpeakerRoute}' 1"
 +		cset "name='DISPLAY_PORT_RX_0 Audio Mixer MultiMedia2' 1"
  		cset "name='MultiMedia3 Mixer VA_CODEC_DMA_TX_0' 1"
 +		# Set all physical amp caches before PipeWire probes/starts the PCM.
@@ -15,17 +44,19 @@
  	]
  
  	Value {
-@@ -23,7 +30,8 @@
+@@ -23,20 +52,42 @@
  	Comment "Speaker playback"
  
  	Value {
 -		PlaybackChannels 2
-+		# Open all four hardware slots; PipeWire duplicates ordinary stereo.
-+		PlaybackChannels 4
++		# DAP accepts stereo and renders four channels before the TDM port.
++		PlaybackChannels "${var:SpeakerChannels}"
  		PlaybackPriority 100
- 		PlaybackPCM "hw:${CardId},0"
+-		PlaybackPCM "hw:${CardId},0"
++		PlaybackPCM "hw:${CardId},${var:SpeakerPcm}"
  	}
-@@ -32,11 +40,32 @@
+ }
+ 
  SectionDevice."Mic" {
  	Comment "Internal microphone"
  

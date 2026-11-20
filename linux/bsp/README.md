@@ -52,13 +52,19 @@ Debian 默认 sid，Ubuntu 默认 noble，Arch Linux ARM 默认 rolling；Deepin
 ## 音频拓扑包
 
 `piano-audio-topology` 提供 Qualcomm ASoC 驱动加载的开源 AudioReach 拓扑。
-它不包含原厂 ADSP 固件或调校。四个镜像通过 APT 或共用 `sunuefi` 仓安装，
-驱动继续从标准固件目录加载同一个文件，不增加服务。
+四个镜像通过 APT 或共用 `sunuefi` 仓安装，驱动从标准固件目录加载这个文件。
 
 本地构建使用上面的 `bsp package` 命令加 `--audio-topology`。向旧系统安装前，
 用 `bsp inspect --audio-topology --against /absolute/target-root` 检查同名文件
 和压缩版本的归属。未登记的旧文件按上面的迁移方法备份；发行版软件包已有
 同名文件时保留其归属。
+
+本地使用原厂杜比扬声器处理时，给 `./build.sh bsp package --audio-topology`
+加上 `--speaker-acdb /path/to/Mi_acdb_cal.acdb`。构建从匹配的 Piano 原厂 ACDB
+提取 95 项扬声器参数，加入 AudioReach 拓扑的 DAP 模块。配套内核在播放准备时
+分批发送完整参数，最后启用处理。ALSA UCM 仍提供同一个扬声器，DAP 路径接收
+48 kHz 立体声并向 TDM 输出四路。普通拓扑没有这条路径时，UCM 使用原有四声道
+PCM。该配置适用于本地打包，原厂调音数据随输入提供。
 
 ## 设备固件包
 

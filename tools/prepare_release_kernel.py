@@ -74,7 +74,7 @@ def load_series(root, target):
             raise ValueError('Patch series pin mismatch: ' + key)
     object_id(series.get('base_tree'), 'base tree')
     rows = series.get('patches')
-    if not isinstance(rows, list) or not 1 <= len(rows) <= 256:
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 10000:
         raise ValueError('Invalid patch series length')
     if policy.get('patch_commits') is not None and [row.get('original_commit') for row in rows] != policy['patch_commits']:
         raise ValueError('Original patch commit sequence changed')

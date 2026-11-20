@@ -18,7 +18,7 @@ import struct
 import subprocess
 
 from desktop import prepare_kernel_llvm
-from package import v4l2loopback
+from package import audio_dap, v4l2loopback
 
 ROOT=Path(__file__).resolve().parents[1]
 PUBLIC_COMMIT='a75f8c5d5fa099d65c171ac839c2e3bb6c63ec45'
@@ -80,23 +80,35 @@ def tree_files(folder):return {p.relative_to(folder).as_posix():sha(p)for p in s
 def tree_digest(rows):return hashlib.sha256(json.dumps(rows,sort_keys=True).encode()).hexdigest()
 
 
-def build_topology(public, macros, destination, env=None):
+def build_topology(public, macros, destination, env=None, speaker_acdb=None):
     policy=json.loads((ROOT/'config/release.json').read_text())['audio_topology']
     source=ROOT/policy['source']
     config=destination/'piano.conf'
     target=destination/TOPOLOGY_PATH
     target.parent.mkdir(parents=True,exist_ok=True)
+    command=['m4']
+    expected=policy['sha256']
+    if speaker_acdb is not None:
+        dap=policy['speaker_dap']
+        board=public/'topology/Xiaomi-Pad-8-Pro.m4'
+        (destination/board.name).write_bytes(audio_dap.add_speaker_route(board.read_bytes(), ROOT/dap['source']))
+        command += ['-D', f'PIANO_DAP_INSTANCE={dap["instance"]}', '-I', destination]
+        audio_dap.write_calibration(speaker_acdb, destination/'speaker-dap-config.bin', dap)
+        expected=dap['sha256']
+        env={**(os.environ if env is None else env), 'ALSA_CONFIG_TPLG': str(destination.resolve())}
+    command += ['-I', public/'topology', '-I', macros, source]
     topology = subprocess.run(
-        ['m4', '-I', public/'topology', '-I', macros, source],
-        stdout=subprocess.PIPE, env=env, check=True,
+        command, stdout=subprocess.PIPE, env=env, check=True,
     ).stdout
+    if speaker_acdb is not None:
+        topology=audio_dap.route_speaker(topology, dap['instance'])
     # ASoC prefixes each volume control with its widget name. Shorten the
     # two widget names and their graph references to keep Playback Volume.
     topology = topology.replace(b'stream0.vol_ctrl0', b'stream0.vol0')
     topology = topology.replace(b'stream1.vol_ctrl1', b'stream1.vol1')
     config.write_bytes(topology)
     subprocess.run(['alsatplg','-c',config,'-o',target],env=env,check=True)
-    if sha(target)!=policy['sha256']:
+    if sha(target)!=expected:
         raise ValueError('Product topology differs from its recorded source build')
     return target
 
