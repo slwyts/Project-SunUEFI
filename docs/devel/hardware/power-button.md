@@ -8,7 +8,7 @@ GNOME 使用 `systemd-hostnamed` 报告的设备类型区分平板和虚拟机�
 
 ## 默认设置
 
-[标准 dconf 配置](../../../linux/desktops/gnome/overlay/etc/dconf/db/local.d/00-power)设置 2 分钟空闲熄屏、使用电池时 5 分钟自动挂起、外接电源时 10 分钟自动挂起。键盘背光默认 80%，后续沿用用户保存的亮度。用户可在系统设置里修改这些偏好。
+[标准 dconf 配置](../../../linux/desktops/gnome/overlay/etc/dconf/db/local.d/00-power)设置 2 分钟空闲熄屏、使用电池时 5 分钟自动挂起；外接电源时不自动挂起。Plasma 用自己的 PowerDevil 配置实现相同的空闲行为，插电时合盖关闭显示，短按电源切换显示。键盘背光默认 80%，后续沿用用户保存的亮度。用户可在系统设置里修改这些偏好。
 
 GSD 电源管理器启动时先读取 GNOME 已有的锁屏状态，再配置空闲计时和显示电源。会话已锁屏时保持灭屏；查询失败时保留原显示电源状态，避免重启服务把黑画面背后的背光重新点亮。正常输入仍沿用 GNOME 的唤醒与再次灭屏流程，不增加背光轮询服务。
 
@@ -26,7 +26,7 @@ Debian GNOME 和 KDE 镜像都允许挂起到内存（`mem/deep`）。磁盘休�
 
 ## 从旧镜像升级
 
-安装或更新 `piano-device-config` 会清理旧镜像生成且未修改的助手和配置，保留用户编辑过或由其他包管理的文件。原有空闲时间和锁屏默认值不变。升级后重启，让系统重新读取 udev、logind 和 GNOME 配置。新装镜像不再包含旧助手。
+安装或更新 `piano-device-config` 会清理旧镜像生成且未修改的助手和配置，并更新未修改的 GNOME 电源默认值，保留用户编辑过或由其他包管理的文件。升级后重启，让系统重新读取 udev、logind 和 GNOME 配置。新装镜像不再包含旧助手。
 
 旧 Debian 镜像可能还屏蔽了普通挂起。用 `systemctl is-enabled sleep.target suspend.target` 查询；如果显示 `masked`，并确认是镜像的默认设置，不是自己禁用的，解除这两项：
 

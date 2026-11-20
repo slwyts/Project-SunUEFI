@@ -7,11 +7,9 @@ LockBeforeTurnOffDisplay=true
 TurnOffDisplayIdleTimeoutWhenLockedSec=0
 
 [AC][SuspendAndShutdown]
-AutoSuspendIdleTimeoutSec=600
-AutoSuspendAction=1
-SleepMode=1
-LidAction=1
-PowerButtonAction=1
+AutoSuspendAction=0
+LidAction=64
+PowerButtonAction=128
 
 [Battery][Display]
 DimDisplayWhenIdle=false

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "component": "piano-device-config",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "source": {
     "url": "https://github.com/blu-sharky/debian-piano.git",
     "commit": "25babfe3ff5d8ddee98b1e0ea88152d69a0c01b1"
@@ -35,6 +35,20 @@
       "source_sha256": "d135aac56bb9c4d2d4675b5a6d98d7d9adfe7a4910ac6f34c23b583faf6aaf8b",
       "source_git_mode": "100644",
       "license": "NOASSERTION"
+    },
+    {
+      "group": "common",
+      "path": "usr/lib/systemd/logind.conf.d/50-piano.conf",
+      "type": "file",
+      "mode": "0644",
+      "uid": 0,
+      "gid": 0,
+      "sha256": "ddc36041435e92fb8a606ece9babff5d6bdc7731ee4ca1446e305a69dfe2b926",
+      "source": "linux/bsp/common/usr/lib/systemd/logind.conf.d/50-piano.conf",
+      "source_sha256": "ddc36041435e92fb8a606ece9babff5d6bdc7731ee4ca1446e305a69dfe2b926",
+      "source_git_mode": "100644",
+      "license": "MIT",
+      "source_component": "Project SunUEFI"
     },
     {
       "group": "common",
