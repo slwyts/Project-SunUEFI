@@ -17,6 +17,7 @@ import tempfile
 from build_piano_ram_bootstrap import guest_resolve
 from build import overlay_release
 from desktop import power_migration
+from package import fingerprint_migration
 
 ROOT = Path(__file__).resolve().parents[1]
 BSP = ROOT / 'linux/bsp'
@@ -27,6 +28,7 @@ DISPLAY_PACKAGE = 'piano-firmware-display'
 DISPLAY_MANIFEST = ROOT / 'vendor/firmware/piano-display/manifest.json'
 FINGERPRINT_PACKAGE = 'piano-firmware-fingerprint'
 FINGERPRINT_MANIFEST = ROOT / 'vendor/firmware/hyperos4-fingerprint/manifest.json'
+FINGERPRINT_TOOLS = 'piano-fingerprint-tools'
 LOCAL_FIRMWARE = {
     TOUCH_PACKAGE: ('touch-firmware', TOUCH_MANIFEST),
     DISPLAY_PACKAGE: ('display-firmware', DISPLAY_MANIFEST),
@@ -52,6 +54,8 @@ def package_description(package):
         return 'Xiaomi Pad 8 Pro display calibration firmware'
     if package == FINGERPRINT_PACKAGE:
         return 'Xiaomi Pad 8 Pro Goodix fingerprint firmware'
+    if package == FINGERPRINT_TOOLS:
+        return 'Optional Goodix fingerprint diagnostics for the Xiaomi Pad 8 Pro'
     if package == TOPOLOGY_PACKAGE:
         return 'Xiaomi Pad 8 Pro AudioReach topology'
     if package == POWER_PROFILES_PACKAGE:
@@ -342,8 +346,8 @@ def inspect_power_profiles(args, suite):
     }, rows
 
 
-def stage(args):
-    report, rows = inspect(args)
+def stage(args, inspected=None):
+    report, rows = inspect(args) if inspected is None else inspected
     require(args.output is not None and not args.output.exists() and not args.output.is_symlink(), 'Use a fresh output directory')
     output = args.output.absolute()
     output.mkdir(parents=True)
@@ -388,7 +392,7 @@ def stage(args):
     return output, tree, report, rows
 
 
-def preinst(paths, package=NAME, *, adopt=None):
+def preinst(paths, package=NAME, *, architecture='all', adopt=None):
     guard = '#!/bin/sh\nset -eu\n'
     if package in FIRMWARE_PACKAGES:
         firmware = ' '.join(shlex.quote('/' + name) for name in paths if name.startswith(FIRMWARE_ROOT))
@@ -427,7 +431,7 @@ def preinst(paths, package=NAME, *, adopt=None):
             f'for path in {quoted}; do\n'
             '  if [ -e "$path" ] || [ -L "$path" ]; then\n'
             '    owned=$(dpkg-query --search "$path" 2>/dev/null || true)\n'
-            f'    case "$owned" in "{package}: $path"|"{package}:all: $path") ;;\n' +
+            f'    case "$owned" in "{package}: $path"|"{package}:{architecture}: $path") ;;\n' +
             adoption +
             '      *) printf "%s\\n" "BSP file conflict: $path ($owned)" >&2; exit 1 ;;\n'
             '    esac\n'
@@ -451,6 +455,10 @@ if [ ! -L "$legacy" ] && [ -f "$legacy" ] &&
     rm -- "$legacy"
 fi
 '''
+    body += ("python3 -I -S - <<'SUNUEFI_FINGERPRINT_CLEANUP'\n"
+             + Path(fingerprint_migration.__file__).read_text()
+             + f"\nremove_on_upgrade({package_format!r})\n"
+             + 'SUNUEFI_FINGERPRINT_CLEANUP\n')
     if package_format == 'deb':
         return ('#!/bin/sh\nset -eu\n[ "$1" = configure ] || exit 0\n' + body +
                 reload_systemd())
@@ -460,18 +468,19 @@ fi
 
 def debian_package(output, tree, report, configuration):
     package = report['package']
+    architecture = report['package_architecture']
     section, detail = {
         TOUCH_PACKAGE: ('non-free-firmware/kernel', ' Built from locally supplied stock ROM files.\n'),
         DISPLAY_PACKAGE: ('non-free-firmware/kernel', ' Installs locally supplied panel calibration data.\n'),
         FINGERPRINT_PACKAGE: ('non-free-firmware/kernel',
                               ' Installs the stock signed Goodix application and models.\n'),
+        FINGERPRINT_TOOLS: ('utils', ' Provides piano-fingerprint-ctl for explicit command-line diagnostics.\n'),
         TOPOLOGY_PACKAGE: ('kernel', ' Provides the topology loaded by the Qualcomm ASoC driver.\n'),
         POWER_PROFILES_PACKAGE: ('admin', ' Connects the three desktop power modes to TuneD.\n'),
     }.get(package, ('misc', ' Native runtime, Mesa, firmware and modules are distributed separately.\n'))
     depends = 'Depends: ' + ', '.join(report['depends']) + '\n' if report['depends'] else ''
     installed_size = ''
-    if package in FIRMWARE_PACKAGES or package == POWER_PROFILES_PACKAGE:
-        # The firmware payload contains only directories and regular files.
+    if package in (*FIRMWARE_PACKAGES, POWER_PROFILES_PACKAGE, FINGERPRINT_TOOLS):
         # Match dpkg-gencontrol: 1 KiB per directory, round up each file.
         kib = 1 + sum(1 if path.is_dir() else (path.stat().st_size + 1023) // 1024
                       for path in tree.rglob('*'))
@@ -480,7 +489,7 @@ def debian_package(output, tree, report, configuration):
     control.mkdir()
     control.chmod(0o755)
     (control / 'control').write_text(
-        f"Package: {package}\nVersion: {report['version']}\nArchitecture: all\n"
+        f"Package: {package}\nVersion: {report['version']}\nArchitecture: {architecture}\n"
         f'Maintainer: Project SunUEFI <slwyts@tuta.io>\nSection: {section}\nPriority: optional\n'
         f'{depends}{installed_size}Description: {package_description(package)}\n{detail}')
     if configuration:
@@ -490,7 +499,7 @@ def debian_package(output, tree, report, configuration):
     if package in FIRMWARE_PACKAGES or package == POWER_PROFILES_PACKAGE:
         paths.append(docs + 'copyright')
     adopt = report['payload_files'] if package == POWER_PROFILES_PACKAGE else None
-    (control / 'preinst').write_text(preinst(paths, package, adopt=adopt))
+    (control / 'preinst').write_text(preinst(paths, package, architecture=architecture, adopt=adopt))
     (control / 'preinst').chmod(0o755)
     subprocess.run(['/bin/sh', '-n', control / 'preinst'], check=True)
     if package == NAME:
@@ -503,7 +512,7 @@ def debian_package(output, tree, report, configuration):
                           reload_systemd())
         remove.chmod(0o755)
         subprocess.run(['/bin/sh', '-n', remove], check=True)
-    artifact = output / f"{package}_{report['version']}_all.deb"
+    artifact = output / f"{package}_{report['version']}_{architecture}.deb"
     subprocess.run(['dpkg-deb', '--root-owner-group', '--build', tree, artifact],
                    check=True, stdout=sys.stderr, env={**os.environ, 'SOURCE_DATE_EPOCH': '0'})
     shutil.rmtree(control)
@@ -521,6 +530,7 @@ def pacman_sources(directory, tree, report, configuration):
     license_ids = {name: 'LicenseRef-Proprietary' for name in LOCAL_FIRMWARE}
     license_ids[TOPOLOGY_PACKAGE] = 'BSD-3-Clause'
     license_ids[POWER_PROFILES_PACKAGE] = 'MIT'
+    license_ids[FINGERPRINT_TOOLS] = "BSD-3-Clause BSD-3-Clause-Clear 'GPL-2.0-only WITH Linux-syscall-note'"
     install = ''
     if package == NAME:
         migration = directory / (NAME + '.install')
@@ -531,7 +541,8 @@ def pacman_sources(directory, tree, report, configuration):
         f"pkgname={package}\npkgver={report['version']}\npkgrel={overlay_release.pacman_release('1')}\n"
         f'pkgdesc={shlex.quote(package_description(package))}\n'
         "url='https://github.com/slwyts/Project-SunUEFI'\n"
-        f'arch=(any)\nlicense=({license_ids.get(package, "MIT BSD-2-Clause-Patent")})\noptions=(!strip !debug)\n'
+        f'arch=({report["package_architecture"]})\n'
+        f'license=({license_ids.get(package, "MIT BSD-2-Clause-Patent")})\noptions=(!strip !debug)\n'
         f'{install}'
         f'depends=({depends})\nbackup=({backup})\n'
         'source=(payload.tar)\nnoextract=(payload.tar)\n'
@@ -558,13 +569,17 @@ def pacman_builder_account():
         raise ValueError('Run makepkg as a regular user or in the project builder')
 
 
-def makepkg(work):
+def makepkg(work, architecture='any'):
     """Build a package of checked files without installing runtime dependencies."""
     env = {**os.environ, 'SOURCE_DATE_EPOCH': '0', 'LC_ALL': 'C',
            'BUILDDIR': str(work), 'SRCDEST': str(work), 'PKGDEST': str(work),
            'LOGDEST': str(work), 'PKGEXT': '.pkg.tar.zst',
            'PACKAGER': 'Project SunUEFI <slwyts@tuta.io>'}
     command = ['makepkg', '--noconfirm', '--nodeps']
+    if architecture != 'any':
+        config = work / 'makepkg.conf'
+        config.write_text(f'. /etc/makepkg.conf\nCARCH={architecture}\n')
+        command += ['--config', config]
     account = pacman_builder_account()
     if account is not None:
         for path in (work, *work.iterdir()):
@@ -578,9 +593,10 @@ def pacman_package(output, tree, report, configuration):
     with tempfile.TemporaryDirectory(prefix='sunuefi-bsp-', dir='/tmp') as folder:
         work = Path(folder)
         pacman_sources(work, tree, report, configuration)
-        makepkg(work)
+        architecture = report['package_architecture']
+        makepkg(work, architecture)
         version = report['version'] + '-' + overlay_release.pacman_release('1')
-        artifact = work / f"{report['package']}-{version}-any.pkg.tar.zst"
+        artifact = work / f"{report['package']}-{version}-{architecture}.pkg.tar.zst"
         require(artifact.is_file() and not artifact.is_symlink(),
                 'makepkg did not produce the Piano package')
         target = output / artifact.name
@@ -589,6 +605,9 @@ def pacman_package(output, tree, report, configuration):
 
 
 def build(args):
+    fingerprint_tools = args.fingerprint_tools
+    if fingerprint_tools is not None:
+        require(args.command == 'package', '--fingerprint-tools requires bsp package')
     if args.command == 'inspect':
         return inspect(args)[0]
     if args.command == 'package':
@@ -599,7 +618,12 @@ def build(args):
         require(shutil.which(backend), 'Missing package backend: ' + backend)
         if args.format == 'pacman':
             require(shutil.which('tar'), 'Missing tar')
-    output, tree, report, rows = stage(args)
+    inspected = None
+    if fingerprint_tools is not None:
+        from package import fingerprint_tools as tools
+
+        inspected = tools.prepare(args)
+    output, tree, report, rows = stage(args, inspected)
     if args.command == 'package':
         configuration = [row['path'] for row, _ in rows if row['path'].startswith('etc/')]
         if args.format == 'pacman':
@@ -634,6 +658,8 @@ def parser():
                            help='Package the two local display calibration files')
     component.add_argument('--fingerprint-firmware', type=Path, metavar='DIRECTORY',
                            help='Package the local Goodix fingerprint application and models')
+    component.add_argument('--fingerprint-tools', type=Path, metavar='UAPI',
+                           help='Build the optional Goodix CLI from exported release kernel headers')
     component.add_argument('--audio-topology', action='store_true',
                            help='Build the AudioReach topology package from the fixed sources')
     component.add_argument('--power-profiles', action='store_true',

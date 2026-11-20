@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "tools_version": "0.1.0",
   "desktop": {
     "libfprint": {
       "url": "https://gitlab.freedesktop.org/libfprint/libfprint.git",

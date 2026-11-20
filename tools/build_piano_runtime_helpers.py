@@ -435,9 +435,6 @@ def stage(output,destination,*,ram_boot=False):
         expected.add((Path('usr/lib/firmware')/TOPOLOGY_PATH).as_posix())
         expected |= CAMERA_RUNTIME_PATHS
         expected.add(v4l2loopback.module_path(release).as_posix())
-    if manifest.get('fingerprint'):
-        from build_piano_fingerprint import RUNTIME_PATHS
-        expected |= RUNTIME_PATHS
     if set(files)!=expected:raise ValueError('Runtime bundle source/install paths differ from the exact contract')
     if not(destination/'usr/lib/modules'/release/'kernel').is_dir():raise ValueError('Stage the matching full kernel module tree first')
     pen_input,_=pen_kernel_inputs(manifest['kernel'],destination)
@@ -449,6 +446,10 @@ def stage(output,destination,*,ram_boot=False):
         target=destination/name
         if not p.resolve().is_relative_to(output.resolve())or not target.resolve().is_relative_to(destination.resolve())or target.is_symlink():raise ValueError('Runtime bundle destination/source alias escapes staging root')
         if not p.is_file()or p.is_symlink()or p.stat().st_size!=row['bytes']or sha(p)!=row['sha256']:raise ValueError('Runtime bundle changed: '+name)
+    if not ram_boot:
+        from package.fingerprint_migration import remove_from_image
+
+        remove_from_image(destination)
     for name,row in files.items():
         target=destination/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(output/row['file'],target);target.chmod(row['mode'])
     if ram_boot:

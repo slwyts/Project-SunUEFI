@@ -28,14 +28,6 @@ PACMAN_LIBFPRINT_RUNTIME = ('libgcc', 'glib2', 'glibc', 'libgudev', 'libgusb', '
 STEAMOS_FPRINTD_RUNTIME = ('dbus', 'glib2', 'glibc', 'libgcc', 'libfprint',
                          'pam', 'polkit', 'systemd', 'systemd-libs')
 LIBFPRINT_SONAME = 'libfprint-2.so=2-64'
-RUNTIME_PATHS = {
-    'usr/local/sbin/piano-fingerprint-ctl',
-    'usr/share/piano-provenance/fingerprint.json',
-    'usr/share/licenses/piano-fingerprint/linux-tee.h',
-    *{f'usr/share/licenses/piano-fingerprint/{name}.txt'
-       for name in ('qcbor',)},
-    *{f'usr/share/licenses/piano-fingerprint/{name}' for name in LICENSES},
-}
 
 
 def digest(path):
@@ -64,7 +56,7 @@ def source_inputs():
     return {
         'config_sha256': digest(ROOT / 'config/fingerprint.json'),
         'native_sources': {name: digest(NATIVE / name)
-                           for name in (*CORE_SOURCES, *HEADERS, *LICENSES, CLI_SOURCE.name)},
+                           for name in (*CORE_SOURCES, *HEADERS, *LICENSES)},
         'builder_sha256': digest(Path(__file__)),
         'kernel_uapi_sha256': json.loads(
             (ROOT / 'config/release.json').read_text())['kernel']['uapi_sha256'],
@@ -130,89 +122,19 @@ def backend_archive(output, backend):
 def prepare_desktop_backend(output, uapi):
     """Export the reviewed source used by libfprint without building the CLI."""
     inputs = source_inputs()
+    tee_header = uapi / 'include/linux/tee.h'
+    tee_digest = digest(tee_header)
     backend = output / 'fingerprint/backend'
     stage_sources(backend, uapi)
     archive = backend_archive(output, backend)
     if source_inputs() != inputs:
         raise ValueError('Fingerprint inputs changed while preparing the backend')
-    (backend.parent / 'fingerprint.json').write_text(json.dumps(
-        {'inputs': inputs, 'backend_archive': archive}, indent=2) + '\n')
-
-
-def build(output, flags, uapi, emulator=None):
-    inputs = source_inputs()
-    tee_header = uapi / 'include/linux/tee.h'
-    tee_digest = digest(tee_header)
-    cfg = json.loads((ROOT / 'config/fingerprint.json').read_text())
-    work = output / 'fingerprint'
-    work.mkdir()
-    backend = work / 'backend'
-    dependencies = stage_sources(backend, uapi)
-    # Use the exported kernel interface before any sysroot system headers.
-    flags = [flags[0], '-isystem', str(backend / 'uapi'), *flags[1:]]
-    qcbor = dependencies['qcbor']
-    includes = [qcbor / 'inc']
-    originals = [
-        *[qcbor / 'src' / name for name in (
-            'UsefulBuf.c', 'qcbor_encode.c', 'qcbor_decode.c',
-            'qcbor_err_to_str.c', 'ieee754.c')],
-        *[backend / name for name in CORE_SOURCES],
-        CLI_SOURCE,
-    ]
-    native_sources = {backend / name for name in CORE_SOURCES} | {CLI_SOURCE}
-    objects = []
-    for index, original in enumerate(originals):
-        obj = work / (str(index) + '.o')
-        command = [*flags, '-fPIC', '-D_GNU_SOURCE', '-DUSE_QCBOR',
-                   *['-I' + str(p) for p in includes],
-                   '-c', original, '-o', obj]
-        # Imported Qualcomm sources retain their own warning policy.
-        if original not in native_sources:
-            command = [arg for arg in command if arg != '-Werror']
-        subprocess.run(command, check=True)
-        objects.append(obj)
-    archive = backend_archive(output, backend)
-    binary = work / 'piano-fingerprint-ctl'
-    subprocess.run([*flags, '-static', *objects, '-pthread', '-lm', '-o', binary], check=True)
-    subprocess.run(([emulator] if emulator else []) + [str(binary), '--help'], check=True)
-    files = {}
-    for name, path, mode in [
-            ('usr/local/sbin/piano-fingerprint-ctl', binary, 0o755),
-            ('usr/share/licenses/piano-fingerprint/linux-tee.h',
-             backend / 'uapi/linux/tee.h', 0o644),
-            *[(f'usr/share/licenses/piano-fingerprint/{name}', NATIVE / name, 0o644)
-              for name in LICENSES],
-            *[(f'usr/share/licenses/piano-fingerprint/{name}.txt',
-               dependencies[name] / record['license'], 0o644)
-              for name, record in cfg['sources'].items()]]:
-        target = work / Path(name).name
-        if path != target:
-            shutil.copy2(path, target)
-        files[name] = {'file': str(target.relative_to(output)),
-                       'bytes': target.stat().st_size, 'sha256': digest(target), 'mode': mode}
-    record = {
-        'inputs': inputs,
-        'sources': cfg['sources'],
-        'client_source': str(CLI_SOURCE.relative_to(ROOT)),
-        'client_sha256': digest(CLI_SOURCE),
-        'source_files': {str(p.relative_to(ROOT)): digest(p) for p in originals},
-        'backend_archive': archive,
-        'uapi_headers': {'linux/tee.h': tee_digest},
-        'firmware': json.loads(
-            (ROOT / 'vendor/firmware/hyperos4-fingerprint/manifest.json').read_text())['files'],
-        'operations': ['info', 'initialize', 'prepare-auth', 'watch', 'list',
-                       'storage-probe', 'enroll', 'verify', 'delete'],
-    }
-    if source_inputs() != inputs:
-        raise ValueError('Fingerprint sources changed during compilation')
     if digest(tee_header) != tee_digest or digest(backend / 'uapi/linux/tee.h') != tee_digest:
-        raise ValueError('Fingerprint TEE header changed during compilation')
-    provenance = work / 'fingerprint.json'
-    provenance.write_text(json.dumps(record, indent=2) + '\n')
-    files['usr/share/piano-provenance/fingerprint.json'] = {
-        'file': str(provenance.relative_to(output)), 'bytes': provenance.stat().st_size,
-        'sha256': digest(provenance), 'mode': 0o644}
-    return files, record
+        raise ValueError('Fingerprint TEE header changed while preparing the backend')
+    record = {'inputs': inputs, 'backend_archive': archive,
+              'uapi_headers': {'linux/tee.h': tee_digest}}
+    (backend.parent / 'fingerprint.json').write_text(json.dumps(record, indent=2) + '\n')
+    return record
 
 
 def backend_sources(runtime):

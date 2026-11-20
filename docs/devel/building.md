@@ -283,6 +283,21 @@ CI 的共用设备产物；指纹包在组装时从固定固件清单直接构�
 
 ### 单独构建的软件包
 
+仅在需要指纹诊断时构建、安装 `piano-fingerprint-tools`。使用当前
+内核导出的头文件目录（其下有 `include/linux/tee.h`）：
+
+```sh
+./build.sh bsp package --fingerprint-tools build/runtime/uapi \
+  --target debian --format deb --output build/fingerprint-tools/debian
+./build.sh bsp package --fingerprint-tools build/runtime/uapi \
+  --target arch --format pacman --output build/fingerprint-tools/pacman
+```
+
+Debian 用 `apt install ./路径.deb`，Arch 和 SteamOS 用
+`pacman -U ./路径.pkg.tar.zst`。运行 `piano-fingerprint-ctl --help`
+不访问传感器；日常指纹功能不需要这个包。新版设备配置包会清理由旧镜像
+复制且未被修改的旧工具，保留管理员自己的副本和已有的指纹登记。
+
 CPU 型号由 `linux/dts/piano-cpu-model.dtso` 给八个 CPU 节点加标准 `model` 属性，内核补丁把它输出为 `/proc/cpuinfo` 的 `model name`，让 GNOME 显示 Snapdragon 8 Elite。MIDR、核心拓扑、时钟和板型号保持原值。
 
 `./build.sh gsd --sysroot 已完成的基础根目录` 在独立副本里编译带 Piano 自动亮度策略的 gnome-settings-daemon，使用原厂 lux 阈值和延迟，不修改传感器读数，由 APT 安装。默认的 `release-rootfs` 会自动完成这一步，策略只匹配 `xiaomi,piano` 板级标识。

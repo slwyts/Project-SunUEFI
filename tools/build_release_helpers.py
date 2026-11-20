@@ -121,13 +121,7 @@ def build(kernel, source, kernel_build, output, cc, sysroot, firmware_root=None)
         if name == 'piano-touch-view':
             item.update(touch_record)
         files[destination] = item
-    fingerprint_files, fingerprint = build_piano_fingerprint.build(
-        output, flags, uapi, emulator=emulator)
-    fingerprint_binary = output / fingerprint_files[
-        'usr/local/sbin/piano-fingerprint-ctl']['file']
-    fingerprint_files['usr/local/sbin/piano-fingerprint-ctl'].update(
-        runtime.verify_elf(fingerprint_binary), help_no_device_access=True)
-    files.update(fingerprint_files)
+    fingerprint = build_piano_fingerprint.prepare_desktop_backend(output, uapi)
     if runtime.kernel_identity(kernel_build, source, commit, release) != identity:
         raise ValueError('Kernel source/ABI changed during runtime helper build')
     result = {'status': 'RUNTIME_COMPILED_NOT_DEVICE_TESTED', 'kernel': identity,

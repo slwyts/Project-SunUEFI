@@ -198,8 +198,10 @@ QSEECOMPAT 的 lookup 返回 `architecture=2`，命令应使用 64 位地址，
 
 原生客户端位于
 [`piano-goodix.c`](../../../linux/userspace/fingerprint/piano-goodix.c)，
-使用标准 Linux TEE 对象传输与固定版本的 QCBOR，CLI 由共享运行时构建器
-静态编译；来源记录在
+使用标准 Linux TEE 对象传输与固定版本的 QCBOR。
+诊断命令 `piano-fingerprint-ctl` 由可选的 `piano-fingerprint-tools` 原生包提供，
+不随桌面镜像预装；[构建说明](../building.md#单独构建的软件包)列出了打包命令。
+CLI 和 libfprint 后端共用源码，来源记录在
 [`config/fingerprint.json`](../../../config/fingerprint.json)。
 执行 `sudo piano-fingerprint-ctl info` 可查询设备信息，`--help` 不访问设备。
 签名程序与模型由 [本地固件包 `piano-firmware-fingerprint`](../../../linux/bsp/README.md#本地固件包)
