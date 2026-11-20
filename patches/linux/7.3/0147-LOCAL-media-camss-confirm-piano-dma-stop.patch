@@ -1,0 +1,533 @@
+From ac3b0fb55d429e1872a3214df6e0fd42cac43d09 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Fri, 20 Nov 2026 16:38:28 +0800
+Subject: [PATCH] media: qcom: camss: Confirm Piano DMA stopped before
+ returning buffers
+
+Stop submitting new addresses and verify write-master completion
+against the two outstanding buffers. Check both luma and chroma on
+PIX. If completion cannot be established, isolate the whole camera
+IOMMU stream before allowing Videobuf2 to return or unmap buffers.
+Keep buffers and the powered pipeline if isolation is not confirmed.
+The same stop path runs before device removal and shutdown. Hold
+the kexec block until DMA is safe, or until reset after isolation.
+
+Link: https://github.com/MiCode/vendor_qcom_opensource_camera-kernel/blob/piano-w-oss/drivers/cam_isp/isp_hw_mgr/isp_hw/vfe_hw/vfe17x/cam_tfe980.h
+Assisted-by: LLM
+---
+ .../platform/qcom/camss/camss-vfe-gen4.c      | 30 ++++++
+ drivers/media/platform/qcom/camss/camss-vfe.c | 99 ++++++++++++++++++-
+ drivers/media/platform/qcom/camss/camss-vfe.h |  5 +
+ .../media/platform/qcom/camss/camss-video.c   | 29 +++++-
+ drivers/media/platform/qcom/camss/camss.c     | 97 +++++++++++++++++-
+ drivers/media/platform/qcom/camss/camss.h     |  7 ++
+ 6 files changed, 261 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe-gen4.c b/drivers/media/platform/qcom/camss/camss-vfe-gen4.c
+index 5f9d050396cce97138a131fc3e33c465170f1d09..e88147b6ecee8fb3e9eb2da48b3d18f4ee9085bd 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe-gen4.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe-gen4.c
+@@ -64,6 +64,7 @@
+ #define VFE_BUS_WM_MMU_PREFETCH_CFG(n)		(BUS_REG_BASE + 0x560 + (n) * 0x100)
+ #define VFE_BUS_WM_MMU_PREFETCH_MAX_OFFSET(n)	(BUS_REG_BASE + 0x564 + (n) * 0x100)
+ #define VFE_BUS_WM_CTXT_CFG(n)			(BUS_REG_BASE + 0x578 + (n) * 0x100)
++#define VFE_BUS_WM_LAST_ADDR(n)			(BUS_REG_BASE + 0x590 + (n) * 0x100)
+ #define VFE_BUS_CTXT_SEL			(BUS_REG_BASE + 0x124)
+ 
+ #define		WM_PACKER_PLAIN_8_LSB_MSB_10		3
+@@ -557,6 +558,13 @@ static u32 vfe_check_bus_error(struct vfe_device *vfe)
+ 		if (!(vfe->bus_active_lines & BIT(id)))
+ 			continue;
+ 		output->frame_timeline_error = true;
++		if (vfe->camss->check_dma_stop) {
++			output->dma_error = true;
++			if (output->state == VFE_OUTPUT_DRAINING)
++				complete(&output->dma_drained);
++			else if (output->state == VFE_OUTPUT_ON)
++				vb2_queue_error(&vfe->line[id].video_out.vb2_q);
++		}
+ 		trace_camss_frame_error(vfe->id, id, output->frame_sequence,
+ 					status, irq_ns);
+ 	}
+@@ -698,6 +706,27 @@ static void vfe_wm_update(struct vfe_device *vfe, u8 wm, u32 addr,
+ 	dev_dbg(vfe->camss->dev, "wm:%d, image buf addr:0x%x\n", wm, addr);
+ }
+ 
++static bool vfe_980_dma_done(struct vfe_device *vfe, struct vfe_line *line,
++			     u32 addr)
++{
++	unsigned int wm = RDI_WM(line->output.wm_idx[0]);
++	u32 done;
++
++	if (line->id == VFE_LINE_PIX) {
++		struct v4l2_pix_format_mplane *pix =
++			&line->video_out.active_fmt.fmt.pix_mp;
++		u32 chroma = addr + pix->plane_fmt[0].bytesperline * pix->height;
++
++		done = readl(vfe->base + VFE_BUS_WM_LAST_ADDR(FD_C_WM));
++		if (done != chroma >> VFE_GEN4_ADDR_SHIFT)
++			return false;
++		wm = FD_Y_WM;
++	}
++
++	done = readl(vfe->base + VFE_BUS_WM_LAST_ADDR(wm));
++	return done == addr >> VFE_GEN4_ADDR_SHIFT;
++}
++
+ static void vfe_reg_update(struct vfe_device *vfe, enum vfe_line_id line_id)
+ {
+ 	int port_id = line_id;
+@@ -768,6 +797,7 @@ const struct vfe_hw_ops vfe_ops_gen4 = {
+ 	.vfe_wm_stop = vfe_wm_stop,
+ 	.vfe_buf_done = vfe_buf_done,
+ 	.check_bus_error = vfe_check_bus_error,
++	.dma_done = vfe_980_dma_done,
+ 	.vfe_wm_update = vfe_wm_update,
+ 	.vfe_isp_update = vfe_isp_update,
+ };
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index e545a741f003e38997434f186fcb4fb168844405..a5e9447cfa716016189de583b03172e46dc44303 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -628,6 +628,19 @@ unlock:
+ 	}
+ }
+ 
++static void vfe_stop_980_port(struct vfe_line *line)
++{
++	struct vfe_device *vfe = to_vfe(line);
++	struct vfe_output *output = &line->output;
++	unsigned int i;
++
++	lockdep_assert_held(&vfe->output_lock);
++	csid_980_stop_port(&vfe->camss->csid[vfe->id], line->id);
++	for (i = 0; i < output->wm_num; i++)
++		vfe->res->hw_ops->vfe_wm_stop(vfe, output->wm_idx[i]);
++	output->state = VFE_OUTPUT_STOPPING;
++}
++
+ void vfe_buf_done(struct vfe_device *vfe, int wm)
+ {
+ 	struct vfe_line *line;
+@@ -638,8 +651,11 @@ void vfe_buf_done(struct vfe_device *vfe, int wm)
+ 	u32 index;
+ 	u64 ts = ktime_get_ns();
+ 	bool frame_valid = true;
++	bool verify_dma = vfe->camss->check_dma_stop;
+ 
+ 	spin_lock_irqsave(&vfe->output_lock, flags);
++	if (unlikely(READ_ONCE(vfe->camss->dma_faulted)))
++		goto out_unlock;
+ 
+ 	if (vfe->wm_output_map[wm] == VFE_LINE_NONE) {
+ 		dev_err_ratelimited(vfe->camss->dev,
+@@ -648,18 +664,40 @@ void vfe_buf_done(struct vfe_device *vfe, int wm)
+ 	}
+ 	line = &vfe->line[vfe->wm_output_map[wm]];
+ 	output = &line->output;
+-	if (output->state != VFE_OUTPUT_ON)
++	if (output->state != VFE_OUTPUT_ON && output->state != VFE_OUTPUT_DRAINING)
+ 		goto out_unlock;
+ 
+ 	/* CSID forwards DMA completion independently of the VFE BUS error IRQ.
+ 	 * Serialize both paths so a delayed error IRQ cannot publish a bad frame.
+ 	 */
+ 	if (ops->check_bus_error) {
+-		ops->check_bus_error(vfe);
++		if (ops->check_bus_error(vfe))
++			output->dma_error = true;
+ 		frame_valid = !output->frame_timeline_error;
+ 	}
+ 
+ 	ready_buf = output->buf[0];
++	if (output->state == VFE_OUTPUT_DRAINING)
++		ready_buf = output->buf[output->drain_count];
++	if (verify_dma && ready_buf &&
++	    (output->dma_error ||
++	     (output->buf[1] && output->buf[0]->addr[0] == output->buf[1]->addr[0]) ||
++	     !ops->dma_done(vfe, line, ready_buf->addr[0]))) {
++		output->dma_error = true;
++		if (output->state == VFE_OUTPUT_DRAINING)
++			complete(&output->dma_drained);
++		else
++			vb2_queue_error(&line->video_out.vb2_q);
++		goto out_unlock;
++	}
++	if (output->state == VFE_OUTPUT_DRAINING) {
++		/* Keep ownership of both buffers until the write masters stop. */
++		if (ready_buf && ++output->drain_count == output->gen2.active_num) {
++			vfe_stop_980_port(line);
++			complete(&output->dma_drained);
++		}
++		goto out_unlock;
++	}
+ 	if (!ready_buf) {
+ 		dev_err_ratelimited(vfe->camss->dev,
+ 				    "Missing ready buf %d!\n", output->state);
+@@ -722,6 +760,7 @@ static void vfe_arm_output_v2(struct vfe_line *line)
+ 	unsigned int i;
+ 
+ 	lockdep_assert_held(&vfe->output_lock);
++	output->dma_error = false;
+ 	output->state = VFE_OUTPUT_ON;
+ 	ops->vfe_wm_start(vfe, output->wm_idx[0], line);
+ 
+@@ -839,7 +878,8 @@ int vfe_queue_buffer_v2(struct camss_video *vid,
+ 
+ 	spin_lock_irqsave(&vfe->output_lock, flags);
+ 
+-	if (output->state == VFE_OUTPUT_ON &&
++	if (!READ_ONCE(vfe->camss->dma_faulted) &&
++	    output->state == VFE_OUTPUT_ON &&
+ 	    output->gen2.active_num < 2) {
+ 		output->buf[output->gen2.active_num++] = buf;
+ 		ops->vfe_wm_update(vfe, output->wm_idx[0],
+@@ -1101,6 +1141,53 @@ static int vfe_disable_output(struct vfe_line *line)
+ 	return vfe_reset(vfe);
+ }
+ 
++static int vfe_stop_980_dma(struct vfe_line *line)
++{
++	struct vfe_device *vfe = to_vfe(line);
++	struct vfe_output *output = &line->output;
++	struct camss *camss = vfe->camss;
++	unsigned long flags;
++	bool wait = false;
++	bool drained;
++
++	lockdep_assert_held(&camss->dma_lock);
++	spin_lock_irqsave(&vfe->output_lock, flags);
++	if (output->state == VFE_OUTPUT_RESERVED) {
++		/* No DMA address is published until start_output succeeds. */
++		spin_unlock_irqrestore(&vfe->output_lock, flags);
++		return 0;
++	}
++
++	if (!camss->dma_isolated && !output->dma_error && output->gen2.active_num) {
++		reinit_completion(&output->dma_drained);
++		output->drain_count = 0;
++		output->state = VFE_OUTPUT_DRAINING;
++		wait = true;
++	} else {
++		vfe_stop_980_port(line);
++	}
++	spin_unlock_irqrestore(&vfe->output_lock, flags);
++
++	if (wait)
++		wait_for_completion_timeout(&output->dma_drained, msecs_to_jiffies(1000));
++
++	spin_lock_irqsave(&vfe->output_lock, flags);
++	drained = output->state == VFE_OUTPUT_STOPPING && !output->dma_error &&
++		  (!wait || output->drain_count == output->gen2.active_num);
++	if (output->state == VFE_OUTPUT_DRAINING)
++		vfe_stop_980_port(line);
++	output->gen2.active_num = 0;
++	output->frame_timeline_initialized = false;
++	spin_unlock_irqrestore(&vfe->output_lock, flags);
++
++	synchronize_irq(vfe->irq);
++	synchronize_irq(camss->csid[vfe->id].irq);
++	if (!drained)
++		camss_wait_for_dma_isolation(camss);
++
++	return 0;
++}
++
+ /*
+  * vfe_disable - Disable streaming on VFE line
+  * @line: VFE line
+@@ -1113,7 +1200,10 @@ int vfe_disable(struct vfe_line *line)
+ 	int ret;
+ 
+ 	mutex_lock(&vfe->stream_lock);
+-	ret = vfe_disable_output(line);
++	if (vfe->camss->check_dma_stop)
++		ret = vfe_stop_980_dma(line);
++	else
++		ret = vfe_disable_output(line);
+ 	if (!ret) {
+ 		vfe_put_output(line);
+ 		vfe->stream_count--;
+@@ -2281,6 +2371,7 @@ int msm_vfe_subdev_init(struct camss *camss, struct vfe_device *vfe,
+ 		l->id = i;
+ 		init_completion(&l->output.sof);
+ 		init_completion(&l->output.reg_update);
++		init_completion(&l->output.dma_drained);
+ 
+ 		if (i == VFE_LINE_PIX) {
+ 			l->nformats = res->vfe.formats_pix->nformats;
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.h b/drivers/media/platform/qcom/camss/camss-vfe.h
+index cd1b5eede50d01c32b15dcba7f7bcfc90935328c..b868f172ed24e9d6236046bb2a42f4b10019b550 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.h
++++ b/drivers/media/platform/qcom/camss/camss-vfe.h
+@@ -46,6 +46,7 @@ enum vfe_output_state {
+ 	VFE_OUTPUT_SINGLE,
+ 	VFE_OUTPUT_CONTINUOUS,
+ 	VFE_OUTPUT_IDLE,
++	VFE_OUTPUT_DRAINING,
+ 	VFE_OUTPUT_STOPPING,
+ 	VFE_OUTPUT_ON,
+ };
+@@ -90,6 +91,9 @@ struct vfe_output {
+ 	int wait_reg_update;
+ 	struct completion sof;
+ 	struct completion reg_update;
++	struct completion dma_drained;
++	unsigned int drain_count;
++	bool dma_error;
+ };
+ 
+ /*
+@@ -149,6 +153,7 @@ struct vfe_hw_ops {
+ 	void (*vfe_buf_done)(struct vfe_device *vfe, int port_id);
+ 	/* Called with output_lock held, before a completed buffer is published. */
+ 	u32 (*check_bus_error)(struct vfe_device *vfe);
++	bool (*dma_done)(struct vfe_device *vfe, struct vfe_line *line, u32 addr);
+ 	void (*vfe_wm_update)(struct vfe_device *vfe, u8 wm, u32 addr,
+ 			      struct vfe_line *line);
+ 	/* PIX lines with an ISP: apply vfe_line.isp (called locked, streaming) */
+diff --git a/drivers/media/platform/qcom/camss/camss-video.c b/drivers/media/platform/qcom/camss/camss-video.c
+index f928d91aab04c16d5ceda4fd12c857abec76a278..924806407674ed7990c7001c1716d4a3a39f0b03 100644
+--- a/drivers/media/platform/qcom/camss/camss-video.c
++++ b/drivers/media/platform/qcom/camss/camss-video.c
+@@ -7,6 +7,8 @@
+  * Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
+  * Copyright (C) 2015-2018 Linaro Ltd.
+  */
++#include <linux/iommu/qcom-sm8750-camss.h>
++#include <linux/kexec.h>
+ #include <linux/overflow.h>
+ #include <linux/slab.h>
+ #include <media/media-entity.h>
+@@ -339,6 +341,19 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
+ 	unsigned int started = 0;
+ 	int ret;
+ 
++	guard(mutex)(&video->camss->dma_lock);
++	if (video->camss->check_dma_stop) {
++		if (video->camss->removing || video->camss->dma_faulted) {
++			ret = -EIO;
++			goto flush_buffers;
++		}
++		ret = qcom_smmu_camss_dma_prepare(video->camss->dev);
++		if (ret) {
++			dev_err(video->camss->dev, "Camera DMA isolation unavailable: %d\n", ret);
++			goto flush_buffers;
++		}
++	}
++
+ 	ret = video_device_pipeline_alloc_start(vdev);
+ 	if (ret < 0) {
+ 		dev_err(video->camss->dev, "Failed to start media pipeline: %d\n", ret);
+@@ -369,9 +384,16 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
+ 	}
+ 
+ 	if (video->ops->start_output) {
++		if (video->camss->check_dma_stop && !kexec_block_for_dma()) {
++			ret = -EBUSY;
++			goto error;
++		}
+ 		ret = video->ops->start_output(video);
+-		if (ret)
++		if (ret) {
++			if (video->camss->check_dma_stop)
++				kexec_unblock_for_dma();
+ 			goto error;
++		}
+ 	}
+ 
+ 	return 0;
+@@ -391,9 +413,12 @@ static void video_stop_streaming(struct vb2_queue *q)
+ 	struct camss_video *video = vb2_get_drv_priv(q);
+ 	struct video_device *vdev = &video->vdev;
+ 
++	guard(mutex)(&video->camss->dma_lock);
+ 	video_stop_subdevs(video, UINT_MAX);
+ 	video_device_pipeline_stop(vdev);
+ 	video->ops->flush_buffers(video, VB2_BUF_STATE_ERROR);
++	if (video->camss->check_dma_stop && !video->camss->dma_faulted)
++		kexec_unblock_for_dma();
+ }
+ 
+ static void video_unprepare_streaming(struct vb2_queue *q)
+@@ -802,6 +827,8 @@ int msm_video_register(struct camss_video *video, struct v4l2_device *v4l2_dev,
+ 	q->buf_struct_size = sizeof(struct camss_buffer);
+ 	q->dev = video->camss->dev;
+ 	q->lock = &video->q_lock;
++	if (video->camss->check_dma_stop)
++		q->min_queued_buffers = 1;
+ 	ret = vb2_queue_init(q);
+ 	if (ret < 0) {
+ 		dev_err(v4l2_dev->dev, "Failed to init vb2 queue: %d\n", ret);
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index 842bcf16339ddd70d4aecd87ad92a97f34a2fc56..9d380e260e48563fca75aaa21f2ff27fbb4e6d9f 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -8,7 +8,9 @@
+  * Copyright (C) 2015-2018 Linaro Ltd.
+  */
+ #include <linux/clk.h>
++#include <linux/delay.h>
+ #include <linux/interconnect.h>
++#include <linux/iommu/qcom-sm8750-camss.h>
+ #include <linux/media-bus-format.h>
+ #include <linux/media.h>
+ #include <linux/module.h>
+@@ -6129,8 +6131,11 @@ static int camss_probe(struct platform_device *pdev)
+ 		return -ENOMEM;
+ 
+ 	camss->res = of_device_get_match_data(dev);
++	camss->check_dma_stop = camss->res->version == CAMSS_8750 &&
++				of_machine_is_compatible("xiaomi,piano");
+ 
+ 	atomic_set(&camss->ref_count, 0);
++	mutex_init(&camss->dma_lock);
+ 	camss->dev = dev;
+ 	platform_set_drvdata(pdev, camss);
+ 
+@@ -6253,6 +6258,84 @@ void camss_delete(struct camss *camss)
+ 	pm_runtime_disable(camss->dev);
+ }
+ 
++void camss_wait_for_dma_isolation(struct camss *camss)
++{
++	unsigned int i, j;
++	int ret;
++
++	lockdep_assert_held(&camss->dma_lock);
++	if (camss->dma_isolated)
++		return;
++
++	WRITE_ONCE(camss->dma_faulted, true);
++	for (i = 0; i < camss->res->vfe_num; i++) {
++		struct vfe_device *vfe = &camss->vfe[i];
++		unsigned long flags;
++
++		/* Wait out any address publication already running on this VFE. */
++		spin_lock_irqsave(&vfe->output_lock, flags);
++		spin_unlock_irqrestore(&vfe->output_lock, flags);
++
++		for (j = 0; j < vfe->res->line_num; j++) {
++			struct camss_video *video = &vfe->line[j].video_out;
++
++			if (video_is_registered(&video->vdev))
++				vb2_queue_error(&video->vb2_q);
++		}
++	}
++
++	/*
++	 * VB2 reclaims every buffer when stop_streaming returns. Keep the
++	 * existing DMA mappings and pipeline power until the SMMU confirms
++	 * isolation, even if closing a queue must wait for a hardware fault.
++	 */
++	for (;;) {
++		ret = qcom_smmu_camss_dma_quiesce(camss->dev);
++		if (!ret)
++			break;
++
++		dev_err_ratelimited(camss->dev,
++				    "Camera DMA isolation failed (%d); retaining buffers and power\n",
++				    ret);
++		msleep(1000);
++	}
++
++	camss->dma_isolated = true;
++	dev_err(camss->dev, "Camera DMA isolated after stop failure; power cycle to restore cameras\n");
++}
++
++static void camss_stop_queues(struct camss *camss)
++{
++	unsigned int i, j;
++
++	if (!camss->check_dma_stop)
++		return;
++
++	mutex_lock(&camss->dma_lock);
++	camss->removing = true;
++	mutex_unlock(&camss->dma_lock);
++
++	for (i = 0; i < camss->res->vfe_num; i++) {
++		struct vfe_device *vfe = &camss->vfe[i];
++
++		for (j = 0; j < vfe->res->line_num; j++) {
++			struct camss_video *video = &vfe->line[j].video_out;
++
++			if (!video_is_registered(&video->vdev))
++				continue;
++			mutex_lock(&video->q_lock);
++			vb2_queue_release(&video->vb2_q);
++			video->vb2_q.owner = NULL;
++			mutex_unlock(&video->q_lock);
++		}
++	}
++}
++
++static void camss_shutdown(struct platform_device *pdev)
++{
++	camss_stop_queues(platform_get_drvdata(pdev));
++}
++
+ /*
+  * camss_remove - Remove CAMSS platform device
+  * @pdev: Pointer to CAMSS platform device
+@@ -6263,6 +6346,7 @@ static void camss_remove(struct platform_device *pdev)
+ {
+ 	struct camss *camss = platform_get_drvdata(pdev);
+ 
++	camss_stop_queues(camss);
+ 	v4l2_async_nf_unregister(&camss->notifier);
+ 	v4l2_async_nf_cleanup(&camss->notifier);
+ 	camss_unregister_entities(camss);
+@@ -6590,8 +6674,18 @@ static int __maybe_unused camss_runtime_resume(struct device *dev)
+ 	return 0;
+ }
+ 
++static int __maybe_unused camss_suspend(struct device *dev)
++{
++	struct camss *camss = dev_get_drvdata(dev);
++
++	if (READ_ONCE(camss->dma_faulted))
++		return -EBUSY;
++
++	return pm_runtime_force_suspend(dev);
++}
++
+ static const struct dev_pm_ops camss_pm_ops = {
+-	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend,
++	SET_SYSTEM_SLEEP_PM_OPS(camss_suspend,
+ 				pm_runtime_force_resume)
+ 	SET_RUNTIME_PM_OPS(camss_runtime_suspend, camss_runtime_resume, NULL)
+ };
+@@ -6599,6 +6693,7 @@ static const struct dev_pm_ops camss_pm_ops = {
+ static struct platform_driver qcom_camss_driver = {
+ 	.probe = camss_probe,
+ 	.remove = camss_remove,
++	.shutdown = camss_shutdown,
+ 	.driver = {
+ 		.name = "qcom-camss",
+ 		.of_match_table = camss_dt_match,
+diff --git a/drivers/media/platform/qcom/camss/camss.h b/drivers/media/platform/qcom/camss/camss.h
+index a846bddf7b5741407e03c4467b0935bc8561e577..d7dcb35304acb43250db7e40ada9bf5411a87cbc 100644
+--- a/drivers/media/platform/qcom/camss/camss.h
++++ b/drivers/media/platform/qcom/camss/camss.h
+@@ -135,6 +135,11 @@ struct camss {
+ 	struct vfe_device *vfe;
+ 	void __iomem *csid_wrapper_base;
+ 	atomic_t ref_count;
++	struct mutex dma_lock;
++	bool check_dma_stop;
++	bool dma_faulted;
++	bool dma_isolated;
++	bool removing;
+ 	int genpd_num;
+ 	struct device *genpd;
+ 	struct device_link *genpd_link;
+@@ -142,6 +147,8 @@ struct camss {
+ 	const struct camss_resources *res;
+ };
+ 
++void camss_wait_for_dma_isolation(struct camss *camss);
++
+ struct camss_camera_interface {
+ 	u8 csiphy_id;
+ 	struct csiphy_csi2_cfg csi2;

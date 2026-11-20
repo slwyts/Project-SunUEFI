@@ -1,0 +1,639 @@
+From f97c74fc0fc2db363cde6ca77fdb8792085f27b1 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Fri, 20 Nov 2026 16:38:28 +0800
+Subject: [PATCH] iommu/arm-smmu: Confirm isolation for Piano camera DMA
+
+Use the dedicated Camera HF QTB to fence the camera SID. Keep its
+interconnect and SMMU power references, verify that the route really
+faults, and finish invalidating the old translation context before
+allowing its caller to reclaim buffers. Retry incomplete hardware
+operations without reissuing a pending context sync. Keep the block
+until platform reset because the shared Lite queue has no independent
+reset sequence. The Xiaomi driver documents the QTB fence and vote.
+
+Link: https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/piano-w-oss/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c#L1194-L1232
+Assisted-by: LLM
+---
+ drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c | 326 +++++++++++++++++++++
+ drivers/iommu/arm/arm-smmu/arm-smmu-qcom.h |  16 +
+ drivers/iommu/arm/arm-smmu/arm-smmu.c      | 118 +++++++-
+ drivers/iommu/arm/arm-smmu/arm-smmu.h      |   1 +
+ include/linux/iommu/qcom-sm8750-camss.h    |  25 ++
+ 5 files changed, 479 insertions(+), 7 deletions(-)
+ create mode 100644 include/linux/iommu/qcom-sm8750-camss.h
+
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
+index 708934f0e23926786066cf2b4e13098880375eeb..f443bf688fe34db1999808c2b2d65cf33eb86548 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c
+@@ -6,10 +6,16 @@
+ #include <linux/acpi.h>
+ #include <linux/adreno-smmu-priv.h>
+ #include <linux/delay.h>
++#include <linux/interconnect.h>
++#include <linux/iopoll.h>
++#include <linux/module.h>
++#include <linux/of_address.h>
++#include <linux/of_platform.h>
+ #include <linux/of_device.h>
+ #include <linux/firmware/qcom/qcom_scm.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
++#include <linux/sizes.h>
+ 
+ #include "arm-smmu.h"
+ #include "arm-smmu-qcom.h"
+@@ -724,6 +730,326 @@ static const struct arm_smmu_impl qcom_smmu_500_impl = {
+ #endif
+ };
+ 
++#define QTB_FENCE_REQUEST	0x410
++#define QTB_FENCE_ACK		0x418
++#define QTB_FENCE_BIT		BIT_ULL(0)
++#define QTB_FENCE_TIMEOUT_US	100
++#define CAMSS_TLB_SYNC_TIMEOUT_US	1000
++#define SM8750_CAMSS_QTB_BASE	0x17d2000
++#define SM8750_CAMSS_QTB_SIZE	SZ_4K
++
++static int qcom_sm8750_camss_qtb_find(struct device_node *parent,
++				      struct resource *res)
++{
++	struct resource candidate;
++	unsigned int matches = 0;
++	u32 range[2], ports;
++
++	for_each_child_of_node_scoped(parent, child) {
++		if (!of_device_is_compatible(child, "qcom,qtb500") ||
++		    of_property_read_u32_array(child, "qcom,stream-id-range",
++					       range, ARRAY_SIZE(range)) ||
++		    range[0] > SM8750_CAMSS_SID ||
++		    SM8750_CAMSS_SID - range[0] >= range[1])
++			continue;
++
++		if (++matches != 1 || !of_device_is_available(child) ||
++		    range[0] != SM8750_CAMSS_SID || range[1] != SM8750_CAMSS_QTB_SIDS ||
++		    of_property_read_u32(child, "qcom,num-qtb-ports", &ports) ||
++		    ports != 2 || of_property_read_bool(child, "qcom,no-qtb-atos-halt") ||
++		    of_property_read_bool(child, "qcom,opt-out-tbu-halting") ||
++		    of_address_to_resource(child, 0, &candidate) ||
++		    candidate.start != SM8750_CAMSS_QTB_BASE ||
++		    resource_size(&candidate) != SM8750_CAMSS_QTB_SIZE)
++			return -EINVAL;
++
++		*res = candidate;
++	}
++
++	return matches ? 0 : -ENOENT;
++}
++
++static int qcom_sm8750_camss_qtb_resource(struct arm_smmu_device *smmu,
++					  struct resource *res)
++{
++	struct device_node *np = smmu->dev->of_node;
++	struct device_node *parent __free(device_node) = of_get_parent(np);
++	struct resource active, legacy, candidate;
++	int ret;
++
++	ret = qcom_sm8750_camss_qtb_find(np, res);
++	if (ret != -ENOENT)
++		return ret;
++
++	/*
++	 * Piano retains the vendor QTB children under an unbound qsmmuv500
++	 * node that describes the same physical SMMU.
++	 */
++	if (!parent || of_address_to_resource(np, 0, &active))
++		return -ENODEV;
++
++	for_each_child_of_node_scoped(parent, sibling) {
++		struct platform_device *pdev;
++		bool bound;
++
++		if (!of_device_is_compatible(sibling, "qcom,qsmmu-v500") ||
++		    of_address_to_resource(sibling, 0, &legacy) ||
++		    legacy.start != active.start || legacy.end != active.end)
++			continue;
++
++		if (ret != -ENOENT)
++			return -EINVAL;
++
++		pdev = of_find_device_by_node(sibling);
++		bound = pdev && READ_ONCE(pdev->dev.driver);
++		if (pdev)
++			put_device(&pdev->dev);
++		if (bound)
++			return -EBUSY;
++
++		ret = qcom_sm8750_camss_qtb_find(sibling, &candidate);
++		if (ret && ret != -ENOENT)
++			return ret;
++		if (!ret)
++			*res = candidate;
++	}
++
++	return ret == -ENOENT ? -ENODEV : ret;
++}
++
++static int qcom_sm8750_camss_qtb_map(struct qcom_smmu *qsmmu)
++{
++	struct resource res;
++	void __iomem *qtb;
++	int ret;
++
++	if (qsmmu->camss_qtb)
++		return 0;
++
++	ret = qcom_sm8750_camss_qtb_resource(&qsmmu->smmu, &res);
++	if (ret)
++		return ret;
++
++	/* The QTB registers sit inside the multimedia NoC aperture. */
++	qtb = devm_ioremap(qsmmu->smmu.dev, res.start, resource_size(&res));
++	if (!qtb)
++		return -ENOMEM;
++
++	qsmmu->camss_qtb = qtb;
++	return 0;
++}
++
++static void qcom_sm8750_camss_terminate_stall(struct arm_smmu_domain *domain)
++{
++	struct arm_smmu_device *smmu = domain->smmu;
++	u8 cb = domain->cfg.cbndx;
++	u32 sctlr, fsr;
++
++	fsr = arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_FSR);
++	if (!(fsr & ARM_SMMU_CB_FSR_SS))
++		return;
++
++	/* The QTB cannot acknowledge until stalled requests are terminated. */
++	sctlr = arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_SCTLR);
++	arm_smmu_cb_write(smmu, cb, ARM_SMMU_CB_SCTLR,
++			  sctlr & ~(ARM_SMMU_SCTLR_CFCFG | ARM_SMMU_SCTLR_CFIE));
++	arm_smmu_cb_write(smmu, cb, ARM_SMMU_CB_FSR, fsr);
++	/* Clear the fault before terminating the stalled transaction. */
++	wmb();
++	arm_smmu_cb_write(smmu, cb, ARM_SMMU_CB_RESUME, ARM_SMMU_RESUME_TERMINATE);
++	arm_smmu_cb_write(smmu, cb, ARM_SMMU_CB_SCTLR, sctlr);
++}
++
++static int qcom_sm8750_camss_tlb_drain(struct arm_smmu_domain *domain)
++{
++	struct arm_smmu_device *smmu = domain->smmu;
++	struct qcom_smmu *qsmmu = to_qcom_smmu(smmu);
++	u8 cb = domain->cfg.cbndx;
++	unsigned long flags;
++	u32 status;
++	int ret;
++
++	lockdep_assert_held(&smmu->stream_map_mutex);
++	spin_lock_irqsave(&domain->cb_lock, flags);
++	if (!qsmmu->camss_tlb_sync_pending) {
++		/* Order the confirmed FAULT route before invalidating translations. */
++		wmb();
++		arm_smmu_cb_write(smmu, cb, ARM_SMMU_CB_S1_TLBIASID, domain->cfg.asid);
++		arm_smmu_cb_write(smmu, cb, ARM_SMMU_CB_TLBSYNC, QCOM_DUMMY_VAL);
++		qsmmu->camss_tlb_sync_pending = true;
++	}
++	/* Retry a pending sync without queuing another invalidation. */
++	ret = read_poll_timeout_atomic(arm_smmu_cb_read, status,
++				       !(status & ARM_SMMU_sTLBGSTATUS_GSACTIVE),
++				       1, CAMSS_TLB_SYNC_TIMEOUT_US, false,
++				       smmu, cb, ARM_SMMU_CB_TLBSTATUS);
++	if (!ret)
++		qsmmu->camss_tlb_sync_pending = false;
++	spin_unlock_irqrestore(&domain->cb_lock, flags);
++	return ret;
++}
++
++int qcom_smmu_camss_quiesce(struct device *dev, struct arm_smmu_domain *domain,
++			    struct arm_smmu_master_cfg *cfg, u32 id, bool prepare)
++{
++	struct arm_smmu_device *smmu = cfg->smmu;
++	struct qcom_smmu *qsmmu = to_qcom_smmu(smmu);
++	int idx = cfg->smendx[0];
++	struct arm_smmu_s2cr *route;
++	unsigned int i;
++	struct icc_path *path = NULL;
++	void __iomem *qtb;
++	u8 cb;
++	u64 value;
++	u32 smr, s2cr;
++	int ret;
++	bool armed, runtime_pm;
++
++	if (id != SM8750_CAMSS_SID || smmu->impl != &qcom_smmu_500_impl ||
++	    !smmu->smrs || idx < 0 || idx >= smmu->num_mapping_groups)
++		return -EOPNOTSUPP;
++
++	if (READ_ONCE(smmu->camss_dma_quarantined) && prepare)
++		return -EIO;
++
++	runtime_pm = pm_runtime_enabled(smmu->dev);
++	if (runtime_pm) {
++		ret = pm_runtime_resume_and_get(smmu->dev);
++		if (ret < 0)
++			return ret;
++	}
++
++	mutex_lock(&domain->init_mutex);
++	mutex_lock(&smmu->stream_map_mutex);
++	armed = smmu->camss_dma_quarantined;
++	if (armed && prepare) {
++		ret = -EIO;
++		goto unlock;
++	}
++	cb = domain->cfg.cbndx;
++	route = &smmu->s2crs[idx];
++	if (domain->smmu != smmu || domain->stage != ARM_SMMU_DOMAIN_S1 ||
++	    domain->cfg.cbar != CBAR_TYPE_S1_TRANS_S2_BYPASS ||
++	    domain->cfg.fmt != ARM_SMMU_CTX_FMT_AARCH64 ||
++	    cb >= smmu->num_context_banks || !domain->pgtbl_ops ||
++	    smmu->cbs[cb].cfg != &domain->cfg ||
++	    route->count != 1 || route->boot || !smmu->smrs[idx].valid ||
++	    smmu->smrs[idx].id != id || smmu->smrs[idx].mask) {
++		ret = -EOPNOTSUPP;
++		goto unlock;
++	}
++
++	/* A QTB fence applies to its entire SID range. */
++	for (i = 0; i < smmu->num_mapping_groups; i++) {
++		if (i != idx && sm8750_camss_qtb_smr(&smmu->smrs[i])) {
++			ret = -EBUSY;
++			goto unlock;
++		}
++	}
++
++	smr = arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_SMR(idx));
++	s2cr = arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_S2CR(idx));
++	/* Qualcomm SM8750 routes use the legacy SMR valid bit. */
++	if (smr != (ARM_SMMU_SMR_VALID | id) ||
++	    (arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_sCR0) & ARM_SMMU_sCR0_CLIENTPD) ||
++	    !(arm_smmu_cb_read(smmu, cb, ARM_SMMU_CB_SCTLR) & ARM_SMMU_SCTLR_M) ||
++	    (!armed && (route->type != S2CR_TYPE_TRANS || route->cbndx != cb ||
++			FIELD_GET(ARM_SMMU_S2CR_TYPE, s2cr) != S2CR_TYPE_TRANS ||
++			FIELD_GET(ARM_SMMU_S2CR_CBNDX, s2cr) != cb))) {
++		ret = -ESTALE;
++		goto unlock;
++	}
++
++	if (!armed) {
++		ret = qcom_sm8750_camss_qtb_map(qsmmu);
++		if (ret)
++			goto unlock;
++
++		path = of_icc_get(dev, "hf_mnoc");
++		if (IS_ERR_OR_NULL(path)) {
++			ret = path ? PTR_ERR(path) : -ENODEV;
++			path = NULL;
++			goto unlock;
++		}
++		/* The original QTB driver votes this path before any MMIO. */
++		ret = icc_set_bw(path, 0, 1000);
++		if (ret)
++			goto unlock;
++
++		qtb = qsmmu->camss_qtb;
++		if ((readq(qtb + QTB_FENCE_REQUEST) | readq(qtb + QTB_FENCE_ACK)) &
++		    QTB_FENCE_BIT) {
++			ret = -EBUSY;
++			goto unlock;
++		}
++		if (prepare) {
++			ret = 0;
++			goto unlock;
++		}
++
++		/* Keep both power references until the platform is reset. */
++		qsmmu->camss_qtb_path = path;
++		path = NULL;
++		if (runtime_pm)
++			pm_runtime_get_noresume(smmu->dev);
++		__module_get(THIS_MODULE);
++		WRITE_ONCE(smmu->camss_dma_quarantined, true);
++	}
++
++	qtb = qsmmu->camss_qtb;
++	value = readq(qtb + QTB_FENCE_REQUEST);
++	if (!(value & QTB_FENCE_BIT)) {
++		qsmmu->camss_tlb_sync_pending = false;
++		writeq(value | QTB_FENCE_BIT, qtb + QTB_FENCE_REQUEST);
++	}
++	qcom_sm8750_camss_terminate_stall(domain);
++	ret = readq_poll_timeout_atomic(qtb + QTB_FENCE_ACK, value,
++					value & QTB_FENCE_BIT, 1,
++					QTB_FENCE_TIMEOUT_US);
++	if (ret) {
++		qsmmu->camss_tlb_sync_pending = false;
++		dev_err_ratelimited(dev, "Camera DMA fence did not acknowledge\n");
++		goto unlock;
++	}
++
++	if (FIELD_GET(ARM_SMMU_S2CR_TYPE, s2cr) != S2CR_TYPE_FAULT) {
++		qsmmu->camss_tlb_sync_pending = false;
++		route->type = S2CR_TYPE_FAULT;
++		route->cbndx = 0;
++		qcom_smmu_write_s2cr(smmu, idx);
++	}
++	s2cr = arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_S2CR(idx));
++	if (FIELD_GET(ARM_SMMU_S2CR_TYPE, s2cr) != S2CR_TYPE_FAULT ||
++	    arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_SMR(idx)) != smr) {
++		dev_err_ratelimited(dev, "Camera DMA could not be blocked: S2CR %#x\n",
++				    s2cr);
++		ret = -EIO;
++		goto unlock;
++	}
++
++	ret = qcom_sm8750_camss_tlb_drain(domain);
++	if (ret) {
++		dev_err_ratelimited(dev, "Camera DMA translation sync timed out\n");
++		goto unlock;
++	}
++	if (!(readq(qtb + QTB_FENCE_ACK) & QTB_FENCE_BIT) ||
++	    !(readq(qtb + QTB_FENCE_REQUEST) & QTB_FENCE_BIT) ||
++	    (arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_sCR0) & ARM_SMMU_sCR0_CLIENTPD) ||
++	    arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_S2CR(idx)) != s2cr) {
++		dev_err_ratelimited(dev, "Camera DMA isolation changed during sync\n");
++		ret = -EIO;
++		goto unlock;
++	}
++	dev_info_once(dev, "Camera DMA isolated (stream %#x, context %u)\n", id, cb);
++unlock:
++	mutex_unlock(&smmu->stream_map_mutex);
++	mutex_unlock(&domain->init_mutex);
++	icc_put(path);
++	if (runtime_pm)
++		pm_runtime_put_autosuspend(smmu->dev);
++	return ret;
++}
++
+ static const struct arm_smmu_impl sdm845_smmu_500_impl = {
+ 	.init_context = qcom_smmu_init_context,
+ 	.cfg_probe = qcom_smmu_cfg_probe,
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.h b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.h
+index 8addd453f5f1c9659fbfbc68a84a3ab1267b356e..68f00fd8d1bd9b097f4fbbfd1b5f953e18d5c482 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.h
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.h
+@@ -6,12 +6,18 @@
+ #ifndef _ARM_SMMU_QCOM_H
+ #define _ARM_SMMU_QCOM_H
+ 
++#define SM8750_CAMSS_SID		0x1c00
++#define SM8750_CAMSS_QTB_SIDS	0x400
++
+ struct qcom_smmu {
+ 	struct arm_smmu_device smmu;
+ 	const struct qcom_smmu_match_data *data;
+ 	bool bypass_quirk;
+ 	u8 bypass_cbndx;
+ 	u32 stall_enabled;
++	void __iomem *camss_qtb;
++	struct icc_path *camss_qtb_path;
++	bool camss_tlb_sync_pending;
+ };
+ 
+ enum qcom_smmu_impl_reg_offset {
+@@ -31,6 +37,16 @@ struct qcom_smmu_match_data {
+ 	const struct of_device_id * const client_match;
+ };
+ 
++int qcom_smmu_camss_quiesce(struct device *dev, struct arm_smmu_domain *domain,
++			    struct arm_smmu_master_cfg *cfg, u32 id, bool prepare);
++
++static inline bool sm8750_camss_qtb_smr(const struct arm_smmu_smr *smr)
++{
++	u16 mask = smr->mask | (SM8750_CAMSS_QTB_SIDS - 1);
++
++	return smr->valid && !((smr->id ^ SM8750_CAMSS_SID) & ~mask);
++}
++
+ irqreturn_t qcom_smmu_context_fault(int irq, void *dev);
+ 
+ #ifdef CONFIG_ARM_SMMU_QCOM_DEBUG
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu.c b/drivers/iommu/arm/arm-smmu/arm-smmu.c
+index 7491bc49f8708b6ed5f5f9fa6b50b8e4fc29bf03..0d04562916b7f57bb1f3ef6332164794a2372355 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu.c
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu.c
+@@ -25,6 +25,7 @@
+ #include <linux/err.h>
+ #include <linux/interrupt.h>
+ #include <linux/io.h>
++#include <linux/iommu/qcom-sm8750-camss.h>
+ #include <linux/iopoll.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+@@ -39,6 +40,7 @@
+ #include <linux/fsl/mc.h>
+ 
+ #include "arm-smmu.h"
++#include "arm-smmu-qcom.h"
+ #include "arm-smmu-qcom-handoff.h"
+ #include "../../dma-iommu.h"
+ 
+@@ -1145,15 +1147,110 @@ static void arm_smmu_master_free_smes(struct arm_smmu_master_cfg *cfg,
+ 	mutex_unlock(&smmu->stream_map_mutex);
+ }
+ 
+-static void arm_smmu_master_install_s2crs(struct arm_smmu_master_cfg *cfg,
+-					  enum arm_smmu_s2cr_type type,
+-					  u8 cbndx, struct iommu_fwspec *fwspec)
++#if IS_ENABLED(CONFIG_ARM_SMMU_QCOM)
++static bool arm_smmu_is_sm8750_camss(struct device *dev,
++				     const struct iommu_fwspec *fwspec)
++{
++	return of_device_is_compatible(dev->of_node, "qcom,sm8750-camss") &&
++	       fwspec && fwspec->num_ids == 1 &&
++	       of_device_is_compatible(to_of_node(fwspec->iommu_fwnode),
++				       "qcom,sm8750-smmu-500");
++}
++
++struct arm_smmu_camss_dma_request {
++	struct device *dev;
++	bool prepare;
++	int result;
++};
++
++static int arm_smmu_camss_dma(struct device *dev, void *data)
++{
++	struct arm_smmu_camss_dma_request *request = data;
++	struct iommu_fwspec *fwspec;
++	struct arm_smmu_master_cfg *cfg;
++	struct iommu_domain *domain;
++
++	if (dev != request->dev)
++		return 0;
++
++	fwspec = dev_iommu_fwspec_get(dev);
++	cfg = dev_iommu_priv_get(dev);
++	domain = iommu_driver_get_domain_for_dev(dev);
++	if (!domain || domain->owner != &arm_smmu_ops ||
++	    !iommu_is_dma_domain(domain) || !cfg ||
++	    !arm_smmu_is_sm8750_camss(dev, fwspec))
++		return -EOPNOTSUPP;
++
++	request->result = qcom_smmu_camss_quiesce(dev, to_smmu_domain(domain),
++						  cfg, fwspec->ids[0],
++						  request->prepare);
++	return request->result;
++}
++
++static int arm_smmu_camss_dma_request(struct device *dev, bool prepare)
++{
++	struct arm_smmu_camss_dma_request request = {
++		.dev = dev,
++		.prepare = prepare,
++		.result = -ENODEV,
++	};
++	struct iommu_group *group;
++	int ret;
++
++	group = iommu_group_get(dev);
++	if (!group)
++		return -ENODEV;
++
++	ret = iommu_group_for_each_dev(group, &request, arm_smmu_camss_dma);
++	iommu_group_put(group);
++	return ret ?: request.result;
++}
++
++/**
++ * qcom_smmu_camss_dma_prepare() - Check CAMSS DMA and its recovery path
++ * @dev: bound SM8750 CAMSS device
++ *
++ * Call before submitting DMA, including after binding the CAMSS driver again.
++ */
++int qcom_smmu_camss_dma_prepare(struct device *dev)
++{
++	return arm_smmu_camss_dma_request(dev, true);
++}
++EXPORT_SYMBOL_GPL(qcom_smmu_camss_dma_prepare);
++
++/**
++ * qcom_smmu_camss_dma_quiesce() - Quarantine SM8750 CAMSS until reset
++ * @dev: bound SM8750 CAMSS device
++ *
++ * The caller must stop submitting buffers and keep all existing DMA mappings
++ * alive until this function returns success. A failed armed quarantine holds
++ * its resources and may be retried. Success leaves CAMSS isolated until reset.
++ */
++int qcom_smmu_camss_dma_quiesce(struct device *dev)
++{
++	return arm_smmu_camss_dma_request(dev, false);
++}
++EXPORT_SYMBOL_GPL(qcom_smmu_camss_dma_quiesce);
++#endif
++
++static int arm_smmu_master_install_s2crs(struct arm_smmu_master_cfg *cfg,
++					 enum arm_smmu_s2cr_type type,
++					 u8 cbndx, struct iommu_fwspec *fwspec)
+ {
+ 	struct arm_smmu_device *smmu = cfg->smmu;
+ 	struct arm_smmu_s2cr *s2cr = smmu->s2crs;
+ 	int i, idx;
+ 
+ 	mutex_lock(&smmu->stream_map_mutex);
++	if (smmu->camss_dma_quarantined && smmu->smrs && type != S2CR_TYPE_FAULT) {
++		for_each_cfg_sme(cfg, fwspec, i, idx) {
++			if (sm8750_camss_qtb_smr(&smmu->smrs[idx])) {
++				mutex_unlock(&smmu->stream_map_mutex);
++				return -EBUSY;
++			}
++		}
++	}
++
+ 	for_each_cfg_sme(cfg, fwspec, i, idx) {
+ 		if (type == s2cr[idx].type && cbndx == s2cr[idx].cbndx)
+ 			continue;
+@@ -1171,6 +1268,7 @@ static void arm_smmu_master_install_s2crs(struct arm_smmu_master_cfg *cfg,
+ 		arm_smmu_write_s2cr(smmu, idx);
+ 	}
+ 	mutex_unlock(&smmu->stream_map_mutex);
++	return 0;
+ }
+ 
+ static int arm_smmu_attach_dev(struct iommu_domain *domain, struct device *dev,
+@@ -1214,8 +1312,8 @@ static int arm_smmu_attach_dev(struct iommu_domain *domain, struct device *dev,
+ 	}
+ 
+ 	/* Looks ok, so add the device to the domain */
+-	arm_smmu_master_install_s2crs(cfg, S2CR_TYPE_TRANS,
+-				      smmu_domain->cfg.cbndx, fwspec);
++	ret = arm_smmu_master_install_s2crs(cfg, S2CR_TYPE_TRANS,
++					    smmu_domain->cfg.cbndx, fwspec);
+ rpm_put:
+ 	arm_smmu_rpm_put(smmu);
+ 	return ret;
+@@ -1303,8 +1401,7 @@ static int arm_smmu_attach_dev_type(struct device *dev,
+ 		if (ret)
+ 			goto rpm_put;
+ 	}
+-	arm_smmu_master_install_s2crs(cfg, type, 0, fwspec);
+-	ret = 0;
++	ret = arm_smmu_master_install_s2crs(cfg, type, 0, fwspec);
+ rpm_put:
+ 	arm_smmu_rpm_put(smmu);
+ 	return ret;
+@@ -2655,6 +2752,10 @@ static void arm_smmu_device_shutdown(struct platform_device *pdev)
+ {
+ 	struct arm_smmu_device *smmu = platform_get_drvdata(pdev);
+ 
++	/* CLIENTPD bypasses even a faulting stream. Preserve the CAMSS barrier. */
++	if (READ_ONCE(smmu->camss_dma_quarantined))
++		return;
++
+ 	if (!bitmap_empty(smmu->context_map, ARM_SMMU_MAX_CBS))
+ 		dev_notice(&pdev->dev, "disabling translation\n");
+ 
+@@ -2728,6 +2829,9 @@ static int __maybe_unused arm_smmu_pm_suspend(struct device *dev)
+ 	int ret = 0;
+ 	struct arm_smmu_device *smmu = dev_get_drvdata(dev);
+ 
++	if (READ_ONCE(smmu->camss_dma_quarantined))
++		return -EBUSY;
++
+ 	if (pm_runtime_suspended(dev))
+ 		goto clk_unprepare;
+ 
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu.h b/drivers/iommu/arm/arm-smmu/arm-smmu.h
+index 772f03d07df07ab201d151d0764d8ce7a4d7d283..818afe769a0097582c77057ec80a715bce388741 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu.h
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu.h
+@@ -329,6 +329,7 @@ struct arm_smmu_device {
+ 	struct arm_smmu_smr		*smrs;
+ 	struct arm_smmu_s2cr		*s2crs;
+ 	struct mutex			stream_map_mutex;
++	bool			camss_dma_quarantined;
+ 
+ 	unsigned long			va_size;
+ 	unsigned long			ipa_size;
+diff --git a/include/linux/iommu/qcom-sm8750-camss.h b/include/linux/iommu/qcom-sm8750-camss.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..212249363055ae73fc0b0757544a21dbce2f6d5b
+--- /dev/null
++++ b/include/linux/iommu/qcom-sm8750-camss.h
+@@ -0,0 +1,25 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef _LINUX_IOMMU_QCOM_SM8750_CAMSS_H
++#define _LINUX_IOMMU_QCOM_SM8750_CAMSS_H
++
++#include <linux/errno.h>
++#include <linux/kconfig.h>
++
++struct device;
++
++#if IS_ENABLED(CONFIG_ARM_SMMU_QCOM) && IS_REACHABLE(CONFIG_ARM_SMMU)
++int qcom_smmu_camss_dma_prepare(struct device *dev);
++int qcom_smmu_camss_dma_quiesce(struct device *dev);
++#else
++static inline int qcom_smmu_camss_dma_prepare(struct device *dev)
++{
++	return -EOPNOTSUPP;
++}
++
++static inline int qcom_smmu_camss_dma_quiesce(struct device *dev)
++{
++	return -EOPNOTSUPP;
++}
++#endif
++
++#endif

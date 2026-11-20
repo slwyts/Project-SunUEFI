@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "e7dacac71c0672d84cf44c2c5be91bf3d288a161",
-  "original_target_commit": "bf45313cd6247c1d18606ad70b302fa4b134fb04",
+  "target_tree": "da6b2adfb7ecf338cfd3e53644f37ce7d6bec741",
+  "original_target_commit": "ac3b0fb55d429e1872a3214df6e0fd42cac43d09",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -1876,6 +1876,45 @@
         "status": "downstream",
         "url": "https://github.com/torvalds/linux/commit/42bd6f59ae90244484746696aabcafc0003f59c7",
         "drop_when": "The selected V4L2 flash driver preserves the committed torch setting across readback, TRY, reopening and failed LED writes."
+      }
+    },
+    {
+      "file": "0145-LOCAL-kexec-block-handoff-while-device-dma-is-active.patch",
+      "sha256": "5f156b0b725cbbb8e0db90b1ba0a57896f2f1cbfbb9af6b8b9831166a0bb338f",
+      "original_commit": "23b3b84a027ee86555d8ca35c576eb6fc7cf4060",
+      "original_parent": "bf45313cd6247c1d18606ad70b302fa4b134fb04",
+      "committer_date": "2026-11-20T16:38:28+08:00",
+      "tree": "ea4625403708f9e82a7040c78e3ca0fee3f42c50",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/kexec_core.c",
+        "drop_when": "The kernel provides equivalent protection for both ordinary and crash kexec."
+      }
+    },
+    {
+      "file": "0146-LOCAL-iommu-arm-smmu-isolate-piano-camera-dma.patch",
+      "sha256": "45d2b01c5fcc2c118c0acfb3cc5b09d669bbfd88e029cfebad36d3e1f2e0e228",
+      "original_commit": "f97c74fc0fc2db363cde6ca77fdb8792085f27b1",
+      "original_parent": "23b3b84a027ee86555d8ca35c576eb6fc7cf4060",
+      "committer_date": "2026-11-20T16:38:28+08:00",
+      "tree": "564c97879202d86e1fab2b72462fcd5a0a99af4d",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/piano-w-oss/drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c#L1194-L1232",
+        "drop_when": "The supported IOMMU driver can confirm that SM8750 camera DMA is isolated."
+      }
+    },
+    {
+      "file": "0147-LOCAL-media-camss-confirm-piano-dma-stop.patch",
+      "sha256": "bf4508b057b22467d5bdd6b5c1d297bd8750c5af12599777adf87787be9bdf0b",
+      "original_commit": "ac3b0fb55d429e1872a3214df6e0fd42cac43d09",
+      "original_parent": "f97c74fc0fc2db363cde6ca77fdb8792085f27b1",
+      "committer_date": "2026-11-20T16:38:28+08:00",
+      "tree": "da6b2adfb7ecf338cfd3e53644f37ce7d6bec741",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/MiCode/vendor_qcom_opensource_camera-kernel/blob/piano-w-oss/drivers/cam_isp/isp_hw_mgr/isp_hw/vfe_hw/vfe17x/cam_tfe980.h",
+        "drop_when": "The SM8750 CAMSS driver verifies DMA completion or confirmed hardware isolation before teardown."
       }
     }
   ],
