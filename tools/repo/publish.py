@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build signed APT/pacman indexes and publish packages to R2 without pruning."""
+"""Build signed APT/pacman indexes and publish packages to R2 without deleting archives."""
 import argparse
 import gzip
 import hashlib
@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 REPOSITORIES = ('apt', 'sunuefi', 'sunuefi-steamos')
 APT_INDEXES = ('main/binary-arm64/Packages', 'main/binary-arm64/Packages.gz')
 APT_INDEX_HASHES = ('SHA512', 'SHA256')
+PACMAN_INDEX_REPLACEMENTS = {'libpipewire': 'pipewire-v4l2-source'}
 KERNEL_META_VERSION = re.compile(
     r'([0-9]+\.[0-9]+\.[0-9]+(?:~?rc[0-9]+)?)'
     r'\+([0-9]+)\.[0-9]+\.([0-9a-f]{12}(?:\.[0-9a-f]{12})?)-[1-9][0-9]*')
@@ -224,10 +225,15 @@ def apt_index(work, packages, key, store=None, *, digests=None):
     return prefix, immutable, mutable
 
 
-def pacman_entries(database):
+def pacman_has_relation(record, field, name):
+    section = re.search(rf'^%{field}%\n(.+?)(?:\n\n|\Z)', record, re.M | re.S)
+    return section is not None and name in section[1].splitlines()
+
+
+def pacman_metadata(database):
     # The builder's Python tarfile cannot read this zstd archive directly.
     data = run('bsdtar', '-cf', '-', '@' + str(database), capture_output=True).stdout
-    selected = {}
+    selected, retired = {}, set()
     with tarfile.open(fileobj=io.BytesIO(data), mode='r:') as archive:
         for member in archive:
             if not member.name.endswith('/desc'):
@@ -245,12 +251,16 @@ def pacman_entries(database):
             if name in selected:
                 raise ValueError(f'{database.name}: multiple entries for {name}')
             selected[name] = (version, filename, digest)
-    return selected
+            legacy = PACMAN_INDEX_REPLACEMENTS.get(name)
+            if legacy and all(pacman_has_relation(record, field, legacy)
+                              for field in ('REPLACES', 'CONFLICTS')):
+                retired.add(legacy)
+    return selected, retired & selected.keys()
 
 
 def check_pacman_selection(database, expected):
     """Check the archives pacman will select from the generated database."""
-    selected = pacman_entries(database)
+    selected, _ = pacman_metadata(database)
     for name, (version, filename, digest) in expected.items():
         if name not in selected:
             raise ValueError(f'{database.name}: {name} {version} is missing from the index')
@@ -306,11 +316,17 @@ def pacman_index(work, packages, name, key, store=None, *, digests=None):
         verify(target, signature, keyring)
         immutable.extend((target, signature))
     if digests is not None and db.is_file() and 'linux-piano' in expected:
-        indexed = pacman_entries(db).get('linux-piano')
+        previous, _ = pacman_metadata(db)
+        indexed = previous.get('linux-piano')
         if indexed:
             check_kernel_epoch('linux-piano', expected['linux-piano'][0], [indexed[0]])
     run('repo-add', '--prevent-downgrade', '--include-sigs', '--sign', '--key', key, db,
         *[work / package.name for package in packages])
+    _, retired = pacman_metadata(db)
+    if retired:
+        # Older installations must not see an upgrade of the conflicting package.
+        # Keep its archive and prior signed indexes available for rollback.
+        run('repo-remove', '--sign', '--key', key, db, *sorted(retired))
     if store:
         for archive, signature in archives:
             verify(archive, signature, keyring)

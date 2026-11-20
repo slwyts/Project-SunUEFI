@@ -92,13 +92,16 @@ class RepoPublishTests(unittest.TestCase):
                        check=True, capture_output=True)
         return package
 
-    def pacman(self, version, name='fixture'):
+    def pacman(self, version, name='fixture', *, replaces=(), conflicts=()):
         path = self.root / (name + '-' + version + '-1-any.pkg.tar.gz')
         with tarfile.open(path, 'w:gz') as archive:
+            relations = ''.join(f'{field} = {target}\n'
+                                for field, targets in (('replaces', replaces), ('conflict', conflicts))
+                                for target in targets)
             data = (f'pkgname = {name}\npkgbase = {name}\npkgver = {version}-1\n'
                     'pkgdesc = Fixture\nurl = https://example.invalid\n'
                     'builddate = 1\npackager = Fixture\nsize = 8\n'
-                    'arch = any\nlicense = MIT\n').encode()
+                    'arch = any\nlicense = MIT\n' + relations).encode()
             info = tarfile.TarInfo('.PKGINFO')
             info.size = len(data)
             archive.addfile(info, io.BytesIO(data))
@@ -122,6 +125,43 @@ class RepoPublishTests(unittest.TestCase):
                          self.store.objects[prefix + 'sunuefi.db.tar.zst'])
         immutable = [index for index, (_, fixed) in enumerate(self.store.writes) if fixed]
         self.assertLess(immutable[-1], len(self.store.writes) - 1)
+
+    @unittest.skipUnless(all(shutil.which(tool) for tool in ('repo-add', 'repo-remove', 'bsdtar')),
+                         'pacman tools required')
+    def test_pacman_retires_replaced_index_entries_without_removing_archives(self):
+        base, overlay = 'sunuefi', 'sunuefi-steamos'
+        prefix = f'pacman/{base}/os/aarch64/'
+        overlay_prefix = f'pacman/{overlay}/os/aarch64/'
+        plugin = self.pacman('2', 'pipewire-v4l2-source')
+        lib = self.pacman('2', 'libpipewire', replaces=('pipewire-v4l2-source',),
+                          conflicts=('pipewire-v4l2-source',))
+        profiles = self.pacman('1', 'power-profiles-daemon')
+        tuned_ppd = self.pacman('2', 'tuned-ppd', replaces=('power-profiles-daemon',),
+                                conflicts=('power-profiles-daemon',))
+        repo.publish(self.args(base, [plugin, profiles, tuned_ppd], 'before'), self.store)
+        repo.publish(self.args(overlay, [plugin], 'overlay'), self.store)
+        old_index = self.store.objects[prefix + base + '.db']
+        old_signature = self.store.objects[prefix + plugin.name + '.sig']
+        overlay_index = self.store.objects[overlay_prefix + overlay + '.db']
+
+        with patch.object(products, 'verify_public'):
+            products.publish_products({base: {lib: repo.sha(lib)}}, self.key,
+                                      self.root / 'after', self.store)
+            for suffix in ('.db', '.files'):
+                path = self.root / 'after' / base / (base + suffix)
+                entries, _ = repo.pacman_metadata(path)
+                self.assertEqual(set(entries), {'libpipewire', 'power-profiles-daemon', 'tuned-ppd'})
+            before_replay = list(self.store.writes)
+            with self.assertRaisesRegex(ValueError, 'pipewire-v4l2-source .* missing from the index'):
+                products.publish_products({base: {plugin: repo.sha(plugin)}}, self.key,
+                                          self.root / 'replay', self.store)
+            self.assertEqual(self.store.writes, before_replay)
+
+        self.assertEqual(self.store.objects[prefix + plugin.name], plugin.read_bytes())
+        self.assertEqual(self.store.objects[prefix + plugin.name + '.sig'], old_signature)
+        self.assertEqual(self.store.objects[prefix + 'by-hash/SHA256/' +
+                                           hashlib.sha256(old_index).hexdigest()], old_index)
+        self.assertEqual(self.store.objects[overlay_prefix + overlay + '.db'], overlay_index)
 
     @unittest.skipUnless(shutil.which('repo-add') and shutil.which('bsdtar'), 'pacman tools required')
     def test_product_rejects_older_pacman_version_before_updating_any_index(self):
