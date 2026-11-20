@@ -74,6 +74,16 @@
     {
       "file": "../1.6.9/0015-libcamera-enumerate-formats-by-index.patch",
       "sha256": "e2c5851b1d0ab0921a24b55f9029735bdfe6f0e97246cad72ba2b21e96370952"
+    },
+    {
+      "file": "0016-valve-spa-json-abi.patch",
+      "sha256": "02afc36fe6e27c44898a1fe15d30428f1cb021a55ef6dae26ca8bf5fb6079ddc",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/PipeWire/pipewire/commit/c244fbf945a4e240f40bdf0fe6baf0dfc4ddde13",
+        "commit": "c244fbf945a4e240f40bdf0fe6baf0dfc4ddde13",
+        "drop_when": "Valve's shipped consumers no longer need the in-place JSON reducer exported by libspa."
+      }
     }
   ]
 }

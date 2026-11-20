@@ -1,0 +1,132 @@
+From: Arun Raghavan <arunr@valvesoftware.com>
+Subject: [PATCH] spa: json: retain Valve's in-place object reducer
+
+Valve's Deckard libspa exports spa_json_str_object_reduce_inplace, and
+its installed header contains the implementation from c244fbf945a4e.
+Upstream reverted that interface in 5bd93b97adfb while pursuing a
+different JSON API. Retain it in the Valve build for ABI compatibility.
+
+Use the parser's token lengths for copies, preserve escapes in quoted
+keys, and leave the input unchanged if parsing or reduction fails.
+
+Origin: https://github.com/PipeWire/pipewire/commit/c244fbf945a4e240f40bdf0fe6baf0dfc4ddde13
+Link: https://github.com/PipeWire/pipewire/commit/5bd93b97adfb5a8352daf8fed1c7eb26dc8d1f6f
+Forwarded: not-needed
+
+diff --git a/spa/include/spa/utils/json.h b/spa/include/spa/utils/json.h
+--- a/spa/include/spa/utils/json.h
++++ b/spa/include/spa/utils/json.h
+@@ -11,6 +11,7 @@
+ #include <string.h>
+ #include <math.h>
+ #include <float.h>
++#include <limits.h>
+ 
+ #include <spa/utils/json-core.h>
+ 
+@@ -212,6 +213,105 @@
+ 	spa_json_make_str_array_unpack(32,uint32_t, atoi);
+ }
+ 
++static int spa_json_reduce_token(char *out, size_t size, const char *value,
++		size_t len, bool quote)
++{
++	size_t extra = quote ? 2 : 0;
++
++	if (len > size || extra > size - len)
++		return -1;
++	if (quote)
++		out[0] = '"';
++	memcpy(out + quote, value, len);
++	if (quote)
++		out[len + 1] = '"';
++	return len + extra;
++}
++
++static int spa_json_reduce_value(struct spa_json *json, char *out,
++		size_t size, const char *value, int len)
++{
++	struct spa_json sub;
++	bool object, first = true;
++	size_t idx = 0;
++	int res;
++
++	if (!spa_json_is_container(value, len)) {
++		bool quote = !spa_json_is_string(value, len) &&
++				!spa_json_is_null(value, len) &&
++				!spa_json_is_bool(value, len) &&
++				!spa_json_is_int(value, len) &&
++				!spa_json_is_float(value, len);
++
++		return spa_json_reduce_token(out, size, value, len, quote);
++	}
++
++#define SPA_JSON_REDUCE_APPEND(c)	\
++	do {				\
++		if (idx == size)	\
++			return -1;	\
++		out[idx++] = (c);	\
++	} while (0)
++
++	object = spa_json_is_object(value, len);
++	SPA_JSON_REDUCE_APPEND(*value);
++	spa_json_enter(json, &sub);
++	while ((len = spa_json_next(&sub, &value)) > 0) {
++		if (!first)
++			SPA_JSON_REDUCE_APPEND(',');
++		first = false;
++
++		if (object) {
++			res = spa_json_reduce_token(out + idx, size - idx, value, len,
++					!spa_json_is_string(value, len));
++			if (res < 0)
++				return res;
++			idx += res;
++			SPA_JSON_REDUCE_APPEND(':');
++			if ((len = spa_json_next(&sub, &value)) <= 0)
++				return -1;
++		}
++		res = spa_json_reduce_value(&sub, out + idx, size - idx, value, len);
++		if (res < 0)
++			return res;
++		idx += res;
++	}
++	if (len < 0)
++		return len;
++	SPA_JSON_REDUCE_APPEND(object ? '}' : ']');
++	return idx;
++#undef SPA_JSON_REDUCE_APPEND
++}
++
++/* Reduce a SPA JSON value in place. Return its byte length, or -1 on failure. */
++SPA_API_JSON_UTILS int spa_json_str_object_reduce_inplace(char *str)
++{
++	struct spa_json json, check;
++	size_t size = strlen(str);
++	const char *value, *next;
++	char *temp;
++	int len, res;
++
++	if (size > INT_MAX || (len = spa_json_begin(&json, str, size, &value)) <= 0)
++		return -1;
++
++	/* Apply the tokenizer's nesting limit before visiting child values. */
++	check = json;
++	if (spa_json_next(&check, &next) != 0)
++		return -1;
++
++	temp = (char *)malloc(size + 1);
++	if (temp == NULL)
++		return -1;
++	res = spa_json_reduce_value(&json, temp, size, value, len);
++	if (res >= 0) {
++		temp[res] = '\0';
++		memcpy(str, temp, (size_t)res + 1);
++	}
++	free(temp);
++	return res;
++}
++
+ /**
+  * \}
+  */
