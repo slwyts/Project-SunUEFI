@@ -85,6 +85,32 @@ WinPE，不打开安装程序。启动脚本初始化设备，找到带 `SunUEFI
 的卷后，在同目录记录本次启动、磁盘卷和设备枚举结果，再重启。若 Windows
 没有识别带标记的卷，脚本仍请求重启，不写其他卷。普通安装介质不包含这个启动脚本。
 
+在已创建独立分区的平板上，从有 root 的 Android 连接 ADB。Linux 主机还需要
+Android platform-tools、`dosfstools`、`mtools`，完整安装另需 `ntfs-3g`、
+`img2simg` 和 `wimlib-imagex`。先查看分区和介质选择：
+
+```sh
+./build.sh install windows --media artifacts/windows/winpe --esp-size-mib 2048
+```
+
+不加 `--execute` 时只读取设备。已有足够大的 ESP 可省略 `--esp-size-mib`；
+调整容量时只移动相邻 ESP 和 `sunuefi_root` 的公共边界，保留两者的分区 GUID、
+ESP 卷标、卷 ID 和其他系统的引导文件。WinPE 和正式 Windows 使用同一处微软引导目录；
+把 WinPE 写入该 ESP 会替换已有的 Windows 启动配置。**移动边界会丢失当前 `sunuefi_root` 的系统和数据，
+即使只安装 WinPE。** 查看结果后在同一条命令末尾加 `--execute` 执行。
+保持 Android 作为测试期间的正常重启落点。
+
+完整安装用 `--media artifacts/windows/media` 代替 WinPE 目录；这会把独立系统卷
+改成 NTFS 并覆盖其内容。`--edition Professional` 是默认设置，也可指定
+`media.json` 里的其他版本或索引。电脑写入并读回两个卷后，在平板引导菜单
+选择“启动 Windows”（`\EFI\Microsoft\Boot\bootmgfw.efi`）。WinPE 启动后，DISM 只向此次标记的
+NTFS 系统卷展开选定映像，BCDBoot 生成的微软启动文件放入共享 ESP，不
+覆盖 `EFI/BOOT/BOOTAA64.EFI` 或重排固件启动顺序。WinPE 不会给整盘重新分区。
+进度与失败原因在 ESP 的 `SunUEFI/Deployment/install.log`。如果写 ESP 时连接中断，
+提示中的本地 FAT 镜像保留了原有引导文件；重新刷到 `sunuefi_esp` 即可恢复。
+WinPE 重启后仍遵从原来保存的默认系统；再次选择“启动 Windows”即可进入
+刚部署的 Windows，不会重新运行安装步骤。
+
 ## 完整系统
 
 各目标共用同一份内核和 UEFI，各自构建根系统：

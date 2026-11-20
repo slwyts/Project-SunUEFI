@@ -6,7 +6,11 @@ on:
     paths: &windows_paths
       - 'windows/deployment/**'
       - 'tools/build/windows.py'
+      - 'tools/device/install_windows.py'
+      - 'tools/install_piano.py'
       - 'tests/unit/test_windows.py'
+      - 'tests/unit/test_install_windows.py'
+      - 'tests/unit/test_install_piano.py'
       - 'build.sh'
       - '.github/workflows/windows.yml'
   pull_request:
@@ -28,5 +32,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - name: Install FAT32 test tools
+        run: |
+          if ! command -v mkfs.fat >/dev/null || ! command -v mcopy >/dev/null; then
+            sudo apt-get -o Acquire::Retries=3 update
+            sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends dosfstools mtools
+          fi
       - run: ./build.sh windows media --help
-      - run: ./build.sh check --group python-all --no-skips --pattern test_windows.py
+      - run: ./build.sh install windows --help
+      - run: ./build.sh check --group python-all --no-skips --pattern test_windows.py --pattern test_install_windows.py --pattern test_install_piano.py

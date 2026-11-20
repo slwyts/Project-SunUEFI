@@ -15,6 +15,7 @@ import re
 import shlex
 import struct
 import subprocess
+import sys
 import tempfile
 import uuid
 import zlib
@@ -99,7 +100,7 @@ class Gpt:
                 ('primary', 'primary_entries', 'backup', 'backup_entries')}
 
 
-def parse_gpt(primary, primary_entries, backup, backup_entries, disk_bytes):
+def parse_gpt(primary, primary_entries, backup, backup_entries, disk_bytes, *, require_userdata=True):
     require(type(disk_bytes) is int and disk_bytes % BLOCK == 0 and disk_bytes >= 4 * BLOCK, 'Disk must use 4 KiB blocks')
     last = disk_bytes // BLOCK - 1
     front, rear = gpt_header(primary, 1, last), gpt_header(backup, last, last)
@@ -125,7 +126,8 @@ def parse_gpt(primary, primary_entries, backup, backup_entries, disk_bytes):
                            'last': end, 'bytes': (end - first + 1) * BLOCK, 'attributes': attributes})
     ordered = sorted(partitions, key=lambda row: row['first'])
     require(all(before['last'] < after['first'] for before, after in zip(ordered, ordered[1:])), 'GPT partitions overlap')
-    require(sum(row['name'] == 'userdata' for row in partitions) == 1, 'Expected exactly one userdata partition')
+    if require_userdata:
+        require(sum(row['name'] == 'userdata' for row in partitions) == 1, 'Expected exactly one userdata partition')
     return Gpt(disk_bytes, primary, primary_entries, backup, backup_entries, front, rear['table_lba'], tuple(partitions))
 
 
@@ -312,6 +314,16 @@ class Device:
         require(len(data) == count * BLOCK, 'Incomplete block read')
         return data
 
+    def read_gpt(self, disk, *, require_userdata=True):
+        require(self.text('blockdev --getss ' + disk) == str(BLOCK), 'Expected 4 KiB logical sectors')
+        size = int(self.text('blockdev --getsize64 ' + disk))
+        last = size // BLOCK - 1
+        primary, backup = self.read(disk, 1, 1), self.read(disk, last, 1)
+        front, rear = gpt_header(primary, 1, last), gpt_header(backup, last, last)
+        return parse_gpt(primary, self.read(disk, front['table_lba'], front['table_blocks']),
+                         backup, self.read(disk, rear['table_lba'], rear['table_blocks']), size,
+                         require_userdata=require_userdata)
+
     def inspect(self):
         require(self.text('id -u') == '0', 'Rooted ADB is required')
         require(self.text('getprop ro.product.device') == 'piano' and self.text('getprop ro.boot.flash.locked') == '0', 'Expected unlocked piano')
@@ -323,13 +335,7 @@ class Device:
         parent, part_number = match[1], int(match[2]);disk = '/dev/block/' + parent
         scsi = self.text(f'readlink -f /sys/class/block/{parent}/device').rsplit('/', 1)[-1]
         require(re.fullmatch(r'\d+:\d+:\d+:0', scsi), 'Userdata must reside on UFS LUN0')
-        require(self.text('blockdev --getss ' + disk) == str(BLOCK), 'Only 4 KiB logical sectors are supported')
-        disk_bytes = int(self.text('blockdev --getsize64 ' + disk))
-        primary, backup = self.read(disk, 1, 1), self.read(disk, disk_bytes // BLOCK - 1, 1)
-        front = gpt_header(primary, 1, disk_bytes // BLOCK - 1)
-        rear = gpt_header(backup, disk_bytes // BLOCK - 1, disk_bytes // BLOCK - 1)
-        gpt = parse_gpt(primary, self.read(disk, front['table_lba'], front['table_blocks']),
-                        backup, self.read(disk, rear['table_lba'], rear['table_blocks']), disk_bytes)
+        gpt = self.read_gpt(disk)
         userdata = next(row for row in gpt.partitions if row['name'] == 'userdata')
         require(userdata['index'] + 1 == part_number and
                 int(self.text(f'cat /sys/class/block/{parent}{part_number}/start')) * 512 == userdata['first'] * BLOCK and
@@ -340,7 +346,7 @@ class Device:
         except ValueError:
             f2fs = None
         identity = {'product': 'piano', 'unlocked': True, 'factory_serial': factory,
-                    'disk': disk, 'disk_bytes': disk_bytes, 'lun': 0, 'block_bytes': BLOCK}
+                    'disk': disk, 'disk_bytes': gpt.disk_bytes, 'lun': 0, 'block_bytes': BLOCK}
         return {'identity': identity, 'gpt': gpt, 'f2fs': f2fs}
 
     def reboot_bootloader(self):
@@ -499,7 +505,12 @@ def discover_serial(runner=subprocess.run):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    source_windows = (Path(__file__).parent / 'device/install_windows.py').is_file()
+    if source_windows and sys.argv[1:2] == ['windows']:
+        from device.install_windows import main as install_windows
+        return install_windows(sys.argv[2:])
+    parser = argparse.ArgumentParser(description=__doc__, epilog=(
+        'Windows ARM64: ./build.sh install windows --help' if source_windows else None))
     parser.add_argument('operation', choices=('inspect', 'plan', 'apply'), nargs='?', default='inspect')
     parser.add_argument('--serial', help='Optional ADB serial; automatically select the single connected Piano')
     parser.add_argument('--bundle', type=Path, help='Generic disk bundle for plan/apply')
