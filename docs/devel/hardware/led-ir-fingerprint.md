@@ -46,6 +46,8 @@ SE15 / QUP2 SE7 / CS0。GPIO28/29/30/31 分别为 MISO/MOSI/CLK/CS，
 编码在完整的 32 位零字后对齐到 1024 字节，1 秒波形填充后为 240640 字节。
 GENI 向 SPI 核心公布 QUP 映射设备支持的单段 DMA 大小，GPI 用一个数据描述符
 发送完整波形，不在脉冲之间拆分传输。
+GPI 成功时只通知 SPI 核心当前段完成，由核心累计实际长度并处理下一段；
+DMA 错误或有未传完的数据时标记消息失败。见[传输完成修复](../../../patches/linux/7.3/0254-LOCAL-spi-geni-qcom-complete-gpi-transfer.patch)。
 
 共享 [`设备树`](../../../linux/dts/piano-ir-spi-controller.dtso)沿用原厂
 GCC ID123、GIC SPI462、GPI2 SE7 和 IOMMU 路由。运行与休眠的差异只在

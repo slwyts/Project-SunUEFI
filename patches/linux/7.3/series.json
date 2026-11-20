@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "840c46abcdca3f21d0cd66c54b4bdfff393c5b5e",
-  "original_target_commit": "40d5287b1dfc59bc0821b88655a80404149dc5fb",
+  "target_tree": "ab6b6c4720123bf1a8a9ab7a1d421c6a67daee33",
+  "original_target_commit": "719ebc84e33d08ffd22e6d3debd880fd63808d3c",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -3335,6 +3335,19 @@
         "status": "downstream",
         "url": "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/drivers/gpu/drm/msm/msm_gpu.c",
         "drop_when": "The upstream MSM driver only requests legacy supply handles for GPUs whose runtime power callbacks use those handles."
+      }
+    },
+    {
+      "file": "0254-LOCAL-spi-geni-qcom-complete-gpi-transfer.patch",
+      "sha256": "3473e49a79a79ba49807cd8bc163b5c6c186e73f3f931aecb8774a1d95bcbdae",
+      "original_commit": "719ebc84e33d08ffd22e6d3debd880fd63808d3c",
+      "original_parent": "40d5287b1dfc59bc0821b88655a80404149dc5fb",
+      "committer_date": "2026-11-21T02:35:25+08:00",
+      "tree": "ab6b6c4720123bf1a8a9ab7a1d421c6a67daee33",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://lore.kernel.org/linux-spi/20261106-qspi_upstream_series-v1-1-21f43042dd60@oss.qualcomm.com/",
+        "drop_when": "The selected GENI driver leaves successful per-transfer completion to the SPI core or accounts for completed transfers and completes the whole message itself."
       }
     }
   ],
