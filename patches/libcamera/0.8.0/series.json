@@ -76,12 +76,12 @@
       }
     },
     {
-      "file": "0009-log-output-internal-linkage.patch",
-      "sha256": "9851c38fa2acf34c92402daddcfb1f83a058929382ff280bd5b064e240d5e80a",
+      "file": "0009-meson-avoid-gcc-16-1-speculative-bounds-errors.patch",
+      "sha256": "1df1576d161439e535972223da9bb55a55a1787ce392227b93d580d0e06e694a",
       "upstream": {
         "status": "downstream",
-        "url": "https://github.com/libcamera-org/libcamera/blob/v0.8.0/src/libcamera/base/log.cpp",
-        "drop_when": "The packaged libcamera builds its logger with AArch64 GCC at -O2 without an array-bounds diagnostic."
+        "url": "https://gcc.gnu.org/g:b6274f4ec32dc4a8855459384ac899316e7a34f2",
+        "drop_when": "All package build roots use GCC and libstdc++ with the PR 122197 fix or a different compiler."
       }
     },
     {

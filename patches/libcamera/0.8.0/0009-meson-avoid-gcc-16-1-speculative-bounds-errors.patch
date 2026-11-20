@@ -1,0 +1,35 @@
+From: slwyts <slwyts@foxmail.com>
+Subject: [PATCH] meson: Avoid GCC 16.1 speculative shared_ptr bounds errors
+
+GCC 16.1 can speculate that a shared_ptr control block disposes of a
+different type. Its array-bounds pass can then report an access from
+an unreachable path and fail the build with -Werror. This affects
+both LogOutput and BoundMethodPack on AArch64.
+
+Skip speculative devirtualization when building with GCC 16.1 and
+libstdc++. Keep array-bounds and the other diagnostics enabled. GCC
+16.2 includes the libstdc++ fix, so leave newer compilers unchanged.
+
+Link: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=122197
+Link: https://gcc.gnu.org/g:b6274f4ec32dc4a8855459384ac899316e7a34f2
+Assisted-by: LLM
+---
+diff --git a/meson.build b/meson.build
+--- a/meson.build
++++ b/meson.build
+@@ -184,6 +184,15 @@ if cc.get_id() == 'gcc'
+     endif
+ endif
+ 
++# GCC PR 122197: avoid false bounds reports from speculative shared_ptr
++# devirtualization with libstdc++ 16.1. Keep the bounds diagnostic enabled.
++if cxx.get_id() == 'gcc' and cxx_stdlib == 'libstdc++'
++    gcc_version = cxx.version()
++    if gcc_version.version_compare('>=16.1') and gcc_version.version_compare('<16.2')
++        cpp_arguments += ['-fno-devirtualize-speculatively']
++    endif
++endif
++
+ # We use C99 designated initializers for arrays as C++ has no equivalent
+ # feature. Both gcc and clang support this extension, but recent
+ # versions of clang generate a warning that needs to be disabled.
