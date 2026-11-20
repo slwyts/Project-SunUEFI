@@ -292,6 +292,8 @@ lwext4 的固定来源在 [`config/uefi-ext4.json`](../../../config/uefi-ext4.js
 “电源与重启”提供关机、普通重启、Recovery、Bootloader 和 EDL（9008）。
 动作先在菜单中登记。界面退出后，驻留核心保存设置、关闭文件系统，并完成存储、
 输入、USB 和显示资源的安全退出。`ExitBootServices` 成功后才调用 `ResetSystem`。
+Shell 的 `reset` 和 `drvcfg` 发出的重启请求也交给驻留核心。固件拒绝在交接前直接调用
+`ResetSystem` 的请求，退出启动服务后的系统重启继续使用标准接口。
 
 Recovery／Bootloader 使用原厂设备树的 PMK8550 SDAM 重启原因字段；
 EDL 使用 TCSR／SCM 下载模式，代码位于 `uefi/components/reset/`。

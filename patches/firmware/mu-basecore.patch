@@ -904,3 +904,72 @@ index 3b8374223636dc8c0cc243699867c084d2dab16a..3fd6cc663a1609d37b26d6a36713a91a
    MemoryAllocationLib
    BaseLib
    BaseMemoryLib
+diff --git a/MdeModulePkg/Universal/ResetSystemRuntimeDxe/ResetSystem.c b/MdeModulePkg/Universal/ResetSystemRuntimeDxe/ResetSystem.c
+--- a/MdeModulePkg/Universal/ResetSystemRuntimeDxe/ResetSystem.c
++++ b/MdeModulePkg/Universal/ResetSystemRuntimeDxe/ResetSystem.c
+@@ -234,6 +234,17 @@
+   LIST_ENTRY          *Link;
+   RESET_NOTIFY_ENTRY  *Entry;
+ 
++#if defined (PIANO_PRODUCT_NATIVE_LATE) && PIANO_PRODUCT_NATIVE_LATE
++  // The product must retire its devices and complete ExitBootServices first.
++  // The runtime event alone fires before DXE clears the Boot Services table.
++  if (!EfiAtRuntime () ||
++      (!EfiGoneVirtual () && ((gST == NULL) || (gST->BootServices != NULL))))
++  {
++    DEBUG ((DEBUG_ERROR, "Piano reset refused before ExitBootServices\n"));
++    return;
++  }
++#endif
++
+   //
+   // Only do REPORT_STATUS_CODE() on first call to RuntimeServiceResetSystem()
+   //
+diff --git a/ShellPkg/Library/UefiShellDriver1CommandsLib/DrvCfg.c b/ShellPkg/Library/UefiShellDriver1CommandsLib/DrvCfg.c
+--- a/ShellPkg/Library/UefiShellDriver1CommandsLib/DrvCfg.c
++++ b/ShellPkg/Library/UefiShellDriver1CommandsLib/DrvCfg.c
+@@ -8,6 +8,7 @@
+ **/
+ 
+ #include "UefiShellDriver1CommandsLib.h"
++#include <Library/PianoProductPumpLib.h>
+ #include <Protocol/HiiConfigAccess.h>
+ #include <Protocol/HiiDatabase.h>
+ 
+@@ -584,6 +585,25 @@
+       ShellPrintHiiDefaultEx (STRING_TOKEN (STR_DRVCFG_RESTART_S), gShellDriver1HiiHandle, L"platform");
+       ShellPrintHiiDefaultEx (STRING_TOKEN (STR_DRVCFG_ENTER_S), gShellDriver1HiiHandle, L"restart platform");
+       ShellPromptForResponse (ShellPromptResponseTypeEnterContinue, NULL, NULL);
++
++      if (PianoProductRebootManaged ()) {
++        if (PianoProductUiReturnRequested ()) {
++          return EFI_ABORTED;
++        }
++
++        EFI_STATUS  Status = PianoProductRequestReboot ();
++        if (EFI_ERROR (Status)) {
++          ShellPrintHiiDefaultEx (
++            STRING_TOKEN (STR_GEN_UEFI_FUNC_WARN),
++            gShellDriver1HiiHandle,
++            L"drvcfg",
++            L"PianoProductRequestReboot",
++            Status
++            );
++        }
++
++        return Status;
++      }
+ 
+       gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);
+       break;
+diff --git a/ShellPkg/Library/UefiShellDriver1CommandsLib/UefiShellDriver1CommandsLib.inf b/ShellPkg/Library/UefiShellDriver1CommandsLib/UefiShellDriver1CommandsLib.inf
+--- a/ShellPkg/Library/UefiShellDriver1CommandsLib/UefiShellDriver1CommandsLib.inf
++++ b/ShellPkg/Library/UefiShellDriver1CommandsLib/UefiShellDriver1CommandsLib.inf
+@@ -39,6 +39,7 @@
+   MdeModulePkg/MdeModulePkg.dec
+ 
+ [LibraryClasses]
++  PianoProductPumpLib
+   MemoryAllocationLib
+   BaseLib
+   BaseMemoryLib
