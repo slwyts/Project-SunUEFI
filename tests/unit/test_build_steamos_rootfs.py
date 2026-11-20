@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -23,6 +24,47 @@ class SteamOSBuildRootTests(unittest.TestCase):
                     self.assertRaisesRegex(ValueError, 'Valve pacman build root'):
                 builder.build_overlays(root, root / 'out', root / 'sources', {})
             packages.assert_not_called()
+
+
+class SteamOSKDETests(unittest.TestCase):
+    def check_kwindowsystem(self, version, order, relocation):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            library = f'/usr/lib/libKF6WindowSystem.so.{version}'
+            path = root / library.lstrip('/')
+            path.parent.mkdir(parents=True)
+            path.write_bytes(b'\x7fELF')
+
+            def check_output(command, **kwargs):
+                if command == ['chroot', root, 'vercmp', version, '6.26.0']:
+                    return f'{order}\n'
+                self.assertEqual(command, ['chroot', root, 'pacman', '-Qlq', 'kwindowsystem'])
+                return library + '\n'
+
+            def run(command, **kwargs):
+                if command[2:] == ['pacman', '-Q', 'kwindowsystem']:
+                    return subprocess.CompletedProcess(command, 0, f'kwindowsystem {version}-1\n', '')
+                self.assertEqual(command[2:], ['env', 'LC_ALL=C', 'ldd', '-r', library])
+                return subprocess.CompletedProcess(command, 0, relocation, '')
+
+            with patch.object(builder.subprocess, 'run', side_effect=run), \
+                    patch.object(builder.subprocess, 'check_output', side_effect=check_output):
+                return builder.kde_repository_package_works(root, 'kwindowsystem')
+
+    def test_keeps_newer_valve_framework_if_it_works(self):
+        self.assertTrue(self.check_kwindowsystem('6.27.0', 1, 'libQt6Core.so.6 => /usr/lib/libQt6Core.so.6'))
+
+    def test_rebuilds_broken_framework_from_matching_source(self):
+        self.assertFalse(self.check_kwindowsystem('6.26.0', 0, 'undefined symbol: qt_internal'))
+
+    def test_does_not_downgrade_newer_framework_with_broken_relocations(self):
+        with self.assertRaisesRegex(ValueError, 'Valve kwindowsystem 6.27.0 failed'):
+            self.check_kwindowsystem('6.27.0', 1, 'libQt6Core.so.6 => not found')
+
+    def test_patched_kde_component_still_uses_recipe(self):
+        with patch.object(builder.subprocess, 'run') as query:
+            self.assertFalse(builder.kde_repository_package_works(Path('/not-used'), 'kwin'))
+            query.assert_not_called()
 
 
 class SteamOSWebRTCTests(unittest.TestCase):

@@ -196,28 +196,44 @@ def gtk3_recipe(output):
 
 
 def kde_repository_package_works(root, name):
-    """Reuse Valve's matching package when its Qt relocations resolve."""
+    """Keep an unpatched Valve package when it works with the installed Qt."""
     item = next(p for p in json.loads((ROOT / 'config/steamos.json').read_text())['kde_packages']
                 if p['name'] == name)
     if item.get('patch_series') or item.get('patches'):
         return False
     installed = subprocess.run(['chroot', root, 'pacman', '-Q', name], capture_output=True, text=True)
-    if installed.returncode or installed.stdout.split()[1].rsplit('-', 1)[0] != item['version']:
+    if installed.returncode:
         return False
+
+    version = installed.stdout.split()[1].rsplit('-', 1)[0]
+    order = int(subprocess.check_output(
+        ['chroot', root, 'vercmp', version, item['version']], text=True))
+    if order < 0:
+        return False
+
     files = subprocess.check_output(['chroot', root, 'pacman', '-Qlq', name], text=True).splitlines()
-    checked = 0
-    for name in files:
-        path = root / name.lstrip('/')
+    checked = False
+    for filename in files:
+        path = root / filename.lstrip('/')
         if not path.is_file() or path.is_symlink() or '.so' not in path.name:
             continue
-        if path.open('rb').read(4) != b'\x7fELF':
-            continue
-        result = subprocess.run(['chroot', root, 'ldd', '-r', name], capture_output=True, text=True)
+        with path.open('rb') as entry:
+            if entry.read(4) != b'\x7fELF':
+                continue
+        result = subprocess.run(['chroot', root, 'env', 'LC_ALL=C', 'ldd', '-r', filename],
+                                capture_output=True, text=True)
         if result.returncode or any(word in result.stdout + result.stderr
                                    for word in ('not found', 'undefined symbol')):
-            return False
-        checked += 1
-    return checked > 0
+            break
+        checked = True
+    else:
+        if checked:
+            return True
+
+    if order > 0:
+        raise ValueError(f'Valve {name} {version} failed the Qt library check; '
+                         f'update its source recipe instead of rebuilding {item["version"]}.')
+    return False
 
 
 def mesa_recipe(output, config):
