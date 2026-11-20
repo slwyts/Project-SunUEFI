@@ -1,0 +1,422 @@
+Subject: [PATCH] libcamera: Keep the camera manager responsive during CAMSS PIX start
+
+CAMSS starts the sensor synchronously in VIDIOC_STREAMON. Starting
+a front camera on the camera manager thread can block completion of
+the rear camera's buffers for longer than the queue can cover.
+
+Prepare and complete the start in the camera manager, but issue the
+blocking ioctl from the thread calling Camera::start(). Keep the
+public call synchronous and preserve the synchronous start for
+pipelines that do not opt in. Close the old video handle on removal
+instead of opening a potentially reused node name.
+
+On Xiaomi Pad 8 Pro with two PipeWire clients, starting the front
+camera dropped eight rear frames before the change. With split
+start the rear delivered 360 consecutive 4K60 buffers, with a
+maximum interval of 16.665 ms, and the front delivered all 90 frames.
+
+---
+diff --git a/include/libcamera/internal/camera.h b/include/libcamera/internal/camera.h
+index 8a2e9ed..4f2e185 100644
+--- a/include/libcamera/internal/camera.h
++++ b/include/libcamera/internal/camera.h
+@@ -46,10 +46,13 @@ public:
+ 	const CameraControlValidator *validator() const { return validator_.get(); }
+ 
+ private:
++	friend class PipelineHandler;
++
+ 	enum State {
+ 		CameraAvailable,
+ 		CameraAcquired,
+ 		CameraConfigured,
++		CameraStarting,
+ 		CameraStopping,
+ 		CameraRunning,
+ 	};
+@@ -70,7 +73,7 @@ private:
+ 	std::set<Stream *> streams_;
+ 	std::set<const Stream *> activeStreams_;
+ 
+-	bool disconnected_;
++	std::atomic<bool> disconnected_;
+ 	std::atomic<State> state_;
+ 
+ 	std::unique_ptr<CameraControlValidator> validator_;
+diff --git a/include/libcamera/internal/pipeline_handler.h b/include/libcamera/internal/pipeline_handler.h
+index 6a018fe..92b28a1 100644
+--- a/include/libcamera/internal/pipeline_handler.h
++++ b/include/libcamera/internal/pipeline_handler.h
+@@ -7,6 +7,7 @@
+ 
+ #pragma once
+ 
++#include <functional>
+ #include <memory>
+ #include <string>
+ #include <sys/types.h>
+@@ -53,6 +54,13 @@ public:
+ 	virtual int exportFrameBuffers(Camera *camera, Stream *stream,
+ 				       std::vector<std::unique_ptr<FrameBuffer>> *buffers) = 0;
+ 
++	struct StartOperation {
++		std::function<int()> run;
++		std::function<int(int, bool)> complete;
++	};
++
++	int startCamera(Camera *camera, const ControlList *controls, StartOperation *operation);
++	int completeCameraStart(Camera *camera, StartOperation *operation, int result);
+ 	virtual int start(Camera *camera, const ControlList *controls) = 0;
+ 	void stop(Camera *camera);
+ 	bool hasPendingRequests(const Camera *camera) const;
+@@ -91,6 +99,8 @@ protected:
+ 	void hotplugMediaDevice(std::shared_ptr<MediaDevice> media);
+ 	unsigned int useCount() const { return useCount_; }
+ 
++	virtual int prepareStart(Camera *camera, const ControlList *controls,
++				 StartOperation *operation);
+ 	virtual int queueRequestDevice(Camera *camera, Request *request) = 0;
+ 	virtual void stopDevice(Camera *camera) = 0;
+ 
+diff --git a/include/libcamera/internal/v4l2_videodevice.h b/include/libcamera/internal/v4l2_videodevice.h
+index f63d748..9789d8a 100644
+--- a/include/libcamera/internal/v4l2_videodevice.h
++++ b/include/libcamera/internal/v4l2_videodevice.h
+@@ -8,6 +8,7 @@
+ #pragma once
+ 
+ #include <array>
++#include <functional>
+ #include <memory>
+ #include <optional>
+ #include <ostream>
+@@ -222,6 +223,8 @@ public:
+ 	Signal<FrameBuffer *> bufferReady;
+ 
+ 	int streamOn();
++	int prepareStreamOn(std::function<int()> *operation);
++	int completeStreamOn(int result);
+ 	int streamOff();
+ 
+ 	void setDequeueTimeout(utils::Duration timeout);
+diff --git a/src/libcamera/camera.cpp b/src/libcamera/camera.cpp
+index 9dadc91..a05b218 100644
+--- a/src/libcamera/camera.cpp
++++ b/src/libcamera/camera.cpp
+@@ -673,6 +673,7 @@ static const char *const camera_state_names[] = {
+ 	"Available",
+ 	"Acquired",
+ 	"Configured",
++	"Starting",
+ 	"Stopping",
+ 	"Running",
+ };
+@@ -1409,22 +1410,28 @@ int Camera::start(const ControlList *controls)
+ 
+ 	ASSERT(d->requestSequence_ == 0);
+ 
++	/* Keep the camera and its pipeline alive across a device disconnection. */
++	const auto camera = shared_from_this();
++	PipelineHandler *pipe = d->pipe();
++	PipelineHandler::StartOperation operation;
++	std::optional<ControlList> adjusted;
+ 	if (controls) {
+-		ControlList copy(*controls);
+-		patchControlList(copy);
+-		ret = d->pipe_->invokeMethod(&PipelineHandler::start,
+-					     ConnectionTypeBlocking, this, &copy);
+-	} else {
+-		ret = d->pipe_->invokeMethod(&PipelineHandler::start,
+-					     ConnectionTypeBlocking, this, nullptr);
++		adjusted.emplace(*controls);
++		patchControlList(*adjusted);
+ 	}
+ 
+-	if (ret)
++	ret = pipe->invokeMethod(&PipelineHandler::startCamera,
++				 ConnectionTypeBlocking, camera.get(),
++				 adjusted ? &*adjusted : nullptr, &operation);
++	if (ret || !operation.run)
+ 		return ret;
+ 
+-	d->setState(Private::CameraRunning);
+-
+-	return 0;
++	/* The blocking operation must not access CameraManager-owned objects. */
++	int result = operation.run();
++	/* Release its file descriptor before the pipeline may close the device. */
++	operation.run = {};
++	return pipe->invokeMethod(&PipelineHandler::completeCameraStart,
++				  ConnectionTypeBlocking, camera.get(), &operation, result);
+ }
+ 
+ /**
+diff --git a/src/libcamera/pipeline/camss/camss.cpp b/src/libcamera/pipeline/camss/camss.cpp
+index da9f3d7..73202cd 100644
+--- a/src/libcamera/pipeline/camss/camss.cpp
++++ b/src/libcamera/pipeline/camss/camss.cpp
+@@ -11,6 +11,7 @@
+  */
+ 
+ #include <algorithm>
++#include <chrono>
+ #include <memory>
+ #include <queue>
+ #include <set>
+@@ -115,6 +116,9 @@ public:
+ 	bool match(DeviceEnumerator *enumerator) override;
+ 
+ private:
++	int prepareStart(Camera *camera, const ControlList *controls,
++			 StartOperation *operation) override;
++
+ 	CamssCameraData *cameraData(Camera *camera)
+ 	{
+ 		return static_cast<CamssCameraData *>(camera->_d());
+@@ -426,17 +430,36 @@ void PipelineHandlerCamss::freeBuffers(Camera *camera)
+ 	cameraData(camera)->isp_->freeBuffers();
+ }
+ 
+-int PipelineHandlerCamss::start(Camera *camera, const ControlList *controls)
++int PipelineHandlerCamss::prepareStart(Camera *camera, const ControlList *controls,
++				       StartOperation *operation)
+ {
+ 	CamssCameraData *data = cameraData(camera);
+-	int ret;
++	if (!data->csi_->isPix())
++		return start(camera, controls);
+ 
+-	if (data->csi_->isPix()) {
+-		ret = data->csi_->startPix(controls);
+-		if (!ret)
+-			data->csi_->bufferReady().connect(data, &CamssCameraData::pixBufferReady);
++	int ret = data->csi_->prepareStartPix(controls, &operation->run);
++	if (ret)
+ 		return ret;
+-	}
++
++	auto before = std::chrono::steady_clock::now();
++	operation->complete = [data, before](int result, bool disconnected) {
++		auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
++			std::chrono::steady_clock::now() - before);
++		LOG(Camss, Debug) << "PIX start completed in " << elapsed.count()
++				  << " us, STREAMON status " << result;
++		int status = data->csi_->completeStartPix(result, disconnected);
++		if (!status)
++			data->csi_->bufferReady().connect(data, &CamssCameraData::pixBufferReady);
++		return status;
++	};
++
++	return 0;
++}
++
++int PipelineHandlerCamss::start(Camera *camera, [[maybe_unused]] const ControlList *controls)
++{
++	CamssCameraData *data = cameraData(camera);
++	int ret;
+ 
+ 	/* Allocate buffers for internal pipeline usage. */
+ 	ret = allocateBuffers(camera);
+diff --git a/src/libcamera/pipeline/camss/camss_csi.h b/src/libcamera/pipeline/camss/camss_csi.h
+index dc861a1..49be677 100644
+--- a/src/libcamera/pipeline/camss/camss_csi.h
++++ b/src/libcamera/pipeline/camss/camss_csi.h
+@@ -57,8 +57,9 @@ public:
+ 	StreamConfiguration generatePixConfiguration() const;
+ 	int validatePix(StreamConfiguration *cfg) const;
+ 	int configurePix(const StreamConfiguration &cfg);
+-	int startPix(const ControlList *controls);
+-	void stopPix();
++	int prepareStartPix(const ControlList *controls, std::function<int()> *operation);
++	int completeStartPix(int result, bool disconnected);
++	int stopPix();
+ 	int queuePixBuffer(FrameBuffer *buffer);
+ 	const std::string &pixId() const { return pixId_; }
+ 	const ControlList &pixProperties() const { return pixProperties_; }
+diff --git a/src/libcamera/pipeline/camss/camss_csi_pix.cpp b/src/libcamera/pipeline/camss/camss_csi_pix.cpp
+index 0ab2bc8..069c3e1 100644
+--- a/src/libcamera/pipeline/camss/camss_csi_pix.cpp
++++ b/src/libcamera/pipeline/camss/camss_csi_pix.cpp
+@@ -8,7 +8,6 @@
+ #include <algorithm>
+ #include <array>
+ #include <cerrno>
+-#include <chrono>
+ #include <cmath>
+ #include <limits>
+ #include <map>
+@@ -624,7 +623,7 @@ int CamssCsiCamera::configurePix(const StreamConfiguration &cfg)
+ 	return 0;
+ }
+ 
+-int CamssCsiCamera::startPix(const ControlList *controls)
++int CamssCsiCamera::prepareStartPix(const ControlList *controls, std::function<int()> *operation)
+ {
+ 	if (!output_->isOpen())
+ 		return -EPIPE;
+@@ -634,31 +633,43 @@ int CamssCsiCamera::startPix(const ControlList *controls)
+ 		return ret;
+ 
+ 	ret = applyPixFrameTiming(controls);
+-	if (!ret) {
+-		auto before = std::chrono::steady_clock::now();
+-		LOG(Camss, Debug) << "Starting PIX STREAMON on " << output_->deviceNode()
+-				  << " with " << bufferCount_ << " request buffers";
+-		ret = output_->streamOn();
+-		auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+-			std::chrono::steady_clock::now() - before);
+-		LOG(Camss, Debug) << "PIX STREAMON on " << output_->deviceNode() << ": "
+-				  << elapsed.count() << " us, status " << ret;
+-	}
+-	if (ret) {
+-		if (output_->releaseBuffers())
+-			closePix();
++	if (!ret)
++		ret = output_->prepareStreamOn(operation);
++	if (ret && stopPix() == -ENODEV)
++		return -ENODEV;
++
++	return ret;
++}
++
++int CamssCsiCamera::completeStartPix(int result, bool disconnected)
++{
++	int ret = output_->completeStreamOn(result);
++	if (disconnected || ret == -ENODEV) {
++		output_->streamOff();
++		output_->close();
+ 		restorePixFrameTiming();
++		return -ENODEV;
+ 	}
++	if (ret && stopPix() == -ENODEV)
++		return -ENODEV;
+ 
+ 	return ret;
+ }
+ 
+-void CamssCsiCamera::stopPix()
++int CamssCsiCamera::stopPix()
+ {
+-	/* On failure close the device before returning outstanding buffers. */
+-	if (output_->streamOff() || output_->releaseBuffers())
++	int ret = output_->streamOff();
++	if (!ret)
++		ret = output_->releaseBuffers();
++
++	/* Once removed, the device node may be reused by a different device. */
++	if (ret == -ENODEV)
++		output_->close();
++	else if (ret)
+ 		closePix();
++
+ 	restorePixFrameTiming();
++	return ret;
+ }
+ 
+ void CamssCsiCamera::closePix()
+diff --git a/src/libcamera/pipeline_handler.cpp b/src/libcamera/pipeline_handler.cpp
+index a803f62..586ae9a 100644
+--- a/src/libcamera/pipeline_handler.cpp
++++ b/src/libcamera/pipeline_handler.cpp
+@@ -339,6 +339,57 @@ void PipelineHandler::unlockMediaDevices()
+  * otherwise
+  */
+ 
++/**
++ * \brief Begin a camera start on the CameraManager thread
++ *
++ * A pipeline may finish synchronously or supply a blocking operation to run
++ * in the thread calling Camera::start().
++ */
++int PipelineHandler::startCamera(Camera *camera, const ControlList *controls,
++				 StartOperation *operation)
++{
++	Camera::Private *data = camera->_d();
++	int ret = data->isAccessAllowed(Camera::Private::CameraConfigured);
++	if (ret)
++		return ret;
++
++	data->setState(Camera::Private::CameraStarting);
++	ret = prepareStart(camera, controls, operation);
++	if (ret || !operation->run)
++		data->setState(ret ? Camera::Private::CameraConfigured : Camera::Private::CameraRunning);
++
++	return ret;
++}
++
++/**
++ * \brief Finish a deferred camera start on the CameraManager thread
++ */
++int PipelineHandler::completeCameraStart(Camera *camera, StartOperation *operation, int result)
++{
++	Camera::Private *data = camera->_d();
++	const bool disconnected = data->disconnected_;
++	int ret = operation->complete(result, disconnected);
++	if (disconnected)
++		ret = -ENODEV;
++
++	data->setState(ret ? Camera::Private::CameraConfigured : Camera::Private::CameraRunning);
++	return ret;
++}
++
++/**
++ * \brief Prepare a camera start or start it synchronously
++ *
++ * The camera is kept alive until the operation completes. Deferred operations
++ * must not access pipeline objects from the caller's thread. Their completion
++ * runs back on the CameraManager thread and must unwind resources on failure
++ * or disconnection before a new camera operation can start.
++ */
++int PipelineHandler::prepareStart(Camera *camera, const ControlList *controls,
++				  [[maybe_unused]] StartOperation *operation)
++{
++	return start(camera, controls);
++}
++
+ /**
+  * \fn PipelineHandler::start()
+  * \brief Start capturing from a group of streams
+diff --git a/src/libcamera/v4l2_videodevice.cpp b/src/libcamera/v4l2_videodevice.cpp
+index 41dc5d0..3d3bb55 100644
+--- a/src/libcamera/v4l2_videodevice.cpp
++++ b/src/libcamera/v4l2_videodevice.cpp
+@@ -1989,11 +1989,36 @@ FrameBuffer *V4L2VideoDevice::dequeueBuffer()
+  */
+ int V4L2VideoDevice::streamOn()
+ {
+-	int ret;
++	return completeStreamOn(ioctl(VIDIOC_STREAMON, &bufferType_));
++}
+ 
+-	firstFrame_.reset();
++/**
++ * \brief Prepare a STREAMON ioctl that does not access any device object
++ *
++ * Only pipelines with no queued buffers may defer STREAMON. They must call
++ * completeStreamOn() on the device thread before queuing a buffer.
++ */
++int V4L2VideoDevice::prepareStreamOn(std::function<int()> *operation)
++{
++	ASSERT(state_ == State::Stopped && queuedBuffers_.empty());
++
++	UniqueFD handle(fcntl(fd(), F_DUPFD_CLOEXEC, 0));
++	if (!handle.isValid())
++		return -errno;
+ 
+-	ret = ioctl(VIDIOC_STREAMON, &bufferType_);
++	*operation = [handle = SharedFD(std::move(handle)), type = bufferType_]() mutable {
++		return ::ioctl(handle.get(), VIDIOC_STREAMON, &type) < 0 ? -errno : 0;
++	};
++
++	return 0;
++}
++
++/**
++ * \brief Apply a STREAMON result on the device thread
++ */
++int V4L2VideoDevice::completeStreamOn(int ret)
++{
++	firstFrame_.reset();
+ 	if (ret < 0) {
+ 		LOG(V4L2, Error)
+ 			<< "Failed to start streaming: " << strerror(-ret);

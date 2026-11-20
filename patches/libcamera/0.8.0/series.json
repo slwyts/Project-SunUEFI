@@ -92,6 +92,15 @@
         "url": "https://github.com/libcamera-org/libcamera/blob/v0.8.0/src/apps/cam/main.cpp",
         "drop_when": "The cam tool can start multiple sessions without running out of queued buffers while the application starts the other cameras."
       }
+    },
+    {
+      "file": "0011-camss-split-pix-streamon.patch",
+      "sha256": "816057b5fe3766851cb357ca536fffe2af7b5915ace284604ee78ee50808309d",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/libcamera-org/libcamera/blob/v0.8.0/src/libcamera/camera.cpp",
+        "drop_when": "The CAMSS PIX handler can start another sensor without blocking buffer completion for cameras already running."
+      }
     }
   ]
 }
