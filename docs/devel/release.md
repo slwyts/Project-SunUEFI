@@ -144,11 +144,14 @@ systemd-boot、Linux 睡眠唤醒和返回 Android；安装 Windows 只使用明
 平板已用这份带 ACPI 的固件经 systemd-boot 启动 Debian。EFI 系统表
 给出 ACPI 2.0 指针，从设备读回的 XSDT、FADT、DSDT、MADT、GTDT 和 PPTT
 校验和均正确；Linux 的 PSCI 仍从设备树初始化。IORT 使用原厂 XBL 的
-SMMU 中断和设备映射：UFS 的 StreamID 为 `0x60`，USB 为 `0x40`。
-表中有这些资源不代表 Windows 已接管控制器。
+SMMU 中断和设备映射：UFS 的 StreamID 为 `0x60`，USB 为 `0x40`。微软原版
+ARM64 介质自带的 `storufs.inf` 匹配这台设备的 `ACPI\QCOM24A5`，也支持
+标准 UFSHCI 类 `ACPI\CC_010901`。启动文件由固件读出；要证明 Windows 已接管
+控制器，须在 WinPE 内读写内置卷，不能以看到引导菜单或 INF 匹配代替。
 
 | 功能 | 发布前在 Piano 上检查 |
 | --- | --- |
+| 内存 | 各容量机型使用同一镜像。核对 SMBIOS 装机容量与原厂 DDR 数据，再核对 WinPE 的 `memory.txt`；Windows 的可用段不能跨越物理空洞或占用硬件保留区。 |
 | 启动与存储 | WinPE 能接受键盘输入，从 Windows 的存储驱动读取 UFS，并在目标卷写入、读回文件。完整 Windows 从内置存储连续冷启动，更新后仍能启动，也能返回 Android。 |
 | GPU 渲染 | 分别用 D3D11 和 D3D12 绘制并读回已知画面。记录 DXGI 选中的适配器，用 GPUView 对应到实际执行的硬件队列；WARP 软件渲染、固件帧缓冲和设备管理器的名称都不能替代这一检查。 |
 | 内屏与应用 | 检查桌面合成、浏览器和实际 3D 应用的画面、帧时间及持续负载下的频率和温度。视频硬件解码单独检查。逐项实测驱动报告的显示模式、亮度、熄屏唤醒；不因能显示开机画面就宣称支持高刷新率或 HDR。 |
