@@ -10,6 +10,7 @@ import subprocess
 import tarfile
 
 from prepare_linux_modules import modinfo
+from package.archive import debian_identity, pacman_identity
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / 'upstream/v4l2loopback'
@@ -152,7 +153,6 @@ def package_pacman(work, output, module, payload, name, version, kernel, env):
 
 def build_package(plan, kernel_archive, env):
     """Return the native archive, package name and full version."""
-    from build.overlay_packages import debian_identity, pacman_identity
     from build_piano_runtime_helpers import kernel_identity
 
     release = plan['kernel_release']

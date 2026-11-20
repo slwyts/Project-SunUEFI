@@ -20,6 +20,7 @@ from desktop import build_libcamera_packages as libcamera
 from desktop.build_pipewire_packages import DEBIAN_PACKAGES
 from desktop.build_plasma_camera_package import RUNTIME as PLASMA_PACKAGES
 from desktop.build_qt_multimedia_packages import DEBIAN_PACKAGES as QT_PACKAGES
+from package.download import download_debian
 
 
 @unittest.skipUnless(shutil.which('dpkg-deb'), 'Debian package tools required')
@@ -226,17 +227,17 @@ class OverlayPackageTests(unittest.TestCase):
             return subprocess.run([*args[2:6], str(self.root / args[6].lstrip('/')), *args[7:]],
                                   env=env, check=True, capture_output=True)
 
-        paths = overlays.download_debian(self.root, download, packages, run)
+        paths = download_debian(self.root, download, packages, run)
         self.assertEqual(len(paths), 1)
         self.assertEqual(overlays.sha(self.root / paths[0].lstrip('/')), overlays.sha(archive))
         packages[archive.name]['sha256'] = '0' * 64
         with self.assertRaisesRegex(ValueError, 'differs from the published generation'):
-            overlays.download_debian(self.root, download, packages, run)
+            download_debian(self.root, download, packages, run)
         download = self.root / 'downloads-from-debian'
         download.mkdir()
         packages[archive.name]['sha256'] = overlays.sha(self.root / 'debian' / archive.name)
-        paths = overlays.download_debian(self.root, download, packages, run,
-                                         source='sources.list.d/debian.sources')
+        paths = download_debian(self.root, download, packages, run,
+                                source='sources.list.d/debian.sources')
         self.assertEqual(len(paths), 1)
         self.assertEqual(overlays.sha(self.root / paths[0].lstrip('/')),
                          packages[archive.name]['sha256'])

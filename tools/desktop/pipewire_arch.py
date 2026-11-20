@@ -10,6 +10,7 @@ import sys
 import build_arch_package
 from build_piano_runtime_helpers import source_patches
 from build import overlay_packages, overlay_release
+from package.archive import pacman_info
 from desktop import libcamera_arch, package_build
 from prepare_steamos_rootfs import download
 
@@ -103,7 +104,7 @@ def verify_packages(runtime, archives, expected, version, audio_soname, camera_a
     camera_dependencies = {f'pipewire={version}', *libcamera_arch.sonames(camera_abi)}
     for filename, row in archives.items():
         archive = runtime / filename
-        fields = overlay_packages.pacman_info(archive)
+        fields = pacman_info(archive)
         name, = fields.get('pkgname', ('',))
         if (name in packages or name not in expected or fields.get('pkgver') != [version] or
                 fields.get('arch') != ['aarch64']):

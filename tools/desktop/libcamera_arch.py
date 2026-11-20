@@ -12,6 +12,7 @@ import sys
 import build_arch_package
 from build_piano_ram_bootstrap import guest_resolve
 from build import overlay_packages, overlay_release
+from package.archive import pacman_info
 from desktop import build_libcamera_packages, package_build
 from prepare_steamos_rootfs import download
 
@@ -132,7 +133,7 @@ def verify_arch_packages(runtime, archives, version, abi, *, target='arch'):
         path = runtime / archive
         if Path(archive).name != archive or path.is_symlink() or package_build.sha(path) != row['sha256']:
             raise ValueError('Native libcamera archive differs from the build record: ' + archive)
-        fields = overlay_packages.pacman_info(path)
+        fields = pacman_info(path)
         name, = fields['pkgname']
         if (name in packages or name not in expected or
                 fields['arch'] != ['aarch64'] or fields['pkgver'] != [version]):
@@ -177,7 +178,7 @@ def runtime_inputs(directory, *, target='arch'):
                 manifest['packages'].get(filename, {}).get('sha256') != checksum or
                 package_build.sha(archive) != checksum):
             raise ValueError('Arch libcamera archive differs from the build record: ' + filename)
-        fields = overlay_packages.pacman_info(archive)
+        fields = pacman_info(archive)
         if (fields.get('pkgname'), fields.get('pkgver'), fields.get('arch')) != (
                 [name], [version], ['aarch64']):
             raise ValueError('Unexpected Arch libcamera package: ' + filename)

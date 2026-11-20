@@ -7,7 +7,8 @@ import re
 import subprocess
 
 from build import denial, overlay_release
-from build.overlay_packages import pacman_info, sha
+from build.cache import sha
+from package.archive import pacman_info
 from build_piano_runtime_helpers import source_patches
 from desktop.debian_package import controls
 

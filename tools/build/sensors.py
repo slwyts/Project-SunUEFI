@@ -110,7 +110,7 @@ def build_pacman(output):
 
 def pacman_package(directory):
     """Verify the shared package and its runtime paths before use."""
-    from build.overlay_packages import pacman_info
+    from package.archive import pacman_info
 
     manifest = directory / 'manifest.json'
     if directory.is_symlink() or manifest.is_symlink():
@@ -137,7 +137,7 @@ def pacman_package(directory):
 
 
 def check_ssc_provider(archive):
-    from build.overlay_packages import pacman_info
+    from package.archive import pacman_info
 
     info = pacman_info(archive)
     capability, required = SSC_DEPENDENCY.split('>=')

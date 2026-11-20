@@ -9,6 +9,7 @@ import subprocess
 from build import overlay_packages, shared_products
 from build_piano_ram_bootstrap import guest_resolve
 from ci_build_targets import DENIAL_FILES
+from package.archive import pacman_identity
 
 # Denial builds separately. Repository code verifies and signs already-built packages.
 RECIPE_PATHS = ('build.sh', 'requirements-build.txt', 'sources.lock.json',
@@ -97,7 +98,7 @@ def restore_pacman(project, directory, target, inputs):
         for path, row in paths.values():
             identity = row['name'], row['version'], row['architecture']
             if (path.is_symlink() or not path.is_file() or overlay_packages.sha(path) != row['sha256'] or
-                    overlay_packages.pacman_identity(path) != identity):
+                    pacman_identity(path) != identity):
                 raise ValueError('Cached package differs: ' + path.name)
     except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
         print(f'Ignoring the cached {target} packages: {error}', flush=True)

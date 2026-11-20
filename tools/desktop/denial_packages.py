@@ -9,7 +9,8 @@ import shutil
 import subprocess
 import tempfile
 
-from build import overlay_packages, overlay_release
+from build import overlay_release
+from package.archive import debian_identity, pacman_identity, pacman_info
 from build.denial import FINGERPRINT, KEY
 from build.denial_manifest import ENGINE, MAIN, PLUGIN, TARGETS
 from build_piano_runtime_helpers import source_patches
@@ -114,7 +115,7 @@ def signed_archives(directory, package_format, version, keyring):
     selected = release_archives(digests, package_format, version)
     debian = package_format == 'debian'
     architecture = ARCHITECTURES[package_format]
-    identity = overlay_packages.debian_identity if debian else overlay_packages.pacman_identity
+    identity = debian_identity if debian else pacman_identity
     archives, inputs = {}, {}
     for name, files in selected.items():
         filename, signature = files
@@ -279,8 +280,8 @@ def build_pacman(binary, archives, inputs, output, version, source, root, policy
                 run_makepkg(guest, stage, folder, scratch, recipe, settings)
                 basename = f'{name}-{pkgversion}-aarch64.pkg.tar.zst'
                 archive = stage / scratch / basename
-                before = overlay_packages.pacman_info(archives[name])
-                after = overlay_packages.pacman_info(archive)
+                before = pacman_info(archives[name])
+                after = pacman_info(archive)
                 depends = before.get('depend', [])
                 if name == PLUGIN:
                     if f'{MAIN}={previous}' not in depends:
@@ -300,7 +301,7 @@ def add_engine(runtime, archive, metadata):
         shutil.copyfile(path, staged)
         if package_build.sha(staged) != digest:
             raise ValueError(f'The original Engine archive or signature changed: {path.name}')
-    name, version, arch = overlay_packages.pacman_identity(runtime / archive.name)
+    name, version, arch = pacman_identity(runtime / archive.name)
     return {'name': name, 'version': version, 'architecture': arch, 'sha256': metadata['sha256']}
 
 
@@ -327,12 +328,12 @@ def build(binary, receipt, upstream, output, package_format, *, source=None, arc
         if package_format == 'debian':
             revision = build_debian(binary, archives, release['archives'], runtime, work,
                                     release['source_date_epoch'])
-            identity = overlay_packages.debian_identity
+            identity = debian_identity
         else:
             revision = build_pacman(binary, archives, release['archives'], runtime, version,
                                     Path(source).resolve(), Path(arch_root).resolve() if arch_root else None,
                                     record['source'])
-            identity = overlay_packages.pacman_identity
+            identity = pacman_identity
         packages, names = {}, set()
         architecture = ARCHITECTURES[package_format]
         for archive in sorted(runtime.iterdir()):

@@ -16,7 +16,8 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 import build_arch_package
-from build import overlay_packages, overlay_release
+from build import overlay_release
+from package.archive import pacman_identity, pacman_info
 from build_piano_ram_bootstrap import guest_resolve
 from build_piano_runtime_helpers import source_patches
 from desktop import debian_package, libcamera_arch, package_build
@@ -198,9 +199,9 @@ def verify_arch_runtime(runtime, manifest, version, abi, *, qt_minor=None):
     row = packages[filename]
     if (Path(filename).name != filename or archive.is_symlink() or
             package_build.sha(archive) != row['sha256'] or
-            overlay_packages.pacman_identity(archive) != (PACKAGE, version, 'aarch64')):
+            pacman_identity(archive) != (PACKAGE, version, 'aarch64')):
         raise ValueError('Unexpected Plasma Camera package: ' + filename)
-    dependencies = set(overlay_packages.pacman_info(archive).get('depend', ()))
+    dependencies = set(pacman_info(archive).get('depend', ()))
     if not {*libcamera_arch.sonames(abi), 'qt6-multimedia-ffmpeg'} <= dependencies:
         raise ValueError('Plasma Camera must require the selected libcamera ABI and FFmpeg backend')
     if qt_minor is not None and f'qt6-base>={qt_minor}' not in dependencies:

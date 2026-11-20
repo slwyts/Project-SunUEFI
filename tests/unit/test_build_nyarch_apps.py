@@ -9,7 +9,8 @@ import unittest
 from unittest.mock import patch
 
 import build_nyarch_apps as nyarch
-from build import overlay_packages, overlay_release
+from build import overlay_release
+from package.archive import pacman_identity
 
 
 @unittest.skipUnless(all(shutil.which(tool) for tool in ('makepkg', 'fakeroot', 'bsdtar')),
@@ -50,7 +51,7 @@ class NyarchApplicationTests(unittest.TestCase):
                 self.assertEqual(commands, ['--nobuild', '--noextract'])
                 archives = list(root.glob('*.pkg.tar.gz'))
                 self.assertEqual(len(archives), 1)
-                name, version, arch = overlay_packages.pacman_identity(archives[0])
+                name, version, arch = pacman_identity(archives[0])
                 self.assertEqual((name, version, arch),
                                  ('piano-nyarch-test', '2.r7-' + overlay_release.pacman_release('1'), 'any'))
                 self.assertTrue(overlay_release.uses_pacman_generation(version))

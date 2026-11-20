@@ -22,8 +22,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT / 'tools') not in sys.path:
     sys.path.insert(0, str(ROOT / 'tools'))
 
-from build.cache import atomic_json, source_identity
-from build.overlay_packages import debian_identity, pacman_identity, sha
+from build.cache import atomic_json, sha, source_identity
+from package.archive import debian_identity, pacman_identity
 from build_piano_ram_bootstrap import guest_resolve
 from build_piano_runtime_helpers import CAMERA_RUNTIME_PATHS, build_camera, verify_elf
 import package_bsp
@@ -46,7 +46,7 @@ def policy():
 def cache_digest():
     inputs = source_identity(ROOT, (
         'tools/package/camera.py', 'tools/build_piano_runtime_helpers.py',
-        'tools/build/cache.py', 'tools/build/overlay_packages.py', 'tools/package_bsp.py',
+        'tools/build/cache.py', 'tools/package/archive.py', 'tools/package_bsp.py',
         'linux/userspace/camera', 'linux/bsp/optional/camera', 'patches/demosaic',
     ))
     manifest = json.loads((ROOT / 'linux/bsp/manifest.json').read_text())

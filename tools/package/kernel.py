@@ -18,6 +18,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 from build_piano_full_kernel import (kernel_build_environment, kernel_release_matches,
                                      release_kernel_policy, toolchain)
+from package import download
+from package.archive import debian_identity, pacman_identity
 from stage_piano_kernel_modules import inspect
 
 DEBIAN_REVISION = 2
@@ -196,8 +198,6 @@ def verify_image(archive, package_format, release, expected, modules=()):
 
 def download_pacman(root, work, packages, guest):
     """Fetch exactly the published kernel generation without refreshing the base repos."""
-    from build import overlay_packages
-
     database, cache = work / 'database', work / 'published'
     database.mkdir()
     cache.mkdir()
@@ -207,7 +207,7 @@ def download_pacman(root, work, packages, guest):
                       'Include = /etc/pacman.d/sunuefi.conf\n')
     records = {}
     for archive, row in packages.items():
-        name, version, architecture = overlay_packages.pacman_identity(work / archive)
+        name, version, architecture = pacman_identity(work / archive)
         if architecture not in ('aarch64', 'any') or not re.fullmatch(r'[a-z0-9][a-z0-9.+_-]*', name):
             raise ValueError('Unexpected native pacman package name: ' + name)
         records[archive] = {'name': name, 'version': version, 'sha256': row['sha256']}
@@ -221,7 +221,7 @@ def download_pacman(root, work, packages, guest):
 
     guest(['pacman-key', '--populate', 'sunuefi'])
     isolated_pacman(['pacman', '-Sy', '--noconfirm'])
-    overlay_packages.download_pacman(root, cache, 'sunuefi', records, isolated_pacman)
+    download.download_pacman(root, cache, 'sunuefi', records, isolated_pacman)
     return [relative(cache / name) for name in packages]
 
 
@@ -265,7 +265,6 @@ def install(root, package_format, kernel, *, published=False):
                             'DEBIAN_FRONTEND=noninteractive', 'apt-get', *arguments]), check=True)
 
                     if published:
-                        from build.overlay_packages import debian_identity, download_debian
                         # The validated config is the initial public key and APT source.
                         config, = [path for path in paths if Path(path).name.startswith('piano-boot-config_')]
                         apt('install', '-y', '--no-install-recommends', config)
@@ -279,8 +278,9 @@ def install(root, package_format, kernel, *, published=False):
                                               'architecture': architecture, 'sha256': row['sha256']}
                         incoming = work / 'published'
                         incoming.mkdir(mode=0o755)
-                        paths = download_debian(root, incoming, expected,
-                                                lambda args, **kwargs: subprocess.run(args, check=True, **kwargs))
+                        paths = download.download_debian(
+                            root, incoming, expected,
+                            lambda args, **kwargs: subprocess.run(args, check=True, **kwargs))
                     apt('install', '-y', '--no-install-recommends',
                         *(['--reinstall'] if published else []), *paths)
             else:

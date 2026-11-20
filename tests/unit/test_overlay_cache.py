@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 import build_nyarch_rootfs as nyarch
 from build import overlay_cache, overlay_packages
+from package.archive import pacman_identity
 from desktop import libcamera_arch
 
 
@@ -101,7 +102,7 @@ class OverlayCacheTests(unittest.TestCase):
                     member = tarfile.TarInfo('.PKGINFO')
                     member.size = len(info)
                     stream.addfile(member, io.BytesIO(info))
-                self.assertEqual(overlay_packages.pacman_identity(archive), (name, '1-1', 'aarch64'))
+                self.assertEqual(pacman_identity(archive), (name, '1-1', 'aarch64'))
                 info = {'version': '1-1', 'architecture': 'aarch64',
                         'sha256': overlay_packages.sha(archive)}
                 component = labels.get(name, 'bluez' if name == 'bluez-sunuefi' else name)

@@ -592,7 +592,7 @@ def recipe_inputs(inputs):
 def build_dependency_records(archives):
     if not archives:
         return {}
-    from build.overlay_packages import debian_identity
+    from package.archive import debian_identity
 
     dependencies = {}
     for archive in archives:

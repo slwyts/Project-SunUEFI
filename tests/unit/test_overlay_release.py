@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import build_arch_package
 from build import overlay_packages, overlay_release
+from package.archive import pacman_identity
 
 
 class OverlayVersionTests(unittest.TestCase):
@@ -159,7 +160,7 @@ package_test-overlay-app() {
             packages = sorted(work.glob('*.pkg.tar.*'))
             version = '2.3-' + overlay_release.pacman_release('1.9')
             expected = {('test-overlay-lib', version, 'any'), ('test-overlay-app', version, 'any')}
-            self.assertEqual({overlay_packages.pacman_identity(path) for path in packages}, expected)
+            self.assertEqual({pacman_identity(path) for path in packages}, expected)
             for package in packages:
                 subprocess.run([*gpg, '--detach-sign', package], check=True, capture_output=True)
             transaction = subprocess.run([*pacman, '-U', '--noconfirm', *packages],

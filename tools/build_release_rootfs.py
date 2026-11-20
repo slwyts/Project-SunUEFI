@@ -27,6 +27,7 @@ from build.denial import image_manifest
 from package_bsp import POWER_PROFILES_PACKAGE
 from make_kernel_initramfs import make_newc, validate_static_arm64_elf
 from package import camera
+from package.download import download_debian
 from prepare_debian_desktop import DESKTOPS, desktop_packages
 from prepare_release_kernel import release_series
 
@@ -912,7 +913,7 @@ def install_overlays(rootfs, run, packages, *, desktop, extra=(), published=Fals
         prepare_build_indexes(rootfs, lambda args: run(['chroot', rootfs, *args]),
                               refresh=published)
         if published:
-            paths = overlay_packages.download_debian(rootfs, work, packages, run)
+            paths = download_debian(rootfs, work, packages, run)
         else:
             paths = []
             for name, (archive, row) in packages.items():

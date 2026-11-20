@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 
 from build import overlay_packages
+from package.download import download_debian
 from build_piano_ram_bootstrap import guest_resolve
 
 
@@ -128,8 +129,8 @@ def install_published_debian(rootfs, run, apt, manifest, install):
         project, upstream = work / 'sunuefi', work / 'denial'
         project.mkdir()
         upstream.mkdir()
-        paths = overlay_packages.download_debian(rootfs, project, packages, run)
-        paths += overlay_packages.download_debian(
+        paths = download_debian(rootfs, project, packages, run)
+        paths += download_debian(
             rootfs, upstream, {engine['file']: {
                 'name': ENGINE, 'version': engine['version'], 'architecture': 'arm64',
                 'sha256': engine['sha256'],

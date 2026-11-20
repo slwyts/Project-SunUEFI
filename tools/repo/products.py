@@ -15,9 +15,10 @@ from verify_public import verify_public
 
 sys.path.insert(0, str(ROOT / 'tools'))
 from build import denial_manifest, sensors
-from build.overlay_packages import (ARCH_REPOSITORIES, PACMAN_CAMERA, bsp_package, pacman_identity,
+from build.overlay_packages import (ARCH_REPOSITORIES, PACMAN_CAMERA, bsp_package,
                                     read_debian, read_pacman, topology_package)
 from package import camera
+from package.archive import pacman_identity
 from package.boot import PUBLIC_REPOSITORY_URL
 
 
