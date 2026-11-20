@@ -1,0 +1,153 @@
+Subject: [PATCH] avformat/matroskaenc: accept first-packet AVC and HEVC configuration
+
+Stateful V4L2 encoders can provide Annex B parameter sets in the first
+coded packet. Matroska needs them for CodecPrivate before writing any
+video blocks.
+
+For seekable output, reserve room in Tracks when the stream has no
+initial configuration. Use the existing extract_extradata filter and
+publish CodecPrivate as soon as the first packet supplies it, before
+writing its length-prefixed NAL units. Keep the existing requirement
+for initial configuration on live or non-seekable outputs.
+
+diff --git a/configure b/configure
+--- a/configure
++++ b/configure
+@@ -3956,7 +3956,7 @@
+ matroska_audio_muxer_select="matroska_muxer"
+ matroska_demuxer_select="riffdec"
+ matroska_demuxer_suggest="bzlib zlib"
+-matroska_muxer_select="iso_writer mpeg4audio riffenc aac_adtstoasc_bsf pgs_frame_merge_bsf vp9_superframe_bsf"
++matroska_muxer_select="iso_writer mpeg4audio riffenc aac_adtstoasc_bsf extract_extradata_bsf pgs_frame_merge_bsf vp9_superframe_bsf"
+ mcc_demuxer_select="smpte_436m"
+ mcc_muxer_select="smpte_436m"
+ mcc_muxer_suggest="eia608_to_smpte436m_bsf"
+diff --git a/libavformat/matroskaenc.c b/libavformat/matroskaenc.c
+--- a/libavformat/matroskaenc.c
++++ b/libavformat/matroskaenc.c
+@@ -82,6 +82,8 @@
+  * and so has avio_write(). */
+ #define MAX_SUPPORTED_EBML_LENGTH FFMIN(MAX_EBML_LENGTH, INT_MAX)
+ 
++#define H26X_CODEC_PRIVATE_RESERVE 4096
++
+ #define MODE_MATROSKAv2 0x01
+ #define MODE_WEBM       0x02
+ 
+@@ -841,6 +843,21 @@
+     return ret;
+ }
+ 
++static int write_ebml_stored_master(AVIOContext *pb,
++                                    const ebml_stored_master *elem, uint32_t id)
++{
++    uint8_t *buf;
++    int size = avio_get_dyn_buf(elem->bc, &buf);
++
++    if (elem->bc->error < 0)
++        return elem->bc->error;
++
++    put_ebml_id(pb, id);
++    put_ebml_length(pb, size, 0);
++    avio_write(pb, buf, size);
++    return pb->error;
++}
++
+ /**
+  * Output EBML master. Keep the buffer if seekable, allowing for later updates.
+  * Furthermore always add a SeekHead Entry for this element.
+@@ -850,20 +867,9 @@
+                                              MatroskaMuxContext *mkv, uint32_t id)
+ {
+     if (IS_SEEKABLE(pb, mkv)) {
+-        uint8_t *buf;
+-        int size = avio_get_dyn_buf(elem->bc, &buf);
+-
+-        if (elem->bc->error < 0)
+-            return elem->bc->error;
+-
+         elem->pos = avio_tell(pb);
+         mkv_add_seekhead_entry(mkv, id, elem->pos);
+-
+-        put_ebml_id(pb, id);
+-        put_ebml_length(pb, size, 0);
+-        avio_write(pb, buf, size);
+-
+-        return 0;
++        return write_ebml_stored_master(pb, elem, id);
+     } else
+         return end_ebml_master_crc32(pb, &elem->bc, mkv, id, 0, 0, 1);
+ }
+@@ -1153,6 +1159,13 @@
+                                             int extradata_size,
+                                             unsigned *size_to_reserve)
+ {
++    if (CONFIG_MATROSKA_MUXER && !extradata_size &&
++        (par->codec_id == AV_CODEC_ID_H264 || par->codec_id == AV_CODEC_ID_HEVC) &&
++        IS_SEEKABLE(s->pb, (MatroskaMuxContext *)s->priv_data)) {
++        *size_to_reserve = H26X_CODEC_PRIVATE_RESERVE;
++        return 0;
++    }
++
+     switch (par->codec_id) {
+     case AV_CODEC_ID_VORBIS:
+     case AV_CODEC_ID_THEORA:
+@@ -3062,6 +3075,39 @@
+ 
+     switch (par->codec_id) {
+ #if CONFIG_MATROSKA_MUXER
++    case AV_CODEC_ID_H264:
++    case AV_CODEC_ID_HEVC:
++        if (!par->extradata_size) {
++            int64_t pos = avio_tell(s->pb);
++            int64_t seek_ret;
++
++            if (side_data_size < 4 || side_data_size > INT_MAX - AV_INPUT_BUFFER_PADDING_SIZE ||
++                !mkv->track.bc) {
++                av_log(s, AV_LOG_ERROR, "Missing or invalid %s configuration in the first packet of stream %d.\n",
++                       avcodec_get_name(par->codec_id), pkt->stream_index);
++                return AVERROR_INVALIDDATA;
++            }
++
++            ret = mkv_update_codecprivate(s, mkv, side_data, side_data_size,
++                                          par, mkv->track.bc, track, 0);
++            if (ret < 0)
++                return ret;
++
++            if (AV_RB24(side_data) == 1 || AV_RB32(side_data) == 1)
++                track->reformat = mkv_reformat_h2645;
++
++            /* Publish CodecPrivate before writing the first cluster. */
++            seek_ret = avio_seek(s->pb, mkv->track.pos, SEEK_SET);
++            if (seek_ret < 0)
++                return seek_ret;
++            ret = write_ebml_stored_master(s->pb, &mkv->track, MATROSKA_ID_TRACKS);
++            seek_ret = avio_seek(s->pb, pos, SEEK_SET);
++            if (ret < 0)
++                return ret;
++            if (seek_ret < 0)
++                return seek_ret;
++        }
++        break;
+     case AV_CODEC_ID_AAC:
+         if (side_data_size && mkv->track.bc) {
+             int output_sample_rate = 0;
+@@ -3629,11 +3675,18 @@
+ static int mkv_check_bitstream(AVFormatContext *s, AVStream *st,
+                                const AVPacket *pkt)
+ {
++    MatroskaMuxContext *mkv = s->priv_data;
+     int ret = 1;
+ 
+     if (CONFIG_MATROSKA_MUXER && st->codecpar->codec_id == AV_CODEC_ID_AAC) {
+         if (pkt->size > 2 && (AV_RB16(pkt->data) & 0xfff0) == 0xfff0)
+             ret = ff_stream_add_bitstream_filter(st, "aac_adtstoasc", NULL);
++    } else if (CONFIG_MATROSKA_MUXER && !st->codecpar->extradata_size &&
++               (st->codecpar->codec_id == AV_CODEC_ID_H264 ||
++                st->codecpar->codec_id == AV_CODEC_ID_HEVC) &&
++               IS_SEEKABLE(s->pb, mkv) &&
++               !av_packet_get_side_data(pkt, AV_PKT_DATA_NEW_EXTRADATA, NULL)) {
++        ret = ff_stream_add_bitstream_filter(st, "extract_extradata", NULL);
+     } else if (st->codecpar->codec_id == AV_CODEC_ID_VP9) {
+         ret = ff_stream_add_bitstream_filter(st, "vp9_superframe", NULL);
+     } else if (CONFIG_MATROSKA_MUXER &&
