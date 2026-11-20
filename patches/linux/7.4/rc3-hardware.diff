@@ -1,0 +1,2363 @@
+diff --git a/drivers/dma/qcom/gpi.c b/drivers/dma/qcom/gpi.c
+index d3c3d0f35afbe01c9a151054eb35076336b2c805..99b72f3b3162c650bd8d5b56b871cd8c02e4cf67 100644
+--- a/drivers/dma/qcom/gpi.c
++++ b/drivers/dma/qcom/gpi.c
+@@ -2014,6 +2014,7 @@ static void gpi_free_chan_resources(struct dma_chan *chan)
+ 	gpi_free_ring(&gchan->ch_ring, gpii);
+ 	vchan_free_chan_resources(&gchan->vc);
+ 	kfree(gchan->config);
++	gchan->config = NULL;
+ 
+ 	write_lock_irq(&gpii->pm_lock);
+ 	gchan->pm_state = DISABLE_STATE;
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+index c8465186ccdd5fd0535ee7b818fe76708afb1fcc..f64202cc3192b8e5f813598f80694721919ff716 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+@@ -1765,6 +1765,8 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
+ {
+ 	struct drm_crtc_state *crtc_state = drm_atomic_get_new_crtc_state(state,
+ 									  crtc);
++	struct drm_crtc_state *old_crtc_state = drm_atomic_get_old_crtc_state(state, crtc);
++	struct dpu_crtc_state *old_cstate = to_dpu_crtc_state(old_crtc_state);
+ 	struct dpu_crtc *dpu_crtc = to_dpu_crtc(crtc);
+ 	struct dpu_crtc_state *cstate = to_dpu_crtc_state(crtc_state);
+ 
+@@ -1792,7 +1794,8 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
+ 	/* A hardware failure latches the engine unusable. Do not accept a
+ 	 * later gamma update as though its transport were still initialized.
+ 	 */
+-	if ((crtc_state->color_mgmt_changed || drm_atomic_crtc_needs_modeset(crtc_state)) &&
++	if (crtc_state->enable &&
++	    (crtc_state->color_mgmt_changed || drm_atomic_crtc_needs_modeset(crtc_state)) &&
+ 	    kms->lutdma && !dpu_lutdma_ready(kms->lutdma))
+ 		return -EIO;
+ 
+@@ -1800,9 +1803,10 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
+ 	if (rc)
+ 		return rc;
+ 
+-	/* don't reallocate resources if only ACTIVE has beeen changed */
++	/* The fixed output conversion reuses the DSPPs from the active mode. */
+ 	if (crtc_state->mode_changed || crtc_state->connectors_changed ||
+-	    crtc_state->color_mgmt_changed) {
++	    (crtc_state->color_mgmt_changed &&
++	     cstate->output_color_mode == old_cstate->output_color_mode)) {
+ 		rc = dpu_crtc_assign_resources(crtc, crtc_state);
+ 		if (rc < 0)
+ 			return rc;
+@@ -1863,8 +1867,7 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
+ 		return rc;
+ 	}
+ 
+-	cstate->vfp_update = dpu_crtc_can_update_vfp(
+-		drm_atomic_get_old_crtc_state(state, crtc), crtc_state);
++	cstate->vfp_update = dpu_crtc_can_update_vfp(old_crtc_state, crtc_state);
+ 	if (cstate->vfp_update)
+ 		crtc_state->mode_changed = false;
+ 
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c
+index 800117e67bec946a135bc01ffb855b04ead97736..518dd08ddeca8d7e5f94dbe4147160861f09c54f 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c
+@@ -69,8 +69,8 @@ static int parse_color(struct dpu_output_color *color, const struct firmware *fw
+ 	return 0;
+ }
+ 
+-void dpu_output_color_init(struct msm_kms *kms, struct drm_connector *connector,
+-			   const struct device_node *panel)
++bool dpu_output_color_init(struct msm_kms *kms, struct drm_connector *connector,
++			  const struct device_node *panel)
+ {
+ 	struct dpu_kms *dpu_kms = to_dpu_kms(kms);
+ 	struct dpu_output_color *color;
+@@ -83,12 +83,12 @@ void dpu_output_color_init(struct msm_kms *kms, struct drm_connector *connector,
+ 	if (!panel || dpu_kms->output_color || !dpu_lutdma_ready(dpu_kms->lutdma) ||
+ 	    dpu_kms->catalog->mdss_ver->core_major_ver != 12 ||
+ 	    dpu_kms->catalog->dspp_count < 2)
+-		return;
++		return false;
+ 	sblk = dpu_kms->catalog->dspp[0].sblk;
+ 	if (!sblk || sblk->gamut.base != 0x1000 || sblk->gamut.version != 0x40003 ||
+ 	    sblk->igc.base != 0x1260 || sblk->igc.version != 0x50000 ||
+ 	    sblk->gc.base != 0x17c0 || sblk->gc.version != 0x20000)
+-		return;
++		return false;
+ 	if (of_device_is_compatible(panel, "xiaomi,piano-boe-nt36532")) {
+ 		name = "qcom/sm8750/piano-boe-display.bin";
+ 		panel_id = 1;
+@@ -96,30 +96,31 @@ void dpu_output_color_init(struct msm_kms *kms, struct drm_connector *connector,
+ 		name = "qcom/sm8750/piano-csot-display.bin";
+ 		panel_id = 2;
+ 	} else {
+-		return;
++		return false;
+ 	}
+ 	ret = firmware_request_nowarn(&fw, name, kms->dev->dev);
+ 	if (ret) {
+ 		drm_dbg_kms(kms->dev, "Output color calibration unavailable: %d\n", ret);
+-		return;
++		return false;
+ 	}
+ 	color = drmm_kzalloc(kms->dev, sizeof(*color), GFP_KERNEL);
+ 	ret = color ? parse_color(color, fw, panel_id) : -ENOMEM;
+ 	release_firmware(fw);
+ 	if (ret) {
+ 		drm_warn(kms->dev, "Invalid output color calibration: %d\n", ret);
+-		return;
++		return false;
+ 	}
+ 	ret = drm_mode_create_hdmi_colorspace_property(connector,
+ 		BIT(DRM_MODE_COLORIMETRY_BT2020_RGB));
+ 	if (ret)
+-		return;
++		return false;
+ 	ret = drm_connector_attach_colorspace_property(connector);
+ 	if (ret)
+-		return;
++		return false;
+ 	drm_connector_attach_hdr_output_metadata_property(connector);
+ 	color->connector = connector;
+ 	dpu_kms->output_color = color;
++	return true;
+ }
+ 
+ static bool gamma_lut_is_identity(const struct drm_property_blob *blob)
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.h
+index c230cef8f1cf2fd9090767f76e0ba1f5ab19a27d..169e31a7a78657b4ad8351856080482c975ce847 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.h
+@@ -18,8 +18,8 @@ struct dpu_output_color {
+ 	struct dpu_hw_gamut_lut gamut;
+ };
+ 
+-void dpu_output_color_init(struct msm_kms *kms, struct drm_connector *connector,
+-			   const struct device_node *panel);
++bool dpu_output_color_init(struct msm_kms *kms, struct drm_connector *connector,
++			  const struct device_node *panel);
+ int dpu_output_color_check(struct drm_crtc_state *state);
+ 
+ #endif
+diff --git a/drivers/gpu/drm/msm/dsi/dsi_manager.c b/drivers/gpu/drm/msm/dsi/dsi_manager.c
+index a1896b12ab0c3f605f57d6bbbe391b509ae78cff..d34ff35ec8dad51fd5ad745acd0905ff1a6e5fac 100644
+--- a/drivers/gpu/drm/msm/dsi/dsi_manager.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_manager.c
+@@ -3,8 +3,12 @@
+  * Copyright (c) 2015, The Linux Foundation. All rights reserved.
+  */
+ 
+-#include "drm/drm_bridge_connector.h"
++#include <linux/backlight.h>
++#include <linux/device.h>
++
+ #include <drm/display/drm_dsc.h>
++#include <drm/drm_bridge_connector.h>
++#include <drm/drm_panel.h>
+ 
+ #include "msm_kms.h"
+ #include "dsi.h"
+@@ -217,6 +221,7 @@ struct dsi_bridge {
+ 	struct drm_connector *connector;
+ 	int id;
+ 	bool link_ready;
++	bool output_color;
+ };
+ 
+ #define to_dsi_bridge(x) container_of(x, struct dsi_bridge, base)
+@@ -539,30 +544,52 @@ dsi_mgr_panel_mode(struct drm_connector *connector,
+ 	return native;
+ }
+ 
++static bool dsi_mgr_can_update_sdr_color(struct drm_bridge *bridge,
++					 const struct drm_crtc_state *crtc_state,
++					 const struct drm_connector_state *old,
++					 const struct drm_connector_state *new)
++{
++	const struct drm_crtc_state *old_crtc;
++
++	if (!to_dsi_bridge(bridge)->output_color ||
++	    old->hdr_output_metadata || new->hdr_output_metadata ||
++	    old->crtc != new->crtc || !crtc_state->active ||
++	    crtc_state->self_refresh_active || drm_atomic_crtc_needs_modeset(crtc_state))
++		return false;
++
++	old_crtc = drm_atomic_get_old_crtc_state(crtc_state->state, crtc_state->crtc);
++	return old_crtc->active && !old_crtc->self_refresh_active &&
++	       hweight32(crtc_state->encoder_mask) == 1 &&
++	       drm_mode_equal(&old_crtc->adjusted_mode, &crtc_state->adjusted_mode);
++}
++
+ static int dsi_mgr_bridge_atomic_check(struct drm_bridge *bridge,
+ 				      struct drm_bridge_state *bridge_state,
+ 				      struct drm_crtc_state *crtc_state,
+ 				      struct drm_connector_state *conn_state)
+ {
+-	const struct drm_display_mode *native;
++	struct drm_connector *connector = conn_state->connector;
+ 	struct drm_connector_state *old;
+ 
+-	old = drm_atomic_get_old_connector_state(crtc_state->state, conn_state->connector);
++	if (connector->scaling_mode_property) {
++		const struct drm_display_mode *native;
++
++		native = dsi_mgr_panel_mode(connector, &crtc_state->mode);
++		if (!native)
++			return -EINVAL;
++		if (conn_state->scaling_mode == DRM_MODE_SCALE_NONE &&
++		    (native->hdisplay != crtc_state->mode.hdisplay ||
++		     native->vdisplay != crtc_state->mode.vdisplay))
++			return -EINVAL;
++		drm_mode_copy(&crtc_state->adjusted_mode, native);
++	}
++
++	/* SDR color conversion changes only the DSPP tables, not the link. */
++	old = drm_atomic_get_old_connector_state(crtc_state->state, connector);
+ 	if (old && (old->colorspace != conn_state->colorspace ||
+-		    !drm_connector_atomic_hdr_metadata_equal(old, conn_state)))
++		    !drm_connector_atomic_hdr_metadata_equal(old, conn_state)) &&
++	    !dsi_mgr_can_update_sdr_color(bridge, crtc_state, old, conn_state))
+ 		crtc_state->mode_changed = true;
+-
+-	if (!conn_state->connector->scaling_mode_property)
+-		return 0;
+-	native = dsi_mgr_panel_mode(conn_state->connector, &crtc_state->mode);
+-	if (!native)
+-		return -EINVAL;
+-	if (conn_state->scaling_mode == DRM_MODE_SCALE_NONE &&
+-	    (native->hdisplay != crtc_state->mode.hdisplay ||
+-	     native->vdisplay != crtc_state->mode.vdisplay))
+-		return -EINVAL;
+-
+-	drm_mode_copy(&crtc_state->adjusted_mode, native);
+ 	return 0;
+ }
+ 
+@@ -604,15 +631,70 @@ static enum drm_mode_status dsi_mgr_bridge_mode_valid(struct drm_bridge *bridge,
+ 	return msm_dsi_host_check_dsc(host, mode);
+ }
+ 
++static int dsi_mgr_link_panel_backlight(struct drm_bridge *bridge,
++					const struct drm_bridge *next_bridge)
++{
++	struct device *dev = bridge->dev->dev;
++	struct backlight_device *backlight;
++	struct device_node *node;
++
++	if (!IS_REACHABLE(CONFIG_BACKLIGHT_CLASS_DEVICE) ||
++	    !next_bridge || !drm_bridge_is_panel(next_bridge))
++		return 0;
++
++	node = of_parse_phandle(next_bridge->of_node, "backlight", 0);
++	if (!node)
++		return 0;
++
++	backlight = of_find_backlight_by_node(node);
++	of_node_put(node);
++	if (!backlight)
++		return dev_err_probe(dev, -EPROBE_DEFER, "panel backlight not registered\n");
++
++	/*
++	 * KMS shuts down the panel through the bridge chain. Keep the
++	 * external backlight and its bus available until that completes.
++	 */
++	if (!device_link_add(dev, &backlight->dev, DL_FLAG_STATELESS)) {
++		put_device(&backlight->dev);
++		return dev_err_probe(dev, -EINVAL, "failed to link panel backlight\n");
++	}
++
++	bridge->driver_private = &backlight->dev;
++
++	return 0;
++}
++
++static void dsi_mgr_bridge_detach(struct drm_bridge *bridge)
++{
++	struct device *backlight = bridge->driver_private;
++
++	if (!backlight)
++		return;
++
++	/* The device core might already have purged the link. */
++	device_link_remove(bridge->dev->dev, backlight);
++	put_device(backlight);
++	bridge->driver_private = NULL;
++}
++
+ static int dsi_mgr_bridge_attach(struct drm_bridge *bridge,
+ 				 struct drm_encoder *encoder,
+ 				 enum drm_bridge_attach_flags flags)
+ {
+ 	int id = dsi_mgr_bridge_get_id(bridge);
+ 	struct msm_dsi *msm_dsi = dsi_mgr_get_dsi(id);
++	int ret;
++
++	ret = dsi_mgr_link_panel_backlight(bridge, msm_dsi->next_bridge);
++	if (ret)
++		return ret;
+ 
+-	return drm_bridge_attach(encoder, msm_dsi->next_bridge,
+-				 bridge, flags);
++	ret = drm_bridge_attach(encoder, msm_dsi->next_bridge, bridge, flags);
++	if (ret)
++		dsi_mgr_bridge_detach(bridge);
++
++	return ret;
+ }
+ 
+ static const struct drm_bridge_funcs dsi_mgr_bridge_funcs = {
+@@ -620,6 +702,7 @@ static const struct drm_bridge_funcs dsi_mgr_bridge_funcs = {
+ 	.atomic_destroy_state = drm_atomic_helper_bridge_destroy_state,
+ 	.atomic_duplicate_state = drm_atomic_helper_bridge_duplicate_state,
+ 	.attach = dsi_mgr_bridge_attach,
++	.detach = dsi_mgr_bridge_detach,
+ 	.atomic_pre_enable = dsi_mgr_bridge_pre_enable,
+ 	.atomic_enable = dsi_mgr_bridge_enable,
+ 	.atomic_disable = dsi_mgr_bridge_disable,
+@@ -696,8 +779,8 @@ int msm_dsi_manager_connector_init(struct msm_dsi *msm_dsi,
+ 		struct msm_drm_private *priv = msm_dsi->dev->dev_private;
+ 
+ 		if (priv->kms->funcs->init_output_color)
+-			priv->kms->funcs->init_output_color(priv->kms, connector,
+-							  msm_dsi->next_bridge->of_node);
++			dsi_bridge->output_color = priv->kms->funcs->init_output_color(
++				priv->kms, connector, msm_dsi->next_bridge->of_node);
+ 	}
+ 
+ 	return 0;
+diff --git a/drivers/gpu/drm/msm/msm_kms.h b/drivers/gpu/drm/msm/msm_kms.h
+index 6acceac948ca83c791359ef608f29f665ec53fe9..5bcab97affe357b64406af4eae60946508402827 100644
+--- a/drivers/gpu/drm/msm/msm_kms.h
++++ b/drivers/gpu/drm/msm/msm_kms.h
+@@ -25,9 +25,9 @@
+ struct msm_kms_funcs {
+ 	/* hw initialization: */
+ 	int (*hw_init)(struct msm_kms *kms);
+-	/* Optional fixed-panel signal conversion, initialized before registration. */
+-	void (*init_output_color)(struct msm_kms *kms, struct drm_connector *connector,
+-				  const struct device_node *panel);
++	/* Returns true when KMS converts the fixed-panel signal internally. */
++	bool (*init_output_color)(struct msm_kms *kms, struct drm_connector *connector,
++				 const struct device_node *panel);
+ 	/* irq handling: */
+ 	void (*irq_preinstall)(struct msm_kms *kms);
+ 	int (*irq_postinstall)(struct msm_kms *kms);
+diff --git a/drivers/gpu/drm/panel/panel-novatek-nt36532.c b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
+index e2f48a98522669439e6b1e341cf91df2801f5f73..3fbd05716bf6dbff442b9d8a68dad934c97e01d8 100644
+--- a/drivers/gpu/drm/panel/panel-novatek-nt36532.c
++++ b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
+@@ -212,7 +212,7 @@ static void nt36532_edid_checksum(u8 *block)
+ 
+ static void nt36532_update_edid(struct nt36532 *ctx, struct drm_connector *connector)
+ {
+-	const struct drm_display_mode *mode = &ctx->panel_info->modes[1];
++	const struct drm_display_mode *mode = &ctx->panel_info->modes[0];
+ 	const struct drm_edid *edid;
+ 	u8 data[384] = { 0 };
+ 	u8 *cta = data + 128, *displayid = data + 256, *params = displayid + 5;
+@@ -346,24 +346,11 @@ static int nt36532_get_modes(struct drm_panel *panel,
+ {
+ 	struct nt36532 *ctx = to_nt36532(panel);
+ 	const struct panel_info *panel_info = ctx->panel_info;
+-	unsigned int preferred = 0;
+ 	unsigned int i;
+ 	int count = panel_info->num_modes;
+ 
+ 	nt36532_update_edid(ctx, connector);
+ 
+-	/* Piano's validated pen scan uses a 120 Hz cold-start display mode.
+-	 * Keep every advertised mode and each panel vendor's own sequence.
+-	 */
+-	if (of_machine_is_compatible("xiaomi,piano")) {
+-		for (i = 0; i < panel_info->num_modes; i++) {
+-			if (drm_mode_vrefresh(&panel_info->modes[i]) == 120) {
+-				preferred = i;
+-				break;
+-			}
+-		}
+-	}
+-
+ 	for (i = 0; i < panel_info->num_modes; i++) {
+ 		struct drm_display_mode *mode;
+ 
+@@ -372,7 +359,7 @@ static int nt36532_get_modes(struct drm_panel *panel,
+ 			return -ENOMEM;
+ 
+ 		mode->type = DRM_MODE_TYPE_DRIVER;
+-		if (i == preferred)
++		if (i == 0)
+ 			mode->type |= DRM_MODE_TYPE_PREFERRED;
+ 
+ 		drm_mode_set_name(mode);
+@@ -649,8 +636,8 @@ static const struct drm_dsc_config csot_dsc_cfg = {
+ 		   PIANO_VTOTAL, (_vrefresh))
+ 
+ static const struct drm_display_mode piano_display_modes[] = {
+-	PIANO_MODE(42, PIANO_VFP, 144),
+ 	PIANO_MODE(234, PIANO_VFP, 120),
++	PIANO_MODE(42, PIANO_VFP, 144),
+ 	PIANO_MODE(618, PIANO_VFP, 90),
+ 	PIANO_VFP_MODE(60),
+ 	PIANO_VFP_MODE(50),
+diff --git a/drivers/hid/hid-nanosic-wn8030.c b/drivers/hid/hid-nanosic-wn8030.c
+index 3f727919e271f8bd62f419cef5cfd2d2e1540f0c..c8473a22e2a7b55ab6d907ef1295cc6e0afc0093 100644
+--- a/drivers/hid/hid-nanosic-wn8030.c
++++ b/drivers/hid/hid-nanosic-wn8030.c
+@@ -23,6 +23,7 @@
+ #include <linux/workqueue.h>
+ #include <uapi/linux/nanosic_hinge.h>
+ 
++#define WN8030_FIRMWARE_NAME "nanosic/MCU_Upgrade.bin"
+ #define WN8030_HEADER_ADDR 0x7FC0
+ #define WN8030_CODE_ADDR 0x8000
+ 
+@@ -1481,7 +1482,7 @@ static int nanosic_wn8030_load_fw(struct nanosic_wn8030 *nanosic)
+ 	const struct firmware *firmware;
+ 	unsigned int ram_code_size;
+ 
+-	ret = request_firmware(&firmware, "nanosic/MCU_Upgrade.bin", nanosic->dev);
++	ret = request_firmware(&firmware, WN8030_FIRMWARE_NAME, nanosic->dev);
+ 	if (ret) {
+ 		dev_err(nanosic->dev, "failed to load MCU firmware\n");
+ 		return ret;
+@@ -2220,3 +2221,4 @@ module_i2c_driver(nanosic_wn8030_driver);
+ MODULE_AUTHOR("map220v <map220v300@gmail.com>");
+ MODULE_DESCRIPTION("HID driver for Nanosic WN8030 keyboard MCU");
+ MODULE_LICENSE("GPL v2");
++MODULE_FIRMWARE(WN8030_FIRMWARE_NAME);
+diff --git a/drivers/leds/flash/leds-qcom-flash.c b/drivers/leds/flash/leds-qcom-flash.c
+index f972092dc1ad8123084ff9d45cf889adebf51f3e..a9d09b5df0206001e6c898e0392eb660fd60e079 100644
+--- a/drivers/leds/flash/leds-qcom-flash.c
++++ b/drivers/leds/flash/leds-qcom-flash.c
+@@ -398,6 +398,9 @@ static int set_flash_timeout(struct qcom_flash_led *led, u32 timeout_ms)
+ 		chan_id = led->chan_id[i];
+ 
+ 		timer = timeout_ms / FLASH_TIMER_STEP_MS;
++		/* The first 10 ms period is encoded as zero. */
++		if (timer)
++			timer--;
+ 		timer = clamp_t(u8, timer, 0, FLASH_TIMER_VAL_MASK);
+ 
+ 		if (timeout_ms)
+diff --git a/drivers/media/i2c/gt9764.c b/drivers/media/i2c/gt9764.c
+index ccbaf6eb978ea5c80acd8eea2544d9a34eb75f4f..1cf63ca8a396402bd987700630bee11505b5d9e1 100644
+--- a/drivers/media/i2c/gt9764.c
++++ b/drivers/media/i2c/gt9764.c
+@@ -109,7 +109,7 @@ static int gt9764_init(struct gt9764 *lens)
+ 		return ret;
+ 
+ 	usleep_range(GT9764_PARK_DELAY_US, GT9764_PARK_DELAY_US + 1000);
+-	return gt9764_move_gradually(lens, lens->focus->val);
++	return gt9764_move_gradually(lens, lens->focus->cur.val);
+ }
+ 
+ static int gt9764_suspend(struct device *dev)
+@@ -282,8 +282,22 @@ static void gt9764_remove(struct i2c_client *client)
+ 
+ 	v4l2_async_unregister_subdev(&lens->sd);
+ 	pm_runtime_disable(dev);
+-	if (lens->powered && !gt9764_suspend(dev))
+-		pm_runtime_set_suspended(dev);
++	if (lens->powered) {
++		int ret;
++
++		ret = gt9764_suspend(dev);
++		if (ret) {
++			/*
++			 * Runtime suspend can be retried; unbind cannot keep the
++			 * regulators enabled after it releases their handles.
++			 */
++			ret = regulator_bulk_disable(ARRAY_SIZE(lens->supplies), lens->supplies);
++			if (ret)
++				dev_err(dev, "Failed to disable regulators on remove: %d\n", ret);
++		}
++		if (!ret)
++			pm_runtime_set_suspended(dev);
++	}
+ 	pm_runtime_dont_use_autosuspend(dev);
+ 	media_entity_cleanup(&lens->sd.entity);
+ 	v4l2_ctrl_handler_free(&lens->ctrls);
+@@ -301,7 +315,7 @@ static DEFINE_RUNTIME_DEV_PM_OPS(gt9764_pm_ops, gt9764_suspend, gt9764_resume, N
+ static struct i2c_driver gt9764_driver = {
+ 	.driver = {
+ 		.name = "gt9764",
+-		.pm = pm_sleep_ptr(&gt9764_pm_ops),
++		.pm = pm_ptr(&gt9764_pm_ops),
+ 		.of_match_table = gt9764_of_match,
+ 	},
+ 	.probe = gt9764_probe,
+diff --git a/drivers/media/i2c/s5kjn1.c b/drivers/media/i2c/s5kjn1.c
+index b296c80320664ff96633aa7ef71e2d35bb411899..df838323c8291dc60076255602790c8af5520e1d 100644
+--- a/drivers/media/i2c/s5kjn1.c
++++ b/drivers/media/i2c/s5kjn1.c
+@@ -31,6 +31,8 @@
+ #define S5KJN1_VFLIP			BIT(1)
+ #define S5KJN1_HFLIP			BIT(0)
+ 
++#define S5KJN1_REG_GROUP_HOLD		CCI_REG8(0x0104)
++
+ #define S5KJN1_REG_EXPOSURE		CCI_REG16(0x0202)
+ #define S5KJN1_EXPOSURE_MIN		8
+ #define S5KJN1_EXPOSURE_STEP		1
+@@ -92,6 +94,12 @@ static const char * const s5kjn1_test_pattern_menu[] = {
+ 	"PN9",
+ };
+ 
++enum {
++	S5KJN1_EXPOSURE_CTRL,
++	S5KJN1_AGAIN_CTRL,
++	S5KJN1_NUM_EXPOSURE_CTRLS,
++};
++
+ struct s5kjn1 {
+ 	struct device *dev;
+ 	struct regmap *regmap;
+@@ -110,7 +118,7 @@ struct s5kjn1 {
+ 	struct v4l2_ctrl *pixel_rate;
+ 	struct v4l2_ctrl *hblank;
+ 	struct v4l2_ctrl *vblank;
+-	struct v4l2_ctrl *exposure;
++	struct v4l2_ctrl *exposure_ctrls[S5KJN1_NUM_EXPOSURE_CTRLS];
+ 	struct v4l2_ctrl *vflip;
+ 	struct v4l2_ctrl *hflip;
+ 	unsigned long mclk_rate;
+@@ -753,47 +761,69 @@ static const struct s5kjn1_mode s5kjn1_supported_modes[] = {
+ 
+ #include "s5kjn1-piano.h"
+ 
++static int s5kjn1_set_exposure_gain(struct s5kjn1 *s5kjn1)
++{
++	struct v4l2_ctrl **ctrls = s5kjn1->exposure_ctrls;
++	int ret = 0, release_ret;
++
++	cci_write(s5kjn1->regmap, S5KJN1_REG_GROUP_HOLD, 1, &ret);
++	cci_write(s5kjn1->regmap, S5KJN1_REG_EXPOSURE,
++		  ctrls[S5KJN1_EXPOSURE_CTRL]->val, &ret);
++	cci_write(s5kjn1->regmap, S5KJN1_REG_AGAIN,
++		  ctrls[S5KJN1_AGAIN_CTRL]->val << S5KJN1_AGAIN_SHIFT, &ret);
++
++	/* A failed write must not prevent releasing the hold. */
++	release_ret = cci_write(s5kjn1->regmap, S5KJN1_REG_GROUP_HOLD, 0, NULL);
++
++	return ret ?: release_ret;
++}
++
++static int s5kjn1_set_vblank(struct s5kjn1 *s5kjn1, s32 vblank)
++{
++	struct v4l2_ctrl *exposure = s5kjn1->exposure_ctrls[S5KJN1_EXPOSURE_CTRL];
++	const struct s5kjn1_mode *mode = s5kjn1->mode;
++	u32 vts = mode->height + vblank;
++	s32 max_exposure = vts - mode->exposure_margin;
++	int ret;
++
++	/* Shorten the exposure, if necessary, before shortening the frame. */
++	if (exposure->cur.val > max_exposure) {
++		ret = __v4l2_ctrl_s_ctrl(exposure, max_exposure);
++		if (ret)
++			return ret;
++	}
++
++	if (s5kjn1->mode_programmed) {
++		ret = cci_write(s5kjn1->regmap, S5KJN1_REG_VTS, vts, NULL);
++		if (ret)
++			return ret;
++	}
++
++	return __v4l2_ctrl_modify_range(exposure, exposure->minimum, max_exposure,
++					exposure->step, mode->exposure);
++}
++
+ static int s5kjn1_set_ctrl(struct v4l2_ctrl *ctrl)
+ {
+ 	struct s5kjn1 *s5kjn1 = container_of(ctrl->handler, struct s5kjn1,
+ 					     ctrl_handler);
+-	const struct s5kjn1_mode *mode = s5kjn1->mode;
+-	s64 exposure_max;
+ 	int pm, ret;
+ 
+-	/* Propagate change of current control to all related controls */
+-	switch (ctrl->id) {
+-	case V4L2_CID_VBLANK:
+-		/* Update max exposure while meeting expected vblanking */
+-		exposure_max = mode->height + ctrl->val - mode->exposure_margin;
+-		__v4l2_ctrl_modify_range(s5kjn1->exposure,
+-					 s5kjn1->exposure->minimum,
+-					 exposure_max,
+-					 s5kjn1->exposure->step,
+-					 mode->exposure);
+-		break;
+-	}
+-
+ 	/* A powered sensor can still contain the previous mode's registers. */
+ 	if (!s5kjn1->mode_programmed)
+-		return 0;
++		return ctrl->id == V4L2_CID_VBLANK ?
++		       s5kjn1_set_vblank(s5kjn1, ctrl->val) : 0;
+ 
+ 	pm = pm_runtime_get_if_active(s5kjn1->dev);
+ 	if (IS_ENABLED(CONFIG_PM) && pm <= 0)
+ 		return pm ?: -EAGAIN;
+ 
+ 	switch (ctrl->id) {
+-	case V4L2_CID_ANALOGUE_GAIN:
+-		ret = cci_write(s5kjn1->regmap, S5KJN1_REG_AGAIN,
+-				ctrl->val << S5KJN1_AGAIN_SHIFT, NULL);
+-		break;
+ 	case V4L2_CID_EXPOSURE:
+-		ret = cci_write(s5kjn1->regmap, S5KJN1_REG_EXPOSURE,
+-				ctrl->val, NULL);
++		ret = s5kjn1_set_exposure_gain(s5kjn1);
+ 		break;
+ 	case V4L2_CID_VBLANK:
+-		ret = cci_write(s5kjn1->regmap, S5KJN1_REG_VTS,
+-				ctrl->val + mode->height, NULL);
++		ret = s5kjn1_set_vblank(s5kjn1, ctrl->val);
+ 		break;
+ 	case V4L2_CID_VFLIP:
+ 	case V4L2_CID_HFLIP:
+@@ -860,17 +890,17 @@ static int s5kjn1_init_controls(struct s5kjn1 *s5kjn1)
+ 					   S5KJN1_VTS_MAX - mode->height, 1,
+ 					   vblank);
+ 
+-	v4l2_ctrl_new_std(ctrl_hdlr, &s5kjn1_ctrl_ops, V4L2_CID_ANALOGUE_GAIN,
+-			  S5KJN1_AGAIN_MIN, S5KJN1_AGAIN_MAX,
+-			  S5KJN1_AGAIN_STEP, S5KJN1_AGAIN_DEFAULT);
++	s5kjn1->exposure_ctrls[S5KJN1_AGAIN_CTRL] =
++		v4l2_ctrl_new_std(ctrl_hdlr, &s5kjn1_ctrl_ops,
++				  V4L2_CID_ANALOGUE_GAIN, S5KJN1_AGAIN_MIN,
++				  S5KJN1_AGAIN_MAX, S5KJN1_AGAIN_STEP,
++				  S5KJN1_AGAIN_DEFAULT);
+ 
+ 	exposure_max = mode->vts - mode->exposure_margin;
+-	s5kjn1->exposure = v4l2_ctrl_new_std(ctrl_hdlr, &s5kjn1_ctrl_ops,
+-					     V4L2_CID_EXPOSURE,
+-					     S5KJN1_EXPOSURE_MIN,
+-					     exposure_max,
+-					     S5KJN1_EXPOSURE_STEP,
+-					     mode->exposure);
++	s5kjn1->exposure_ctrls[S5KJN1_EXPOSURE_CTRL] =
++		v4l2_ctrl_new_std(ctrl_hdlr, &s5kjn1_ctrl_ops, V4L2_CID_EXPOSURE,
++				  S5KJN1_EXPOSURE_MIN, exposure_max,
++				  S5KJN1_EXPOSURE_STEP, mode->exposure);
+ 
+ 	v4l2_ctrl_new_std_menu_items(ctrl_hdlr, &s5kjn1_ctrl_ops,
+ 				     V4L2_CID_TEST_PATTERN,
+@@ -896,6 +926,7 @@ static int s5kjn1_init_controls(struct s5kjn1 *s5kjn1)
+ 	if (ret)
+ 		goto error_free_hdlr;
+ 
++	v4l2_ctrl_cluster(ARRAY_SIZE(s5kjn1->exposure_ctrls), s5kjn1->exposure_ctrls);
+ 	s5kjn1->sd.ctrl_handler = ctrl_hdlr;
+ 
+ 	return 0;
+@@ -1036,6 +1067,7 @@ static int s5kjn1_set_pad_format(struct v4l2_subdev *sd,
+ 				 struct v4l2_subdev_format *fmt)
+ {
+ 	struct s5kjn1 *s5kjn1 = to_s5kjn1(sd);
++	struct v4l2_ctrl *exposure = s5kjn1->exposure_ctrls[S5KJN1_EXPOSURE_CTRL];
+ 	s64 hblank, vblank, exposure_max;
+ 	const struct s5kjn1_mode *mode;
+ 
+@@ -1067,10 +1099,10 @@ static int s5kjn1_set_pad_format(struct v4l2_subdev *sd,
+ 	__v4l2_ctrl_s_ctrl(s5kjn1->vblank, vblank);
+ 
+ 	exposure_max = mode->vts - mode->exposure_margin;
+-	__v4l2_ctrl_modify_range(s5kjn1->exposure, S5KJN1_EXPOSURE_MIN,
++	__v4l2_ctrl_modify_range(exposure, S5KJN1_EXPOSURE_MIN,
+ 				 exposure_max, S5KJN1_EXPOSURE_STEP,
+ 				 mode->exposure);
+-	__v4l2_ctrl_s_ctrl(s5kjn1->exposure, mode->exposure);
++	__v4l2_ctrl_s_ctrl(exposure, mode->exposure);
+ 
+ set_format:
+ 	*v4l2_subdev_state_get_format(state, 0) = fmt->format;
+diff --git a/drivers/media/platform/qcom/camss/camss-csid.c b/drivers/media/platform/qcom/camss/camss-csid.c
+index 36f990a4372ce37230ae9f6804204308ab52bc51..d2a61cb69fd9befc2d4dee249acebc71f8cc3f9e 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid.c
++++ b/drivers/media/platform/qcom/camss/camss-csid.c
+@@ -696,44 +696,28 @@ static int csid_set_power(struct v4l2_subdev *sd, int on)
+ 
+ 		ret = pm_runtime_resume_and_get(dev);
+ 		if (ret < 0)
+-			return ret;
++			goto err_put_parent;
+ 
+ 		ret = regulator_bulk_enable(csid->num_supplies,
+ 					    csid->supplies);
+-		if (ret < 0) {
+-			pm_runtime_put_sync(dev);
+-			return ret;
+-		}
++		if (ret < 0)
++			goto err_put_runtime;
+ 
+ 		ret = csid_set_clock_rates(csid);
+-		if (ret < 0) {
+-			regulator_bulk_disable(csid->num_supplies,
+-					       csid->supplies);
+-			pm_runtime_put_sync(dev);
+-			return ret;
+-		}
++		if (ret < 0)
++			goto err_disable_supplies;
+ 
+ 		ret = camss_enable_clocks(csid->nclocks, csid->clock, dev);
+-		if (ret < 0) {
+-			regulator_bulk_disable(csid->num_supplies,
+-					       csid->supplies);
+-			pm_runtime_put_sync(dev);
+-			return ret;
+-		}
++		if (ret < 0)
++			goto err_disable_supplies;
+ 
+ 		csid->phy.need_vc_update = true;
+ 
+ 		enable_irq(csid->irq);
+ 
+ 		ret = csid->res->hw_ops->reset(csid);
+-		if (ret < 0) {
+-			disable_irq(csid->irq);
+-			camss_disable_clocks(csid->nclocks, csid->clock);
+-			regulator_bulk_disable(csid->num_supplies,
+-					       csid->supplies);
+-			pm_runtime_put_sync(dev);
+-			return ret;
+-		}
++		if (ret < 0)
++			goto err_disable_irq;
+ 
+ 		csid->res->hw_ops->hw_version(csid);
+ 	} else {
+@@ -745,6 +729,18 @@ static int csid_set_power(struct v4l2_subdev *sd, int on)
+ 		csid->res->parent_dev_ops->put(camss, csid->id);
+ 	}
+ 
++	return ret;
++
++err_disable_irq:
++	disable_irq(csid->irq);
++	camss_disable_clocks(csid->nclocks, csid->clock);
++err_disable_supplies:
++	regulator_bulk_disable(csid->num_supplies, csid->supplies);
++err_put_runtime:
++	pm_runtime_put_sync(dev);
++err_put_parent:
++	csid->res->parent_dev_ops->put(camss, csid->id);
++
+ 	return ret;
+ }
+ 
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe-17x.c b/drivers/media/platform/qcom/camss/camss-vfe-17x.c
+index 62c2405359a06bb9553e44ad83388a5ebd9270be..f0d0e8a91b0daa817e548468fc2da1166f5cb2cd 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe-17x.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe-17x.c
+@@ -467,7 +467,7 @@ static void vfe_isr_reg_update(struct vfe_device *vfe, enum vfe_line_id line_id)
+  */
+ static void vfe_isr_wm_done(struct vfe_device *vfe, u8 wm)
+ {
+-	struct vfe_line *line = &vfe->line[vfe->wm_output_map[wm]];
++	struct vfe_line *line;
+ 	struct camss_buffer *ready_buf;
+ 	struct vfe_output *output;
+ 	unsigned long flags;
+@@ -481,7 +481,10 @@ static void vfe_isr_wm_done(struct vfe_device *vfe, u8 wm)
+ 				    "Received wm done for unmapped index\n");
+ 		goto out_unlock;
+ 	}
+-	output = &vfe->line[vfe->wm_output_map[wm]].output;
++	line = &vfe->line[vfe->wm_output_map[wm]];
++	output = &line->output;
++	if (output->state != VFE_OUTPUT_ON)
++		goto out_unlock;
+ 
+ 	ready_buf = output->buf[0];
+ 	if (!ready_buf) {
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index 60a00e0443c27e9e8b1e41f8a3dcc4da3dba06d9..fc440948b4a53b785b90bd669ecdeeaae1e4d26f 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -648,6 +648,8 @@ void vfe_buf_done(struct vfe_device *vfe, int wm)
+ 	}
+ 	line = &vfe->line[vfe->wm_output_map[wm]];
+ 	output = &line->output;
++	if (output->state != VFE_OUTPUT_ON)
++		goto out_unlock;
+ 
+ 	/* CSID forwards DMA completion independently of the VFE BUS error IRQ.
+ 	 * Serialize both paths so a delayed error IRQ cannot publish a bad frame.
+@@ -1030,16 +1032,27 @@ static void vfe_disable_output(struct vfe_line *line)
+ {
+ 	struct vfe_device *vfe = to_vfe(line);
+ 	struct vfe_output *output = &line->output;
++	struct camss *camss = vfe->camss;
++	const struct vfe_hw_ops *ops = vfe->res->hw_ops;
+ 	unsigned long flags;
+ 	unsigned int i;
+ 
+ 	spin_lock_irqsave(&vfe->output_lock, flags);
++	output->state = VFE_OUTPUT_STOPPING;
+ 	for (i = 0; i < output->wm_num; i++)
+-		vfe->res->hw_ops->vfe_wm_stop(vfe, output->wm_idx[i]);
++		ops->vfe_wm_stop(vfe, output->wm_idx[i]);
+ 	output->gen2.active_num = 0;
+ 	output->frame_timeline_error = true;
+ 	output->frame_timeline_initialized = false;
+ 	spin_unlock_irqrestore(&vfe->output_lock, flags);
++
++	/*
++	 * A completion may still be returning a buffer removed from the FIFO
++	 * before STOPPING. Wait for it before the capture queue is flushed.
++	 */
++	synchronize_irq(vfe->irq);
++	if (ops->vfe_buf_done && vfe->id < camss->res->csid_num)
++		synchronize_irq(camss->csid[vfe->id].irq);
+ }
+ 
+ /*
+@@ -1428,6 +1441,7 @@ int vfe_flush_buffers(struct camss_video *vid,
+ 	struct vfe_device *vfe = to_vfe(line);
+ 	struct vfe_output *output;
+ 	unsigned long flags;
++	unsigned int i;
+ 
+ 	output = &line->output;
+ 
+@@ -1435,11 +1449,15 @@ int vfe_flush_buffers(struct camss_video *vid,
+ 
+ 	vfe_buf_flush_pending(output, state);
+ 
+-	if (output->buf[0])
+-		vb2_buffer_done(&output->buf[0]->vb.vb2_buf, state);
++	for (i = 0; i < ARRAY_SIZE(output->buf); i++) {
++		struct camss_buffer *buffer = output->buf[i];
+ 
+-	if (output->buf[1])
+-		vb2_buffer_done(&output->buf[1]->vb.vb2_buf, state);
++		if (!buffer)
++			continue;
++
++		output->buf[i] = NULL;
++		vb2_buffer_done(&buffer->vb.vb2_buf, state);
++	}
+ 
+ 	if (output->last_buffer) {
+ 		vb2_buffer_done(&output->last_buffer->vb.vb2_buf, state);
+diff --git a/drivers/media/rc/ir-spi.c b/drivers/media/rc/ir-spi.c
+index 3302056da03aaee96026c7a9f6d5566c1f969c40..70126b64597fc183e63fbf6fb635b6591ddf0b34 100644
+--- a/drivers/media/rc/ir-spi.c
++++ b/drivers/media/rc/ir-spi.c
+@@ -11,7 +11,6 @@
+ #include <linux/module.h>
+ #include <linux/property.h>
+ #include <linux/regulator/consumer.h>
+-#include <linux/sizes.h>
+ #include <linux/spi/spi.h>
+ #include <linux/string.h>
+ #include <linux/types.h>
+@@ -26,8 +25,6 @@
+ /* The factory Piano transmitter consumes MSB-first native u32 words. */
+ #define IR_SPI_PIANO_WORD_BITS		32
+ #define IR_SPI_PIANO_PADDING_BYTES	1024
+-#define IR_SPI_PIANO_MAX_DURATIONS	1024
+-#define IR_SPI_PIANO_MAX_TX_BYTES		SZ_32K
+ #define IR_SPI_PIANO_MIN_CARRIER		30000
+ #define IR_SPI_PIANO_MAX_CARRIER		56000
+ 
+@@ -124,15 +121,9 @@ static int ir_spi_tx_piano(struct rc_dev *dev, unsigned int *buffer,
+ 	unsigned int i;
+ 	int ret;
+ 
+-	/* Match normal LIRC pulse/space bounds; never reinterpret negative data. */
+-	if (!count || count > IR_SPI_PIANO_MAX_DURATIONS || !(count & 1))
+-		return -EINVAL;
+-
+-	for (i = 0; i < count; i++) {
+-		if (!buffer[i] || buffer[i] > IR_MAX_DURATION - total_us)
+-			return -EINVAL;
++	/* LIRC has already validated the count and the total duration. */
++	for (i = 0; i < count; i++)
+ 		total_us += buffer[i];
+-	}
+ 
+ 	period = DIV_ROUND_CLOSEST(idata->variant->sample_hz, idata->freq);
+ 	high = period * idata->duty_cycle / 100;
+@@ -145,11 +136,7 @@ static int ir_spi_tx_piano(struct rc_dev *dev, unsigned int *buffer,
+ 	bytes = round_up(DIV_ROUND_UP(samples, IR_SPI_PIANO_WORD_BITS) *
+ 			 sizeof(*tx_buf) + sizeof(*tx_buf),
+ 			 IR_SPI_PIANO_PADDING_BYTES);
+-	/* GPI accepts one DMA segment. Keep diagnostic waves within 32 KiB;
+-	 * splitting transfers would insert an unmeasured gap in the waveform.
+-	 */
+-	if (bytes > IR_SPI_PIANO_MAX_TX_BYTES)
+-		return -EMSGSIZE;
++	/* Keep the entire waveform in a single DMA-mappable buffer. */
+ 	tx_buf = kzalloc(bytes, GFP_KERNEL);
+ 	if (!tx_buf)
+ 		return -ENOMEM;
+@@ -160,9 +147,14 @@ static int ir_spi_tx_piano(struct rc_dev *dev, unsigned int *buffer,
+ 		end_us += buffer[i];
+ 		end = DIV_ROUND_CLOSEST_ULL((u64)end_us *
+ 					  idata->variant->sample_hz, 1000000);
++		if (i & 1) {
++			sample = end;
++			continue;
++		}
++
+ 		phase = 0;
+ 		for (; sample < end; sample++) {
+-			if (!(i & 1) && phase < high)
++			if (phase < high)
+ 				tx_buf[sample / IR_SPI_PIANO_WORD_BITS] |=
+ 					BIT(31 - sample % IR_SPI_PIANO_WORD_BITS);
+ 			if (++phase == period)
+diff --git a/drivers/media/v4l2-core/v4l2-flash-led-class.c b/drivers/media/v4l2-core/v4l2-flash-led-class.c
+index 2587544c6a2ef6ca334c77366f8b7e5ad07f378e..0a0e2aa129a4c066c4cb263592d7e66295fde4c1 100644
+--- a/drivers/media/v4l2-core/v4l2-flash-led-class.c
++++ b/drivers/media/v4l2-core/v4l2-flash-led-class.c
+@@ -40,6 +40,16 @@ enum ctrl_init_data_id {
+ 	NUM_FLASH_CTRLS,
+ };
+ 
++struct v4l2_flash_device {
++	struct v4l2_flash flash;
++	s32 torch_intensity;
++};
++
++static struct v4l2_flash_device *to_flash_device(struct v4l2_flash *flash)
++{
++	return container_of(flash, struct v4l2_flash_device, flash);
++}
++
+ static enum led_brightness __intensity_to_led_brightness(
+ 					struct v4l2_ctrl *ctrl, s32 intensity)
+ {
+@@ -77,7 +87,8 @@ static s32 __led_brightness_to_intensity(struct v4l2_ctrl *ctrl,
+ }
+ 
+ static int v4l2_flash_set_led_brightness(struct v4l2_flash *v4l2_flash,
+-					 struct v4l2_ctrl *ctrl)
++					 struct v4l2_ctrl *ctrl, s32 *intensity,
++					 bool apply)
+ {
+ 	struct v4l2_ctrl **ctrls = v4l2_flash->ctrls;
+ 	struct led_classdev *led_cdev;
+@@ -86,9 +97,9 @@ static int v4l2_flash_set_led_brightness(struct v4l2_flash *v4l2_flash,
+ 	if (has_flash_op(v4l2_flash, intensity_to_led_brightness))
+ 		brightness = call_flash_op(v4l2_flash,
+ 					intensity_to_led_brightness,
+-					ctrl->val);
++					*intensity);
+ 	else
+-		brightness = __intensity_to_led_brightness(ctrl, ctrl->val);
++		brightness = __intensity_to_led_brightness(ctrl, *intensity);
+ 	/*
+ 	 * In case a LED Flash class driver provides ops for custom
+ 	 * brightness <-> intensity conversion, it also must have defined
+@@ -97,14 +108,13 @@ static int v4l2_flash_set_led_brightness(struct v4l2_flash *v4l2_flash,
+ 	 * aligned intensity value.
+ 	 */
+ 	if (has_flash_op(v4l2_flash, led_brightness_to_intensity))
+-		ctrl->val = call_flash_op(v4l2_flash,
+-					led_brightness_to_intensity,
+-					brightness);
++		*intensity = call_flash_op(v4l2_flash, led_brightness_to_intensity,
++					   brightness);
+ 
+-	if (ctrl == ctrls[TORCH_INTENSITY]) {
+-		if (ctrls[LED_MODE]->val != V4L2_FLASH_LED_MODE_TORCH)
+-			return 0;
++	if (!apply)
++		return 0;
+ 
++	if (ctrl == ctrls[TORCH_INTENSITY]) {
+ 		if (WARN_ON_ONCE(!v4l2_flash->fled_cdev))
+ 			return -EINVAL;
+ 
+@@ -119,6 +129,15 @@ static int v4l2_flash_set_led_brightness(struct v4l2_flash *v4l2_flash,
+ 	return led_set_brightness_sync(led_cdev, brightness);
+ }
+ 
++static int v4l2_flash_apply_torch_intensity(struct v4l2_flash *v4l2_flash)
++{
++	s32 intensity = to_flash_device(v4l2_flash)->torch_intensity;
++
++	return v4l2_flash_set_led_brightness(v4l2_flash,
++					    v4l2_flash->ctrls[TORCH_INTENSITY],
++					    &intensity, true);
++}
++
+ static int v4l2_flash_update_led_brightness(struct v4l2_flash *v4l2_flash,
+ 					struct v4l2_ctrl *ctrl)
+ {
+@@ -127,14 +146,11 @@ static int v4l2_flash_update_led_brightness(struct v4l2_flash *v4l2_flash,
+ 	int ret;
+ 
+ 	if (ctrl == ctrls[TORCH_INTENSITY]) {
+-		/*
+-		 * Update torch brightness only if in TORCH_MODE. In other modes
+-		 * torch led is turned off, which would spuriously inform the
+-		 * user space that V4L2_CID_FLASH_TORCH_INTENSITY control value
+-		 * has changed to 0.
+-		 */
+-		if (ctrls[LED_MODE]->val != V4L2_FLASH_LED_MODE_TORCH)
++		/* Outside torch mode, report the saved setting. */
++		if (ctrls[LED_MODE]->cur.val != V4L2_FLASH_LED_MODE_TORCH) {
++			ctrl->val = to_flash_device(v4l2_flash)->torch_intensity;
+ 			return 0;
++		}
+ 
+ 		if (WARN_ON_ONCE(!v4l2_flash->fled_cdev))
+ 			return -EINVAL;
+@@ -217,12 +233,18 @@ static int v4l2_flash_s_ctrl(struct v4l2_ctrl *c)
+ 	struct led_classdev *led_cdev;
+ 	struct v4l2_ctrl **ctrls = v4l2_flash->ctrls;
+ 	bool external_strobe;
++	bool torch;
+ 	int ret = 0;
+ 
+ 	switch (c->id) {
+ 	case V4L2_CID_FLASH_TORCH_INTENSITY:
++		torch = ctrls[LED_MODE]->cur.val == V4L2_FLASH_LED_MODE_TORCH;
++		ret = v4l2_flash_set_led_brightness(v4l2_flash, c, &c->val, torch);
++		if (!ret)
++			to_flash_device(v4l2_flash)->torch_intensity = c->val;
++		return ret;
+ 	case V4L2_CID_FLASH_INDICATOR_INTENSITY:
+-		return v4l2_flash_set_led_brightness(v4l2_flash, c);
++		return v4l2_flash_set_led_brightness(v4l2_flash, c, &c->val, true);
+ 	}
+ 
+ 	if (!fled_cdev)
+@@ -261,8 +283,7 @@ static int v4l2_flash_s_ctrl(struct v4l2_ctrl *c)
+ 			if (ret < 0)
+ 				return ret;
+ 
+-			return v4l2_flash_set_led_brightness(v4l2_flash,
+-							     ctrls[TORCH_INTENSITY]);
++			return v4l2_flash_apply_torch_intensity(v4l2_flash);
+ 		}
+ 		break;
+ 	case V4L2_CID_FLASH_STROBE_SOURCE:
+@@ -490,6 +511,10 @@ static int v4l2_flash_init_controls(struct v4l2_flash *v4l2_flash,
+ 		goto error_free_handler;
+ 	}
+ 
++	if (v4l2_flash->ctrls[TORCH_INTENSITY])
++		to_flash_device(v4l2_flash)->torch_intensity =
++			v4l2_flash->ctrls[TORCH_INTENSITY]->default_value;
++
+ 	v4l2_ctrl_handler_setup(&v4l2_flash->hdl);
+ 
+ 	v4l2_flash->sd.ctrl_handler = &v4l2_flash->hdl;
+@@ -505,18 +530,24 @@ static int __sync_device_with_v4l2_controls(struct v4l2_flash *v4l2_flash)
+ {
+ 	struct led_classdev_flash *fled_cdev = v4l2_flash->fled_cdev;
+ 	struct v4l2_ctrl **ctrls = v4l2_flash->ctrls;
++	bool torch;
+ 	int ret = 0;
+ 
+-	if (ctrls[TORCH_INTENSITY]) {
+-		ret = v4l2_flash_set_led_brightness(v4l2_flash,
+-						    ctrls[TORCH_INTENSITY]);
++	guard(mutex)(v4l2_flash->hdl.lock);
++
++	torch = ctrls[LED_MODE] &&
++		ctrls[LED_MODE]->cur.val == V4L2_FLASH_LED_MODE_TORCH;
++	if (torch) {
++		ret = v4l2_flash_apply_torch_intensity(v4l2_flash);
+ 		if (ret < 0)
+ 			return ret;
+ 	}
+ 
+ 	if (ctrls[INDICATOR_INTENSITY]) {
+ 		ret = v4l2_flash_set_led_brightness(v4l2_flash,
+-						    ctrls[INDICATOR_INTENSITY]);
++						    ctrls[INDICATOR_INTENSITY],
++						    &ctrls[INDICATOR_INTENSITY]->val,
++						    true);
+ 		if (ret < 0)
+ 			return ret;
+ 	}
+@@ -547,8 +578,7 @@ static int __sync_device_with_v4l2_controls(struct v4l2_flash *v4l2_flash)
+ 	 * mode. For torch mode case it will get synchronized upon switching
+ 	 * to flash mode.
+ 	 */
+-	if (ctrls[STROBE_SOURCE] &&
+-	    ctrls[LED_MODE]->val != V4L2_FLASH_LED_MODE_TORCH)
++	if (ctrls[STROBE_SOURCE] && !torch)
+ 		ret = call_flash_op(v4l2_flash, external_strobe_set,
+ 					ctrls[STROBE_SOURCE]->val);
+ 
+@@ -653,6 +683,7 @@ static struct v4l2_flash *__v4l2_flash_init(
+ 	struct led_classdev_flash *fled_cdev, struct led_classdev *iled_cdev,
+ 	const struct v4l2_flash_ops *ops, struct v4l2_flash_config *config)
+ {
++	struct v4l2_flash_device *flash;
+ 	struct v4l2_flash *v4l2_flash;
+ 	struct v4l2_subdev *sd;
+ 	int ret;
+@@ -660,10 +691,11 @@ static struct v4l2_flash *__v4l2_flash_init(
+ 	if (!config)
+ 		return ERR_PTR(-EINVAL);
+ 
+-	v4l2_flash = devm_kzalloc_obj(dev, *v4l2_flash);
+-	if (!v4l2_flash)
++	flash = devm_kzalloc_obj(dev, *flash);
++	if (!flash)
+ 		return ERR_PTR(-ENOMEM);
+ 
++	v4l2_flash = &flash->flash;
+ 	sd = &v4l2_flash->sd;
+ 	v4l2_flash->fled_cdev = fled_cdev;
+ 	v4l2_flash->iled_cdev = iled_cdev;
+diff --git a/drivers/power/reset/Kconfig b/drivers/power/reset/Kconfig
+index b1292e42358124448f8f62a74b0670da1675352b..025ea1837e11c4834a3b872399aef6ac6d8969d6 100644
+--- a/drivers/power/reset/Kconfig
++++ b/drivers/power/reset/Kconfig
+@@ -12,7 +12,7 @@ if POWER_RESET
+ config POWER_RESET_PIANO
+ 	bool "Xiaomi Piano power-off charging request"
+ 	depends on ARCH_QCOM || COMPILE_TEST
+-	depends on OF && BLOCK && POWER_SUPPLY=y
++	depends on OF && BLOCK
+ 	help
+ 	  Preserve the stock bootloader's power-off charging behavior on Xiaomi
+ 	  Piano. Only a connected power-off request updates the charger partition;
+diff --git a/drivers/power/reset/piano-poweroff-test.c b/drivers/power/reset/piano-poweroff-test.c
+index 3baf29ab644c68ccc915fd506fdda587a6f57efc..8967bc0467cff7318d9a31658403f4380d876740 100644
+--- a/drivers/power/reset/piano-poweroff-test.c
++++ b/drivers/power/reset/piano-poweroff-test.c
+@@ -167,10 +167,9 @@ static void piano_poweroff_io_errors(struct kunit *test)
+ 	KUNIT_EXPECT_EQ(test, io->writes, 1);
+ }
+ 
+-static void piano_poweroff_races_and_restart(struct kunit *test)
++static void piano_poweroff_races(struct kunit *test)
+ {
+ 	struct piano_poweroff_test_io *io = kunit_kzalloc(test, sizeof(*io), GFP_KERNEL);
+-	struct piano_poweroff poweroff = {};
+ 
+ 	KUNIT_ASSERT_NOT_NULL(test, io);
+ 	piano_test_reset(io, 0);
+@@ -188,17 +187,14 @@ static void piano_poweroff_races_and_restart(struct kunit *test)
+ 	KUNIT_EXPECT_EQ(test, piano_test_mark(io, PIANO_TEST_BYTES, 4096), -EBUSY);
+ 	KUNIT_EXPECT_EQ(test, io->writes, 0);
+ 	/* Restart and halt must return before touching even an uninitialized device. */
+-	KUNIT_EXPECT_EQ(test, piano_poweroff_notify(&poweroff.reboot, SYS_RESTART, NULL),
+-			NOTIFY_DONE);
+-	KUNIT_EXPECT_EQ(test, piano_poweroff_notify(&poweroff.reboot, SYS_HALT, NULL),
+-			NOTIFY_DONE);
++
+ }
+ 
+ static struct kunit_case piano_poweroff_cases[] = {
+ 	KUNIT_CASE(piano_poweroff_preserves_data),
+ 	KUNIT_CASE(piano_poweroff_rejects_bad_storage),
+ 	KUNIT_CASE(piano_poweroff_io_errors),
+-	KUNIT_CASE(piano_poweroff_races_and_restart),
++	KUNIT_CASE(piano_poweroff_races),
+ 	{}
+ };
+ 
+diff --git a/drivers/power/reset/piano-poweroff.c b/drivers/power/reset/piano-poweroff.c
+index 7e3f0e1c448d83a2e05fd671a9e0ca6912595e6d..8a5ec625fe83c3a21f009cd9159eced5f5916c4b 100644
+--- a/drivers/power/reset/piano-poweroff.c
++++ b/drivers/power/reset/piano-poweroff.c
+@@ -4,11 +4,8 @@
+ #include <linux/blkdev.h>
+ #include <linux/file.h>
+ #include <linux/module.h>
+-#include <linux/mutex.h>
+ #include <linux/of.h>
+-#include <linux/platform_device.h>
+-#include <linux/power_supply.h>
+-#include <linux/reboot.h>
++#include <linux/power/piano-poweroff.h>
+ #include <linux/slab.h>
+ #include <linux/unaligned.h>
+ #include <linux/uuid.h>
+@@ -27,10 +24,9 @@ struct piano_poweroff_io {
+ };
+ 
+ struct piano_poweroff {
+-	struct device *dev;
+-	struct notifier_block reboot;
+ 	struct block_device *bdev;
+-	struct mutex lock;
++	int (*online)(void *);
++	void *online_data;
+ };
+ 
+ struct piano_charger_partition {
+@@ -158,16 +154,9 @@ static int piano_find_charger(struct device *dev, void *data)
+ 
+ static int piano_poweroff_online(void *context)
+ {
+-	union power_supply_propval value;
+-	struct power_supply *usb;
+-	int ret;
++	struct piano_poweroff *poweroff = context;
+ 
+-	usb = power_supply_get_by_name("piano-mca-usb");
+-	if (!usb)
+-		return -ENODEV;
+-	ret = power_supply_get_property(usb, POWER_SUPPLY_PROP_ONLINE, &value);
+-	power_supply_put(usb);
+-	return ret ? ret : !!value.intval;
++	return poweroff->online(poweroff->online_data);
+ }
+ 
+ static int piano_poweroff_read(void *context, u64 offset, void *buffer, size_t bytes)
+@@ -193,11 +182,12 @@ static int piano_poweroff_flush(void *context)
+ 	return blkdev_issue_flush(poweroff->bdev);
+ }
+ 
+-static int piano_poweroff_prepare(struct piano_poweroff *poweroff)
++int piano_poweroff_request(int (*online)(void *), void *data)
+ {
+ 	struct piano_charger_partition partition = {};
++	struct piano_poweroff poweroff = { .online = online, .online_data = data };
+ 	const struct piano_poweroff_io io = {
+-		.context = poweroff,
++		.context = &poweroff,
+ 		.read = piano_poweroff_read,
+ 		.write = piano_poweroff_write,
+ 		.flush = piano_poweroff_flush,
+@@ -207,7 +197,10 @@ static int piano_poweroff_prepare(struct piano_poweroff *poweroff)
+ 	struct file *file;
+ 	int ret;
+ 
+-	ret = piano_poweroff_online(poweroff);
++	if (!of_machine_is_compatible("xiaomi,piano"))
++		return -ENODEV;
++
++	ret = piano_poweroff_online(&poweroff);
+ 	if (ret <= 0)
+ 		return ret;
+ 	class_for_each_device(&block_class, NULL, &partition, piano_find_charger);
+@@ -218,78 +211,30 @@ static int piano_poweroff_prepare(struct piano_poweroff *poweroff)
+ 	candidate = dev_to_bdev(partition.dev);
+ 	file = bdev_file_open_by_dev(candidate->bd_dev,
+ 				     BLK_OPEN_READ | BLK_OPEN_WRITE |
+-				     BLK_OPEN_RESTRICT_WRITES, poweroff, NULL);
++				     BLK_OPEN_RESTRICT_WRITES, &poweroff, NULL);
+ 	if (IS_ERR(file)) {
+ 		ret = PTR_ERR(file);
+ 		goto put;
+ 	}
+-	poweroff->bdev = file_bdev(file);
+-	if (poweroff->bdev != candidate ||
+-	    !piano_charger_partition_valid(poweroff->bdev) ||
+-	    bdev_read_only(poweroff->bdev)) {
++	poweroff.bdev = file_bdev(file);
++	if (poweroff.bdev != candidate ||
++	    !piano_charger_partition_valid(poweroff.bdev) ||
++	    bdev_read_only(poweroff.bdev)) {
+ 		ret = -ENODEV;
+ 		goto close;
+ 	}
+-	ret = sync_blockdev(poweroff->bdev);
++	ret = sync_blockdev(poweroff.bdev);
+ 	if (!ret)
+-		ret = piano_poweroff_mark(&io, bdev_nr_bytes(poweroff->bdev),
+-					  bdev_logical_block_size(poweroff->bdev));
++		ret = piano_poweroff_mark(&io, bdev_nr_bytes(poweroff.bdev),
++					  bdev_logical_block_size(poweroff.bdev));
+ close:
+-	poweroff->bdev = NULL;
+ 	__fput_sync(file);
+ put:
+ 	put_device(partition.dev);
+ 	return ret;
+ }
+ 
+-static int piano_poweroff_notify(struct notifier_block *nb, unsigned long action,
+-				void *data)
+-{
+-	struct piano_poweroff *poweroff = container_of(nb, struct piano_poweroff,
+-						     reboot);
+-	int ret;
+-
+-	if (action != SYS_POWER_OFF)
+-		return NOTIFY_DONE;
+-	mutex_lock(&poweroff->lock);
+-	ret = piano_poweroff_prepare(poweroff);
+-	mutex_unlock(&poweroff->lock);
+-	if (ret)
+-		dev_err(poweroff->dev,
+-			"cannot request power-off charging: %pe; USB power may start Android, unplug to stay off\n",
+-			ERR_PTR(ret));
+-	return NOTIFY_DONE;
+-}
+-
+-static int piano_poweroff_probe(struct platform_device *pdev)
+-{
+-	struct piano_poweroff *poweroff;
+-
+-	if (!of_machine_is_compatible("xiaomi,piano"))
+-		return -ENODEV;
+-	poweroff = devm_kzalloc(&pdev->dev, sizeof(*poweroff), GFP_KERNEL);
+-	if (!poweroff)
+-		return -ENOMEM;
+-	poweroff->dev = &pdev->dev;
+-	mutex_init(&poweroff->lock);
+-	poweroff->reboot.notifier_call = piano_poweroff_notify;
+-	poweroff->reboot.priority = 255;
+-	return devm_register_reboot_notifier(&pdev->dev, &poweroff->reboot);
+-}
+-
+-static const struct of_device_id piano_poweroff_of_match[] = {
+-	{ .compatible = "mca,qcom_subpmic" },
+-	{}
+-};
+-
+-static struct platform_driver piano_poweroff_driver = {
+-	.probe = piano_poweroff_probe,
+-	.driver = {
+-		.name = "piano-poweroff",
+-		.of_match_table = piano_poweroff_of_match,
+-	},
+-};
+-builtin_platform_driver(piano_poweroff_driver);
++EXPORT_SYMBOL_GPL(piano_poweroff_request);
+ 
+ #if IS_ENABLED(CONFIG_POWER_RESET_PIANO_KUNIT_TEST)
+ #include "piano-poweroff-test.c"
+diff --git a/drivers/power/supply/bq27xxx_battery.c b/drivers/power/supply/bq27xxx_battery.c
+index 196af83168ad735c8ca3b77b1369d9a45fb9fd01..0aba19c771a7350577c568a96f50d7e4374c16e7 100644
+--- a/drivers/power/supply/bq27xxx_battery.c
++++ b/drivers/power/supply/bq27xxx_battery.c
+@@ -1862,10 +1862,8 @@ static int bq27xxx_battery_read_health(struct bq27xxx_device_info *di,
+ 
+ 	/* Vendor firmware exposes read-only SOA and ISC alerts as byte registers. */
+ 	if (di->health_alerts) {
+-		mutex_lock(&di->lock);
+-		isc = di->removed ? -ENODEV : di->bus.read(di, BQ27Z561_ISC_ALERT, true);
++		isc = di->bus.read(di, BQ27Z561_ISC_ALERT, true);
+ 		soa = isc < 0 ? isc : di->bus.read(di, BQ27Z561_SOA_ALERT, true);
+-		mutex_unlock(&di->lock);
+ 		if (soa < 0)
+ 			return soa;
+ 		if (isc > 3)
+@@ -1968,6 +1966,9 @@ static void bq27xxx_battery_update_unlocked(struct bq27xxx_device_info *di)
+ 	struct bq27xxx_reg_cache cache = {0, };
+ 	bool has_singe_flag = di->opts & BQ27XXX_O_ZERO;
+ 
++	if (di->removed)
++		return;
++
+ 	cache.flags = bq27xxx_read(di, BQ27XXX_REG_FLAGS, has_singe_flag);
+ 	if (di->chip == BQ27000 && (cache.flags & 0xff) == 0xff)
+ 		cache.flags = -ENODEV; /* bq27000 hdq read error */
+@@ -1998,7 +1999,7 @@ static void bq27xxx_battery_update_unlocked(struct bq27xxx_device_info *di)
+ 
+ 	di->last_update = jiffies;
+ 
+-	if (!di->removed && poll_interval > 0)
++	if (poll_interval > 0)
+ 		mod_delayed_work(system_percpu_wq, &di->work, poll_interval * HZ);
+ }
+ 
+@@ -2304,14 +2305,13 @@ static int bq27z561_get_charge_property(struct bq27xxx_device_info *di,
+ 				      enum power_supply_property property,
+ 				      union power_supply_propval *value)
+ {
+-	int ret = 0;
++	int ret;
+ 
+-	mutex_lock(&di->lock);
+-	ret = di->removed ? -ENODEV : bq27xxx_read(di, BQ27XXX_REG_FLAGS, false);
++	ret = bq27xxx_read(di, BQ27XXX_REG_FLAGS, false);
+ 	if (ret < 0) {
+ 		di->authentic = false;
+ 		di->charge_mode_known = false;
+-		goto out;
++		return ret;
+ 	}
+ 	ret = 0;
+ 	if (property == POWER_SUPPLY_PROP_AUTHENTIC && !di->authentic &&
+@@ -2328,8 +2328,6 @@ static int bq27z561_get_charge_property(struct bq27xxx_device_info *di,
+ 	else if (!ret)
+ 		value->intval = di->fast_charge ? POWER_SUPPLY_CHARGE_TYPE_FAST :
+ 			POWER_SUPPLY_CHARGE_TYPE_STANDARD;
+-out:
+-	mutex_unlock(&di->lock);
+ 	return ret;
+ }
+ 
+@@ -2368,14 +2366,16 @@ static int bq27xxx_battery_get_property(struct power_supply *psy,
+ 	struct bq27xxx_device_info *di = power_supply_get_drvdata(psy);
+ 	enum bq27xxx_reg_index current_reg = BQ27XXX_REG_AI;
+ 
++	guard(mutex)(&di->lock);
++	if (di->removed)
++		return -ENODEV;
++
+ 	if (di->auth_key && (psp == POWER_SUPPLY_PROP_AUTHENTIC ||
+ 			    psp == POWER_SUPPLY_PROP_CHARGE_TYPE))
+ 		return bq27z561_get_charge_property(di, psp, val);
+ 
+-	mutex_lock(&di->lock);
+ 	if (time_is_before_jiffies(di->last_update + 5 * HZ))
+ 		bq27xxx_battery_update_unlocked(di);
+-	mutex_unlock(&di->lock);
+ 
+ 	if (psp != POWER_SUPPLY_PROP_PRESENT && di->cache.flags < 0)
+ 		return di->cache.flags;
+@@ -2624,18 +2624,35 @@ int bq27xxx_battery_setup(struct bq27xxx_device_info *di)
+ }
+ EXPORT_SYMBOL_GPL(bq27xxx_battery_setup);
+ 
++static void bq27xxx_battery_stop(struct bq27xxx_device_info *di,
++				 bool restore_charge_mode)
++{
++	scoped_guard(mutex, &di->lock) {
++		if (di->removed)
++			return;
++		if (restore_charge_mode && di->auth_key &&
++		    bq27z561_set_charge_mode(di, false))
++			dev_warn(di->dev, "could not disable gauge fast-charge mode\n");
++		di->removed = true;
++	}
++
++	/* Supply notifications can still try to schedule a poll. */
++	disable_delayed_work_sync(&di->work);
++}
++
++void bq27xxx_battery_shutdown(struct bq27xxx_device_info *di)
++{
++	bq27xxx_battery_stop(di, false);
++}
++EXPORT_SYMBOL_GPL(bq27xxx_battery_shutdown);
++
+ void bq27xxx_battery_teardown(struct bq27xxx_device_info *di)
+ {
+ 	mutex_lock(&bq27xxx_list_lock);
+ 	list_del(&di->list);
+ 	mutex_unlock(&bq27xxx_list_lock);
+ 
+-	/* Set removed to avoid bq27xxx_battery_update() re-queuing the work */
+-	mutex_lock(&di->lock);
+-	if (di->auth_key && bq27z561_set_charge_mode(di, false))
+-		dev_warn(di->dev, "could not disable gauge fast-charge mode\n");
+-	di->removed = true;
+-	mutex_unlock(&di->lock);
++	bq27xxx_battery_stop(di, true);
+ }
+ EXPORT_SYMBOL_GPL(bq27xxx_battery_teardown);
+ 
+diff --git a/drivers/power/supply/bq27xxx_battery_i2c.c b/drivers/power/supply/bq27xxx_battery_i2c.c
+index d65c5337cfcf9da4260b3d59c138fe4acc3f657f..252974beeb954a58c2088792b4c2c1e44f6dcf18 100644
+--- a/drivers/power/supply/bq27xxx_battery_i2c.c
++++ b/drivers/power/supply/bq27xxx_battery_i2c.c
+@@ -228,6 +228,14 @@ static void bq27xxx_battery_i2c_remove(struct i2c_client *client)
+ 	bq27xxx_battery_teardown(di);
+ }
+ 
++static void bq27xxx_battery_i2c_shutdown(struct i2c_client *client)
++{
++	if (client->irq > 0)
++		disable_irq(client->irq);
++
++	bq27xxx_battery_shutdown(i2c_get_clientdata(client));
++}
++
+ static const struct i2c_device_id bq27xxx_i2c_id_table[] = {
+ 	{ .name = "bq27200", .driver_data = BQ27000 },
+ 	{ .name = "bq27210", .driver_data = BQ27010 },
+@@ -314,6 +322,7 @@ static struct i2c_driver bq27xxx_battery_i2c_driver = {
+ 	},
+ 	.probe = bq27xxx_battery_i2c_probe,
+ 	.remove = bq27xxx_battery_i2c_remove,
++	.shutdown = bq27xxx_battery_i2c_shutdown,
+ 	.id_table = bq27xxx_i2c_id_table,
+ };
+ module_i2c_driver(bq27xxx_battery_i2c_driver);
+diff --git a/drivers/power/supply/bq27xxx_battery_test.c b/drivers/power/supply/bq27xxx_battery_test.c
+index f18106e47e2e0f063219dfcafdd2695470b1bd46..a759a7048606ce837f4f6d4b7c46849c0b8caae0 100644
+--- a/drivers/power/supply/bq27xxx_battery_test.c
++++ b/drivers/power/supply/bq27xxx_battery_test.c
+@@ -324,6 +324,7 @@ static int bq27xxx_health_test_read(struct bq27xxx_device_info *di, u8 reg,
+ static void bq27xxx_health_alert_test(struct kunit *test)
+ {
+ 	struct bq27xxx_suspend_test *f = test->priv;
++	struct power_supply psy = { .drv_data = &f->di };
+ 	union power_supply_propval health;
+ 	static const struct { int isc, soa, health; } rows[] = {
+ 		{ 0, 0, POWER_SUPPLY_HEALTH_GOOD },
+@@ -337,27 +338,46 @@ static void bq27xxx_health_alert_test(struct kunit *test)
+ 
+ 	f->di.health_alerts = true;
+ 	f->di.bus.read = bq27xxx_health_test_read;
++	f->di.last_update = jiffies;
+ 	for (i = 0; i < ARRAY_SIZE(rows); i++) {
+ 		f->isc = rows[i].isc;
+ 		f->soa = rows[i].soa;
+-		KUNIT_ASSERT_EQ(test, bq27xxx_battery_read_health(&f->di, &health), 0);
++		KUNIT_ASSERT_EQ(test,
++				bq27xxx_battery_get_property(&psy,
++							     POWER_SUPPLY_PROP_HEALTH, &health),
++				0);
+ 		KUNIT_EXPECT_EQ(test, health.intval, rows[i].health);
+ 	}
+ 	f->isc = -EREMOTEIO;
+-	KUNIT_EXPECT_EQ(test, bq27xxx_battery_read_health(&f->di, &health), -EREMOTEIO);
++	KUNIT_EXPECT_EQ(test,
++			bq27xxx_battery_get_property(&psy,
++						     POWER_SUPPLY_PROP_HEALTH, &health),
++			-EREMOTEIO);
+ 	f->isc = 0;
+ 	f->soa = -EIO;
+-	KUNIT_EXPECT_EQ(test, bq27xxx_battery_read_health(&f->di, &health), -EIO);
++	KUNIT_EXPECT_EQ(test,
++			bq27xxx_battery_get_property(&psy,
++						     POWER_SUPPLY_PROP_HEALTH, &health),
++			-EIO);
+ 	f->isc = 4;
+ 	f->soa = 0;
+-	KUNIT_EXPECT_EQ(test, bq27xxx_battery_read_health(&f->di, &health), -ENODATA);
++	KUNIT_EXPECT_EQ(test,
++			bq27xxx_battery_get_property(&psy,
++						     POWER_SUPPLY_PROP_HEALTH, &health),
++			-ENODATA);
+ 	f->di.health_alerts = false;
+ 	f->health_reads = 0;
+-	KUNIT_EXPECT_EQ(test, bq27xxx_battery_read_health(&f->di, &health), 0);
++	KUNIT_EXPECT_EQ(test,
++			bq27xxx_battery_get_property(&psy,
++						     POWER_SUPPLY_PROP_HEALTH, &health),
++			0);
+ 	KUNIT_EXPECT_EQ(test, f->health_reads, 0U);
+ 	f->di.health_alerts = true;
+ 	f->di.removed = true;
+-	KUNIT_EXPECT_EQ(test, bq27xxx_battery_read_health(&f->di, &health), -ENODEV);
++	KUNIT_EXPECT_EQ(test,
++			bq27xxx_battery_get_property(&psy,
++						     POWER_SUPPLY_PROP_HEALTH, &health),
++			-ENODEV);
+ 	KUNIT_EXPECT_EQ(test, f->health_reads, 0U);
+ 	KUNIT_EXPECT_EQ(test, f->writes, 0U);
+ }
+@@ -485,10 +505,42 @@ static void bq27z561_current_properties_test(struct kunit *test)
+ 	KUNIT_EXPECT_EQ(test, f->writes, 0U);
+ }
+ 
++static void bq27xxx_shutdown_stops_io_test(struct kunit *test)
++{
++	struct bq27xxx_suspend_test *f = test->priv;
++	struct power_supply psy = { .drv_data = &f->di };
++	union power_supply_propval val = { .intval = 42 };
++
++	f->di.chip = BQ27Z561;
++	f->di.regs = bq27z561_regs;
++	f->di.opts = BQ27Z561_O_BITS;
++	f->di.bus.read = bq27xxx_current_test_read;
++	f->di.last_update = jiffies;
++
++	bq27xxx_battery_shutdown(&f->di);
++	KUNIT_EXPECT_FALSE(test, delayed_work_pending(&f->di.work));
++	bq27xxx_external_power_changed(&psy);
++	KUNIT_EXPECT_FALSE(test, delayed_work_pending(&f->di.work));
++	KUNIT_EXPECT_EQ(test,
++			bq27xxx_battery_get_property(&psy,
++						     POWER_SUPPLY_PROP_STATUS, &val),
++			-ENODEV);
++	KUNIT_EXPECT_EQ(test, val.intval, 42);
++	KUNIT_EXPECT_EQ(test, f->current_avg_reads, 0U);
++	val.intval = POWER_SUPPLY_CHARGE_TYPE_STANDARD;
++	KUNIT_EXPECT_EQ(test,
++			bq27xxx_battery_set_property(&psy,
++						     POWER_SUPPLY_PROP_CHARGE_TYPE, &val),
++			-ENODEV);
++	KUNIT_EXPECT_TRUE(test, f->di.fast_charge);
++	KUNIT_EXPECT_EQ(test, f->writes, 0U);
++}
++
+ static struct kunit_case bq27xxx_suspend_cases[] = {
+ 	KUNIT_CASE(bq27xxx_vendor_average_power_test),
+ 	KUNIT_CASE(bq27z561_current_properties_test),
+ 	KUNIT_CASE(bq27xxx_health_alert_test),
++	KUNIT_CASE(bq27xxx_shutdown_stops_io_test),
+ #if IS_ENABLED(CONFIG_BATTERY_BQ27XXX_IIO)
+ 	KUNIT_CASE(bq27xxx_original_iio_values_test),
+ 	KUNIT_CASE(bq27xxx_original_iio_range_test),
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index 13ac22e6c4d0fdeb62a39c7afe66a9060ba8cb80..b1d1c5fe4cab3bbd0b50cd95a3b2d3046c11179d 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -43,6 +43,8 @@
+ #include <linux/pm_wakeup.h>
+ #include <linux/power_supply.h>
+ #include <linux/property.h>
++#include <linux/power/piano-poweroff.h>
++#include <linux/reboot.h>
+ #include <linux/random.h>
+ #include <linux/regulator/driver.h>
+ #include <linux/of.h>
+@@ -112,7 +114,7 @@ struct piano_mca_pdo {
+ #define MCA_PROP_ADAPTER_SVID	0x2100f
+ #define MCA_PROP_PD_VERIFIED	0x21010
+ #define MCA_PROP_UVDM_STATE	0x21012
+-#define MCA_PROP_USB_ATTACHED	0x2101f	/* physical Type-C connection, u8 */
++#define MCA_PROP_CID_STATUS	0x2101f	/* connector ID status, u8 */
+ #define MCA_PROP_OTG_PLUGIN	0x21020	/* physical source attachment, u8 */
+ #define MCA_VDM_LEN		16
+ #define MCA_DATA_ROLE_UFP	1
+@@ -630,6 +632,7 @@ struct piano_mca {
+ 	bool inhibit_charge;	/* Requested policy, retained after a stop error. */
+ 	bool inhibit_stopped_cp;	/* This policy requested the CP stop. */
+ 	struct notifier_block connection_notifier;
++	struct notifier_block reboot_notifier;
+ 	atomic_t connection_generation;
+ 	unsigned int polled_generation;
+ 	unsigned int polled_connection_generation;
+@@ -4616,7 +4619,8 @@ static int piano_mca_connector_state(struct piano_mca *mca)
+ 	unsigned int generation = pmic_glink_get_generation(mca->client);
+ 	unsigned int connection = piano_mca_connection_generation(mca);
+ 	int present = power_supply_for_each_psy(mca, piano_mca_connector_present);
+-	u8 attached = U8_MAX, otg = U8_MAX;
++	__le32 vbus;
++	u8 cid, otg;
+ 	int ret;
+ 
+ 	lockdep_assert_held(&mca->policy_lock);
+@@ -4624,13 +4628,21 @@ static int piano_mca_connector_state(struct piano_mca *mca)
+ 		return present;
+ 	if (!READ_ONCE(mca->service_up))
+ 		return MCA_CONNECTOR_UNKNOWN;
+-	ret = piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_USB_ATTACHED,
+-			     &attached, sizeof(attached), generation, connection);
++	ret = piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_CID_STATUS,
++			     &cid, sizeof(cid), generation, connection);
+ 	ret = ret ?: piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_OTG_PLUGIN,
+ 				     &otg, sizeof(otg), generation, connection);
+-	if (ret || attached > 1 || otg > 1)
++	if (ret || cid > 1 || otg > 1)
++		return MCA_CONNECTOR_UNKNOWN;
++	if (cid || otg)
++		return MCA_CONNECTOR_ATTACHED;
++
++	/* Low VBUS only corroborates UCSI's detach report. */
++	ret = piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_BUS_VOLT,
++			     &vbus, sizeof(vbus), generation, connection);
++	if (ret)
+ 		return MCA_CONNECTOR_UNKNOWN;
+-	if (attached || otg)
++	if (le32_to_cpu(vbus) >= MCA_CONNECTOR_ISOLATED_UV)
+ 		return MCA_CONNECTOR_ATTACHED;
+ 	return present;
+ }
+@@ -4686,7 +4698,7 @@ failed:
+ }
+ 
+ static bool piano_mca_connector_sample(struct piano_mca *mca, const int *temp,
+-				       int state, bool board_valid, int board_mc,
++				       bool board_valid, int board_mc,
+ 				       unsigned long now)
+ {
+ 	unsigned int elapsed = jiffies_to_msecs(now - mca->connector_sample_at);
+@@ -4709,14 +4721,13 @@ static bool piano_mca_connector_sample(struct piano_mca *mca, const int *temp,
+ 	}
+ 
+ 	/* If the board sensor cannot be sampled, keep the lower trip. */
+-	if (state != MCA_CONNECTOR_DETACHED &&
+-	    (maximum >= 65 ||
+-	     (maximum >= 60 && (!board_valid || board_mc / 1000 <= 50)) ||
+-	     (maximum >= 35 && rate >= MCA_CONNECTOR_RATE)))
++	if (maximum >= 65 ||
++	    (maximum >= 60 && (!board_valid || board_mc / 1000 <= 50)) ||
++	    (maximum >= 35 && rate >= MCA_CONNECTOR_RATE))
+ 		WRITE_ONCE(mca->connector_latched, true);
++
+ 	return previous && elapsed >= MCA_CONNECTOR_POLL_MS &&
+-	       state == MCA_CONNECTOR_DETACHED && maximum < 55 &&
+-	       rate < MCA_CONNECTOR_RATE;
++	       maximum < 55 && rate < MCA_CONNECTOR_RATE;
+ }
+ 
+ static int piano_mca_connector_stop(struct piano_mca *mca, u32 event)
+@@ -4742,9 +4753,7 @@ static int piano_mca_connector_stop(struct piano_mca *mca, u32 event)
+ 	 * The zero-byte VDM has been identified in the v1 stock module.
+ 	 * Do not assume a v2 command number from the unrelated PDO remap.
+ 	 */
+-	if (mca->connector_latched &&
+-	    mca->connector_mos_state != MCA_CONNECTOR_MOS_ISOLATED &&
+-	    mca->pd_protocol_version == 1 && READ_ONCE(mca->service_up) &&
++	if (mca->connector_latched && mca->pd_protocol_version == 1 && READ_ONCE(mca->service_up) &&
+ 	    !piano_mca_read_type(mca, &real_type) && piano_mca_is_pd(real_type)) {
+ 		reset = true;
+ 		err = piano_mca_write_session(mca, MCA_PROP_VDM_VSAFE0V,
+@@ -4810,27 +4819,36 @@ static int piano_mca_connector_isolate(struct piano_mca *mca, bool isolate)
+ 		if (isolate)
+ 			msleep(50);
+ 	}
+-	if (isolate && READ_ONCE(mca->service_up)) {
+-		__le32 value;
++	return 0;
++}
+ 
+-		ret = piano_mca_read(mca, MCA_PROP_BUS_VOLT, &value, sizeof(value));
+-		if (!ret && le32_to_cpu(value) >= MCA_CONNECTOR_ISOLATED_UV)
+-			ret = -EIO;
+-		if (ret) {
+-			mca->connector_stop_confirmed = false;
+-			return ret;
+-		}
+-		/* Preserve cable presence in UCSI; report measured power loss here. */
+-		mca->vbus_uv = le32_to_cpu(value);
+-		mca->ibus_ua = 0;
+-		mca->icl_ma = 0;
+-		if (mca->online || mca->real_type != MCA_TYPE_UNKNOWN) {
+-			if (mca->online)
+-				mca->cp_off_at = jiffies;
+-			mca->online = false;
+-			mca->real_type = MCA_TYPE_UNKNOWN;
+-			power_supply_changed(mca->usb);
+-		}
++static int piano_mca_connector_verify_isolation(struct piano_mca *mca)
++{
++	__le32 value;
++	int ret;
++
++	lockdep_assert_held(&mca->policy_lock);
++	if (!READ_ONCE(mca->service_up))
++		return -ENODEV;
++
++	ret = piano_mca_read(mca, MCA_PROP_BUS_VOLT, &value, sizeof(value));
++	if (!ret && le32_to_cpu(value) >= MCA_CONNECTOR_ISOLATED_UV)
++		ret = -EIO;
++	if (ret) {
++		mca->connector_stop_confirmed = false;
++		return ret;
++	}
++
++	/* Preserve cable presence in UCSI; report measured power loss here. */
++	mca->vbus_uv = le32_to_cpu(value);
++	mca->ibus_ua = 0;
++	mca->icl_ma = 0;
++	if (mca->online || mca->real_type != MCA_TYPE_UNKNOWN) {
++		if (mca->online)
++			mca->cp_off_at = jiffies;
++		mca->online = false;
++		mca->real_type = MCA_TYPE_UNKNOWN;
++		power_supply_changed(mca->usb);
+ 	}
+ 	return 0;
+ }
+@@ -4899,6 +4917,7 @@ static void piano_mca_connector_work(struct work_struct *work)
+ 	struct piano_mca *mca = container_of(work, struct piano_mca,
+ 						connector_work.work);
+ 	bool cool = false, was_latched, was_blocked, awake, temp_unavailable;
++	bool pin_unknown;
+ 	int temp[2], state, board = 0, ret;
+ 	u32 event;
+ 
+@@ -4907,7 +4926,6 @@ static void piano_mca_connector_work(struct work_struct *work)
+ 		return;
+ 	scoped_guard(spinlock_irqsave, &mca->connector_event_lock)
+ 		event = mca->connector_event;
+-	state = piano_mca_connector_state(mca);
+ 	was_latched = mca->connector_latched;
+ 	was_blocked = mca->connector_blocked;
+ 	ret = piano_mca_connector_read(mca, temp);
+@@ -4927,10 +4945,9 @@ static void piano_mca_connector_work(struct work_struct *work)
+ 		 * the two connector trips.
+ 		 */
+ 		if (!mca->connector_latched && mca->skin_control &&
+-		    state != MCA_CONNECTOR_DETACHED &&
+ 		    maximum >= 60000 && maximum < 65000)
+ 			board_valid = !piano_mca_skin_read(mca, &board);
+-		cool = piano_mca_connector_sample(mca, temp, state, board_valid,
++		cool = piano_mca_connector_sample(mca, temp, board_valid,
+ 						  board, jiffies);
+ 		if (mca->connector_sleep_isolated &&
+ 		    !mca->connector_latched &&
+@@ -4943,24 +4960,27 @@ static void piano_mca_connector_work(struct work_struct *work)
+ 	WRITE_ONCE(mca->connector_blocked, temp_unavailable || mca->connector_latched ||
+ 		   mca->connector_mos_state != MCA_CONNECTOR_MOS_CONDUCTING);
+ 	ret = 0;
+-	if (mca->connector_mos_state == MCA_CONNECTOR_MOS_UNKNOWN ||
+-	    ((temp_unavailable || mca->connector_latched) && !cool)) {
+-		int stop;
++	pin_unknown = mca->connector_mos_state == MCA_CONNECTOR_MOS_UNKNOWN;
++	if (pin_unknown || temp_unavailable || mca->connector_latched) {
++		int stop, verify;
+ 
+-		/* Hold the electrical isolation even if the ADSP cannot answer. */
+-		stop = piano_mca_connector_stop(mca, event);
++		/*
++		 * Open the local protection switch before any ADSP request can
++		 * block. Its VBUS readback is on the tablet side of the switch.
++		 */
+ 		ret = piano_mca_connector_isolate(mca, true);
+-		ret = stop ?: ret;
++		stop = piano_mca_connector_stop(mca, event);
++		verify = ret ?: piano_mca_connector_verify_isolation(mca);
++		ret = verify ?: stop;
+ 		if (ret)
+ 			dev_err_ratelimited(mca->dev,
+ 					    "USB connector power removal could not be confirmed: %d\n",
+ 					    ret);
+-	} else if (cool && mca->connector_blocked) {
+-		/*
+-		 * Low VBUS behind the MOS is not a cable detach. Check physical
+-		 * state again before reconnecting and defer on a newer event.
+-		 */
+-		state = piano_mca_connector_state(mca);
++	}
++
++	/* Low VBUS behind the MOS does not establish physical removal. */
++	state = piano_mca_connector_state(mca);
++	if (!pin_unknown && !ret && cool && mca->connector_blocked) {
+ 		if (piano_mca_connector_can_restore(mca, state)) {
+ 			ret = piano_mca_connector_restore(mca, state, event);
+ 			if (ret && ret != -EAGAIN)
+@@ -5684,6 +5704,7 @@ static int piano_mca_suspend(struct device *dev)
+ 		 */
+ 		WRITE_ONCE(mca->connector_blocked, true);
+ 		ret = piano_mca_connector_isolate(mca, true);
++		ret = ret ?: piano_mca_connector_verify_isolation(mca);
+ 		if (!was_blocked && mca->connector_mos_state == MCA_CONNECTOR_MOS_ISOLATED)
+ 			mca->connector_sleep_isolated = true;
+ 		if (ret) {
+@@ -5749,6 +5770,70 @@ static int piano_mca_resume(struct device *dev)
+ static DEFINE_SIMPLE_DEV_PM_OPS(piano_mca_pm_ops, piano_mca_suspend,
+ 				piano_mca_resume);
+ 
++#if IS_ENABLED(CONFIG_POWER_RESET_PIANO)
++struct piano_mca_poweroff_session {
++	struct piano_mca *mca;
++	unsigned int generation;
++	unsigned int connection;
++};
++
++static int piano_mca_poweroff_online(void *data)
++{
++	struct piano_mca_poweroff_session *session = data;
++	struct piano_mca *mca = session->mca;
++	__le32 vbus;
++	u8 otg;
++	int ret;
++
++	ret = piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_BUS_VOLT, &vbus,
++			     sizeof(vbus), session->generation, session->connection);
++	if (ret)
++		return ret;
++	if (le32_to_cpu(vbus) < MCA_VBUS_ONLINE_UV)
++		return 0;
++
++	ret = piano_mca_xfer(mca, MCA_OP_READ, MCA_PROP_OTG_PLUGIN, &otg,
++			     sizeof(otg), session->generation, session->connection);
++	if (ret)
++		return ret;
++	if (otg > 1)
++		return -EPROTO;
++	if (otg)
++		return 0;
++
++	/* UCSI ONLINE requires a connected sink, including non-PD sources. */
++	if (power_supply_for_each_psy(mca, piano_mca_ucsi_status) < MCA_UCSI_CONNECTED)
++		return 0;
++	return piano_mca_session_valid(mca, session->generation, session->connection) ?
++		1 : -ECONNRESET;
++}
++
++static int piano_mca_poweroff_notify(struct notifier_block *nb, unsigned long action,
++				    void *unused)
++{
++	struct piano_mca *mca = container_of(nb, struct piano_mca, reboot_notifier);
++	struct piano_mca_poweroff_session session = { .mca = mca };
++	int ret;
++
++	if (action != SYS_POWER_OFF)
++		return NOTIFY_DONE;
++
++	guard(mutex)(&mca->policy_lock);
++	if (!mca->policy_ready || mca->policy_stopped || mca->policy_suspended)
++		return NOTIFY_DONE;
++	session.generation = pmic_glink_get_generation(mca->client);
++	session.connection = piano_mca_connection_generation(mca);
++
++	ret = piano_poweroff_request(piano_mca_poweroff_online, &session);
++	if (ret)
++		dev_err(mca->dev,
++			"cannot request power-off charging: %pe; USB power may start Android, unplug to stay off\n",
++			ERR_PTR(ret));
++	return NOTIFY_DONE;
++}
++
++#endif
++
+ static void piano_mca_shutdown(struct auxiliary_device *adev)
+ {
+ 	piano_mca_stop(auxiliary_get_drvdata(adev));
+@@ -5836,6 +5921,15 @@ static int piano_mca_probe(struct auxiliary_device *adev,
+ 	if (ret)
+ 		return ret;
+ 
++#if IS_ENABLED(CONFIG_POWER_RESET_PIANO)
++	if (of_machine_is_compatible("xiaomi,piano")) {
++		mca->reboot_notifier.notifier_call = piano_mca_poweroff_notify;
++		mca->reboot_notifier.priority = 255;
++		ret = devm_register_reboot_notifier(dev, &mca->reboot_notifier);
++		if (ret)
++			return ret;
++	}
++#endif
+ 	mutex_lock(&mca->policy_lock);
+ 	mca->policy_ready = true;
+ 	mutex_unlock(&mca->policy_lock);
+diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
+index 1557c0c4fdbee47cd631896e4f748384c8bcfde9..d84b59b396a3dd2597ed57e503320066b4b211bd 100644
+--- a/drivers/power/supply/piano_mca_test.c
++++ b/drivers/power/supply/piano_mca_test.c
+@@ -72,7 +72,7 @@ struct piano_mca_test {
+ 	struct gpio_chip connector_gpio;
+ 	bool connector_pin, connector_present, connector_otg;
+ 	bool attach_on_mos_restore, fail_mos_isolate;
+-	u8 remote_attached;
++	u8 connector_cid;
+ 	unsigned int usb_boost_stops, last_vsafe_event, last_mos_event;
+ 	unsigned int mos_writes;
+ 	bool mos_write_error;
+@@ -453,8 +453,8 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
+ 		case MCA_PROP_BUS_VOLT:
+ 			put_unaligned_le32(fixture->vbus_uv, response.data);
+ 			break;
+-		case MCA_PROP_USB_ATTACHED:
+-			response.data[0] = fixture->remote_attached;
++		case MCA_PROP_CID_STATUS:
++			response.data[0] = fixture->connector_cid;
+ 			break;
+ 		case MCA_PROP_OTG_PLUGIN:
+ 			response.data[0] = fixture->connector_otg;
+@@ -4440,17 +4440,16 @@ static void piano_mca_connector_threshold_test(struct kunit *test)
+ {
+ 	struct piano_mca_test *f = test->priv;
+ 	static const struct {
+-		int first_mc, second_mc, state, board_mc;
++		int first_mc, second_mc, board_mc;
+ 		bool board_valid, expected;
+ 	} rows[] = {
+-		{ 59000, 59000, MCA_CONNECTOR_ATTACHED, 25000, true, false },
+-		{ 60000, 59000, MCA_CONNECTOR_ATTACHED, 50000, true, true },
+-		{ 59000, 60000, MCA_CONNECTOR_ATTACHED, 51000, true, false },
+-		{ 59000, 64999, MCA_CONNECTOR_ATTACHED, 51000, true, false },
+-		{ 65000, 59000, MCA_CONNECTOR_ATTACHED, 51000, true, true },
+-		{ 59000, 65000, MCA_CONNECTOR_ATTACHED, 51000, true, true },
+-		{ 65000, 59000, MCA_CONNECTOR_DETACHED, 25000, true, false },
+-		{ 60000, 59000, MCA_CONNECTOR_UNKNOWN, 0, false, true },
++		{ 59000, 59000, 25000, true, false },
++		{ 60000, 59000, 50000, true, true },
++		{ 59000, 60000, 51000, true, false },
++		{ 59000, 64999, 51000, true, false },
++		{ 65000, 59000, 51000, true, true },
++		{ 59000, 65000, 51000, true, true },
++		{ 60000, 59000, 0, false, true },
+ 	};
+ 	int temp[2], i;
+ 
+@@ -4459,7 +4458,7 @@ static void piano_mca_connector_threshold_test(struct kunit *test)
+ 		f->mca.connector_sample_valid = false;
+ 		temp[0] = rows[i].first_mc;
+ 		temp[1] = rows[i].second_mc;
+-		piano_mca_connector_sample(&f->mca, temp, rows[i].state,
++		piano_mca_connector_sample(&f->mca, temp,
+ 					   rows[i].board_valid, rows[i].board_mc,
+ 					   100 * HZ);
+ 		KUNIT_EXPECT_EQ_MSG(test, f->mca.connector_latched,
+@@ -4472,10 +4471,10 @@ static void piano_mca_connector_rate_test(struct kunit *test)
+ 	struct piano_mca_test *f = test->priv;
+ 	int temp[] = { 30000, 31000 };
+ 
+-	piano_mca_connector_sample(&f->mca, temp, MCA_CONNECTOR_ATTACHED, false, 0, 100 * HZ);
++	piano_mca_connector_sample(&f->mca, temp, false, 0, 100 * HZ);
+ 	temp[0] = 34000;
+ 	temp[1] = 35000;
+-	piano_mca_connector_sample(&f->mca, temp, MCA_CONNECTOR_ATTACHED, false, 0, 101 * HZ);
++	piano_mca_connector_sample(&f->mca, temp, false, 0, 101 * HZ);
+ 	KUNIT_EXPECT_EQ(test, f->mca.connector_rate, 4);
+ 	KUNIT_EXPECT_TRUE(test, f->mca.connector_latched);
+ 
+@@ -4483,10 +4482,10 @@ static void piano_mca_connector_rate_test(struct kunit *test)
+ 	f->mca.connector_sample_valid = false;
+ 	temp[0] = 25000;
+ 	temp[1] = 40000;
+-	piano_mca_connector_sample(&f->mca, temp, MCA_CONNECTOR_ATTACHED, false, 0, 200 * HZ);
++	piano_mca_connector_sample(&f->mca, temp, false, 0, 200 * HZ);
+ 	temp[0] = 35000;
+ 	temp[1] = 41000;
+-	piano_mca_connector_sample(&f->mca, temp, MCA_CONNECTOR_ATTACHED, false, 0, 201 * HZ);
++	piano_mca_connector_sample(&f->mca, temp, false, 0, 201 * HZ);
+ 	/* The factory uses the hotter sensor's rate, not the largest rate. */
+ 	KUNIT_EXPECT_EQ(test, f->mca.connector_rate, 1);
+ 	KUNIT_EXPECT_FALSE(test, f->mca.connector_latched);
+@@ -4494,14 +4493,14 @@ static void piano_mca_connector_rate_test(struct kunit *test)
+ 	f->mca.connector_sample_valid = false;
+ 	temp[0] = 30000;
+ 	temp[1] = 30000;
+-	piano_mca_connector_sample(&f->mca, temp, MCA_CONNECTOR_ATTACHED, false, 0, 300 * HZ);
++	piano_mca_connector_sample(&f->mca, temp, false, 0, 300 * HZ);
+ 	temp[0] = 34000;
+ 	temp[1] = 34000;
+-	piano_mca_connector_sample(&f->mca, temp, MCA_CONNECTOR_ATTACHED, false, 0, 301 * HZ);
++	piano_mca_connector_sample(&f->mca, temp, false, 0, 301 * HZ);
+ 	KUNIT_EXPECT_FALSE(test, f->mca.connector_latched);
+ 	temp[0] = 35000;
+ 	temp[1] = 35000;
+-	piano_mca_connector_sample(&f->mca, temp, MCA_CONNECTOR_ATTACHED, false, 0, 303 * HZ);
++	piano_mca_connector_sample(&f->mca, temp, false, 0, 303 * HZ);
+ 	KUNIT_EXPECT_EQ(test, f->mca.connector_rate, 0);
+ 	KUNIT_EXPECT_FALSE(test, f->mca.connector_latched);
+ }
+@@ -4643,7 +4642,7 @@ static void piano_mca_connector_recovery_test(struct kunit *test)
+ 	KUNIT_EXPECT_EQ(test, f->usb_boost_stops, 1U);
+ 	KUNIT_EXPECT_NE(test, f->last_vsafe_event, 0U);
+ 	KUNIT_EXPECT_LT(test, f->last_vsafe_event, f->last_stop_event);
+-	KUNIT_EXPECT_LT(test, f->last_pmic_disable_event, f->last_mos_event);
++	KUNIT_EXPECT_LT(test, f->last_mos_event, f->last_pmic_disable_event);
+ 	KUNIT_EXPECT_EQ(test, piano_mca_charge_limit(&f->mca), 0U);
+ 	piano_mca_usb_get_property(f->mca.usb, POWER_SUPPLY_PROP_HEALTH, &value);
+ 	KUNIT_EXPECT_EQ(test, value.intval, POWER_SUPPLY_HEALTH_OVERHEAT);
+@@ -4657,11 +4656,15 @@ static void piano_mca_connector_recovery_test(struct kunit *test)
+ 	KUNIT_EXPECT_TRUE(test, f->connector_pin);
+ 	KUNIT_EXPECT_EQ(test, f->mos_writes, 1U);
+ 	f->connector_present = false;
+-	f->remote_attached = 1;
++	f->connector_cid = 1;
+ 	f->mca.connector_sample_at = jiffies - HZ;
+ 	piano_mca_test_connector_poll(f);
+ 	KUNIT_EXPECT_TRUE(test, f->connector_pin);
+-	f->remote_attached = 0;
++	f->connector_cid = 0;
++	f->vbus_uv = 5000000;
++	piano_mca_test_connector_poll(f);
++	KUNIT_EXPECT_TRUE(test, f->connector_pin);
++	f->vbus_uv = 0;
+ 	f->connector_input[1].temp_mc = 55000;
+ 	f->mca.connector_sample_at = jiffies - HZ;
+ 	piano_mca_test_connector_poll(f);
+@@ -4724,6 +4727,37 @@ static void piano_mca_connector_restore_attach_test(struct kunit *test)
+ 	KUNIT_EXPECT_GT(test, piano_mca_charge_limit(&f->mca), 0U);
+ }
+ 
++#if IS_ENABLED(CONFIG_POWER_RESET_PIANO)
++static void piano_mca_poweroff_fresh_state_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	struct piano_mca_poweroff_session session = { .mca = &f->mca };
++
++	KUNIT_ASSERT_EQ(test, piano_mca_api_prepare(test), 0);
++	KUNIT_ASSERT_EQ(test, piano_mca_test_connector_prepare(test, true), 0);
++	session.generation = f->remote_generation;
++	f->mca.online = true;
++	f->vbus_uv = 5000000;
++	KUNIT_EXPECT_EQ(test, piano_mca_poweroff_online(&session), 0);
++
++	f->connector_present = true;
++	KUNIT_EXPECT_EQ(test, piano_mca_poweroff_online(&session), 1);
++	f->connector_otg = true;
++	KUNIT_EXPECT_EQ(test, piano_mca_poweroff_online(&session), 0);
++	f->connector_otg = false;
++	f->vbus_uv = 0;
++	KUNIT_EXPECT_EQ(test, piano_mca_poweroff_online(&session), 0);
++
++	f->vbus_uv = 5000000;
++	atomic_inc(&f->mca.connection_generation);
++	KUNIT_EXPECT_LT(test, piano_mca_poweroff_online(&session), 0);
++	KUNIT_EXPECT_EQ(test, piano_mca_poweroff_notify(&f->mca.reboot_notifier,
++			SYS_RESTART, NULL), NOTIFY_DONE);
++	KUNIT_EXPECT_EQ(test, piano_mca_poweroff_notify(&f->mca.reboot_notifier,
++			SYS_HALT, NULL), NOTIFY_DONE);
++}
++#endif
++
+ static void piano_mca_connector_offline_test(struct kunit *test)
+ {
+ 	struct piano_mca_test *f = test->priv;
+@@ -4819,6 +4853,9 @@ static struct kunit_case piano_mca_test_cases[] = {
+ 	KUNIT_CASE(piano_mca_connector_rate_test),
+ 	KUNIT_CASE(piano_mca_connector_recovery_test),
+ 	KUNIT_CASE(piano_mca_connector_restore_attach_test),
++#if IS_ENABLED(CONFIG_POWER_RESET_PIANO)
++	KUNIT_CASE(piano_mca_poweroff_fresh_state_test),
++#endif
+ 	KUNIT_CASE(piano_mca_connector_offline_test),
+ 	KUNIT_CASE(piano_mca_connector_board_test),
+ 	KUNIT_CASE(piano_mca_connector_hot_resume_test),
+diff --git a/drivers/power/supply/sc96231_charger.c b/drivers/power/supply/sc96231_charger.c
+index f89c2af895bd4957c299994ed2d44f9880cbc13c..562286c95d650278f9c1113aeaccb7372bf8f5fe 100644
+--- a/drivers/power/supply/sc96231_charger.c
++++ b/drivers/power/supply/sc96231_charger.c
+@@ -105,7 +105,7 @@ static int sc96231_disable_vin(struct sc96231 *sc)
+ 	return ret;
+ }
+ 
+-static void sc96231_stop(struct sc96231 *sc)
++static int sc96231_stop(struct sc96231 *sc)
+ {
+ 	int ret;
+ 
+@@ -117,7 +117,7 @@ static void sc96231_stop(struct sc96231 *sc)
+ 		gpiod_set_value_cansleep(sc->tx_enable, 0);
+ 		sc->tx_state = SC96231_TX_OFF;
+ 	}
+-	sc96231_disable_vin(sc);
++	return sc96231_disable_vin(sc);
+ }
+ 
+ static int sc96231_start(struct sc96231 *sc)
+@@ -512,8 +512,19 @@ static int sc96231_suspend(struct device *dev)
+ 	int ret;
+ 	unsigned int i;
+ 
+-	if (!device_may_wakeup(dev))
+-		return 0;
++	/*
++	 * The freezable workqueue cannot expire a handshake during sleep.
++	 * Stop unfinished handshakes and retry after resuming the device.
++	 */
++	mutex_lock(&sc->lock);
++	if (sc->tx_state != SC96231_TX_TRANSFER)
++		ret = sc96231_stop(sc);
++	else
++		ret = 0;
++	mutex_unlock(&sc->lock);
++	if (ret || !device_may_wakeup(dev))
++		return ret;
++
+ 	ret = enable_irq_wake(sc->irq);
+ 	if (ret)
+ 		return ret;
+diff --git a/drivers/spi/spi-geni-qcom.c b/drivers/spi/spi-geni-qcom.c
+index e695b97f09cf1accfafb3cef32589f927b1fa4ff..dd14d87e0d642c7c25394242430677c0fe892a70 100644
+--- a/drivers/spi/spi-geni-qcom.c
++++ b/drivers/spi/spi-geni-qcom.c
+@@ -1284,8 +1284,15 @@ static int spi_geni_probe(struct platform_device *pdev)
+ 	/*
+ 	 * TX is required per GSI spec, see setup_gsi_xfer().
+ 	 */
+-	if (mas->cur_xfer_mode == GENI_GPI_DMA)
++	if (mas->cur_xfer_mode == GENI_GPI_DMA) {
+ 		spi->flags = SPI_CONTROLLER_MUST_TX;
++		/*
++		 * The SPI core uses the QUP wrapper to map buffers. A GPI
++		 * transfer can only use one segment, up to max_dma_len.
++		 */
++		if (dma_get_max_seg_size(spi->dma_map_dev) < spi->max_dma_len)
++			dma_set_max_seg_size(spi->dma_map_dev, spi->max_dma_len);
++	}
+ 
+ 	ret = devm_request_irq(dev, mas->irq, geni_spi_isr, 0, dev_name(dev), spi);
+ 	if (ret)
+diff --git a/drivers/video/backlight/ktz8866.c b/drivers/video/backlight/ktz8866.c
+index c082dbf80b79086e350ba148be3caa41fba0eae0..e05ebcee6b559784d7140badc03d5c7b625a3dcf 100644
+--- a/drivers/video/backlight/ktz8866.c
++++ b/drivers/video/backlight/ktz8866.c
+@@ -6,11 +6,13 @@
+  */
+ 
+ #include <linux/backlight.h>
++#include <linux/cleanup.h>
+ #include <linux/delay.h>
+ #include <linux/err.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/i2c.h>
+ #include <linux/module.h>
++#include <linux/mutex.h>
+ #include <linux/of.h>
+ #include <linux/regmap.h>
+ 
+@@ -40,14 +42,19 @@
+ #define PWM_RAMP_TIME 0x15
+ 
+ /* definition */
++#define BLED_MAP_LINEAR BIT(3)
+ #define BL_EN_BIT BIT(6)
++#define BL_SINK_MASK GENMASK(5, 0)
+ #define LCD_BIAS_EN 0x9F
+ #define PWM_HYST 0x5
+ 
+ struct ktz8866 {
+ 	struct i2c_client *client;
+ 	struct regmap *regmap;
++	/* Serialize readback with both chips' multi-register updates. */
++	struct mutex lock;
+ 	bool led_on;
++	int update_error;
+ 	struct gpio_desc *enable_gpio;
+ 	struct backlight_device *backlight;
+ 	/* Optional second chip mirroring every register write */
+@@ -84,15 +91,13 @@ static int ktz8866_update_bits(struct ktz8866 *ktz, unsigned int reg,
+ 	return ret;
+ }
+ 
+-static int ktz8866_backlight_update_status(struct backlight_device *backlight_dev)
++static int ktz8866_set_brightness(struct ktz8866 *ktz, unsigned int brightness)
+ {
+-	struct ktz8866 *ktz = bl_get_data(backlight_dev);
+-	unsigned int brightness = backlight_get_brightness(backlight_dev);
+ 	unsigned int dimming, secondary_dimming;
+ 	unsigned int ramp;
+ 	int ret;
+ 
+-	if (ktz->led_on && !brightness) {
++	if ((ktz->led_on || ktz->update_error) && !brightness) {
+ 		ret = regmap_read(ktz->regmap, BL_DIMMING, &dimming);
+ 		if (ret)
+ 			return ret;
+@@ -127,7 +132,7 @@ static int ktz8866_backlight_update_status(struct backlight_device *backlight_de
+ 	if (ret)
+ 		return ret;
+ 
+-	if (!ktz->led_on && brightness) {
++	if ((!ktz->led_on || ktz->update_error) && brightness) {
+ 		ret = ktz8866_update_bits(ktz, BL_EN, BL_EN_BIT, BL_EN_BIT);
+ 		if (ret)
+ 			return ret;
+@@ -137,15 +142,84 @@ static int ktz8866_backlight_update_status(struct backlight_device *backlight_de
+ 	return 0;
+ }
+ 
++static int ktz8866_backlight_update_status(struct backlight_device *backlight_dev)
++{
++	struct ktz8866 *ktz = bl_get_data(backlight_dev);
++
++	guard(mutex)(&ktz->lock);
++	ktz->update_error = ktz8866_set_brightness(ktz, backlight_get_brightness(backlight_dev));
++	return ktz->update_error;
++}
++
++static int ktz8866_read_brightness(struct regmap *regmap)
++{
++	unsigned int enable;
++	u8 values[2];
++	int ret;
++
++	ret = regmap_read(regmap, BL_EN, &enable);
++	if (ret)
++		return ret;
++	if (!(enable & BL_EN_BIT) || !(enable & BL_SINK_MASK))
++		return 0;
++
++	ret = regmap_bulk_read(regmap, BL_BRT_LSB, values, ARRAY_SIZE(values));
++	if (ret)
++		return ret;
++
++	return (values[1] << 3) | (values[0] & 0x7);
++}
++
++static int ktz8866_backlight_get_brightness(struct backlight_device *backlight_dev)
++{
++	struct ktz8866 *ktz = bl_get_data(backlight_dev);
++	int primary, secondary;
++
++	guard(mutex)(&ktz->lock);
++
++	/* Failed MSB writes can leave the LSB register updated but not latched. */
++	if (ktz->update_error)
++		return ktz->update_error;
++
++	primary = ktz8866_read_brightness(ktz->regmap);
++	if (primary < 0 || !ktz->secondary)
++		return primary;
++
++	secondary = ktz8866_read_brightness(ktz->secondary);
++	if (secondary < 0)
++		return secondary;
++	if (secondary != primary)
++		return -EIO;
++
++	return primary;
++}
++
+ static const struct backlight_ops ktz8866_backlight_ops = {
+ 	.options = BL_CORE_SUSPENDRESUME,
+ 	.update_status = ktz8866_backlight_update_status,
++	.get_brightness = ktz8866_backlight_get_brightness,
+ };
+ 
++static enum backlight_scale ktz8866_get_scale(struct ktz8866 *ktz)
++{
++	unsigned int primary, secondary;
++
++	if (regmap_read(ktz->regmap, BL_CFG1, &primary))
++		return BACKLIGHT_SCALE_UNKNOWN;
++	if (ktz->secondary &&
++	    (regmap_read(ktz->secondary, BL_CFG1, &secondary) ||
++	     ((primary ^ secondary) & BLED_MAP_LINEAR)))
++		return BACKLIGHT_SCALE_UNKNOWN;
++
++	return primary & BLED_MAP_LINEAR ? BACKLIGHT_SCALE_LINEAR :
++					  BACKLIGHT_SCALE_NON_LINEAR;
++}
++
+ static void ktz8866_init(struct ktz8866 *ktz)
+ {
+ 	unsigned int val = 0;
+ 
++	guard(mutex)(&ktz->lock);
+ 	if (!of_property_read_u32(ktz->client->dev.of_node, "current-num-sinks", &val))
+ 		ktz8866_write(ktz, BL_EN, BIT(val) - 1);
+ 	else
+@@ -179,16 +253,9 @@ static void ktz8866_init(struct ktz8866 *ktz)
+  */
+ static unsigned int ktz8866_get_initial_brightness(struct ktz8866 *ktz)
+ {
+-	unsigned int en, lsb, msb, brightness;
+-
+-	if (regmap_read(ktz->regmap, BL_EN, &en) || !(en & BL_EN_BIT) ||
+-	    regmap_read(ktz->regmap, BL_BRT_LSB, &lsb) ||
+-	    regmap_read(ktz->regmap, BL_BRT_MSB, &msb))
+-		return DEFAULT_BRIGHTNESS;
+-
+-	brightness = (msb << 3) | (lsb & 0x7);
++	int brightness = ktz8866_read_brightness(ktz->regmap);
+ 
+-	return brightness ?: DEFAULT_BRIGHTNESS;
++	return brightness > 0 ? brightness : DEFAULT_BRIGHTNESS;
+ }
+ 
+ static void ktz8866_put_device(void *data)
+@@ -239,6 +306,7 @@ static int ktz8866_probe(struct i2c_client *client)
+ 	if (!ktz)
+ 		return -ENOMEM;
+ 
++	mutex_init(&ktz->lock);
+ 	ktz->client = client;
+ 	ktz->regmap = devm_regmap_init_i2c(client, &ktz8866_regmap_config);
+ 	if (IS_ERR(ktz->regmap))
+@@ -269,7 +337,7 @@ static int ktz8866_probe(struct i2c_client *client)
+ 	props.type = BACKLIGHT_RAW;
+ 	props.max_brightness = MAX_BRIGHTNESS;
+ 	props.brightness = ktz8866_get_initial_brightness(ktz);
+-	props.scale = BACKLIGHT_SCALE_LINEAR;
++	props.scale = ktz8866_get_scale(ktz);
+ 
+ 	ktz->backlight = devm_backlight_device_register(&client->dev, "ktz8866-backlight",
+ 					&client->dev, ktz, &ktz8866_backlight_ops, &props);
+diff --git a/include/linux/power/bq27xxx_battery.h b/include/linux/power/bq27xxx_battery.h
+index 9d4fb86211f333fb0e35d45d7540829e3b823ccb..f2a9e13f25227b0c2fe9c40ae0cf0c4d622ab414 100644
+--- a/include/linux/power/bq27xxx_battery.h
++++ b/include/linux/power/bq27xxx_battery.h
+@@ -84,6 +84,7 @@ struct bq27xxx_device_info {
+ void bq27xxx_battery_update(struct bq27xxx_device_info *di);
+ int bq27xxx_battery_setup(struct bq27xxx_device_info *di);
+ void bq27xxx_battery_teardown(struct bq27xxx_device_info *di);
++void bq27xxx_battery_shutdown(struct bq27xxx_device_info *di);
+ extern const struct dev_pm_ops bq27xxx_battery_battery_pm_ops;
+ 
+ #endif
+diff --git a/include/linux/power/piano-poweroff.h b/include/linux/power/piano-poweroff.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..a571ff2e4f104825086e9585223993448f1e67a9
+--- /dev/null
++++ b/include/linux/power/piano-poweroff.h
+@@ -0,0 +1,7 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef _LINUX_POWER_PIANO_POWEROFF_H
++#define _LINUX_POWER_PIANO_POWEROFF_H
++
++int piano_poweroff_request(int (*online)(void *), void *data);
++
++#endif

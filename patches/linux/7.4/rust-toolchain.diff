@@ -1,0 +1,809 @@
+diff --git a/config/build-container.json b/config/build-container.json
+index c75e4144..be168f45 100644
+--- a/config/build-container.json
++++ b/config/build-container.json
+@@ -3,6 +3,15 @@
+   "registry": "public.ecr.aws/docker/library",
+   "tag": "trixie-20260918-slim",
+   "index_digest": "sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a",
++  "kernel_rust": {
++    "image": "rust",
++    "tag": "1.100.0-slim-trixie",
++    "bindgen_version": "0.73.2",
++    "platforms": {
++      "x86_64": "sha256:4b68057dc8c103af4fa66b5cd29f21b18afec79fadfcd8fb91e295e939f0690c",
++      "aarch64": "sha256:11acfd0f07018a7c60d33b5e95618275feb39e465c4fbc9a73b438b1ee1e43ce"
++    }
++  },
+   "uefi/platforms": [
+     {
+       "architecture": "amd64",
+diff --git a/config/kernel-llvm.json b/config/kernel-llvm.json
+index c808bfc7..a7e274ad 100644
+--- a/config/kernel-llvm.json
++++ b/config/kernel-llvm.json
+@@ -9,6 +9,7 @@
+     "bin/llvm-strip", "bin/llvm-size", "bin/llvm-strings", "bin/llvm-symbolizer",
+     "bin/llvm-addr2line", "lib/clang/23/include"
+   ],
++  "libclang_members": ["lib/libclang.so", "lib/libclang.so.23.1", "lib/libclang.so.23.1.5"],
+   "platforms": {
+     "x86_64": {
+       "archive": "LLVM-23.1.5-Linux-X64.tar.zst",
+diff --git a/containers/Dockerfile b/containers/Dockerfile
+index eb599c95..48c51539 100644
+--- a/containers/Dockerfile
++++ b/containers/Dockerfile
+@@ -1,4 +1,16 @@
+ ARG SUNUEFI_BASE_IMAGE=public.ecr.aws/docker/library/debian@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a
++ARG SUNUEFI_RUST_IMAGE=${SUNUEFI_BASE_IMAGE}
++FROM ${SUNUEFI_RUST_IMAGE} AS kernel-rust
++
++ARG SUNUEFI_BINDGEN_VERSION
++RUN mkdir -p /opt/sunuefi-kernel-rust \
++    && if [ -n "${SUNUEFI_BINDGEN_VERSION}" ]; then \
++        rustup component add rust-src \
++        && cp -a "$(rustc --print sysroot)/." /opt/sunuefi-kernel-rust/ \
++        && cargo install --locked --version "=${SUNUEFI_BINDGEN_VERSION}" \
++            --root /opt/sunuefi-kernel-rust bindgen-cli; \
++    fi
++
+ FROM ${SUNUEFI_BASE_IMAGE}
+ 
+ ENV DEBIAN_FRONTEND=noninteractive SUNUEFI_TOOLCHAIN_ROOT=/usr
+@@ -20,6 +32,8 @@ RUN if [ "$(dpkg --print-architecture)" != arm64 ]; then \
+ RUN apt-get update && apt-get install -y --no-install-recommends makepkg \
+     && rm -rf /var/lib/apt/lists/*
+ 
++COPY --from=kernel-rust /opt/sunuefi-kernel-rust /opt/sunuefi-kernel-rust
++
+ WORKDIR /workspace
+ # No source or personal workspace is embedded in the builder image.
+ # APT packages are authenticated and their actual versions are recorded below.
+diff --git a/docs/devel/building.md b/docs/devel/building.md
+index 3eddd6d5..2d8fed6e 100644
+--- a/docs/devel/building.md
++++ b/docs/devel/building.md
+@@ -84,6 +84,13 @@ docker run --rm -v "$PWD:/workspace" -w /workspace sunuefi-builder bash -euc '
+ `build/release/source-manifest.json`，内核和模块输出到 `artifacts/kernels/release/`。
+ 具体改动见[内核与调度配置](linux/kernel.md)。
+ 
++Linux 7.4 起，内核用 Rust 实现 Binder。构建容器会按所选内核加入固定版本的
++`rustc`、`rust-src` 和 `bindgen`；`libclang` 来自构建内核所用的 LLVM 归档。
++在宿主机直接编译或打包时，`RUSTC` 和 `BINDGEN` 可指定工具路径，
++`RUST_LIB_SRC` 指向与 `rustc` 对应的源码 `library` 目录，`LIBCLANG_PATH` 可指定
++`libclang.so` 文件或其目录。ThinLTO 要求 `rustc` 与 Clang 使用同一 LLVM 大版本。
++编译和生成 APT / pacman 软件包必须使用同一套工具。
++
+ 重建内核时，旧的产物清单先作废，编译完成后才原子发布新的，避免旧 Image 配新模块。
+ 
+ ### Debian
+diff --git a/tests/unit/test_ci_container.py b/tests/unit/test_ci_container.py
+index 0ac6ef0f..d05bce62 100644
+--- a/tests/unit/test_ci_container.py
++++ b/tests/unit/test_ci_container.py
+@@ -1,4 +1,5 @@
+ """Check that the builder cache follows container inputs and archive bytes."""
++import json
+ import os
+ from pathlib import Path
+ import shutil
+@@ -8,7 +9,7 @@ import unittest
+ from unittest.mock import patch
+ 
+ from build import ci_container
+-from build.cache import atomic_json, sha, source_identity
++from build.cache import atomic_json, sha
+ 
+ 
+ class CiContainerTests(unittest.TestCase):
+@@ -22,6 +23,9 @@ class CiContainerTests(unittest.TestCase):
+             path = self.root / name
+             path.parent.mkdir(parents=True, exist_ok=True)
+             shutil.copyfile(ci_container.ROOT / name, path)
++        policy = json.loads((self.root / 'config/release.json').read_text())['kernel']
++        self.series = self.root / policy['patch_series']
++        atomic_json(self.series, {'kernel_version': '7.3.3'})
+ 
+     def test_cache_key_tracks_only_the_container_and_its_build_tools(self):
+         original = ci_container.cache_key(self.root)
+@@ -39,13 +43,23 @@ class CiContainerTests(unittest.TestCase):
+                 self.assertNotEqual(ci_container.cache_key(self.root), original)
+                 path.write_bytes(before)
+ 
++    def test_cache_key_changes_when_the_builder_adds_rust(self):
++        c_builder = ci_container.cache_key(self.root)
++        atomic_json(self.series, {'kernel_version': '7.3.5'})
++        self.assertEqual(ci_container.cache_key(self.root), c_builder)
++        atomic_json(self.series, {'kernel_version': '7.4.0-rc3'})
++        rust_builder = ci_container.cache_key(self.root)
++        self.assertNotEqual(rust_builder, c_builder)
++        atomic_json(self.series, {'kernel_version': '7.4.0'})
++        self.assertEqual(ci_container.cache_key(self.root), rust_builder)
++
+     def test_corrupt_archive_is_rejected_before_docker_load(self):
+         directory = self.root / 'build/ci-builder'
+         directory.mkdir(parents=True)
+         archive = directory / 'image.tar'
+         archive.write_bytes(b'original bytes')
+         atomic_json(directory / 'manifest.json', {
+-            'inputs': source_identity(self.root, ci_container.INPUTS),
++            'inputs': ci_container.builder_inputs(self.root),
+             'archive_sha256': sha(archive),
+             'image_id': 'sha256:' + '1' * 64,
+         })
+diff --git a/tests/unit/test_kernel_package.py b/tests/unit/test_kernel_package.py
+index b8568a9b..d3ee5098 100644
+--- a/tests/unit/test_kernel_package.py
++++ b/tests/unit/test_kernel_package.py
+@@ -12,6 +12,7 @@ from unittest.mock import patch
+ 
+ ROOT = Path(__file__).resolve().parents[2]
+ sys.path.insert(0, str(ROOT / 'tools'))
++from build_piano_full_kernel import toolchain_digests
+ from package import boot, kernel
+ 
+ 
+@@ -69,6 +70,36 @@ class KernelPackageTests(unittest.TestCase):
+         with self.assertRaisesRegex(ValueError, 'precedes the sealed ABI epoch'):
+             kernel.package_versions('7.3.3', '7.3.3-piano-b2-g13eff9d06e11', 'pacman', 1)
+ 
++    def test_packaging_rejects_rust_tool_changes_before_running_make(self):
++        with tempfile.TemporaryDirectory(prefix='sealed-rust-package-') as directory:
++            root = Path(directory)
++            build, sealed = root / 'build/kernel', root / 'sealed'
++            build.mkdir(parents=True)
++            sealed.mkdir()
++            config = build / '.config'
++            config.write_text('CONFIG_RUST=y\n')
++            libclang = root / 'libclang.so'
++            libclang.write_bytes(b'original')
++            tools = {'paths': {'libclang': str(libclang)}, 'kernel_cc': ['/usr/bin/clang']}
++            manifest = sealed / 'manifest.json'
++            manifest.write_text(json.dumps({
++                'config_sha256': kernel.sha(config),
++                'toolchain': {**tools, 'sha256': toolchain_digests(tools['paths'])},
++            }))
++            plan = {'source': str(root / 'source'), 'kernel': str(sealed),
++                    'build': str(build), 'output': str(root / 'packages'),
++                    'manifest_sha256': kernel.sha(manifest)}
++            libclang.write_bytes(b'changed!')
++            tools['sha256'] = toolchain_digests(tools['paths'])
++            with patch.object(kernel, 'ROOT', root), patch.object(kernel, 'kernel_source'), \
++                    patch.object(kernel, 'toolchain', return_value=({}, tools)) as configured, \
++                    patch.object(kernel.subprocess, 'run') as make:
++                with self.assertRaisesRegex(ValueError, 'packaging tools differ'):
++                    kernel.build_packages(plan)
++            configured.assert_called_once_with(rust=True)
++            make.assert_not_called()
++            self.assertFalse(Path(plan['output']).exists())
++
+     @unittest.skipUnless(all(shutil.which(name) for name in (
+         'makepkg', 'pacman', 'gpg', 'bsdtar', 'fakeroot', 'zstd')),
+         'native pacman packaging tools required')
+diff --git a/tests/unit/test_piano_full_kernel.py b/tests/unit/test_piano_full_kernel.py
+index a3fce841..408fde4f 100644
+--- a/tests/unit/test_piano_full_kernel.py
++++ b/tests/unit/test_piano_full_kernel.py
+@@ -2,6 +2,7 @@
+ from pathlib import Path
+ import importlib.util
+ import json
++import os
+ import shutil
+ import subprocess
+ import sys
+@@ -38,7 +39,7 @@ class KernelPolicyCacheTests(unittest.TestCase):
+             (output/'.config').write_text('CONFIG_MODULES=y\n')
+             (output/'Module.symvers').write_text('0x12345678\tmodule_symbol\tvmlinux\tEXPORT_SYMBOL\n')
+             inputs={'tools/kernel.py':'producer-sha256'}
+-            tools={'sha256':{'clang':'compiler-sha256'}}
++            tools={'sha256':{'clang':'compiler-sha256'},'kernel_cc':['/usr/bin/clang'],'paths':{}}
+             record={'status':'HOST_BUILT_FULL_CANDIDATE_NOT_HARDWARE_VERIFIED',
+                     'source_commit':'a'*40,'source_tree':'b'*40,'inputs':inputs,'kernel_policy':policy['policy'],
+                     'kernel_policy_sha256':policy['sha256'],'local_module_overrides':{'CONFIG_UHID':'m'},
+@@ -80,7 +81,7 @@ class KernelPolicyCacheTests(unittest.TestCase):
+             (output/'Module.symvers').write_text('kernel symbols\n')
+             policy=full.kernel_policy_identity(ROOT)
+             hashes={'recipe.py':'source-digest'};modules={'CONFIG_UHID':'m'}
+-            tools={'sha256':{'clang':'compiler-digest'}}
++            tools={'sha256':{'clang':'compiler-digest'},'kernel_cc':['/usr/bin/clang'],'paths':{}}
+             record={'status':'HOST_BUILT_FULL_CANDIDATE_NOT_HARDWARE_VERIFIED',
+                     'source_commit':'a'*40,'source_tree':'b'*40,'inputs':hashes,'kernel_policy':policy['policy'],
+                     'kernel_policy_sha256':policy['sha256'],'local_module_overrides':modules,
+@@ -97,7 +98,8 @@ class KernelPolicyCacheTests(unittest.TestCase):
+             for key,value in (('source_commit','c'*40),('source_tree','c'*40),
+                               ('inputs',{}),('local_module_overrides',{}),('kernel_release','7.3.3-piano'),
+                               ('root_policy','ram'),('command_line','changed'),
+-                              ('toolchain',{'sha256':{'clang':'other-compiler'}}),
++                              ('toolchain',{**tools,'sha256':{'clang':'other-compiler'}}),
++                              ('toolchain',{**tools,'kernel_cc':['/different/path/clang']}),
+                               ('config_sha256','0'*64),('module_symvers_sha256','0'*64)):
+                 with self.subTest(field=key):
+                     self.assertFalse(reusable({**record,key:value}))
+@@ -129,6 +131,74 @@ class KernelPolicyCacheTests(unittest.TestCase):
+             {'kernel_policy':policy['policy'],'kernel_policy_sha256':'0'*64},policy))
+ 
+ 
++class BinderToolchainTests(unittest.TestCase):
++    def test_only_rust_binder_needs_rust_and_keeps_the_same_devices(self):
++        with tempfile.TemporaryDirectory(prefix='binder-kconfig-') as directory:
++            source = Path(directory)
++            kconfig = source / 'drivers/android/Kconfig'
++            kconfig.parent.mkdir(parents=True)
++            expected = dict(full.PLATFORM_OVERRIDES)
++            rust = 'config ANDROID_BINDER_IPC_RUST\n\tbool "Rust Binder"\n'
++            kconfig.write_text('config ANDROID_BINDER_IPC\n\tbool "C Binder"\n' + rust)
++            self.assertEqual(full.binder_overrides(source, expected), expected)
++            c_config = full.config_values(full.effective_config(full.binder_overrides(source, expected)))
++            self.assertNotIn('CONFIG_RUST', c_config)
++            kconfig.write_text(rust)
++            config = full.config_values(full.effective_config(full.binder_overrides(source, expected)))
++            for name in ('CONFIG_ANDROID_BINDER_IPC', 'CONFIG_ANDROID_BINDERFS'):
++                self.assertNotIn(name, config)
++            self.assertEqual(config['CONFIG_RUST'], 'y')
++            self.assertEqual(config['CONFIG_ANDROID_BINDER_IPC_RUST'], 'y')
++            self.assertEqual(config['CONFIG_ANDROID_BINDER_DEVICES'], expected['CONFIG_ANDROID_BINDER_DEVICES'])
++            self.assertEqual(config['CONFIG_LTO_CLANG_THIN'], 'y')
++
++    def test_sealed_toolchain_tracks_libclang_and_each_rust_library_file(self):
++        with tempfile.TemporaryDirectory(prefix='rust-toolchain-') as directory:
++            root = Path(directory)
++            rust_src, rust_std, clang = (root / name for name in ('src', 'std', 'libclang.so'))
++            files = (rust_src / 'core/src/lib.rs', rust_std / 'libcore.rlib', clang)
++            for file in files:
++                file.parent.mkdir(parents=True, exist_ok=True)
++                file.write_bytes(b'original')
++            paths = {'rust_src': rust_src, 'rust_std': rust_std, 'libclang': clang}
++            sealed = full.toolchain_digests(paths)
++            for file in files:
++                with self.subTest(file=file.name):
++                    file.write_bytes(b'modified')
++                    self.assertNotEqual(full.toolchain_digests(paths), sealed)
++                    file.write_bytes(b'original')
++            self.assertEqual(full.toolchain_digests(paths), sealed)
++
++    @unittest.skipUnless(shutil.which('cc') and shutil.which('ldd'),
++                         'native compiler and dynamic loader required')
++    def test_runtime_library_fingerprint_follows_loader_not_binary_path(self):
++        with tempfile.TemporaryDirectory(prefix='kernel-tool-runtime-') as directory:
++            root = Path(directory)
++            library = 'libkernel-tool-test.so'
++            environment = dict(os.environ)
++            original, replaced = root / 'original', root / 'replaced'
++            for path, status in ((original, 17), (replaced, 19)):
++                path.mkdir()
++                subprocess.run(['cc', '-shared', '-fPIC', '-Wl,-soname,' + library,
++                                '-x', 'c', '-', '-o', path / library],
++                               input=f'int tool_status(void) {{ return {status}; }}',
++                               text=True, check=True)
++            binary = root / 'tool'
++            subprocess.run(['cc', '-x', 'c', '-', '-L' + str(original),
++                            '-lkernel-tool-test', '-o', binary],
++                           input='int tool_status(void); int main(void) { return tool_status(); }',
++                           text=True, check=True)
++            records = []
++            for path, status in ((original, 17), (replaced, 19)):
++                environment['LD_LIBRARY_PATH'] = str(path)
++                self.assertEqual(subprocess.run([binary], env=environment).returncode, status)
++                paths = {'tool': binary, **full.tool_runtime_libraries('tool', binary, environment)}
++                self.assertEqual(paths['tool:' + library], str(path / library))
++                records.append(full.toolchain_digests(paths))
++            self.assertEqual(records[0]['tool'], records[1]['tool'])
++            self.assertNotEqual(records[0]['tool:' + library], records[1]['tool:' + library])
++
++
+ class PianoFullKernelTests(unittest.TestCase):
+     def setUp(self):
+         if not (KERNEL/'arch/arm64/configs/piano_defconfig').exists():
+diff --git a/tests/unit/test_shared_products.py b/tests/unit/test_shared_products.py
+index 920889f3..ae633c7e 100644
+--- a/tests/unit/test_shared_products.py
++++ b/tests/unit/test_shared_products.py
+@@ -148,6 +148,35 @@ class SharedProductsTests(unittest.TestCase):
+             path.write_text(json.dumps(release))
+             self.assertNotEqual(shared.identity('kernel',self.root)[1],package_key)
+ 
++    def test_local_rust_kernel_key_binds_tool_bytes_but_ci_uses_the_image_id(self):
++        import build_piano_full_kernel as kernel
++        self.git('init', '-q')
++        release = json.loads((ROOT / 'config/release.json').read_text())
++        series = self.root / release['kernel']['patch_series']
++        shared.atomic_json(self.root / 'config/release.json', release)
++        shared.atomic_json(series, {'kernel_version': '7.3.3'})
++        clang = self.root / 'libclang.so'
++        clang.write_bytes(b'first')
++
++        def rust_tools(*, rust):
++            self.assertTrue(rust)
++            return {}, {'sha256': kernel.toolchain_digests({'libclang': clang}),
++                        'kernel_cc': ['/usr/bin/clang'], 'paths': {}}
++
++        with patch.object(shared, 'environment_identity', return_value={'architecture': 'x86_64'}), \
++                patch.object(kernel, 'toolchain', side_effect=rust_tools) as tools:
++            shared.identity('kernel', self.root)
++            tools.assert_not_called()
++            shared.atomic_json(series, {'kernel_version': '7.4.0-rc3'})
++            _, first = shared.identity('kernel', self.root)
++            clang.write_bytes(b'second')
++            self.assertNotEqual(shared.identity('kernel', self.root)[1], first)
++
++        with patch.object(shared, 'environment_identity', return_value={'container_image': 'sha256:builder'}), \
++                patch.object(kernel, 'toolchain') as tools:
++            shared.identity('kernel', self.root)
++            tools.assert_not_called()
++
+     def test_kernel_restore_rejects_unknown_or_changed_policy_before_building(self):
+         import build_piano_full_kernel as kernel
+         (self.root/'config').mkdir()
+diff --git a/tools/build/ci_container.py b/tools/build/ci_container.py
+index 39893520..351c617a 100644
+--- a/tools/build/ci_container.py
++++ b/tools/build/ci_container.py
+@@ -12,14 +12,19 @@ import sys
+ ROOT = Path(__file__).resolve().parents[2]
+ sys.path.insert(0, str(ROOT / 'tools'))
+ from build.cache import atomic_json, sha, source_identity
++from build_container import kernel_rust_required
+ 
+ INPUTS = ('containers/Dockerfile', 'config/build-container.json',
+           'tools/build_container.py', 'tools/build/ci_container.py',
+           'tools/build/cache.py')
+ 
+ 
++def builder_inputs(root):
++    return {**source_identity(root, INPUTS), 'kernel_rust': kernel_rust_required(root)}
++
++
+ def cache_key(root=ROOT):
+-    identity = source_identity(root, INPUTS)
++    identity = builder_inputs(root)
+     digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+     return f'builder-{platform.machine()}-{digest}'
+ 
+@@ -32,7 +37,7 @@ def image_id():
+ def prepare(load_only=False):
+     directory = ROOT / 'build/ci-builder'
+     directory.mkdir(parents=True, exist_ok=True)
+-    identity = source_identity(ROOT, INPUTS)
++    identity = builder_inputs(ROOT)
+     archive, marker = directory / 'image.tar', directory / 'manifest.json'
+     with (directory / '.lock').open('a') as lock:
+         fcntl.flock(lock, fcntl.LOCK_EX)
+@@ -50,7 +55,7 @@ def prepare(load_only=False):
+             temporary = directory / 'image.tar.part'
+             subprocess.run(['docker', 'save', '--output', temporary, 'sunuefi-builder'], check=True)
+             temporary.replace(archive)
+-            if source_identity(ROOT, INPUTS) != identity:
++            if builder_inputs(ROOT) != identity:
+                 raise ValueError('Builder recipe changed while creating the image')
+             record = {'inputs': identity, 'image_id': image_id(), 'archive_sha256': sha(archive)}
+             atomic_json(marker, record)
+diff --git a/tools/build/shared_products.py b/tools/build/shared_products.py
+index 1e2d6f0e..2239086f 100644
+--- a/tools/build/shared_products.py
++++ b/tools/build/shared_products.py
+@@ -17,6 +17,7 @@ import zipfile
+ ROOT = Path(__file__).resolve().parents[2]
+ sys.path.insert(0, str(ROOT / 'tools'))
+ from build.cache import atomic_json, sha, source_identity
++from build_container import kernel_rust_required
+ 
+ FIRMWARE_INPUTS = ('build.sh', 'Makefile', '.gitmodules', 'sources.lock.json',
+                    'requirements-build.txt', 'tools', 'uefi', 'patches/firmware',
+@@ -74,9 +75,14 @@ def identity(kind, root=ROOT):
+         from build_piano_full_kernel import kernel_policy_identity
+         rows['config/release.json'] = {'section': 'kernel',
+                                        **kernel_policy_identity(root, with_packages=True)}
++    environment = environment_identity()
++    if kind == 'kernel' and 'container_image' not in environment and kernel_rust_required(root):
++        from build_piano_full_kernel import kernel_compiler_args, toolchain
++        _, tools = toolchain(rust=True)
++        environment['kernel_tools'] = {'sha256': tools['sha256'], 'args': kernel_compiler_args(tools)}
+     record = {'schema_version': 1, 'kind': kind,
+               'workspace': os.environ.get('SUNUEFI_CACHE_WORKSPACE', str(root)),
+-              'environment': environment_identity(), 'inputs': rows}
++              'environment': environment, 'inputs': rows}
+     digest = hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()
+     return record, digest
+ 
+@@ -196,9 +202,6 @@ def check_kernel_hot_inputs(root=ROOT):
+     for name, digest in record['inputs'].items():
+         if sha(root / name) != digest:
+             raise ValueError('Shared kernel build input differs: ' + name)
+-    _, tools = kernel.toolchain()
+-    if tools['sha256'] != record['toolchain']['sha256']:
+-        raise ValueError('Shared kernel toolchain differs; rebuild in the shared job')
+     if (record.get('root_policy') != 'LABEL=PIANOROOT' or
+             record.get('command_line') != kernel.command_line('LABEL=PIANOROOT')):
+         raise ValueError('Shared kernel boot policy differs')
+@@ -215,8 +218,13 @@ def check_kernel_hot_inputs(root=ROOT):
+     overrides = {}
+     for name, kind in fragments:
+         overrides.update(kernel.module_overrides((root / 'linux/configs' / name).read_text(), kind))
++    worktree = Path(source['worktree'])
++    overrides = kernel.binder_overrides(worktree, overrides)
+     if record.get('local_module_overrides') != overrides:
+         raise ValueError('Shared kernel configuration overrides differ')
++    _, tools = kernel.toolchain(rust=overrides.get('CONFIG_RUST') == 'y')
++    if not kernel.matching_toolchain(record['toolchain'], tools):
++        raise ValueError('Shared kernel toolchain differs; rebuild in the shared job')
+     compiler = root / 'build/kernel-worktrees' / (
+         'release-compiler-' + hashlib.sha256(str(out).encode()).hexdigest()[:12])
+     expected = ["# Automatically generated by " + str(compiler) + "/Makefile: don't edit",
+@@ -225,7 +233,7 @@ def check_kernel_hot_inputs(root=ROOT):
+         raise ValueError('Shared kernel build Makefile belongs to another workspace')
+     if not kernel.kernel_release_matches(record, out):
+         raise ValueError('Shared external-module kernel release differs')
+-    kernel.verify_source(Path(source['worktree']), record['source_commit'])
++    kernel.verify_source(worktree, record['source_commit'])
+ 
+ 
+ def prepare_kernel_sources(root=ROOT):
+diff --git a/tools/build_container.py b/tools/build_container.py
+index 70c3541d..e9174703 100644
+--- a/tools/build_container.py
++++ b/tools/build_container.py
+@@ -2,18 +2,40 @@
+ """Build the same pinned container through either official image registry."""
+ import json
+ from pathlib import Path
++import platform
++import re
+ import subprocess
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+ 
+ 
++def kernel_rust_required(root=ROOT):
++    policy = json.loads((root / 'config/release.json').read_text())['kernel']
++    series = root / policy['patch_series']
++    version = re.match(r'(\d+)\.(\d+)\.', json.loads(series.read_text())['kernel_version'])
++    if version is None:
++        raise ValueError('Expected the kernel series to declare its Linux version')
++    # Linux 7.4 removed the C Binder driver.
++    return tuple(map(int, version.groups())) >= (7, 4)
++
++
+ def main():
+     config = json.loads((ROOT / 'config/build-container.json').read_text())
++    rust = config['kernel_rust'] if kernel_rust_required() else None
+     registries = (config['registry'], 'docker.io/library')
+     for index, registry in enumerate(registries):
+         image = registry + '/' + config['image'] + '@' + config['index_digest']
++        args = ['--build-arg', 'SUNUEFI_BASE_IMAGE=' + image]
++        if rust:
++            machine = platform.machine()
++            digest = rust['platforms'].get(machine)
++            if digest is None:
++                raise ValueError('No kernel Rust builder for this host architecture')
++            rust_image = registry + '/' + rust['image'] + '@' + digest
++            args.extend(['--build-arg', 'SUNUEFI_RUST_IMAGE=' + rust_image,
++                         '--build-arg', 'SUNUEFI_BINDGEN_VERSION=' + rust['bindgen_version']])
+         process = subprocess.Popen(
+-            ['docker', 'build', '--build-arg', 'SUNUEFI_BASE_IMAGE=' + image,
++            ['docker', 'build', *args,
+              '-t', 'sunuefi-builder', '-f', 'Dockerfile', '.'],
+             cwd=ROOT / 'containers', stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+         lines = []
+diff --git a/tools/build_piano_full_kernel.py b/tools/build_piano_full_kernel.py
+index b7098e67..21160514 100644
+--- a/tools/build_piano_full_kernel.py
++++ b/tools/build_piano_full_kernel.py
+@@ -7,6 +7,7 @@ is switched; no rescue-pin, guest, device or partition operation.
+ import argparse
+ from datetime import datetime, timezone
+ import fcntl
++from functools import cache
+ import hashlib
+ import json
+ import os
+@@ -110,8 +111,10 @@ PLATFORM_OVERRIDES.update({key: 'm' for key in (
+ PLATFORM_OVERRIDES.update({'CONFIG_FTRACE': 'y', 'CONFIG_ENABLE_DEFAULT_TRACERS': 'y'})
+ PLATFORM_OVERRIDES.update({'CONFIG_ANDROID_BINDER_IPC': 'y', 'CONFIG_ANDROID_BINDERFS': 'y',
+                            'CONFIG_ANDROID_BINDER_DEVICES': '"binder,hwbinder,vndbinder"'})
++RUST_BINDER_OVERRIDES = {'CONFIG_RUST': 'y', 'CONFIG_ANDROID_BINDER_IPC_RUST': 'y'}
+ ALLOWED_OVERRIDES={**BLUETOOTH_OVERRIDES,**FILESYSTEM_OVERRIDES,**GAMEPAD_OVERRIDES,**PEN_DOCK_OVERRIDES,**IR_OVERRIDES,**FLASH_OVERRIDES,**EARLY_CPUCP_OVERRIDES,
+-                   **USERSPACE_SECURITY_OVERRIDES,**SLEEP_OVERRIDES,**PM_DEBUG_OVERRIDES,**PLATFORM_OVERRIDES}
++                   **USERSPACE_SECURITY_OVERRIDES,**SLEEP_OVERRIDES,**PM_DEBUG_OVERRIDES,**PLATFORM_OVERRIDES,
++                   **RUST_BINDER_OVERRIDES}
+ 
+ 
+ def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
+@@ -175,7 +178,7 @@ def matching_build(previous,commit,hashes,policy,modules,root_policy,root_comman
+             previous.get('source_commit')==commit and previous.get('inputs')==hashes and
+             kernel_policy_matches(previous,policy) and
+             previous.get('local_module_overrides')==modules and previous.get('root_policy')==root_policy and
+-            previous.get('command_line')==root_command and previous.get('toolchain',{}).get('sha256')==tools['sha256'] and
++            previous.get('command_line')==root_command and matching_toolchain(previous.get('toolchain',{}),tools) and
+             (out/'.config').is_file() and sha(out/'.config')==previous.get('config_sha256') and
+             (out/'Module.symvers').is_file() and (out/'include/config/kernel.release').is_file() and
+             previous.get('module_symvers_sha256')==sha(out/'Module.symvers') and
+@@ -214,6 +217,19 @@ def module_overrides(fragment,kind='bluetooth'):
+     return dict(expected)
+ 
+ 
++def binder_overrides(source, overrides):
++    """Keep the C driver while the selected kernel still provides it."""
++    kconfig = (source / 'drivers/android/Kconfig').read_text()
++    if re.search(r'^config ANDROID_BINDER_IPC$', kconfig, re.MULTILINE):
++        return overrides
++    if not re.search(r'^config ANDROID_BINDER_IPC_RUST$', kconfig, re.MULTILINE):
++        raise ValueError('The release kernel has no Android Binder driver')
++    result = dict(overrides)
++    # The Rust driver includes binderfs without a separate Kconfig symbol.
++    del result['CONFIG_ANDROID_BINDER_IPC'], result['CONFIG_ANDROID_BINDERFS']
++    return {**result, **RUST_BINDER_OVERRIDES}
++
++
+ def validate_module_overrides(values):
+     if any(key not in ALLOWED_OVERRIDES or value!=ALLOWED_OVERRIDES[key]for key,value in values.items()):raise ValueError('Unknown product kernel configuration override')
+     flash=set(values)&set(FLASH_OVERRIDES)
+@@ -289,12 +305,108 @@ def validate_config(config,public,modules=None):
+     return {**{key:values.get('CONFIG_'+key,'n')for key in REQUIRED},**{key.removeprefix('CONFIG_'):value for key,value in modules.items()}}
+ 
+ 
+-def toolchain():
++def toolchain_digests(paths):
++    @cache
++    def digest(path):
++        with path.open('rb') as stream:
++            return hashlib.file_digest(stream, 'sha256').hexdigest()
++
++    def tree_digest(path):
++        rows = {file.relative_to(path).as_posix(): digest(file.resolve(strict=True))
++                for file in sorted(path.rglob('*')) if file.is_file()}
++        return hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest()
++
++    def path_digest(value):
++        path = Path(value).resolve(strict=True)
++        return tree_digest(path) if path.is_dir() else digest(path)
++
++    return {name: path_digest(path) for name, path in paths.items()}
++
++
++def tool_runtime_libraries(name, path, env):
++    """Resolve the host libraries selected by the build's dynamic loader."""
++    result = subprocess.run(['ldd', str(path)], env={**env, 'LC_ALL': 'C'},
++                            capture_output=True, text=True)
++    if result.returncode:
++        raise ValueError(f'Cannot inspect runtime libraries for {name}: '
++                         f'{result.stderr.strip() or result.stdout.strip()}')
++    paths = {}
++    for row in result.stdout.splitlines():
++        library, arrow, location = row.strip().partition(' => ')
++        if arrow and location == 'not found':
++            raise ValueError(f'{name} needs missing runtime library {library}')
++        selected = (location if arrow else library).split(' (0x', 1)[0]
++        if selected.startswith('/'):
++            # Keep the loader's path so a changed symlink is rehashed too.
++            paths[f'{name}:{Path(library).name if arrow else Path(selected).name}'] = selected
++    return paths
++
++
++def rust_tools(env, clang):
++    """Resolve the actual Rust compiler, host standard library and bindgen."""
++    root = Path(env.get('SUNUEFI_KERNEL_RUST_ROOT', '/opt/sunuefi-kernel-rust'))
++    tools = {}
++    for name in ('rustc', 'bindgen'):
++        bundled = root / 'bin' / name
++        requested = env.get(name.upper(), str(bundled) if bundled.is_file() else name)
++        path = shutil.which(requested, path=env['PATH'])
++        if path is None:
++            raise ValueError('Rust Binder requires ' + name + '; see Linux build dependencies')
++        tools[name] = Path(path)
++
++    # Resolve a rustup shim before fingerprinting or passing it to Kbuild.
++    sysroot = Path(text([tools['rustc'], '--print', 'sysroot'], env=env))
++    tools['rustc'] = (sysroot / 'bin/rustc').resolve(strict=True)
++    version = text([tools['rustc'], '--version', '--verbose'], env=env)
++    host = re.search(r'^host: (\S+)$', version, re.MULTILINE)
++    rust_llvm = re.search(r'^LLVM version: (\d+)\.', version, re.MULTILINE)
++    clang_llvm = re.search(r'\bclang version (\d+)\.', text([clang, '--version'], env=env))
++    if not host or not rust_llvm or not clang_llvm or rust_llvm[1] != clang_llvm[1]:
++        raise ValueError('Rust Binder with ThinLTO requires rustc and Clang built with the same LLVM major version')
++
++    library = Path(env.get('RUST_LIB_SRC', sysroot / 'lib/rustlib/src/rust/library'))
++    if not (library / 'core/src/lib.rs').is_file():
++        raise ValueError('Rust Binder requires rust-src matching the selected rustc; set RUST_LIB_SRC to its library directory')
++    libclang = Path(env.get('LIBCLANG_PATH', Path(clang).parent.parent / 'lib/libclang.so'))
++    if libclang.is_dir():
++        libclang /= 'libclang.so'
++    if not libclang.is_file():
++        raise ValueError('Rust Binder requires libclang matching Clang; set LIBCLANG_PATH to the library or its directory')
++    host_lib = sysroot / 'lib/rustlib' / host[1] / 'lib'
++    if not host_lib.is_dir():
++        raise ValueError('Rust Binder requires the compiler’s host Rust standard library')
++    tools.update(rust_src=library, libclang=libclang, rust_std=host_lib)
++    tools = {name: str(path.resolve(strict=True)) for name, path in tools.items()}
++    # The driver and LLVM can be outside the Rust sysroot. Hash what is
++    # actually loaded, including the separately loaded bindgen library.
++    for name in ('rustc', 'bindgen', 'libclang'):
++        tools.update(tool_runtime_libraries(name, tools[name], env))
++    return tools
++
++
++def kernel_compiler_args(tools):
++    args = ['CC=' + shlex.join(tools['kernel_cc'])]
++    if 'rustc' in (paths := tools['paths']):
++        # Kbuild sets RUSTC and BINDGEN itself, so environment defaults alone
++        # do not pick the same tools for compilation and nested package builds.
++        args.extend(key + '=' + paths[name] for key, name in
++                    (('RUSTC', 'rustc'), ('HOSTRUSTC', 'rustc'), ('BINDGEN', 'bindgen'),
++                     ('RUST_LIB_SRC', 'rust_src'), ('LIBCLANG_PATH', 'libclang')))
++    return args
++
++
++def matching_toolchain(sealed, tools):
++    return (sealed.get('sha256') == tools['sha256'] and
++            'kernel_cc' in sealed and 'paths' in sealed and
++            kernel_compiler_args(sealed) == kernel_compiler_args(tools))
++
++
++def toolchain(*, rust=False):
+     import platform
+     env=os.environ.copy();bundled=Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT',ROOT/'build/host-tools/usr'))
+     env['PATH']=str(bundled/'bin')+os.pathsep+env.get('PATH','')
+     env['LD_LIBRARY_PATH']=str(bundled/'lib')+(os.pathsep+env['LD_LIBRARY_PATH']if env.get('LD_LIBRARY_PATH')else '')
+-    env=prepare_kernel_llvm.environment(env)
++    env=prepare_kernel_llvm.environment(env, libclang=rust and not env.get('LIBCLANG_PATH'))
+     if shutil.which('ccache',path=env['PATH']):
+         env.setdefault('CCACHE_DIR',str(ROOT/'build/ccache'))
+         env.setdefault('CCACHE_MAXSIZE','8G')
+@@ -317,7 +429,9 @@ def toolchain():
+         # helpers. Keep these flags identical for the original kernel build.
+         cc+=['--target=aarch64-linux-gnu','--gcc-toolchain='+str(gcc.parent.parent),
+              '--sysroot='+sysroot]
+-    return env,{'paths':binaries,'sha256':{name:sha(Path(path))for name,path in binaries.items()},'compiler':text([binaries['clang'],'--version'],env=env).splitlines()[0],
++    if rust:
++        binaries.update(rust_tools(env, binaries['clang']))
++    return env,{'paths':binaries,'sha256':toolchain_digests(binaries),'compiler':text([binaries['clang'],'--version'],env=env).splitlines()[0],
+                'linker':text([binaries['ld.lld'],'--version'],env=env).splitlines()[0],
+                'llvm_tools':text([binaries['llvm-ar'],'--version'],env=env).splitlines(),
+                'ccache_enabled':cached,'ccache_dir':env.get('CCACHE_DIR')if cached else None,'kernel_cc':cc}
+@@ -385,9 +499,11 @@ def main():
+              **module_overrides((ROOT/'linux/configs/piano-platform.config').read_text(),'platform')}
+     if args.pm_debug:
+         modules.update(PM_DEBUG_OVERRIDES)
++    modules = binder_overrides(work, modules)
++    rust = modules.get('CONFIG_RUST') == 'y'
+     policy=kernel_policy_identity()
+     abi_epoch=policy['policy']['abi_epoch']
+-    env,tools=toolchain()
++    env,tools=toolchain(rust=rust)
+     env.update(kernel_build_environment(abi_epoch))
+     out.mkdir(parents=True,exist_ok=True);artifacts.mkdir(parents=True,exist_ok=True)
+     build_locks=[]
+@@ -416,9 +532,11 @@ def main():
+     effective_text=effective_config(modules)
+     effective=out/'piano-full.effective.config';effective.write_text(effective_text)
+     command=['make','-C',compiler,'O='+str(out),'ARCH=arm64','LLVM=1','LLVM_IAS=1','LOCALVERSION=']
+-    command.append('CC='+shlex.join(tools['kernel_cc']))
++    command.extend(kernel_compiler_args(tools))
+     if 'aarch64-linux-gnu-gcc' in tools['paths']:
+         command.append('CROSS_COMPILE=aarch64-linux-gnu-')
++    if rust:
++        run(command+['rustavailable'],env=env)
+     run(command+['piano_defconfig'],env=env)
+     run(['bash',compiler/'scripts/kconfig/merge_config.sh','-m','-O',out,out/'.config',public,effective],cwd=compiler,env=env)
+     run(command+['olddefconfig'],env=env)
+@@ -431,7 +549,8 @@ def main():
+         if text(['git','rev-parse','HEAD^{tree}'],compiler)!=tree:raise ValueError('Compiler source tree drifted')
+         if (kernel_policy_identity()!=policy or any(sha(ROOT/name)!=value for name,value in hashes.items())or
+                 sha(out/'.config')!=config_hash or effective.read_text()!=effective_text):raise ValueError('Full candidate source/config/tool inputs drifted')
+-        if any(sha(Path(tools['paths'][name]))!=value for name,value in tools['sha256'].items()):raise ValueError('Full candidate build tool changed during compilation')
++        if toolchain_digests(tools['paths']) != tools['sha256']:
++            raise ValueError('Full candidate build tool changed during compilation')
+     fresh();state={'profile':'full-integration','mode':'complete-public-hardware','build_id':str(uuid.uuid4()),'source_commit':commit,'source_tree':tree,'source_worktree':str(compiler),'source_clean':True,
+       'prepared_source_worktree':str(work),'compiler_worktree':str(compiler),
+       'source_branch':text(['git','branch','--show-current'],compiler),'base_commit':source_base,
+@@ -453,7 +572,8 @@ def main():
+     install=artifacts/'modules'
+     if install.exists():shutil.rmtree(install)
+     run(command+[f'INSTALL_MOD_PATH={install}','INSTALL_MOD_STRIP=1','modules_install'],env=env);fresh()
+-    state['modules'],state['module_summary']=seal_modules(install,state['kernel_release'],required_builtin=('qcom_cpucp_mbox',))
++    builtins = ('qcom_cpucp_mbox', 'binder') if rust else ('qcom_cpucp_mbox',)
++    state['modules'],state['module_summary']=seal_modules(install,state['kernel_release'],required_builtin=builtins)
+     for name,source in (('Image',image),('System.map',out/'System.map')):shutil.copyfile(source,artifacts/name)
+     fresh();state['status']='HOST_BUILT_FULL_CANDIDATE_NOT_HARDWARE_VERIFIED'
+     temporary=marker.with_suffix('.json.tmp');temporary.write_text(json.dumps(state,indent=2)+'\n');os.replace(temporary,marker);pending.unlink()
+diff --git a/tools/desktop/prepare_kernel_llvm.py b/tools/desktop/prepare_kernel_llvm.py
+index 684899bd..5c7c506e 100644
+--- a/tools/desktop/prepare_kernel_llvm.py
++++ b/tools/desktop/prepare_kernel_llvm.py
+@@ -20,7 +20,7 @@ def digest(path):
+         return hashlib.file_digest(stream, 'sha256').hexdigest()
+ 
+ 
+-def prepare():
++def prepare(*, libclang=False):
+     policy = json.loads(POLICY.read_text())
+     row = policy['platforms'].get(platform.machine())
+     if row is None:
+@@ -69,7 +69,19 @@ def prepare():
+         if any(name not in record['tools'] or
+                 digest(destination / 'bin' / name) != record['tools'][name] for name in names):
+             raise ValueError('Prepared kernel LLVM tools changed')
+-        if record['policy_sha256'] != digest(POLICY):
++        dirty = record['policy_sha256'] != digest(POLICY)
++        if libclang:
++            library = destination / 'lib/libclang.so'
++            if 'libclang_sha256' not in record:
++                subprocess.run(['tar', '--use-compress-program=zstd -d --long=30',
++                                '-xf', str(archive), '-C', str(cache),
++                                *[row['directory'] + '/' + name for name in policy['libclang_members']]],
++                               check=True)
++                record['libclang_sha256'] = digest(library)
++                dirty = True
++            if digest(library) != record['libclang_sha256']:
++                raise ValueError('Prepared kernel libclang changed')
++        if dirty:
+             record['policy_sha256'] = digest(POLICY)
+             marker.write_text(json.dumps(record, indent=2) + '\n')
+         version = subprocess.check_output([destination / 'bin/clang', '--version'], text=True).splitlines()[0]
+@@ -78,8 +90,8 @@ def prepare():
+     return destination
+ 
+ 
+-def environment(base=None):
++def environment(base=None, *, libclang=False):
+     env = dict(os.environ if base is None else base)
+-    root = prepare()
++    root = prepare(libclang=libclang)
+     env['PATH'] = str(root / 'bin') + os.pathsep + env.get('PATH', '')
+     return env
+diff --git a/tools/package/kernel.py b/tools/package/kernel.py
+index 326b48ea..3e064a75 100644
+--- a/tools/package/kernel.py
++++ b/tools/package/kernel.py
+@@ -8,7 +8,6 @@ import os
+ from pathlib import Path
+ import platform
+ import re
+-import shlex
+ import shutil
+ import subprocess
+ import sys
+@@ -16,8 +15,9 @@ import tarfile
+ 
+ ROOT = Path(__file__).resolve().parents[2]
+ sys.path.insert(0, str(ROOT / 'tools'))
+-from build_piano_full_kernel import (kernel_build_environment, kernel_release_matches,
+-                                     release_kernel_policy, toolchain)
++from build_piano_full_kernel import (config_values, kernel_build_environment, kernel_compiler_args,
++                                     kernel_release_matches, matching_toolchain, release_kernel_policy,
++                                     toolchain)
+ from package import download
+ from package.archive import debian_identity, pacman_identity
+ from stage_piano_kernel_modules import inspect
+@@ -312,11 +312,17 @@ def build_packages(plan):
+     if hashlib.sha256(kernel_manifest).hexdigest() != plan['manifest_sha256']:
+         raise ValueError('Sealed kernel changed while preparing packages')
+     manifest = json.loads(kernel_manifest)
++    config = (build / '.config').read_bytes()
++    if hashlib.sha256(config).hexdigest() != manifest['config_sha256']:
++        raise ValueError('Build configuration differs from the sealed kernel')
++    rust = config_values(config.decode()).get('CONFIG_RUST') == 'y'
++    env, tools = toolchain(rust=rust)
++    if not matching_toolchain(manifest['toolchain'], tools):
++        raise ValueError('Kernel packaging tools differ from the sealed build; rebuild the shared kernel')
+     output.mkdir(parents=True)
+     incomplete = output / '.incomplete'
+     incomplete.touch()
+     image_digest = plan['image_sha256']
+-    env, tools = toolchain()
+     env.update(plan['environment'])
+     env.update(GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0='safe.directory',
+                GIT_CONFIG_VALUE_0=str(source))
+@@ -329,10 +335,7 @@ def build_packages(plan):
+         flags = env.get('DPKG_FLAGS', '')
+         command.insert(-1, 'DPKG_FLAGS=' + flags +
+                        " -R'$(MAKE) -f sunuefi-debian.mk'")
+-    sealed_tools = manifest['toolchain']
+-    if (tools['sha256'], tools['kernel_cc']) != (sealed_tools['sha256'], sealed_tools['kernel_cc']):
+-        raise ValueError('Kernel packaging tools differ from the sealed build; rebuild the shared kernel')
+-    command.insert(-1, 'CC=' + shlex.join(tools['kernel_cc']))
++    command[-1:-1] = kernel_compiler_args(tools)
+     if plan['format'] == 'pacman' and os.geteuid() == 0:
+         # makepkg deliberately refuses root. These are disposable build trees,
+         # not source pins under upstream/ or an installed system.

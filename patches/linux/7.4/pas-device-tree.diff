@@ -1,0 +1,19 @@
+--- a/linux/dts/piano-dsp-resources.dtso
++++ b/linux/dts/piano-dsp-resources.dtso
+@@ -6,7 +6,7 @@
+ 	fragment@0 {
+ 		target-path = "/soc/remoteproc-cdsp@32300000";
+ 		__overlay__ {
+-			compatible = "qcom,sm8750-cdsp-pas";
++			compatible = "qcom,sm8750-cdsp-pas", "qcom,sm8650-cdsp-pas";
+ 			clocks = <&rpmhcc_ml 0>;
+ 			clock-names = "xo";
+ 			/* RPMHPD_CX, RPMHPD_MXC, RPMHPD_NSP from sm8750.dtsi. */
+@@ -23,6 +23,7 @@
+ 	fragment@1 {
+ 		target-path = "/soc/remoteproc-adsp@03000000";
+ 		__overlay__ {
++			compatible = "qcom,sm8750-adsp-pas", "qcom,sm8550-adsp-pas";
+ 			clocks = <&rpmhcc_ml 0>;
+ 			clock-names = "xo";
+ 		};
