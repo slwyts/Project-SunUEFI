@@ -211,6 +211,26 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertEqual(after['reservations'], before['reservations'])
         self.assertEqual(pr.normalize_mainline_bindings(self.dtb)['changes'], [])
 
+    def test_folded_board_keeps_adc_channels_without_requesting_protected_pin(self):
+        shutil.copyfile(pr.ROOT / 'vendor/piano-linux/board.dtb', self.dtb)
+        before = pr.read_fdt(self.dtb.read_bytes())['tree']
+        spmi = '/soc/qcom,spmi@c42d000/'
+        adc = spmi + 'qcom,pmk8550@0/vadc@9000'
+        state = spmi + 'qcom,pmih010x@7/pinctrl@8800/charger1_therm/charger1_therm_default'
+        protected, = struct.unpack('>I', before[state]['phandle'])
+        original = [value for value, in struct.iter_unpack('>I', before[adc]['pinctrl-0'])]
+        self.assertIn(protected, original)
+
+        pr.normalize_mainline_bindings(self.dtb)
+        after = pr.read_fdt(self.dtb.read_bytes())['tree']
+        expected = [value for value in original if value != protected]
+        self.assertEqual(after[adc], {**before[adc],
+                                      'pinctrl-0': struct.pack(f'>{len(expected)}I', *expected)})
+        self.assertEqual(after[state], before[state])
+        for path in before:
+            if path.startswith(adc + '/'):
+                self.assertEqual(after[path], before[path], path)
+
     def test_rpmh_stats_keeps_qmp_and_the_board_register_window(self):
         node = '/soc/ram@c3f0000'
         props = {'compatible': b'qcom,rpmh-stats-v4\0',

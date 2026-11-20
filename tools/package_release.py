@@ -76,11 +76,36 @@ def normalize_boot_framebuffer(tree):
     return [path + ' -> ' + target]
 
 
+def preserve_charger_thermistor_pin(tree):
+    spmi = '/soc/qcom,spmi@c42d000/'
+    adc = spmi + 'qcom,pmk8550@0/vadc@9000'
+    gpio = spmi + 'qcom,pmih010x@7/pinctrl@8800'
+    pin = tree.get(gpio + '/charger1_therm/charger1_therm_default', {})
+    phandle = pin.get('phandle', b'')
+    adc_props = tree.get(adc, {})
+    states = adc_props.get('pinctrl-0', b'')
+    if (pin.get('pins') != b'gpio12\0' or pin.get('bias-high-impedance') != b'' or
+            len(phandle) != 4 or len(states) < 8 or len(states) % 4 or
+            adc_props.get('compatible') != b'qcom,spmi-adc5-gen3\0' or
+            adc_props.get('pinctrl-names') != b'default\0'):
+        return []
+    cells = [states[i:i + 4] for i in range(0, len(states), 4)]
+    if cells.count(phandle) != 1:
+        return []
+
+    # The PMIC arbiter permits observation of GPIO12 but rejects AP writes.
+    # Keep its firmware configuration and apply the other thermistor states.
+    cells.remove(phandle)
+    adc_props['pinctrl-0'] = b''.join(cells)
+    return [adc + ':pinctrl-0']
+
+
 def normalize_mainline_bindings(board):
     """Adapt the folded Android DT to the active Linux bindings."""
     parsed = read_fdt(board.read_bytes())
     tree = parsed['tree']
     changes = normalize_boot_framebuffer(tree)
+    changes.extend(preserve_charger_thermistor_pin(tree))
     # A folded Android tree contains debug blocks and suppliers whose binding
     # is not implemented by mainline. Disable those devices in the DT rather
     # than suppressing autoload for every platform/OF device in userspace.
