@@ -13,6 +13,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 from ci_build_targets import TARGETS
 
+PATCH_TARGETS = (*TARGETS, 'nixos')
+
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -68,7 +70,7 @@ def metadata_coverage(manifests, references):
     return coverage
 
 
-def check(root=ROOT, products=TARGETS):
+def check(root=ROOT, products=PATCH_TARGETS):
     root = Path(root).resolve()
     products = set(products)
     errors, manifests, references = [], {}, defaultdict(list)
@@ -89,7 +91,7 @@ def check(root=ROOT, products=TARGETS):
                         any(not isinstance(target, str) for target in targets)):
                     errors.append(label + ': targets must be a nonempty product list')
                 elif len(set(targets)) != len(targets) or set(targets) - products:
-                    errors.append(label + ': targets must name distinct CI products: ' +
+                    errors.append(label + ': targets must name distinct build targets: ' +
                                   ', '.join(sorted(products)))
                 if 'upstream' in data:
                     errors.extend(upstream_errors(data['upstream'], label))

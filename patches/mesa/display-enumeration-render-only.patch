@@ -1,0 +1,24 @@
+Subject: [PATCH] vulkan/wsi/display: Handle render-only DRM primary nodes
+
+A GPU may have a DRM primary node without modeset support. Linux
+returns EOPNOTSUPP when queried for resources on that node. Report
+an empty display enumeration, as on devices without a display fd,
+and preserve the handling of other errors.
+
+Generated-by: LLM
+
+diff --git a/src/vulkan/wsi/wsi_common_display.c b/src/vulkan/wsi/wsi_common_display.c
+--- a/src/vulkan/wsi/wsi_common_display.c
++++ b/src/vulkan/wsi/wsi_common_display.c
+@@ -902,8 +902,10 @@
+    drmModeResPtr mode_res = drmModeGetResources(wsi->fd);
+ 
+    if (!mode_res) {
++      /* A render-only device has no modeset resources. */
++      VkResult result = errno == EOPNOTSUPP ? VK_SUCCESS : VK_ERROR_OUT_OF_HOST_MEMORY;
+       mtx_unlock(&wsi->connectors_mutex);
+-      return VK_ERROR_OUT_OF_HOST_MEMORY;
++      return result;
+    }
+ 
+    /* Get current information */

@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "targets": ["nixos"],
+  "patches": [
+    {
+      "file": "display-enumeration-render-only.patch",
+      "sha256": "9b146a011bf647b6c82dfb7228e0a8325ffd3c3c49e41158164c0fb4be5e780e",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://gitlab.freedesktop.org/mesa/mesa/-/blob/mesa-26.2.6/src/vulkan/wsi/wsi_common_display.c",
+        "drop_when": "Mesa reports an empty Vulkan display enumeration when a render-only DRM primary node rejects GETRESOURCES with EOPNOTSUPP, while still reporting real allocation errors."
+      }
+    }
+  ]
+}

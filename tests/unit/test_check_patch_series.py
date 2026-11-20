@@ -97,7 +97,7 @@ class CheckPatchSeriesTests(unittest.TestCase):
         old.write_text(json.dumps({'patches': []}))
         self.patch('patches/example/0.9/unused.patch')
         errors = checker.check(self.root)['errors']
-        for reason in ('targets must name distinct CI products', 'targets must be a nonempty product list',
+        for reason in ('targets must name distinct build targets', 'targets must be a nonempty product list',
                        'patch is outside every series'):
             self.assertTrue(any(reason in error for error in errors), (reason, errors))
 
