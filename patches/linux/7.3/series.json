@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "fe7f299b72c2f7fbc7389b437f6e70b73aa33688",
-  "original_target_commit": "7b5bb45154e4f2a3939d26fedbca0be857453c9b",
+  "target_tree": "a8f3a94c3b872d6e3f1ba0cb87240ca9f28406dd",
+  "original_target_commit": "57a85007f2e64ec371de195576982bda0be64ef1",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -1850,6 +1850,19 @@
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
         "drop_when": "The selected S5KJN1 driver applies exposure and analogue gain under one group hold, attempts release on error, and preserves usable exposure limits after a failed frame-length update."
+      }
+    },
+    {
+      "file": "0143-LOCAL-media-camss-release-csid-parent-on-power-error.patch",
+      "sha256": "9e6c53f118564e23b7ce1c00b3a6ce679d766568674f42afe900a8ebf75eb213",
+      "original_commit": "57a85007f2e64ec371de195576982bda0be64ef1",
+      "original_parent": "7b5bb45154e4f2a3939d26fedbca0be857453c9b",
+      "committer_date": "2026-11-20T13:42:29+08:00",
+      "tree": "a8f3a94c3b872d6e3f1ba0cb87240ca9f28406dd",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/torvalds/linux/commit/c5af8db84c01585e077019d5fd384c57a9fcad2f",
+        "drop_when": "CSID power-up releases its parent VFE reference on every failure after acquisition."
       }
     }
   ],
