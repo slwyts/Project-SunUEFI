@@ -12,7 +12,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 BOOT_SPACE_HOOK = Path(__file__).with_name('85-piano-boot-space.install')
-PACMAN_BOOT_CONFIG_PKGREL = '2'
+PACMAN_BOOT_CONFIG_PKGREL = '3'
 PACMAN_REPOSITORIES = ('sunuefi', 'sunuefi-steamos')
 PUBLIC_REPOSITORY_URL = 'https://sunuefi-repo.okassets.uk'
 
@@ -130,7 +130,7 @@ def add_packages(plan, output, manifest, digest, *, image_modules=()):
         dependencies = "'systemd>=258' systemd-ukify mkinitcpio"
         install['etc/kernel/install.conf'] += 'initrd_generator=mkinitcpio\n'
         install['etc/mkinitcpio.conf.d/zz-piano.conf'] = (
-            'MODULES+=(arm_smmu ufs_qcom phy_qcom_qmp_ufs pinctrl_sm8750 hid_nanosic_wn8030)\n'
+            'MODULES+=(arm_smmu ufs_qcom phy_qcom_qmp_ufs pinctrl_sm8750 \'hid_nanosic_wn8030?\')\n'
             '# Valve recovery hooks expect Frame storage, firmware, and ADB.\n'
             'piano_hooks=()\n'
             'for piano_hook in "${HOOKS[@]}"; do\n'
@@ -323,7 +323,7 @@ def add_packages(plan, output, manifest, digest, *, image_modules=()):
                        path.relative_to(payload).parts[0] == 'etc') + ')\n'
                        if package_name == 'piano-boot-config' else '') +
                     f'sha256sums=({digest(recipe / "payload.tar")})\n'
-                    'package() { bsdtar -xf "$srcdir/payload.tar" -C "$pkgdir"; }\n')
+                    'package() { bsdtar --no-same-owner -xf "$srcdir/payload.tar" -C "$pkgdir"; }\n')
                 env.update(PKGDEST=str(output), PKGEXT='.pkg.tar.zst', PACKAGER='Project SunUEFI <slwyts@tuta.io>')
                 command = ['makepkg', '--noconfirm', '--nodeps']
                 if os.geteuid() == 0:

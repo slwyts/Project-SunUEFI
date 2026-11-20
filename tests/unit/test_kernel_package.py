@@ -126,7 +126,7 @@ class KernelPackageTests(unittest.TestCase):
                 self.assertIn('depend = linux-piano-dtb-7.3-piano-b1=' + version + '-1',
                               subprocess.check_output(['bsdtar', '-xOf', meta, '.PKGINFO'], text=True))
                 archive = next(path for path in packages if path.name.startswith('piano-boot-config-'))
-                self.assertEqual(archive.name, f'piano-boot-config-{version}-2-any.pkg.tar.zst')
+                self.assertEqual(archive.name, f'piano-boot-config-{version}-3-any.pkg.tar.zst')
                 archives.append(archive)
             command = [*namespace, 'pacman',
                        '--root', str(root), '--dbpath', str(database),
@@ -153,7 +153,7 @@ class KernelPackageTests(unittest.TestCase):
                 'check-mkinitcpio-config', initramfs_config], text=True)
             self.assertEqual(initramfs.splitlines(), [
                 'base', 'systemd', 'keyboard', 'custom_hook', 'local_module',
-                'arm_smmu', 'ufs_qcom', 'phy_qcom_qmp_ufs', 'pinctrl_sm8750', 'hid_nanosic_wn8030',
+                'arm_smmu', 'ufs_qcom', 'phy_qcom_qmp_ufs', 'pinctrl_sm8750', 'hid_nanosic_wn8030?',
             ])
             transaction = root / 'usr/libexec/piano-kernel-transaction'
             subprocess.run(['bash', '-n', transaction], check=True)
