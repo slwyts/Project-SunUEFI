@@ -54,7 +54,7 @@ EFI_STATUS PianoMemoryLayoutRead(PIANO_MEMORY_LAYOUT_READ Callback,VOID *Context
   }else if(Token==2){
    if(!Depth)return EFI_COMPROMISED_DATA;
    if(Depth==2&&Memory){if(!MemoryType)return EFI_COMPROMISED_DATA;S=Pairs(&R,RegAt,RegBytes,L->Ram,&L->RamCount,PIANO_MEMORY_LAYOUT_MAX_RAM,0);if(S!=EFI_SUCCESS)return S;}
-   if(Depth==3&&Reserved){if(Reuse&&NoMap)return EFI_COMPROMISED_DATA;if(RegBytes){S=Pairs(&R,RegAt,RegBytes,L->Fixed,&L->ReservedCount,PIANO_MEMORY_LAYOUT_MAX_RESERVED,Enabled&&Reuse&&!NoMap&&Pool?PIANO_MEMORY_LAYOUT_CMA:0);if(S!=EFI_SUCCESS)return S;}else if(Dynamic)++L->FutureLinuxDynamicConstraints;}
+   if(Depth==3&&Reserved){if(Reuse&&NoMap)return EFI_COMPROMISED_DATA;if(RegBytes){UINT32 Flags=NoMap?PIANO_MEMORY_LAYOUT_NO_MAP:Enabled&&Reuse&&Pool?PIANO_MEMORY_LAYOUT_CMA:0;S=Pairs(&R,RegAt,RegBytes,L->Fixed,&L->ReservedCount,PIANO_MEMORY_LAYOUT_MAX_RESERVED,Flags);if(S!=EFI_SUCCESS)return S;}else if(Dynamic)++L->FutureLinuxDynamicConstraints;}
    if(Depth==2)Memory=Reserved=Ddr=FALSE;--Depth;
   }else if(Token==3){UINT32 N,Offset;if(!Depth||End-At<8)return EFI_COMPROMISED_DATA;S=Word(&R,At,&N);if(S!=EFI_SUCCESS)return S;S=Word(&R,At+4,&Offset);if(S!=EFI_SUCCESS)return S;At+=8;if(N>End-At||Offset>=StringBytes)return EFI_COMPROMISED_DATA;
    if(Depth==1||((Memory||Ddr)&&Depth==2)||(Reserved&&(Depth==2||Depth==3))){CHAR8 Name[128];UINT32 Used;S=String(&R,Strings+Offset,Strings+StringBytes,Name,sizeof(Name),&Used);if(S!=EFI_SUCCESS)return S;

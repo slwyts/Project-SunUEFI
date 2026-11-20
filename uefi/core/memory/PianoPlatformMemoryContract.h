@@ -25,7 +25,7 @@ typedef struct {
   // placement is invented or required by composition; actual earlier owners
   // must still be supplied/validated independently by the cold authority.
   UINT32 FutureLinuxDynamicConstraints;
-  UINT64 AddedOccupiedBytes,CpuArenaBase,CpuArenaBytes,RetainedReservedBytes;
+  UINT64 AddedOccupiedBytes,CpuArenaBase,CpuArenaBytes,RetainedReservedBytes,AvailableBytes;
   UINT64 InputFingerprint;
   BOOLEAN Composed,ReadyForMemoryPeim,AuthorizationAttempted,Exposed;
   EFI_STATUS Status,Authorization;

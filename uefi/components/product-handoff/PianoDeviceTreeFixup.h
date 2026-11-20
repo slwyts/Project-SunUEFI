@@ -24,8 +24,7 @@ typedef struct {
 
 VOID PianoDeviceTreeFixupGetDiagnostic(PIANO_DEVICE_TREE_FIXUP_DIAGNOSTIC *Report);
 
-// ValidateReserved checks the caller's complete DT against the platform's real
-// EFI memory map. A fixed reservation already excluded there needs no second
-// allocation; an unrepresented range must fail rather than be ignored.
+// ReserveMemory holds available pages claimed by the caller's DT. Existing
+// reservations remain in place; an active allocation must not be reassigned.
 EFI_STATUS PianoDeviceTreeFixupInstall(BOOLEAN (*Alive)(VOID),
-  EFI_STATUS (*ValidateReserved)(CONST VOID *,UINTN));
+  EFI_STATUS (*ReserveMemory)(CONST VOID *,UINTN));

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// Validate the real SEC-published map. Nothing here expands an allocator,
-// interprets ESP /memory as physical RAM, or changes live descriptors/PTEs.
+// SEC identifies installed RAM; an operating system's DT is not a RAM inventory.
 #include "PianoProductMemory.h"
 #include "PianoColdMemory.h"
 #include "PianoColdBootObjects.h"
@@ -12,6 +11,11 @@
 #include <Library/BaseLib.h>
 #include <Library/DebugLib.h>
 #include <Library/FdtLib.h>
+// DXE Core's GCD capabilities for the PI resource HOB states. These names
+// are local to DxeMain and NullMemoryTestDxe, not exported in the PI headers.
+#define GCD_RAM_PRESENT      BIT56
+#define GCD_RAM_INITIALIZED  BIT57
+#define GCD_RAM_TESTED       BIT58
 typedef struct {UINT64 El,Sctlr,Tcr,Ttbr0,Ttbr1,Mair;} CPU_MAP;
 typedef struct {
  UINTN Index;
@@ -37,8 +41,21 @@ STATIC CONST CHAR8 *mCaptureStage="not-started",*mDtbStage="not-started";
 STATIC EFI_STATUS mDtbStatus=EFI_NOT_STARTED;
 STATIC UINTN mCaptureIndex=MAX_UINTN,mDtbIndex=MAX_UINTN;
 STATIC BOOLEAN mBusy;
+typedef struct DT_RESERVATION DT_RESERVATION;
+struct DT_RESERVATION {
+ DT_RESERVATION *Next;
+ EFI_PHYSICAL_ADDRESS Base;
+ UINT64 Bytes;
+ EFI_MEMORY_TYPE Type;
+};
+STATIC DT_RESERVATION *mDtbReservations;
 STATIC UINT64 mMapBuffer[8192];
 STATIC UINTN mMapBytes,mMapStride;
+
+STATIC EFI_STATUS Snapshot(VOID);
+STATIC EFI_STATUS CpuMap(CPU_MAP *C);
+STATIC BOOLEAN CpuGeometry(CONST CPU_MAP *C);
+STATIC EFI_STATUS NormalMapping(CONST CPU_MAP *C,UINT64 Base,UINT64 Bytes);
 
 STATIC EFI_STATUS CheckResult(CONST CHAR8 *Stage,EFI_STATUS Status){
  if(mChecking){mCheck.Stage=Stage;mCheck.Status=Status;}
@@ -155,6 +172,77 @@ STATIC EFI_STATUS Capture(VOID){
   }
  }
  return CaptureResult("ready",EFI_SUCCESS);
+}
+
+STATIC BOOLEAN LoaderRam(CONST EFI_MEMORY_REGION_DESCRIPTOR *Row){
+ return Row->ResourceType==MEM_RES && Row->MemoryType==EfiConventionalMemory;
+}
+
+// PI stages initialized RAM as reserved until memory testing or a platform
+// driver makes it system memory. AddMemorySpace feeds the DXE page allocator
+// directly; freeing an artificial multi-GiB allocation would scrub it in DEBUG.
+STATIC EFI_STATUS PublishRow(CONST EFI_MEMORY_REGION_DESCRIPTOR *Row){
+ UINT64 Position=Row->Address,End=Position+Row->Length;
+ while(Position<End){
+  EFI_GCD_MEMORY_SPACE_DESCRIPTOR Range;
+  EFI_STATUS Status=gDS->GetMemorySpaceDescriptor(Position,&Range);
+  if(EFI_ERROR(Status))return Status;
+  if(!Span(Range.BaseAddress,Range.Length)||Position<Range.BaseAddress||
+     Position-Range.BaseAddress>=Range.Length)return EFI_COMPROMISED_DATA;
+  UINT64 Next=MIN(End,Range.BaseAddress+Range.Length),Length=Next-Position;
+  if(Range.GcdMemoryType!=EfiGcdMemoryTypeSystemMemory){
+   UINT64 State=Range.Capabilities&(GCD_RAM_PRESENT|GCD_RAM_INITIALIZED|GCD_RAM_TESTED);
+   if(Range.GcdMemoryType!=EfiGcdMemoryTypeReserved||Range.ImageHandle||Range.DeviceHandle||
+      State!=(GCD_RAM_PRESENT|GCD_RAM_INITIALIZED)||!(Range.Capabilities&EFI_MEMORY_WB))
+    return EFI_ACCESS_DENIED;
+   Status=gDS->RemoveMemorySpace(Position,Length);
+   if(EFI_ERROR(Status))return Status;
+   Status=gDS->AddMemorySpace(EfiGcdMemoryTypeSystemMemory,Position,Length,
+      Range.Capabilities&~(GCD_RAM_PRESENT|GCD_RAM_INITIALIZED|GCD_RAM_TESTED|EFI_MEMORY_RUNTIME));
+   if(EFI_ERROR(Status)){
+    EFI_GCD_MEMORY_SPACE_DESCRIPTOR Actual;
+    if(!EFI_ERROR(gDS->GetMemorySpaceDescriptor(Position,&Actual))&&
+       Actual.GcdMemoryType==EfiGcdMemoryTypeNonExistent){
+     EFI_STATUS Restore=gDS->AddMemorySpace(EfiGcdMemoryTypeReserved,Position,Length,Range.Capabilities);
+     if(EFI_ERROR(Restore))return Restore;
+    }
+    return Status;
+   }
+   // The identity mapping was installed by MemoryPeim. Synchronize GCD with it.
+   Status=gDS->SetMemorySpaceAttributes(Position,Length,EFI_MEMORY_WB|EFI_MEMORY_XP);
+   if(EFI_ERROR(Status))return Status;
+  }
+  Position=Next;
+ }
+ return EFI_SUCCESS;
+}
+
+EFI_STATUS PianoProductMemoryPublish(VOID){
+ if(!Live()||!gDS->AddMemorySpace||!gDS->RemoveMemorySpace||!gDS->SetMemorySpaceAttributes)
+  return EFI_NOT_READY;
+ if(mBusy)return EFI_ALREADY_STARTED;
+ mBusy=TRUE;
+ EFI_STATUS Status=Capture();
+ CPU_MAP Cpu={0};
+ if(!EFI_ERROR(Status))Status=CpuMap(&Cpu);
+ if(!EFI_ERROR(Status)&&!CpuGeometry(&Cpu))Status=EFI_UNSUPPORTED;
+ UINT64 Bytes=0;
+ if(!EFI_ERROR(Status)){
+  for(UINTN I=mCold.NativeCount;I<mCold.Count;++I){
+   CONST EFI_MEMORY_REGION_DESCRIPTOR *Row=&mCold.Rows[I];
+   if(!LoaderRam(Row))continue;
+   EFI_STATUS RowStatus=Snapshot();
+   if(!EFI_ERROR(RowStatus))RowStatus=NormalMapping(&Cpu,Row->Address,Row->Length);
+   if(!EFI_ERROR(RowStatus))RowStatus=PublishRow(Row);
+   if(EFI_ERROR(RowStatus)){
+    if(!EFI_ERROR(Status))Status=RowStatus;
+    DEBUG((DEBUG_WARN,"PIANO_MEMORY_PUBLISH base=%lx bytes=%lx status=%r\n",Row->Address,Row->Length,RowStatus));
+   }else Bytes+=Row->Length;
+  }
+ }
+ DEBUG((DEBUG_INFO,"PIANO_MEMORY_PUBLISH available=%lx status=%r\n",Bytes,Status));
+ mBusy=FALSE;
+ return Status;
 }
 
 STATIC EFI_STATUS DiagnosticHob(CONST EFI_GUID *Guid,UINTN Bytes,CONST VOID **Data){
@@ -274,12 +362,16 @@ STATIC EFI_STATUS Snapshot(VOID){
  return EFI_SUCCESS;
 }
 STATIC EFI_MEMORY_DESCRIPTOR *At(UINT64 Address){for(UINTN I=0;I<mMapBytes/mMapStride;++I){EFI_MEMORY_DESCRIPTOR *D=Descriptor(I);if(Address>=D->PhysicalStart&&Address-D->PhysicalStart<D->NumberOfPages*4096)return D;}return NULL;}
-STATIC BOOLEAN HoldingCovers(UINT64 Base,UINT64 Bytes){
+STATIC BOOLEAN HoldingCovers(UINT64 Base,UINT64 Bytes,UINT32 Type){
  if(!Span(Base,Bytes))return FALSE;UINT64 End=Base+Bytes;
  while(Base<End){UINT64 Next=Base;
   for(UINTN I=mCold.NativeCount;I<mCold.Count;++I){CONST EFI_MEMORY_REGION_DESCRIPTOR *R=&mCold.Rows[I];
-   if(R->MemoryType==EfiLoaderData&&Base>=R->Address&&Base-R->Address<R->Length)Next=MAX(Next,R->Address+R->Length);
-  }if(Next==Base)return FALSE;Base=MIN(Next,End);
+   if(Type==EfiLoaderData&&R->MemoryType==EfiLoaderData&&Base>=R->Address&&Base-R->Address<R->Length)Next=MAX(Next,R->Address+R->Length);
+  }
+  for(CONST DT_RESERVATION *R=mDtbReservations;R;R=R->Next){
+   if((UINT32)R->Type==Type&&Base>=R->Base&&Base-R->Base<R->Bytes)Next=MAX(Next,R->Base+R->Bytes);
+  }
+  if(Next==Base)return FALSE;Base=MIN(Next,End);
  }return TRUE;
 }
 STATIC EFI_STATUS Reserved(UINT64 Base,UINT64 Bytes,BOOLEAN Cma,BOOLEAN FinalTree){
@@ -289,10 +381,7 @@ STATIC EFI_STATUS Reserved(UINT64 Base,UINT64 Bytes,BOOLEAN Cma,BOOLEAN FinalTre
   if(mChecking)mCheck.Position=MAX(Base,D->PhysicalStart);
   if(FinalTree&&Reclaimable(D->Type)){
    UINT64 Begin=MAX(Base,D->PhysicalStart),End=MIN(Base+Bytes,D->PhysicalStart+D->NumberOfPages*4096);
-   // An arbitrary active low-heap allocation is not ours to give to a DT
-   // reservation. Only the cold producer's still-exclusive holding span may
-   // supply a new reservation; the standard allocator cannot have reused it.
-   if(D->Type!=EfiLoaderData||!HoldingCovers(Begin,End-Begin))return CheckResult("reservation-owner",EFI_ACCESS_DENIED);
+   if(!HoldingCovers(Begin,End-Begin,D->Type))return CheckResult("reservation-owner",EFI_ACCESS_DENIED);
   }
   else if(Cma){if(D->Type!=EfiLoaderData&&D->Type!=EfiReservedMemoryType)return CheckResult("reservation-cma",EFI_ACCESS_DENIED);}
   else if(Reclaimable(D->Type))return CheckResult("reservation-reclaimable",EFI_ACCESS_DENIED);
@@ -322,8 +411,10 @@ STATIC EFI_STATUS TablePage(UINT64 Page){
   mCheck.Par=mCheck.Entry=mCheck.Again=0;mCheck.EntryIndex=MAX_UINTN;
  }
  BOOLEAN Known=FALSE;
- for(UINTN I=0;I<mCold.NativeCount;++I){CONST EFI_MEMORY_REGION_DESCRIPTOR *R=&mCold.Rows[I];
-  if((!AsciiStrCmp(R->Name,"MMU_PageTables")||!AsciiStrCmp(R->Name,"DXE_Heap")||!AsciiStrCmp(R->Name,"DXE_Heap_Upper"))&&
+ for(UINTN I=0;I<mCold.Count;++I){CONST EFI_MEMORY_REGION_DESCRIPTOR *R=&mCold.Rows[I];
+  BOOLEAN PageTableRam=I<mCold.NativeCount?
+   (!AsciiStrCmp(R->Name,"MMU_PageTables")||R->MemoryType==EfiConventionalMemory):LoaderRam(R);
+  if(PageTableRam&&R->HobOption==AddMem&&
      Page>=R->Address&&Page-R->Address<=R->Length&&4096<=R->Length-(Page-R->Address))Known=TRUE;
  }
  EFI_MEMORY_DESCRIPTOR *D=At(Page);
@@ -333,8 +424,7 @@ STATIC EFI_STATUS TablePage(UINT64 Page){
     (D->Type!=EfiReservedMemoryType&&D->Type!=EfiBootServicesData&&D->Type!=EfiRuntimeServicesData))
   return CheckResult("table-ledger",EFI_ACCESS_DENIED);
 #if defined(__aarch64__) && !defined(PIANO_PRODUCT_MEMORY_HOST_TEST)
- // Prove the low table page itself readable and identity mapped before its
- // first software load. No high-DDR data is accessed by this verifier.
+ // Check the table page's translation before the first software load.
  UINT64 Mask,Old,Par;__asm__ volatile("mrs %0, daif\n msr daifset, #15\n mrs %1, par_el1\n at s1e1r, %3\n isb\n mrs %2, par_el1\n msr par_el1, %1\n msr daif, %0"
   :"=&r"(Mask),"=&r"(Old),"=&r"(Par):"r"(Page):"memory");
  if(mChecking){mCheck.Par=Par;mCheck.ParValid=TRUE;}
@@ -387,14 +477,17 @@ STATIC EFI_STATUS FullMap(UINT64 *Normal){
  if(mChecking)mCheck.Cpu=Cpu;
  if(S!=EFI_SUCCESS)return CheckResult("cpu-read",S);
  if(!CpuGeometry(&Cpu))return CheckResult("cpu-geometry",EFI_UNSUPPORTED);
- // Newly described normal DDR remains the producer's LoaderData allocation.
- // It is not silently made Conventional, even when absent from legacy SMEM.
+ // Fixed owners and held CMA retain their cold types. Allocatable RAM may
+ // have been split into ordinary boot/runtime/ACPI allocations by DXE.
  for(UINTN I=mCold.NativeCount;I<mCold.Count;++I){CONST EFI_MEMORY_REGION_DESCRIPTOR *R=&mCold.Rows[I];UINT64 Position=R->Address,End=Position+R->Length;
   CheckRange(R->Address,R->Length,I);
   while(Position<End){
    EFI_MEMORY_DESCRIPTOR *D=At(Position);CheckDescriptor(&mCheck.Descriptor,D);
    if(mChecking)mCheck.Position=Position;
-   if(!D||D->Type!=(UINT32)R->MemoryType)return CheckResult("added-row-type",EFI_NOT_READY);
+   if(!D || (LoaderRam(R)?
+      !(Reclaimable(D->Type)||D->Type==EfiReservedMemoryType||D->Type==EfiACPIMemoryNVS||
+        D->Type==EfiRuntimeServicesCode||D->Type==EfiRuntimeServicesData):
+      D->Type!=(UINT32)R->MemoryType))return CheckResult("added-row-type",EFI_NOT_READY);
    Position=MIN(End,D->PhysicalStart+D->NumberOfPages*4096);
   }
  }
@@ -582,13 +675,52 @@ STATIC EFI_STATUS DtbResult(CONST CHAR8 *Stage,EFI_STATUS Status){
  return Status;
 }
 
-EFI_STATUS PianoProductMemoryValidateDtb(CONST VOID *Tree,UINTN Bytes){
+STATIC EFI_STATUS ClaimDtbPages(CONST PIANO_MEMORY_SPAN *Span){
+ if(!Span->Bytes)return EFI_SUCCESS;
+ if(!gBS->AllocatePages||!gBS->AllocatePool||!gBS->FreePool||!gBS->FreePages)return EFI_UNSUPPORTED;
+ EFI_MEMORY_TYPE Type=(Span->Flags&PIANO_MEMORY_LAYOUT_NO_MAP)?EfiReservedMemoryType:EfiBootServicesData;
+ UINT64 Alignment=Type==EfiReservedMemoryType?RUNTIME_PAGE_ALLOCATION_GRANULARITY:EFI_PAGE_SIZE;
+ UINT64 Position=Span->Base,End=Position+Span->Bytes;
+ while(Position<End){
+  EFI_MEMORY_DESCRIPTOR *D=NULL;
+  UINT64 First=End;
+  for(UINTN I=0;I<mMapBytes/mMapStride;++I){
+   EFI_MEMORY_DESCRIPTOR *Candidate=Descriptor(I);
+   if(Candidate->Type!=EfiConventionalMemory||
+      !Overlap(Position,End-Position,Candidate->PhysicalStart,EFI_PAGES_TO_SIZE(Candidate->NumberOfPages)))continue;
+   UINT64 Begin=MAX(Position,Candidate->PhysicalStart);
+   if(Begin<First){D=Candidate;First=Begin;}
+  }
+  if(!D)break;
+  UINT64 DescEnd=D->PhysicalStart+EFI_PAGES_TO_SIZE(D->NumberOfPages);
+  UINT64 Last=MIN(End,DescEnd);
+  if(Last>MAX_UINT64-(Alignment-1))return EFI_INVALID_PARAMETER;
+  EFI_PHYSICAL_ADDRESS Address=First&~(Alignment-1);
+  UINT64 Limit=ALIGN_VALUE(Last,Alignment);
+  if(Address<D->PhysicalStart||Limit>DescEnd)return EFI_ACCESS_DENIED;
+  UINTN Pages=EFI_SIZE_TO_PAGES(Limit-Address);
+  DT_RESERVATION *R;
+  EFI_STATUS Status=gBS->AllocatePool(EfiBootServicesData,sizeof(*R),(VOID **)&R);
+  if(EFI_ERROR(Status))return Status;
+  Status=gBS->AllocatePages(AllocateAddress,Type,Pages,&Address);
+  if(EFI_ERROR(Status)){gBS->FreePool(R);return Status;}
+  *R=(DT_RESERVATION){mDtbReservations,Address,EFI_PAGES_TO_SIZE(Pages),Type};
+  mDtbReservations=R;
+  Status=Snapshot();
+  if(EFI_ERROR(Status))return Status;
+  Position=Last;
+ }
+ return EFI_SUCCESS;
+}
+
+STATIC EFI_STATUS CheckDtb(CONST VOID *Tree,UINTN Bytes,BOOLEAN Claim){
  mDtbIndex=MAX_UINTN;
  if(!Tree||Bytes<40||Bytes>0x200000||FdtCheckHeader(Tree)||FdtTotalSize(Tree)>Bytes)
   return DtbResult("header",EFI_INVALID_PARAMETER);
  if(mBusy)return DtbResult("busy",EFI_ALREADY_STARTED);
 
  mBusy=TRUE;
+ DT_RESERVATION *Previous=mDtbReservations;
  mDtbStage="capture";
  EFI_STATUS S=Capture();
  PIANO_MEMORY_LAYOUT Linux;
@@ -617,7 +749,8 @@ EFI_STATUS PianoProductMemoryValidateDtb(CONST VOID *Tree,UINTN Bytes){
  if(S==EFI_SUCCESS){
   for(UINTN I=0;I<Linux.ReservedCount;++I){
    CONST PIANO_MEMORY_SPAN *R=&Linux.Fixed[I];
-   S=Reserved(R->Base,R->Bytes,(R->Flags&PIANO_MEMORY_LAYOUT_CMA)!=0,TRUE);
+   if(Claim)S=ClaimDtbPages(R);
+   if(S==EFI_SUCCESS)S=Reserved(R->Base,R->Bytes,(R->Flags&PIANO_MEMORY_LAYOUT_CMA)!=0,TRUE);
    if(S!=EFI_SUCCESS){
     mDtbIndex=I;
     mDtbStage="reservation";
@@ -625,6 +758,23 @@ EFI_STATUS PianoProductMemoryValidateDtb(CONST VOID *Tree,UINTN Bytes){
    }
   }
  }
+ if(EFI_ERROR(S)){
+  while(mDtbReservations!=Previous){
+   DT_RESERVATION *R=mDtbReservations;
+   EFI_STATUS Rollback=gBS->FreePages(R->Base,EFI_SIZE_TO_PAGES(R->Bytes));
+   if(EFI_ERROR(Rollback)){S=Rollback;break;}
+   mDtbReservations=R->Next;
+   gBS->FreePool(R);
+  }
+ }
  mBusy=FALSE;
  return DtbResult(S==EFI_SUCCESS?"ready":mDtbStage,S);
+}
+
+EFI_STATUS PianoProductMemoryValidateDtb(CONST VOID *Tree,UINTN Bytes){
+ return CheckDtb(Tree,Bytes,FALSE);
+}
+
+EFI_STATUS PianoProductMemoryReserveDtb(CONST VOID *Tree,UINTN Bytes){
+ return CheckDtb(Tree,Bytes,TRUE);
 }

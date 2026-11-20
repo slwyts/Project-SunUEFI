@@ -82,6 +82,9 @@ static struct {EFI_HOB_GUID_TYPE H;PIANO_COLD_BOOT_OBJECT_REPORT R;} ObjectsHob;
 static struct {EFI_HOB_GUID_TYPE H;PIANO_EARLY_MEMORY_REPORT R;} EarlyHob;
 static EFI_GUID MemoryGuid=PIANO_COLD_MEMORY_HOB_GUID,ObjectsGuid=PIANO_COLD_OBJECT_HOB_GUID,EarlyGuid=PIANO_EARLY_MEMORY_HOB_GUID;
 static EFI_MEMORY_DESCRIPTOR Map[256];static UINTN MapCount,Case,Layouts,ProtocolLookups;
+static EFI_GCD_MEMORY_TYPE ExtraGcd[MAX_ARM_MEMORY_REGION_DESCRIPTOR_COUNT];
+static UINTN AddedRam,Claimed,Freed;
+static BOOLEAN FailAdd;
 static VOID *Tree;static UINT32 TreeBytes;
 static BOOLEAN Selected,Published;
 static UINT64 PageTable[512];
@@ -116,8 +119,62 @@ static EFI_STATUS EFIAPI GetGcd(EFI_PHYSICAL_ADDRESS At,EFI_GCD_MEMORY_SPACE_DES
  if(Case==6||Case==26)Attributes=EFI_MEMORY_WT;
  if(Case==27)Attributes=EFI_MEMORY_UC;
  if(Case==28)Attributes=EFI_MEMORY_WB|EFI_MEMORY_RP;
+ for(UINTN I=0;I<MemoryHob.R.Count;++I){
+  EFI_MEMORY_REGION_DESCRIPTOR *R=&MemoryHob.R.Rows[I];
+  if(R->ResourceType==MEM_RES&&R->MemoryType==EfiConventionalMemory&&At>=R->Address&&At-R->Address<R->Length){
+   *D=(EFI_GCD_MEMORY_SPACE_DESCRIPTOR){.BaseAddress=R->Address,.Length=R->Length,
+    .GcdMemoryType=ExtraGcd[I],.Capabilities=EFI_MEMORY_WB|EFI_MEMORY_XP|BIT56|BIT57,.Attributes=Attributes};
+   return EFI_SUCCESS;
+  }
+ }
  for(UINTN I=0;I<MapCount;I++)if(At>=Map[I].PhysicalStart&&At-Map[I].PhysicalStart<Map[I].NumberOfPages*4096){*D=(EFI_GCD_MEMORY_SPACE_DESCRIPTOR){.BaseAddress=Map[I].PhysicalStart,.Length=Map[I].NumberOfPages*4096,.GcdMemoryType=EfiGcdMemoryTypeSystemMemory,.Attributes=Attributes};return EFI_SUCCESS;}return EFI_NOT_FOUND;
 }
+static UINTN ExtraIndex(UINT64 Base,UINT64 Length){
+ for(UINTN I=MemoryHob.R.NativeCount;I<MemoryHob.R.Count;++I){EFI_MEMORY_REGION_DESCRIPTOR *R=&MemoryHob.R.Rows[I];if(R->Address==Base&&R->Length==Length&&R->ResourceType==MEM_RES&&R->MemoryType==EfiConventionalMemory)return I;}
+ assert(!"Unexpected GCD range");return 0;
+}
+static EFI_STATUS EFIAPI RemoveGcd(EFI_PHYSICAL_ADDRESS Base,UINT64 Length){
+ UINTN I=ExtraIndex(Base,Length);assert(ExtraGcd[I]==EfiGcdMemoryTypeReserved);
+ ExtraGcd[I]=EfiGcdMemoryTypeNonExistent;return EFI_SUCCESS;
+}
+static EFI_STATUS EFIAPI AddGcd(EFI_GCD_MEMORY_TYPE Type,EFI_PHYSICAL_ADDRESS Base,UINT64 Length,UINT64 Capabilities){
+ UINTN I=ExtraIndex(Base,Length);assert(ExtraGcd[I]==EfiGcdMemoryTypeNonExistent);
+ if(Type==EfiGcdMemoryTypeSystemMemory&&FailAdd){FailAdd=FALSE;return EFI_OUT_OF_RESOURCES;}
+ ExtraGcd[I]=Type;
+ if(Type==EfiGcdMemoryTypeSystemMemory){
+  assert(Capabilities==(EFI_MEMORY_WB|EFI_MEMORY_XP));++AddedRam;
+  for(UINTN M=0;M<MapCount;++M)if(Map[M].PhysicalStart==Base&&Map[M].NumberOfPages==EFI_SIZE_TO_PAGES(Length)){
+   assert(Map[M].Type==EfiReservedMemoryType);Map[M].Type=EfiConventionalMemory;return EFI_SUCCESS;
+  }assert(!"Missing EFI range");
+ }else {assert(Type==EfiGcdMemoryTypeReserved);assert((Capabilities&(BIT56|BIT57))==(BIT56|BIT57));}
+ return EFI_SUCCESS;
+}
+static EFI_STATUS EFIAPI SetGcd(EFI_PHYSICAL_ADDRESS Base,UINT64 Length,UINT64 Attr){
+ assert(ExtraGcd[ExtraIndex(Base,Length)]==EfiGcdMemoryTypeSystemMemory);
+ assert(Attr==(EFI_MEMORY_WB|EFI_MEMORY_XP));return EFI_SUCCESS;
+}
+static EFI_MEMORY_DESCRIPTOR *Lookup(UINT64 Address){
+ for(UINTN I=0;I<MapCount;++I)if(Address>=Map[I].PhysicalStart&&Address-Map[I].PhysicalStart<Map[I].NumberOfPages*4096)return &Map[I];
+ return NULL;
+}
+static EFI_STATUS EFIAPI Claim(EFI_ALLOCATE_TYPE Allocation,EFI_MEMORY_TYPE Type,UINTN Pages,EFI_PHYSICAL_ADDRESS *Address){
+ EFI_MEMORY_DESCRIPTOR *D=Lookup(*Address);
+ assert(Allocation==AllocateAddress&&Pages&&D&&MapCount+2<=ARRAY_SIZE(Map));
+ if(D->Type!=EfiConventionalMemory)return EFI_NOT_FOUND;
+ UINT64 Start=D->PhysicalStart,End=Start+D->NumberOfPages*4096,Limit=*Address+Pages*4096;
+ if(Limit>End)return EFI_NOT_FOUND;
+ if(*Address>Start){Map[MapCount]=*D;Map[MapCount++].NumberOfPages=(*Address-Start)/4096;}
+ if(Limit<End){Map[MapCount]=*D;Map[MapCount].PhysicalStart=Limit;Map[MapCount++].NumberOfPages=(End-Limit)/4096;}
+ D->Type=Type;D->PhysicalStart=*Address;D->NumberOfPages=Pages;++Claimed;return EFI_SUCCESS;
+}
+static EFI_STATUS EFIAPI Unclaim(EFI_PHYSICAL_ADDRESS Address,UINTN Pages){
+ EFI_MEMORY_DESCRIPTOR *D=Lookup(Address);assert(D&&D->PhysicalStart==Address&&D->NumberOfPages==Pages);
+ D->Type=EfiConventionalMemory;++Freed;return EFI_SUCCESS;
+}
+static EFI_STATUS EFIAPI Pool(EFI_MEMORY_TYPE Type,UINTN Bytes,VOID **Address){
+ assert(Type==EfiBootServicesData);*Address=calloc(1,Bytes);return *Address?EFI_SUCCESS:EFI_OUT_OF_RESOURCES;
+}
+static EFI_STATUS EFIAPI Unpool(VOID *P){free(P);return EFI_SUCCESS;}
 static EFI_STATUS EFIAPI Locate(EFI_GUID *G,VOID *R,VOID **Out){(void)G;(void)R;ProtocolLookups++;*Out=NULL;return EFI_NOT_FOUND;}
 static VOID Object(PIANO_COLD_OBJECT_ROLE Role,UINT64 Base,UINT64 Bytes){Objects.Objects[Objects.Count++]=(PIANO_COLD_BOOT_OBJECT){Base,Bytes,Role,0};}
 static VOID Setup(VOID){
@@ -131,9 +188,13 @@ static VOID Setup(VOID){
  UINT8 *P=Early.RawPayload;Le32(P,0x9da5e0a8);Le32(P+4,0xaf9ec4e2);Le32(P+8,3);Le32(P+16,2);
  Le64(P+24+0x10,0x80000000);Le64(P+24+0x18,0x400000000ULL);Le32(P+24+0x24,14);Le32(P+24+0x2c,1);Le64(P+24+0x40,0x40000000);
  P+=24+72;Le64(P+0x10,0xa10000000ULL);Le64(P+0x18,4096);Le32(P+0x24,14);Le32(P+0x2c,2);
+ if(Case>=31){P+=72;Early.RawPayloadBytes+=72;Le32(Early.RawPayload+16,3);
+  Le64(P+0x10,0x8c0000000ULL);Le64(P+0x18,0x140000000ULL);Le32(P+0x24,14);Le32(P+0x2c,1);Le64(P+0x40,0x140000000ULL);}
  assert(PianoSmemRamParse(Early.RawPayload,Early.RawPayloadBytes,&Early.Smem)==EFI_SUCCESS);Early.Smem.RepeatedMetadataEqual=Early.Smem.RepeatedPayloadEqual=TRUE;Early.Smem.PayloadBytes=Early.RawPayloadBytes;Early.RawPayloadCrc32=PianoEarlyMemoryBytesCrc32(Early.RawPayload,Early.RawPayloadBytes);if(Case==3)Early.RawPayloadCrc32^=1;
  for(UINTN I=0;I<512;++I)PageTable[I]=((UINT64)I<<30)|BIT10|(3ULL<<8)|(1ULL<<2)|1;
  Boot.GetMemoryMap=GetMap;Boot.LocateProtocol=Locate;Dxe.GetMemorySpaceDescriptor=GetGcd;System.BootServices=&Boot;
+ Boot.AllocatePool=Pool;Boot.FreePool=Unpool;Boot.AllocatePages=Claim;Boot.FreePages=Unclaim;
+ Dxe.RemoveMemorySpace=RemoveGcd;Dxe.AddMemorySpace=AddGcd;Dxe.SetMemorySpaceAttributes=SetGcd;
 }
 static VOID CheckDtbInjection(CONST PIANO_MEMORY_LAYOUT *Factory){
  UINTN Capacity=TreeBytes+0x10000;
@@ -186,6 +247,7 @@ static VOID Run(VOID){
  BOOLEAN UnknownReserved=FALSE,Expanded=FALSE;
  for(UINTN I=0;I<R->Count;++I){EFI_MEMORY_REGION_DESCRIPTOR *D=&R->Rows[I];if(D->Address<=0xa10000000ULL&&0xa10000000ULL-D->Address<D->Length){assert(D->MemoryType==EfiReservedMemoryType);UnknownReserved=TRUE;}if(D->Address<=0xd00000000ULL&&0xd00000000ULL-D->Address<D->Length&&D->MemoryType==EfiLoaderData)Expanded=TRUE;
   if(D->HobOption==NoHob||D->ResourceType==MMAP_IO)continue;UINT32 Type=D->ResourceType==SYS_MEM?(UINT32)D->MemoryType:EfiReservedMemoryType;
+  if(D->ResourceType==MEM_RES&&D->MemoryType==EfiConventionalMemory)ExtraGcd[I]=EfiGcdMemoryTypeReserved;
   Map[MapCount++]=(EFI_MEMORY_DESCRIPTOR){.Type=Type,.PhysicalStart=D->Address,.NumberOfPages=D->Length/4096,.Attribute=EFI_MEMORY_WB|((Type==EfiRuntimeServicesCode||Type==EfiRuntimeServicesData)?EFI_MEMORY_RUNTIME:0)};
  }
  assert(UnknownReserved&&Expanded);
@@ -200,6 +262,27 @@ static VOID Run(VOID){
  assert(Diagnostic.ColdCount==R->Count&&Diagnostic.ColdNativeCount==R->NativeCount&&Diagnostic.ColdDramBytes==R->Layout.DramBytes);
  assert(Diagnostic.ObjectsValidateStatus==EFI_SUCCESS&&Diagnostic.EarlyHobStatus==EFI_SUCCESS&&Diagnostic.SmemStatus==EFI_SUCCESS);
  assert(Diagnostic.EarlyPublished&&Diagnostic.EarlyColdStateVerified&&Diagnostic.SmemParsed&&Diagnostic.RawPayloadCoherent);
+ if(Case>=31){
+  EFI_PHYSICAL_ADDRESS Base=0x8c0000000ULL;
+  assert(Lookup(Base)->Type==EfiReservedMemoryType);
+  FailAdd=(Case==32);assert(PianoProductMemoryPublish()==(Case==32?EFI_OUT_OF_RESOURCES:EFI_SUCCESS));
+  if(Case==32)assert(PianoProductMemoryPublish()==EFI_SUCCESS);
+  UINTN Added=AddedRam;assert(Added&&PianoProductMemoryPublish()==EFI_SUCCESS&&AddedRam==Added);
+  assert(Lookup(Base)->Type==EfiConventionalMemory&&Lookup(Base)->NumberOfPages>=EFI_SIZE_TO_PAGES(0x140000000ULL));
+  assert(Lookup(0xa10000000ULL)->Type==EfiReservedMemoryType&&Lookup(0xd00000000ULL)->Type==EfiLoaderData);
+  assert(Claim(AllocateAddress,EfiLoaderData,EFI_SIZE_TO_PAGES(700187372),&Base)==EFI_SUCCESS);
+  PIANO_LINUX_MEMORY_PROOF Live;assert(PianoProductMemoryCheck(NULL,&Live)==EFI_SUCCESS);
+  INT32 Node=FdtFirstSubnode(Tree,FdtPathOffset(Tree,"/reserved-memory")),RegLength=0;UINT8 *Reg=NULL;
+  for(;Node>=0;Node=FdtNextSubnode(Tree,Node)){Reg=(UINT8 *)FdtGetProp(Tree,Node,"reg",&RegLength);if(Reg&&RegLength==16)break;}assert(Reg&&RegLength==16);
+  Be64(Reg,Base);Be64(Reg+8,4096);
+  assert(PianoProductMemoryReserveDtb(Tree,TreeBytes)==EFI_ACCESS_DENIED&&Claimed==1&&!Freed);
+  Base+=0x40000000ULL;Be64(Reg,Base);
+  assert(PianoProductMemoryValidateDtb(Tree,TreeBytes)==EFI_ACCESS_DENIED&&Claimed==1);
+  assert(PianoProductMemoryReserveDtb(Tree,TreeBytes)==EFI_SUCCESS&&Claimed==2);
+  assert(PianoProductMemoryValidateDtb(Tree,TreeBytes)==EFI_SUCCESS);
+  assert(PianoProductMemoryReserveDtb(Tree,TreeBytes)==EFI_SUCCESS&&Claimed==2);
+  return;
+ }
  if(Case==17){R->Status=EFI_NOT_READY;R->Crc32=PianoColdMemoryCrc(R);}
  if(Case==18)R->Crc32^=1;
  if(Case==4){ObjectsHob.R.Epoch++;ObjectsHob.R.ReportCrc32=PianoColdObjectsCrc(&ObjectsHob.R);}
@@ -302,4 +385,4 @@ static VOID Run(VOID){
  }
  if(Case==9){UINT32 Struct=((UINT8 *)Tree)[8]<<24|((UINT8 *)Tree)[9]<<16|((UINT8 *)Tree)[10]<<8|((UINT8 *)Tree)[11];((UINT8 *)Tree)[Struct]^=1;assert(PianoProductMemoryValidateDtb(Tree,TreeBytes)!=EFI_SUCCESS);}
 }
-int main(int Argc,char **Argv){assert(Argc==2);FILE *F=fopen(Argv[1],"rb");assert(F);fseek(F,0,SEEK_END);TreeBytes=(UINT32)ftell(F);rewind(F);Tree=malloc(TreeBytes);assert(fread(Tree,1,TreeBytes,F)==TreeBytes);fclose(F);for(Case=0;Case<31;Case++){pid_t P=fork();assert(P>=0);if(!P){Run();_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status)||WEXITSTATUS(Status)){fprintf(stderr,"cold-memory case %lu failed\n",(unsigned long)Case);return 1;}}free(Tree);puts("Factory 24GB source vs legacy 16GB SMEM: actual cold producer, capability/current-cache distinction, permission checks and saved diagnostic replay: 31 cases passed");return 0;}
+int main(int Argc,char **Argv){assert(Argc==2);FILE *F=fopen(Argv[1],"rb");assert(F);fseek(F,0,SEEK_END);TreeBytes=(UINT32)ftell(F);rewind(F);Tree=malloc(TreeBytes);assert(fread(Tree,1,TreeBytes,F)==TreeBytes);fclose(F);for(Case=0;Case<33;Case++){pid_t P=fork();assert(P>=0);if(!P){Run();_exit(0);}int Status;assert(waitpid(P,&Status,0)==P);if(!WIFEXITED(Status)||WEXITSTATUS(Status)){fprintf(stderr,"cold-memory case %lu failed\n",(unsigned long)Case);return 1;}}free(Tree);puts("Cold map, late GCD publication, DT reservations and EFI allocation checks: 33 cases passed");return 0;}

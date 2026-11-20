@@ -42,7 +42,7 @@ int main(int argc,char **argv){
   assert(PianoPlatformMemoryAcquireForMemoryPeim(&contract,&Exposed,&Count)==EFI_SUCCESS&&Count==contract.Count);
   assert(PianoPlatformMemoryAcquireForMemoryPeim(&contract,&Exposed,&Count)==EFI_NOT_READY);
   // Actual MemoryPeim/AddHob: authorized host fixture only, hardware MMU stub.
-  setup(FALSE);memcpy(rows,contract.Rows,contract.Count*sizeof(*rows));count=contract.Count;
+  setup();memcpy(rows,contract.Rows,contract.Count*sizeof(*rows));count=contract.Count;
   assert(MemoryPeim(0,0)==EFI_SUCCESS);
   check_hob(0xA00000000ULL,0x40000000ULL,EfiLoaderData,TRUE);
   check_hob(0x82800000,0x2000000,EfiLoaderData,TRUE);check_hob(0xF3800000,0x5000000,EfiLoaderData,TRUE);
@@ -65,5 +65,27 @@ int main(int argc,char **argv){
   input.CpuArenaBase=0xA00000000ULL;input.CpuArenaBytes=0x40000000;
   inventory.Banks[1]=inventory.Banks[0];
   assert(PianoPlatformMemoryCompose(&input,&contract)==EFI_COMPROMISED_DATA);
+  // Use the actual Mu MemoryPeim and HOB builders. A tested-at-BDS range
+  // has a WB identity mapping but no EFI allocation or early DXE heap.
+  UINT64 Base=0x8c0000000ULL,BankBytes=0x140000000ULL;
+  PIANO_SMEM_RAM_REPORT Cold={.Status=EFI_SUCCESS,.Parsed=TRUE,.BankCount=1,
+    .RepeatedMetadataEqual=TRUE,.RepeatedPayloadEqual=TRUE};
+  Cold.Banks[0].Base=Base;Cold.Banks[0].AvailableLength=BankBytes;
+  input.Inventory=NULL;input.ColdInventory=&Cold;input.CpuArenaBase=input.CpuArenaBytes=0;
+  input.KnownOwners=NULL;input.OwnerCount=0;
+  assert(PianoPlatformMemoryCompose(&input,&contract)==EFI_SUCCESS&&contract.AvailableBytes==BankBytes);
+  setup();memcpy(rows,contract.Rows,contract.Count*sizeof(*rows));count=contract.Count;
+  assert(MemoryPeim(0,0)==EFI_SUCCESS);
+  assert(mapped_at(Base)&&mapped_at(Base)->Length==BankBytes&&mapped_at(Base)->Attributes==ARM_MEMORY_REGION_ATTRIBUTE_WRITE_BACK_XP);
+  unsigned Reserved=0;EFI_PEI_HOB_POINTERS H;H.Raw=hob_list;
+  while(!END_OF_HOB_LIST(H)){
+    if(GET_HOB_TYPE(H)==EFI_HOB_TYPE_RESOURCE_DESCRIPTOR&&H.ResourceDescriptor->PhysicalStart==Base){
+      assert(H.ResourceDescriptor->ResourceType==EFI_RESOURCE_MEMORY_RESERVED&&H.ResourceDescriptor->ResourceLength==BankBytes);
+      assert(!(H.ResourceDescriptor->ResourceAttribute&EFI_RESOURCE_ATTRIBUTE_TESTED));++Reserved;
+    }
+    if(GET_HOB_TYPE(H)==EFI_HOB_TYPE_MEMORY_ALLOCATION)assert(H.MemoryAllocation->AllocDescriptor.MemoryBaseAddress!=Base);
+    H.Raw=GET_NEXT_HOB(H);
+  }
+  assert(Reserved==1);
   free(Dtb);puts("Actual full-DDR C contract + pinned libfdt + real Mu HOB/MMU inputs: occupied high DDR/CMA, safe lowheap, arena ownership/fallback/mutation/warning/default-unready gates passed; no actual MMU/device/high-DDR touch");return 0;
 }

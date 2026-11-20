@@ -112,7 +112,7 @@ SimpleInit 默认选择“启动 Linux”，无操作五秒后按启动顺序寻
 引导程序超时时，固件保留仍在使用的资源，提示长按电源重启，再按音量上进入 Android。
 完整文件布局见[启动架构](architecture.md#存储布局)。
 
-固件通过 `EFI_DT_FIXUP_PROTOCOL` 为装载的设备树应用同次启动的内存、面板与 Gunyah 修正，并检查保留区。Linux EFI stub 负责填写 EFI 内存图和 initrd 信息。SEC 从本次 ABL 传入的最终设备树读取完整 RAM，结合 SMEM、原生固件区域和冷启动对象生成内存表；新增普通 RAM 保持为 `EfiLoaderData`，不进入固件分配池。退出前再次核对真实 EFI/GCD 描述符及页表的恒等映射和缓存属性，再交给 Linux 回收。
+固件通过 `EFI_DT_FIXUP_PROTOCOL` 为装载的设备树应用同次启动的内存、面板与 Gunyah 修正。Linux EFI stub 填写 EFI 内存图和 initrd 信息。每次启动都从 ABL 传入的最终设备树读取实际 RAM：原厂固件、启动时仍占用的数据、固定保留区和 CMA 不进入通用分配池。完成底层设备初始化后，设备树与 SMEM 都确认为可用的空闲页才交给标准 EFI 分配器，供 Linux 或 Windows 加载内核和启动映像。仅由设备树报告的扩容内存仍在 EFI 内存图中描述，固件不提前分配。设备树要求的新保留区不能覆盖正在使用的页；退出前复核实际 EFI/GCD 内存描述符、页表映射及缓存属性。
 
 `PianoProductMemoryApplyDtb()` 使用带 CRC 与同次启动标识的早期采集结果，替换 Linux DTB 的 `/memory/reg`、DDR 容量／厂商／类型和 `/ddr-regions`，移除多余的 memory 节点。DTB 在内存中经标准协议修正，不按内存容量制作镜像，也不在安装时改写 ESP。Linux 的硬件节点、CMA 请求与保留区保持原样；交接前的检查会拒绝不兼容的保留区，而不是把 EFI 空闲页误当作物理总内存。
 

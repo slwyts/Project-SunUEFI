@@ -53,7 +53,7 @@ EFI_STATUS PianoColdMemoryPrepare(VOID){
  EFI_MEMORY_REGION_DESCRIPTOR *Rows=NULL;UINT8 CountRows=0;if(S==EFI_SUCCESS)S=PianoPlatformMemoryAcquireForMemoryPeim(&mContract,&Rows,&CountRows);
  if(S==EFI_SUCCESS){mMemory.Count=CountRows;mMemory.InputFingerprint=mContract.InputFingerprint;CopyMem(mMemory.Rows,Rows,CountRows*sizeof(*Rows));S=PianoProductSelectMemoryMap(Rows,CountRows);}
  mMemory.Status=S;mMemory.Crc32=PianoColdMemoryCrc(&mMemory);
- DEBUG((DEBUG_WARN,"PIANO_COLD_MEMORY status=%r epoch=%lx rows=%u native=%u factory_ram=%lx occupied=%lx retained=%lx allocator_expansion=0\n",S,mMemory.BootEpoch,mMemory.Count,mMemory.NativeCount,mMemory.Layout.DramBytes,mContract.AddedOccupiedBytes,mContract.RetainedReservedBytes));
+ DEBUG((DEBUG_WARN,"PIANO_COLD_MEMORY status=%r epoch=%lx rows=%u native=%u factory_ram=%lx occupied=%lx retained=%lx available=%lx\n",S,mMemory.BootEpoch,mMemory.Count,mMemory.NativeCount,mMemory.Layout.DramBytes,mContract.AddedOccupiedBytes,mContract.RetainedReservedBytes,mContract.AvailableBytes));
  return S;
 }
 EFI_STATUS PianoColdMemoryPublishHob(VOID){

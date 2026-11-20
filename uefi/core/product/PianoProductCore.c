@@ -808,7 +808,11 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
     .CheckMemory=PianoProductMemoryCheck,.ValidateMemory=PianoProductMemoryValidate,.FailStop=LateFailStop,
     .ValidateRaw=PianoRawLinuxPrepared,.ValidateEfiImage=ValidateInstalledEfiImage};
   Status=PianoLateHandoffInitialize(&mLateHandoff,&Late);if(Status!=EFI_SUCCESS)FailStop(Status);
-  Status=PianoDeviceTreeFixupInstall(BootLogAlive,PianoProductMemoryValidateDtb);if(Status!=EFI_SUCCESS)FailStop(Status);
+  // Initialize native devices in their firmware heaps before giving unused
+  // RAM to EFI loaders. The original heaps still work if a bank is unavailable.
+  Status=PianoProductMemoryPublish();
+  if(EFI_ERROR(Status))DEBUG((DEBUG_WARN,"PIANO_LOADER_MEMORY status=%r\n",Status));
+  Status=PianoDeviceTreeFixupInstall(BootLogAlive,PianoProductMemoryReserveDtb);if(Status!=EFI_SUCCESS)FailStop(Status);
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_LATE_EXIT provider_bound=1 phase=unarmed standard_efi=1\n"));
   CONST UINTN StartupKeysMs=1000;
   (VOID)PianoProductBootLogMessage(L"正在准备启动",L"Esc：启动选项  F12：固件设置",EFI_SUCCESS,FALSE);

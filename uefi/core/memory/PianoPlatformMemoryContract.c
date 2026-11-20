@@ -43,12 +43,18 @@ STATIC UINT64 Fingerprint(CONST PIANO_PLATFORM_MEMORY_INPUT *I){
   if(I->Inventory)H=Hash(H,I->Inventory,sizeof(*I->Inventory));if(I->ColdInventory)H=Hash(H,I->ColdInventory,sizeof(*I->ColdInventory));H=Hash(H,I->KnownOwners,I->OwnerCount*sizeof(I->KnownOwners[0]));
   H=Hash(H,&I->CpuArenaBase,sizeof(I->CpuArenaBase));return Hash(H,&I->CpuArenaBytes,sizeof(I->CpuArenaBytes));
 }
-STATIC EFI_STATUS Row(PIANO_PLATFORM_MEMORY_CONTRACT *C,CONST CHAR8 *Name,UINT64 B,UINT64 E,BOOLEAN Reserved){
+STATIC EFI_STATUS Row(PIANO_PLATFORM_MEMORY_CONTRACT *C,CONST CHAR8 *Name,UINT64 B,UINT64 E,EFI_MEMORY_TYPE Type){
   if(C->Count>=MAX_ARM_MEMORY_REGION_DESCRIPTOR_COUNT-1)return EFI_BUFFER_TOO_SMALL;
   EFI_MEMORY_REGION_DESCRIPTOR R={0};UINTN Z=AsciiStrLen(Name);if(Z>=sizeof(R.Name))return EFI_COMPROMISED_DATA;
   CopyMem(R.Name,Name,Z+1);R.Address=B;R.Length=E-B;R.HobOption=AddMem;R.ResourceType=SYS_MEM;R.ResourceAttribute=SYS_MEM_CAP;
-  R.MemoryType=Reserved?EfiReservedMemoryType:EfiLoaderData;R.ArmAttributes=ARM_MEMORY_REGION_ATTRIBUTE_WRITE_BACK_XP;
-  if(Reserved)R.HobOption=HobOnlyNoCacheSetting;
+  R.MemoryType=Type;R.ArmAttributes=ARM_MEMORY_REGION_ATTRIBUTE_WRITE_BACK_XP;
+  if(Type==EfiReservedMemoryType)R.HobOption=HobOnlyNoCacheSetting;
+  if(Type==EfiConventionalMemory){
+    // Keep early DXE allocations in the native heaps. MemoryPeim maps these
+    // pages but emits only a resource HOB, not an allocation HOB.
+    R.ResourceType=MEM_RES;
+    R.ResourceAttribute&=~EFI_RESOURCE_ATTRIBUTE_TESTED;
+  }
   // Merge only newly constructed identical adjacent occupied rows; native
   // descriptors are copied byte-for-byte and never silently rewritten.
   if(C->Count){EFI_MEMORY_REGION_DESCRIPTOR *Last=&C->Rows[C->Count-1];if(!AsciiStrCmp(Last->Name,Name)&&Last->Address+Last->Length==B&&Last->MemoryType==R.MemoryType&&Last->HobOption==R.HobOption&&Last->ArmAttributes==R.ArmAttributes){Last->Length+=R.Length;return EFI_SUCCESS;}}
@@ -69,7 +75,7 @@ EFI_STATUS PianoPlatformMemoryCompose(CONST PIANO_PLATFORM_MEMORY_INPUT *I,PIANO
     CONST PIANO_MEMORY_LAYOUT *L=I->Layout;
     if(L->Reserved||!L->RamCount||L->RamCount>PIANO_MEMORY_LAYOUT_MAX_RAM||L->ReservedCount>PIANO_MEMORY_LAYOUT_MAX_RESERVED)return C->Status=EFI_COMPROMISED_DATA;
     for(UINTN X=0;X<L->RamCount;++X){if(L->Ram[X].Flags||L->Ram[X].Reserved)return C->Status=EFI_COMPROMISED_DATA;S=Add(Dram,&Nd,L->Ram[X].Base,L->Ram[X].Bytes,FALSE,FALSE);if(S!=EFI_SUCCESS)return C->Status=S;}
-    for(UINTN X=0;X<L->ReservedCount;++X){if((L->Fixed[X].Flags&~PIANO_MEMORY_LAYOUT_CMA)||L->Fixed[X].Reserved)return C->Status=EFI_COMPROMISED_DATA;S=Add(Fixed,&Nf,L->Fixed[X].Base,L->Fixed[X].Bytes,(L->Fixed[X].Flags&PIANO_MEMORY_LAYOUT_CMA)!=0,TRUE);if(S!=EFI_SUCCESS)return C->Status=S;}
+    for(UINTN X=0;X<L->ReservedCount;++X){if((L->Fixed[X].Flags>PIANO_MEMORY_LAYOUT_NO_MAP)||L->Fixed[X].Reserved)return C->Status=EFI_COMPROMISED_DATA;S=Add(Fixed,&Nf,L->Fixed[X].Base,L->Fixed[X].Bytes,(L->Fixed[X].Flags&PIANO_MEMORY_LAYOUT_CMA)!=0,TRUE);if(S!=EFI_SUCCESS)return C->Status=S;}
     C->FutureLinuxDynamicConstraints=L->FutureLinuxDynamicConstraints;
   }else{
   INT32 Node;FdtForEachSubnode(Node,I->Fdt,0){INT32 L;CONST CHAR8 *P=FdtGetProp(I->Fdt,Node,"device_type",&L);if(P&&L==7&&!CompareMem(P,"memory",7)){S=Pairs(I->Fdt,Node,Dram,&Nd,FALSE,FALSE);if(S!=EFI_SUCCESS)return C->Status=S;}}
@@ -146,9 +152,12 @@ EFI_STATUS PianoPlatformMemoryCompose(CONST PIANO_PLATFORM_MEMORY_INPUT *I,PIANO
     // The same-boot ABL factory /memory is the RAM authority. SMEM's
     // current-slice list is not a capacity limit on an upgraded board.
     BOOLEAN Hold=Occupied||ReservedHere;
-    S=Row(C,Hold?"Piano_DDR_Reserved":Arena?"Piano_CPU_Arena":Cma?"Piano_Fixed_CMA":"Piano_DDR_Occupied",B,E,Hold);if(S!=EFI_SUCCESS)return C->Status=S;
+    BOOLEAN Free=Cold&&!Unknown&&!Hold&&!Arena&&!Cma;
+    EFI_MEMORY_TYPE Type=Free?EfiConventionalMemory:Hold?EfiReservedMemoryType:EfiLoaderData;
+    S=Row(C,Free?"Piano_DDR":Hold?"Piano_DDR_Reserved":Arena?"Piano_CPU_Arena":Cma?"Piano_Fixed_CMA":"Piano_DDR_Occupied",B,E,Type);if(S!=EFI_SUCCESS)return C->Status=S;
+    if(Free)C->AvailableBytes+=E-B;
     if(Hold)C->RetainedReservedBytes+=E-B;
-    C->AddedOccupiedBytes+=E-B;if(Arena)C->CpuArenaBytes+=E-B;
+    if(!Free)C->AddedOccupiedBytes+=E-B;if(Arena)C->CpuArenaBytes+=E-B;
   }
 #undef POINT
   if(I->CpuArenaBytes&&C->CpuArenaBytes!=I->CpuArenaBytes)return C->Status=EFI_ACCESS_DENIED;

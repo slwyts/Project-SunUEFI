@@ -15,7 +15,7 @@
 STATIC EFI_GUID mFixupGuid=EFI_DT_FIXUP_PROTOCOL_GUID;
 STATIC EFI_HANDLE mFixupHandle;
 STATIC BOOLEAN (*mAlive)(VOID);
-STATIC EFI_STATUS (*mValidateReserved)(CONST VOID *,UINTN);
+STATIC EFI_STATUS (*mReserveMemory)(CONST VOID *,UINTN);
 STATIC EFI_DT_FIXUP_PROTOCOL mFixup;
 STATIC PIANO_DEVICE_TREE_FIXUP_DIAGNOSTIC mDiagnostic={
   .Stage="not-started",.Status=EFI_NOT_STARTED
@@ -84,7 +84,7 @@ STATIC EFI_STATUS EFIAPI Fixup(EFI_DT_FIXUP_PROTOCOL *This,VOID *Tree,UINTN *Buf
 
   if(!mAlive())return FixupResult("alive-before-reservations",EFI_ABORTED);
   if(Flags&EFI_DT_RESERVE_MEMORY){
-    EFI_STATUS Status=mValidateReserved(Tree,FdtTotalSize(Tree));
+    EFI_STATUS Status=mReserveMemory(Tree,FdtTotalSize(Tree));
     if(!mAlive())return FixupResult("alive-after-reservations",EFI_ABORTED);
     if(Status!=EFI_SUCCESS)return FixupResult("reservations",Status);
   }
@@ -95,14 +95,14 @@ STATIC EFI_STATUS EFIAPI Fixup(EFI_DT_FIXUP_PROTOCOL *This,VOID *Tree,UINTN *Buf
   return FixupResult("ready",EFI_SUCCESS);
 }
 
-EFI_STATUS PianoDeviceTreeFixupInstall(BOOLEAN (*Alive)(VOID),EFI_STATUS (*ValidateReserved)(CONST VOID *,UINTN)){
-  if(!Alive||!ValidateReserved)return EFI_INVALID_PARAMETER;
+EFI_STATUS PianoDeviceTreeFixupInstall(BOOLEAN (*Alive)(VOID),EFI_STATUS (*ReserveMemory)(CONST VOID *,UINTN)){
+  if(!Alive||!ReserveMemory)return EFI_INVALID_PARAMETER;
   if(mFixupHandle)return EFI_ALREADY_STARTED;
   if(!Alive()||!gBS||!gBS->RaiseTPL||!gBS->RestoreTPL||!gBS->LocateProtocol||!gBS->InstallProtocolInterface||!gBS->InstallConfigurationTable)return EFI_NOT_READY;
   VOID *Existing=NULL;EFI_STATUS Status=gBS->LocateProtocol(&mFixupGuid,NULL,&Existing);
   if(!Alive())return EFI_ABORTED;
   if(Status!=EFI_NOT_FOUND)return Status==EFI_SUCCESS?EFI_ALREADY_STARTED:Status;
-  mAlive=Alive;mValidateReserved=ValidateReserved;
+  mAlive=Alive;mReserveMemory=ReserveMemory;
   mFixup=(EFI_DT_FIXUP_PROTOCOL){EFI_DT_FIXUP_PROTOCOL_REVISION,Fixup};
   return gBS->InstallProtocolInterface(&mFixupHandle,&mFixupGuid,EFI_NATIVE_INTERFACE,&mFixup);
 }

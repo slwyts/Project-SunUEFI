@@ -5,6 +5,7 @@
 #define PIANO_MEMORY_LAYOUT_MAX_RESERVED 96U
 #define PIANO_MEMORY_LAYOUT_MAX_DDR_REGIONS 8U
 #define PIANO_MEMORY_LAYOUT_CMA 1U
+#define PIANO_MEMORY_LAYOUT_NO_MAP 2U
 // Frozen, page-aligned physical intervals. Dynamic reserved-memory requests
 // have no physical placement until Linux allocates them after ExitBootServices.
 typedef struct {UINT64 Base,Bytes;UINT32 Flags,Reserved;} PIANO_MEMORY_SPAN;

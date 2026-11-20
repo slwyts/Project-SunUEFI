@@ -33,8 +33,9 @@ VOID PianoProductMemoryGetDiagnostic(PIANO_PRODUCT_MEMORY_DIAGNOSTIC *Report);
 // Replay the latest saved live-map check; no fresh map, CPU or table reads.
 VOID PianoProductMemoryReemitDiagnostic(VOID);
 
-// Check the cold producer's map against the live EFI allocation ledger. These
-// functions allocate no pages and never convert or release occupied memory.
+// Make the verified additional RAM available after the native drivers start.
+EFI_STATUS PianoProductMemoryPublish(VOID);
+// Validation of an installed loader or EBS never allocates or frees pages.
 EFI_STATUS PianoProductMemoryCheck(VOID *Context,PIANO_LINUX_MEMORY_PROOF *Proof);
 EFI_STATUS PianoProductMemoryValidate(VOID *Context,CONST PIANO_LINUX_MEMORY_PROOF *Proof);
 // A direct-entry EFI loader may reuse its handle for a copied embedded kernel.
@@ -43,6 +44,8 @@ EFI_STATUS PianoProductMemoryValidateCode(CONST VOID *Base,UINT64 Bytes);
 // The final Linux tree must describe RAM/reservations compatible with the map
 // admitted before the first MemoryPeim, including FDT reserve-map entries.
 EFI_STATUS PianoProductMemoryValidateDtb(CONST VOID *Tree,UINTN Bytes);
+// EFI_DT_RESERVE_MEMORY also claims any newly requested, still-free pages.
+EFI_STATUS PianoProductMemoryReserveDtb(CONST VOID *Tree,UINTN Bytes);
 // Replace only RAM and DDR metadata with the frozen same-boot ABL values.
 // Device bindings and Linux CMA requests remain in the distribution's DTB.
 EFI_STATUS PianoProductMemoryApplyDtb(VOID *Tree,UINTN Capacity);
