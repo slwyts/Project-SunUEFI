@@ -13,6 +13,18 @@ import build_steamos_rootfs as builder
 from build import overlay_packages
 
 
+class SteamOSBuildRootTests(unittest.TestCase):
+    def test_checks_target_before_compiling_any_overlays(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'etc').mkdir()
+            (root / 'etc/os-release').write_text('ID=archarm\n')
+            with patch.object(builder, 'kde_recipes') as packages, \
+                    self.assertRaisesRegex(ValueError, 'Valve pacman build root'):
+                builder.build_overlays(root, root / 'out', root / 'sources', {})
+            packages.assert_not_called()
+
+
 class SteamOSWebRTCTests(unittest.TestCase):
     def test_build_checks_the_abi_and_reuses_the_exact_release(self):
         config = json.loads((ROOT / 'config/steamos.json').read_text())['webrtc_audio_processing']

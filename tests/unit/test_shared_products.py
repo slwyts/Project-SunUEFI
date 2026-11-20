@@ -67,9 +67,10 @@ class SharedProductsTests(unittest.TestCase):
                 shared.run('firmware', verify_only=True, root=self.root)
             command.assert_not_called()
 
-    def test_firmware_key_ignores_host_checks_and_rootfs_assembly_but_binds_firmware_tools(self):
+    def test_firmware_key_only_uses_relevant_build_tools(self):
         self.git('init', '-q')
         not_inputs = ('tools/check_host.py', 'tools/build/check_patch_series.py',
+                      'tools/repo/products.py', 'tools/repo/publish.py',
                       'tools/package/85-piano-boot-space.install', 'tools/package/boot.py',
                       'tools/package/camera.py', 'tools/build_release_rootfs.py',
                       'tools/build_nyarch_rootfs.py', 'tools/build_steamos_rootfs.py')

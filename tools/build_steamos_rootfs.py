@@ -375,6 +375,10 @@ done
 
 
 def build_overlays(root, output, source, steamos_config):
+    from desktop.libcamera_arch import build_target
+
+    if build_target(root) != 'steamos':
+        raise ValueError('SteamOS overlays require the Valve pacman build root')
     outputs = {}
     for name in kde_recipes(output / 'kde-recipes', root):
         if kde_repository_package_works(root, name):
