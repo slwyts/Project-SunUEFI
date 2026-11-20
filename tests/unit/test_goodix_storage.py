@@ -76,6 +76,10 @@ class GoodixStorageTests(unittest.TestCase):
     def test_failed_partial_registration_waits_for_its_remote_callback(self):
         self.check_files('listeners-partial')
 
+    def test_missing_release_notification_closes_the_context_without_hanging(self):
+        result = self.check_files('listeners-timeout')
+        self.assertIn('Waiting for QTEE storage listeners to close failed', result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()

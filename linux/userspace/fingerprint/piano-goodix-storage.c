@@ -19,6 +19,7 @@
 #include <sys/file.h>
 #include <sys/random.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "piano-goodix-tee.h"
@@ -871,6 +872,9 @@ unsigned int goodix_storage_rpmb_probe_requests(struct goodix_storage *storage)
 
 void goodix_storage_close(struct goodix_storage *storage)
 {
+	struct timespec deadline;
+	int error = 0;
+
 	if (!storage)
 		return;
 	pthread_mutex_lock(&storage->mutex);
@@ -885,17 +889,29 @@ void goodix_storage_close(struct goodix_storage *storage)
 	pthread_mutex_unlock(&storage->mutex);
 	for (size_t i = 0; i < LISTENER_COUNT; i++)
 		Object_RELEASE_IF(storage->listeners[i].registration);
-	Object_RELEASE_IF(storage->root);
 
-	/* Close the context after listener release, with no secure call active.
-	 * The joined callback worker and closed context cannot access files again.
-	 * Remaining local memory objects still hold their kernel shared-memory fd;
-	 * secure-world references independently protect their pages.
+	/* TEE_IOC_OBJECT_INVOKE only queues the remote release. Keep receiving
+	 * callbacks until QTEE drops the listeners. Closing the context first
+	 * drops local references without waiting for remote deregistration.
+	 * The kernel can lose a release notification, so bound the wait before
+	 * closing the context and draining its remaining local references.
 	 */
-	pthread_mutex_lock(&storage->mutex);
-	while (atomic_load(&storage->references) != 1)
-		pthread_cond_wait(&storage->released, &storage->mutex);
-	pthread_mutex_unlock(&storage->mutex);
+	if (clock_gettime(CLOCK_MONOTONIC, &deadline)) {
+		error = errno;
+	} else {
+		deadline.tv_sec += 2;
+		pthread_mutex_lock(&storage->mutex);
+		while (!error && atomic_load(&storage->references) != 1)
+			error = pthread_cond_clockwait(&storage->released, &storage->mutex,
+						       CLOCK_MONOTONIC, &deadline);
+		if (error == ETIMEDOUT && atomic_load(&storage->references) == 1)
+			error = 0;
+		pthread_mutex_unlock(&storage->mutex);
+	}
+	if (error)
+		fprintf(stderr, "Waiting for QTEE storage listeners to close failed: %s\n",
+			strerror(error));
+	Object_RELEASE_IF(storage->root);
 	Object callback = {storage_invoke, (ObjectCxt)&storage->listeners[0]};
 	Object_release(callback);
 }

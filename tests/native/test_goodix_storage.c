@@ -563,6 +563,28 @@ struct listener_release {
 	unsigned int total;
 };
 
+struct listener_context {
+	struct goodix_storage *storage;
+	unsigned int pending;
+	int closed;
+};
+
+static int32_t listener_context_release(ObjectCxt context, ObjectOp operation,
+					ObjectArg *args, ObjectCounts counts)
+{
+	struct listener_context *root = context;
+	(void)args;
+	assert(operation == Object_OP_release && counts == 0);
+	assert(atomic_load(&root->storage->references) == 1 + root->pending);
+	/* Simulate the transport draining callbacks that QTEE never returned. */
+	for (size_t i = 0; i < root->pending; i++) {
+		Object callback = {storage_invoke, &root->storage->listeners[i]};
+		Object_release(callback);
+	}
+	root->closed = 1;
+	return Object_OK;
+}
+
 static int32_t registration_release(ObjectCxt context, ObjectOp operation,
 				    ObjectArg *args, ObjectCounts counts)
 {
@@ -613,16 +635,20 @@ static void *close_storage(void *context)
 	return NULL;
 }
 
-static void listener_lifetime(int directory, unsigned int registered)
+static void listener_lifetime(int directory, unsigned int registered, int drop_notifications)
 {
 	struct goodix_storage *storage = calloc(1, sizeof(*storage));
 	struct listener_release releases[LISTENER_COUNT];
+	struct listener_context root = {
+		.storage = storage, .pending = drop_notifications ? registered : 0,
+	};
 	int registrations = 0, memories = 0;
 
 	assert(storage);
 	atomic_init(&storage->references, 1);
 	assert(!pthread_mutex_init(&storage->mutex, NULL));
 	assert(!pthread_cond_init(&storage->released, NULL));
+	storage->root = (Object){listener_context_release, &root};
 	assert(!mkdirat(directory, "listeners", 0700));
 	storage->directory = openat(directory, "listeners", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
 	assert(storage->directory >= 0);
@@ -722,7 +748,7 @@ static void listener_lifetime(int directory, unsigned int registered)
 		for (size_t j = 0; j < listener->size; ++j)
 			assert(((uint8_t *)listener->shared)[j] == 0xa5);
 	}
-	for (size_t i = 0; i < registered; ++i) {
+	for (size_t i = 0; !drop_notifications && i < registered; ++i) {
 		Object callback = {storage_invoke, &storage->listeners[i]};
 		Object_release(callback);
 		if (i + 1 < registered) {
@@ -732,7 +758,7 @@ static void listener_lifetime(int directory, unsigned int registered)
 	}
 	assert(!sem_wait(&close_finished));
 	assert(!pthread_join(close_thread, NULL));
-	assert(memories == (int)registered);
+	assert(root.closed && memories == (int)registered);
 	assert(!sem_destroy(&callback_in_fsync) && !sem_destroy(&callback_continue));
 	assert(!sem_destroy(&close_started) && !sem_destroy(&close_finished));
 	assert(!sem_destroy(&registrations_released));
@@ -764,9 +790,11 @@ int main(int argc, char **argv)
 	else if (!strcmp(argv[1], "rpmb-failures"))
 		rpmb_transfer_failures(&storage);
 	else if (!strcmp(argv[1], "listeners"))
-		listener_lifetime(storage.directory, LISTENER_COUNT);
+		listener_lifetime(storage.directory, LISTENER_COUNT, 0);
 	else if (!strcmp(argv[1], "listeners-partial"))
-		listener_lifetime(storage.directory, 1);
+		listener_lifetime(storage.directory, 1, 0);
+	else if (!strcmp(argv[1], "listeners-timeout"))
+		listener_lifetime(storage.directory, 1, 1);
 	else {
 		assert(!strcmp(argv[1], "handles"));
 		fs_handles(&storage, argv[2]);
