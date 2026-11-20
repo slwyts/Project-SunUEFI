@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "59fb15193101201d1afa121e32ced4897cf13c4d",
-  "original_target_commit": "514035ab6afa2c5f0f3899c3b0891ec967a116c1",
+  "target_tree": "e7dacac71c0672d84cf44c2c5be91bf3d288a161",
+  "original_target_commit": "bf45313cd6247c1d18606ad70b302fa4b134fb04",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -1828,11 +1828,11 @@
     },
     {
       "file": "0141-LOCAL-media-camss-serialize-buffer-completion.patch",
-      "sha256": "d18b5e86644b89974953e6e37a2c06a7abcdab3836eac35575cc4ea1bc0ab7c9",
-      "original_commit": "50fc1f8d89046bddc8a3329f0553c1e5914a449e",
+      "sha256": "d23e708331146b7f6e849f3961285e1ef9d03ee63b0b30f01a17c8df981723cd",
+      "original_commit": "c28ec4adf224dbc85de90e5a948116273f1f3ddb",
       "original_parent": "5de91b740523b7c62259df526c79fe965af8de12",
       "committer_date": "2026-11-20T04:10:27+08:00",
-      "tree": "45ec31cae0f558e240ce91e3579041ad0424d39b",
+      "tree": "ace54938280ee830265453f3259a672dd291026b",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1841,11 +1841,11 @@
     },
     {
       "file": "0142-LOCAL-media-s5kjn1-group-exposure-and-gain.patch",
-      "sha256": "73404143aaa27c71b375449c8b7b84f83263f1228fa8d221a4360e058d29ea67",
-      "original_commit": "0df890e5f841ac382b3accad1eb40814647ba7e4",
-      "original_parent": "50fc1f8d89046bddc8a3329f0553c1e5914a449e",
+      "sha256": "cd122f41ee2c39841862730c2566bacd0694cf882b90cd845375bfc9e562e9ec",
+      "original_commit": "151ba556feccf102a52872e417d672fd99aab56c",
+      "original_parent": "c28ec4adf224dbc85de90e5a948116273f1f3ddb",
       "committer_date": "2026-11-20T13:20:29+08:00",
-      "tree": "cc5e6adc5625e34a4ae4883f5702529a5821d115",
+      "tree": "f816540ae119a53a873813dde8687d92dd9ab7d9",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1854,11 +1854,11 @@
     },
     {
       "file": "0143-LOCAL-media-camss-release-csid-parent-on-power-error.patch",
-      "sha256": "8f8b4196db1b03f955b3393b36f40634c297e34e9a32a8497b55e29449197498",
-      "original_commit": "c98a636d19dc8f0e8758238768465ac335de4cc4",
-      "original_parent": "0df890e5f841ac382b3accad1eb40814647ba7e4",
+      "sha256": "b08d8d3bfbcc2156bf1d980d3e728c830bd6d75e62996393be15ae8e9c6c3b2c",
+      "original_commit": "03536e49c4d00954bbe667995c4a5f5f2ae84d46",
+      "original_parent": "151ba556feccf102a52872e417d672fd99aab56c",
       "committer_date": "2026-11-20T13:42:29+08:00",
-      "tree": "cec66833c62af184c3c05ba8a3a3f6efd9380c0c",
+      "tree": "01cc66303214b702fc059c7f3e39869cb06e46eb",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/torvalds/linux/commit/c5af8db84c01585e077019d5fd384c57a9fcad2f",
@@ -1867,11 +1867,11 @@
     },
     {
       "file": "0144-LOCAL-media-v4l2-flash-preserve-torch-intensity.patch",
-      "sha256": "0a4720c1926ffbea4c73098d403dfe00774326bafdcb82509bfab79fec6366a0",
-      "original_commit": "514035ab6afa2c5f0f3899c3b0891ec967a116c1",
-      "original_parent": "c98a636d19dc8f0e8758238768465ac335de4cc4",
+      "sha256": "d8ac29af53f652c116be99ba36cdd87aacd773b64dd9ac0dba8a1824c0a13ba7",
+      "original_commit": "bf45313cd6247c1d18606ad70b302fa4b134fb04",
+      "original_parent": "03536e49c4d00954bbe667995c4a5f5f2ae84d46",
       "committer_date": "2026-11-20T14:30:34+08:00",
-      "tree": "59fb15193101201d1afa121e32ced4897cf13c4d",
+      "tree": "e7dacac71c0672d84cf44c2c5be91bf3d288a161",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/torvalds/linux/commit/42bd6f59ae90244484746696aabcafc0003f59c7",

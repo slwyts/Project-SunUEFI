@@ -1,4 +1,4 @@
-From 50fc1f8d89046bddc8a3329f0553c1e5914a449e Mon Sep 17 00:00:00 2001
+From c28ec4adf224dbc85de90e5a948116273f1f3ddb Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Fri, 20 Nov 2026 04:10:27 +0800
 Subject: media: camss: Serialize buffer completion with stream-off
@@ -16,16 +16,16 @@ Assisted-by: LLM
 
 Wait for the whole SM8750 pipeline to start before handing capture buffers to DMA.
 ---
- .../platform/qcom/camss/camss-csid-980.c      |  76 ++++++-----
+ .../platform/qcom/camss/camss-csid-980.c      |  76 +++++------
  .../media/platform/qcom/camss/camss-csid.c    |   2 +-
  .../media/platform/qcom/camss/camss-csid.h    |   3 +
  .../media/platform/qcom/camss/camss-vfe-17x.c |   7 +-
  .../platform/qcom/camss/camss-vfe-gen4.c      |   2 +
- drivers/media/platform/qcom/camss/camss-vfe.c | 120 +++++++++++++-----
+ drivers/media/platform/qcom/camss/camss-vfe.c | 124 +++++++++++++-----
  drivers/media/platform/qcom/camss/camss-vfe.h |   1 +
  .../media/platform/qcom/camss/camss-video.c   |   6 +
  .../media/platform/qcom/camss/camss-video.h   |   1 +
- 9 files changed, 144 insertions(+), 74 deletions(-)
+ 9 files changed, 146 insertions(+), 76 deletions(-)
 
 diff --git a/drivers/media/platform/qcom/camss/camss-csid-980.c b/drivers/media/platform/qcom/camss/camss-csid-980.c
 index 47f514130f58361b44e491f1a1c0b394a7b885b9..0b573698818d3bbd9e06ee24f808ef339e389fe1 100644
@@ -227,7 +227,7 @@ index 3cc899d29920f343c4a05acd73baf20f51e49452..5f9d050396cce97138a131fc3e33c465
  
  static void vfe_global_reset(struct vfe_device *vfe)
 diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
-index f546f2d35ae166401bad2ebd15899a226d2966c0..c59d9814917381e118be4040ee1d17e2b526dcf0 100644
+index f546f2d35ae166401bad2ebd15899a226d2966c0..e545a741f003e38997434f186fcb4fb168844405 100644
 --- a/drivers/media/platform/qcom/camss/camss-vfe.c
 +++ b/drivers/media/platform/qcom/camss/camss-vfe.c
 @@ -648,6 +648,8 @@ void vfe_buf_done(struct vfe_device *vfe, int wm)
@@ -423,18 +423,36 @@ index f546f2d35ae166401bad2ebd15899a226d2966c0..c59d9814917381e118be4040ee1d17e2
 -		vb2_buffer_done(&output->buf[0]->vb.vb2_buf, state);
 +	for (i = 0; i < ARRAY_SIZE(output->buf); i++) {
 +		struct camss_buffer *buffer = output->buf[i];
++
++		if (!buffer)
++			continue;
  
 -	if (output->buf[1])
 -		vb2_buffer_done(&output->buf[1]->vb.vb2_buf, state);
-+		if (!buffer)
-+			continue;
-+
 +		output->buf[i] = NULL;
 +		vb2_buffer_done(&buffer->vb.vb2_buf, state);
 +	}
  
  	if (output->last_buffer) {
  		vb2_buffer_done(&output->last_buffer->vb.vb2_buf, state);
+@@ -2095,6 +2153,8 @@ int msm_vfe_subdev_init(struct camss *camss, struct vfe_device *vfe,
+ 	if (!res->vfe.line_num)
+ 		return -EINVAL;
+ 
++	vfe->camss = camss;
++	vfe->id = id;
+ 	vfe->res = &res->vfe;
+ 	vfe->res->hw_ops->subdev_init(dev, vfe);
+ 
+@@ -2147,8 +2207,6 @@ int msm_vfe_subdev_init(struct camss *camss, struct vfe_device *vfe,
+ 	 * Its zero active-line mask prevents MMIO until clocked WM start.
+ 	 */
+ 	spin_lock_init(&vfe->output_lock);
+-	vfe->camss = camss;
+-	vfe->id = id;
+ 	vfe->bus_active_lines = 0;
+ 
+ 	/* Interrupt */
 diff --git a/drivers/media/platform/qcom/camss/camss-vfe.h b/drivers/media/platform/qcom/camss/camss-vfe.h
 index 8399037849702add115e77788b12c7db4a916fbf..cd1b5eede50d01c32b15dcba7f7bcfc90935328c 100644
 --- a/drivers/media/platform/qcom/camss/camss-vfe.h
