@@ -2,6 +2,7 @@
 import io
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -10,6 +11,44 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 from desktop import build_libcamera_packages, build_pipewire_packages as builder, libcamera_arch, pipewire_arch
+
+
+@unittest.skipUnless(all(shutil.which(tool) for tool in ('cc', 'dpkg-deb', 'readelf')),
+                     'Debian package and ELF tools required')
+class DebianPipeWirePackagesTests(unittest.TestCase):
+    def test_checks_the_built_camera_plugin_soname(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / 'package'
+            control = package / 'DEBIAN/control'
+            control.parent.mkdir(parents=True)
+            control.write_text('Package: libspa-0.2-libcamera\nVersion: 1\nArchitecture: arm64\n'
+                               'Maintainer: Test <test@example.invalid>\nDepends: libcamera0.8 (>= 0.8.0)\n'
+                               'Description: PipeWire camera plugin fixture\n')
+            plugin = package / 'usr/lib/aarch64-linux-gnu/spa-0.2/libcamera/libspa-libcamera.so'
+            plugin.parent.mkdir(parents=True)
+            runtime = root / 'runtime'
+            runtime.mkdir()
+            archive = runtime / 'libspa-0.2-libcamera_1_arm64.deb'
+            record = {'packages': {'libspa-0.2-libcamera': {'file': archive.name}}}
+
+            for abi in ('0.8', '0.7'):
+                with self.subTest(abi=abi):
+                    library = root / f'libcamera.so.{abi}'
+                    subprocess.run(['cc', '-shared', '-fPIC', f'-Wl,-soname,{library.name}',
+                                    '-x', 'c', '-o', library, '-'],
+                                   input='int camera(void) { return 0; }\n', text=True, check=True)
+                    subprocess.run(['cc', '-shared', '-fPIC', '-x', 'c', '-',
+                                    '-x', 'none', library, '-o', plugin],
+                                   input='int camera(void); int source(void) { return camera(); }\n',
+                                   text=True, check=True)
+                    subprocess.run(['dpkg-deb', '--build', '--root-owner-group', package, archive],
+                                   check=True, capture_output=True)
+                    if abi == '0.8':
+                        builder.verify_libcamera_plugin(root, record, 'libcamera0.8')
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'links a different libcamera ABI'):
+                            builder.verify_libcamera_plugin(root, record, 'libcamera0.8')
 
 
 @unittest.skipUnless(shutil.which('bsdtar'), 'Package metadata inspection needs bsdtar')
