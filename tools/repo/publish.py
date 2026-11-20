@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 REPOSITORIES = ('apt', 'sunuefi', 'sunuefi-steamos')
 APT_INDEXES = ('main/binary-arm64/Packages', 'main/binary-arm64/Packages.gz')
 APT_INDEX_HASHES = ('SHA512', 'SHA256')
-PACMAN_INDEX_REPLACEMENTS = {'libpipewire': 'pipewire-v4l2-source'}
+PACMAN_V4L2_OWNERS = {'sunuefi': 'libpipewire', 'sunuefi-steamos': 'pipewire'}
 KERNEL_META_VERSION = re.compile(
     r'([0-9]+\.[0-9]+\.[0-9]+(?:~?rc[0-9]+)?)'
     r'\+([0-9]+)\.[0-9]+\.([0-9a-f]{12}(?:\.[0-9a-f]{12})?)-[1-9][0-9]*')
@@ -233,6 +233,8 @@ def pacman_has_relation(record, field, name):
 def pacman_metadata(database):
     # The builder's Python tarfile cannot read this zstd archive directly.
     data = run('bsdtar', '-cf', '-', '@' + str(database), capture_output=True).stdout
+    owner = PACMAN_V4L2_OWNERS.get(database.name.split('.', 1)[0])
+    legacy = 'pipewire-v4l2-source'
     selected, retired = {}, set()
     with tarfile.open(fileobj=io.BytesIO(data), mode='r:') as archive:
         for member in archive:
@@ -251,9 +253,8 @@ def pacman_metadata(database):
             if name in selected:
                 raise ValueError(f'{database.name}: multiple entries for {name}')
             selected[name] = (version, filename, digest)
-            legacy = PACMAN_INDEX_REPLACEMENTS.get(name)
-            if legacy and all(pacman_has_relation(record, field, legacy)
-                              for field in ('REPLACES', 'CONFLICTS')):
+            if name == owner and all(pacman_has_relation(record, field, legacy)
+                                     for field in ('REPLACES', 'CONFLICTS')):
                 retired.add(legacy)
     return selected, retired & selected.keys()
 

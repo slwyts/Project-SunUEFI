@@ -162,6 +162,16 @@ class RepoPublishTests(unittest.TestCase):
         self.assertEqual(self.store.objects[prefix + 'by-hash/SHA256/' +
                                            hashlib.sha256(old_index).hexdigest()], old_index)
         self.assertEqual(self.store.objects[overlay_prefix + overlay + '.db'], overlay_index)
+        server = self.pacman('3', 'pipewire', replaces=('pipewire-v4l2-source',),
+                             conflicts=('pipewire-v4l2-source',))
+        scoped_base = self.store.objects[prefix + base + '.db']
+        valve = self.args(overlay, [server], 'valve-native')
+        repo.publish(valve, self.store)
+        for suffix in ('.db', '.files'):
+            entries, _ = repo.pacman_metadata(valve.output / (overlay + suffix))
+            self.assertEqual(set(entries), {'pipewire'})
+        self.assertEqual(self.store.objects[overlay_prefix + plugin.name], plugin.read_bytes())
+        self.assertEqual(self.store.objects[prefix + base + '.db'], scoped_base)
 
     @unittest.skipUnless(shutil.which('repo-add') and shutil.which('bsdtar'), 'pacman tools required')
     def test_product_rejects_older_pacman_version_before_updating_any_index(self):
