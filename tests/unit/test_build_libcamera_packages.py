@@ -8,6 +8,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
@@ -83,14 +84,30 @@ class LibcameraPackageTests(unittest.TestCase):
             release = root / 'etc/os-release'
             release.parent.mkdir()
             for text, target in (('ID=archarm\n', 'arch'), ('ID=archlinuxarm\n', 'arch'),
-                                 ('ID=steamos\n', 'steamos'),
-                                 ('ID="arch"\nSUNUEFI_BASE_CODENAME="holo"\n', 'steamos')):
+                                 ('ID=steamos\n', 'steamos')):
                 with self.subTest(text=text):
                     release.write_text(text)
                     self.assertEqual(libcamera_arch.build_target(root), target)
             release.write_text('ID=arch\n')
             with self.assertRaisesRegex(ValueError, 'Arch Linux ARM or SteamOS'):
                 libcamera_arch.build_target(root)
+
+    def test_valve_filesystem_upgrade_keeps_the_valve_pacman_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            etc, vendor = root / 'etc', root / 'usr/lib'
+            etc.mkdir()
+            (vendor / 'holo/pacmandb/local').mkdir(parents=True)
+            (etc / 'os-release').symlink_to('/usr/lib/os-release')
+            (vendor / 'os-release').write_text('NAME="Arch Linux"\nID=arch\n')
+            with patch.object(libcamera_arch.subprocess, 'check_output',
+                              return_value='/usr/lib/holo/pacmandb/\n') as configured:
+                self.assertEqual(libcamera_arch.build_target(root), 'steamos')
+            configured.assert_called_once_with(['chroot', root, 'pacman-conf', 'DBPath'], text=True)
+            with patch.object(libcamera_arch.subprocess, 'check_output',
+                              return_value='/var/lib/pacman/\n'):
+                with self.assertRaisesRegex(ValueError, 'Arch Linux ARM or SteamOS'):
+                    libcamera_arch.build_target(root)
 
     def test_steamos_tools_require_the_build_qt_minor(self):
         name, version, abi = 'libcamera-tools', '0.8.0-1.1', '0.8'

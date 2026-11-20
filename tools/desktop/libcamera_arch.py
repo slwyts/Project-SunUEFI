@@ -22,6 +22,7 @@ STEAMOS_PACKAGES = frozenset(('libcamera', 'libcamera-ipa', 'libcamera-tools',
 PACKAGES = STEAMOS_PACKAGES | {'libcamera-docs'}
 RUNTIME_INPUTS = ('libcamera', 'libcamera-ipa')
 PYTHON_FIX = 'libcamera-fix-python3.14-macro-redefinition.patch'
+VALVE_DB_PATH = '/usr/lib/holo/pacmandb'
 
 
 def build_target(root):
@@ -29,11 +30,18 @@ def build_target(root):
                guest_resolve(root, '/etc/os-release').read_text().splitlines()
                for key, sep, value in (line.partition('='),) if sep}
     distro = release.get('ID')
+    if distro == 'steamos':
+        return 'steamos'
+    if (distro in ('arch', 'archarm', 'archlinuxarm') and
+            guest_resolve(root, VALVE_DB_PATH + '/local').is_dir()):
+        # Valve's filesystem update can replace os-release with Arch's file
+        # while the system still uses Valve's pacman database and libraries.
+        database = subprocess.check_output(
+            ['chroot', root, 'pacman-conf', 'DBPath'], text=True).strip()
+        if database.rstrip('/') == VALVE_DB_PATH:
+            return 'steamos'
     if distro in ('archarm', 'archlinuxarm'):
         return 'arch'
-    if distro == 'steamos' or (distro == 'arch' and 'holo' in
-                              (release.get('VERSION_CODENAME'), release.get('SUNUEFI_BASE_CODENAME'))):
-        return 'steamos'
     raise ValueError('Use an Arch Linux ARM or SteamOS build root')
 
 
