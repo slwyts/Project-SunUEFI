@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "versions": [
+    "51.0"
+  ],
+  "patches": [
+    {
+      "file": "0001-users-wait-for-verification-before-enrolling.patch",
+      "sha256": "77c25d89c145dcbfcda69e7dea9ce981c2d7a76044c90cf5b640f699e9211bd0",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://gitlab.gnome.org/GNOME/gnome-control-center/-/commit/44926f54b5427f8c16d8fe0a30e95d1d4384c34b",
+        "drop_when": "GNOME Settings waits for fprintd to stop verification before starting another enrollment."
+      }
+    }
+  ]
+}
