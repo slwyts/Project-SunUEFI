@@ -286,12 +286,18 @@ EFI_STATUS PianoStartBootOption(EFI_HANDLE Parent,EFI_HANDLE *Device,
   if(Status==EFI_SUCCESS) {
     // Persist deletion before loading the once-only target, even if it hangs.
     Status=gRT->SetVariable(L"BootNext",&gEfiGlobalVariableGuid,0,0,NULL);
-    if(Status!=EFI_SUCCESS)return mOptionStatus=Status;
-    Status=PianoNvFileSave(FALSE);
-    if(Status!=EFI_SUCCESS && Status!=EFI_NOT_STARTED)return mOptionStatus=Status;
-    Status=RunNumber(Parent,Next,Device,Application,Dispatch,&Attempts);
-    TriedNext=TRUE;
-    if(!Attempts.TryNext)return mOptionStatus=Status;
+    if(Status==EFI_SUCCESS){
+      Status=PianoNvFileSave(FALSE);
+      if(Status==EFI_SUCCESS || Status==EFI_NOT_STARTED){
+        Status=RunNumber(Parent,Next,Device,Application,Dispatch,&Attempts);
+        TriedNext=TRUE;
+        if(!Attempts.TryNext)return mOptionStatus=Status;
+      }else if(!PianoNvFileSaveOptionalError(Status)){
+        return mOptionStatus=Status;
+      }
+    }
+    if(!TriedNext)
+      DEBUG((DEBUG_WARN,"PIANO_BOOT_NEXT_DEFERRED number=%04x status=%r\n",Next,Status));
   }
   UINTN Count=0;
   EFI_BOOT_MANAGER_LOAD_OPTION *Options=EfiBootManagerGetLoadOptions(&Count,LoadOptionTypeBoot);

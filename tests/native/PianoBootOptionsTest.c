@@ -346,6 +346,13 @@ STATIC VOID TestBootNextPersistence(VOID){
   Dispatch.Selection=PianoBootAutomatic;
   assert(PianoStartBootOption((VOID *)1,&Device,&App,&Dispatch)==EFI_LOAD_ERROR);
   assert(!HasNext&&NextDeletes==1&&NextSaves==1&&Loads==1&&Order[0]==3);
+
+  CONST EFI_STATUS OptionalSaveErrors[]={EFI_VOLUME_FULL,EFI_OUT_OF_RESOURCES,EFI_WRITE_PROTECTED};
+  for(UINTN I=0;I<ARRAY_SIZE(OptionalSaveErrors);++I){
+    Reset();memset(&App,0,sizeof(App));HasNext=TRUE;SaveStatus=OptionalSaveErrors[I];ImageStatus[2]=EFI_SUCCESS;
+    assert(PianoStartBootOption((VOID *)1,&Device,&App,&Dispatch)==EFI_SUCCESS);
+    assert(!HasNext&&NextDeletes==1&&NextSaves==1&&Loads==2&&Order[0]==1&&Order[1]==2);
+  }
 }
 int main(void){
   PIANO_FV_APPLICATION App;EFI_HANDLE Device;

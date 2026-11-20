@@ -15,7 +15,7 @@ class RuntimeNvGuardTests(unittest.TestCase):
   dxe=path.with_name('VariableDxe.c');dxe.write_bytes(subprocess.check_output(['git','-C',str(ROOT/guard.BASE),'show','HEAD:'+str(Path(relative).with_name('VariableDxe.c'))]))
   header=root/'uefi/components/nv/Include/Protocol/PianoNvFile.h';header.parent.mkdir(parents=True);header.write_bytes((ROOT/'uefi/components/nv/Include/Protocol/PianoNvFile.h').read_bytes())
   return path
- def compile_and_run(self, text):
+ def compile_and_run(self, text, *options):
   with tempfile.TemporaryDirectory(prefix='nv-guard-') as directory:
    source=Path(directory)/'guard.c'
    exe=source.with_suffix('')
@@ -23,7 +23,7 @@ class RuntimeNvGuardTests(unittest.TestCase):
    subprocess.run(['cc','-std=gnu11','-fshort-wchar','-Wall','-Wextra','-Werror',
                    '-Wno-unused-parameter','-I'+str(INC),'-I'+str(INC/HOST_PROCESSOR_BIND),
                    '-I'+str(INC.parents[1]/'MdeModulePkg/Include'),
-                   str(source),'-o',str(exe)],check=True)
+                   *options,str(source),'-o',str(exe)],check=True)
    subprocess.run([str(exe)],check=True)
  def test_exact_standard_entry_before_store_or_arguments(self):
   with tempfile.TemporaryDirectory()as d:
@@ -53,6 +53,70 @@ int main(void){
   return 0;
 }
 ''')
+ def test_file_snapshot_failures_freeze_only_when_safe(self):
+  nv=ROOT/'uefi/components/nv'
+  self.compile_and_run('''#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#undef NULL
+#define MDEPKG_NDEBUG
+#include "'''+str(nv/'PianoNvFile.c')+'''"
+EFI_GUID gEfiFileInfoGuid;
+static EFI_STATUS OpenStatus;
+static UINTN Opens;
+VOID *EFIAPI AllocateZeroPool(UINTN Bytes){return calloc(1,Bytes);}
+VOID *EFIAPI AllocatePool(UINTN Bytes){return malloc(Bytes);}
+VOID EFIAPI FreePool(VOID *Buffer){free(Buffer);}
+VOID *EFIAPI CopyMem(VOID *Dst,CONST VOID *Src,UINTN Bytes){return memcpy(Dst,Src,Bytes);}
+VOID *EFIAPI ZeroMem(VOID *Dst,UINTN Bytes){return memset(Dst,0,Bytes);}
+INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN Bytes){return memcmp(A,B,Bytes);}
+UINTN EFIAPI StrSize(CONST CHAR16 *Name){assert(FALSE);return 0;}
+UINT32 PianoGptCrc32(CONST VOID *Data,UINTN Bytes){return 0;}
+static EFI_STATUS EFIAPI Next(UINTN *Bytes,CHAR16 *Name,EFI_GUID *Guid){
+  return EFI_NOT_FOUND;
+}
+static EFI_STATUS EFIAPI Open(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *Fs,EFI_FILE_PROTOCOL **Root){
+  ++Opens;
+  return OpenStatus;
+}
+EFI_RUNTIME_SERVICES Rt={.GetNextVariableName=Next};
+EFI_RUNTIME_SERVICES *gRT=&Rt;
+EFI_SIMPLE_FILE_SYSTEM_PROTOCOL Fs={.OpenVolume=Open};
+static VOID Reset(EFI_STATUS Status){
+  mFs=&Fs;
+  mStarted=TRUE;
+  mSaveError=EFI_SUCCESS;
+  mProtocol.Frozen=FALSE;
+  mProtocol.Changes=1;
+  mSavedChanges=0;
+  mSequence=1;
+  mRestoredBootNext=42;
+  OpenStatus=Status;
+  Opens=0;
+}
+int main(void){
+  Reset(EFI_VOLUME_FULL);
+  assert(PianoNvFileCanConsumeBootNext(42));
+  assert(PianoNvFileSave(FALSE)==EFI_VOLUME_FULL && Opens==1);
+  assert(!PianoNvFileCanConsumeBootNext(42));
+  assert(PianoNvFileSave(TRUE)==EFI_SUCCESS && mProtocol.Frozen && Opens==1);
+
+  Reset(EFI_WRITE_PROTECTED);
+  assert(PianoNvFileSave(TRUE)==EFI_SUCCESS && mProtocol.Frozen && Opens==1);
+
+  Reset(EFI_SUCCESS);
+  mSequence=MAX_UINT64;
+  assert(PianoNvFileSave(FALSE)==EFI_OUT_OF_RESOURCES && Opens==0);
+  assert(PianoNvFileSave(TRUE)==EFI_SUCCESS && mProtocol.Frozen && Opens==0);
+
+  Reset(EFI_DEVICE_ERROR);
+  assert(PianoNvFileSave(FALSE)==EFI_DEVICE_ERROR && Opens==1);
+  assert(PianoNvFileSave(TRUE)==EFI_DEVICE_ERROR && !mProtocol.Frozen && Opens==1);
+  return 0;
+}
+''','-ffunction-sections','-fdata-sections','-Wl,--gc-sections',
+    '-Wno-misleading-indentation','-I'+str(nv/'Include'),
+    '-I'+str(ROOT/'uefi/core/storage'))
  def test_actual_runtime_properties_keep_variable_reads(self):
   self.compile_and_run('''#include <assert.h>
 #undef NULL

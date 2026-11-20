@@ -26,7 +26,8 @@ STATIC EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *mFs;
 STATIC UINT64 mSequence,mSavedChanges;
 STATIC UINT32 mActive;
 STATIC BOOLEAN mStarted,mBusy;
-STATIC BOOLEAN mUnavailable,mExited;
+STATIC BOOLEAN mExited;
+STATIC EFI_STATUS mSaveError;
 STATIC UINTN mRestoredBootNext=MAX_UINTN;
 STATIC EFI_EVENT mExit;
 STATIC CHAR16 *mNames[]={L"\\sunuefi\\nvram-a.bin",L"\\sunuefi\\nvram-b.bin"};
@@ -121,7 +122,7 @@ EFI_STATUS PianoNvFileStart(VOID){
 
 BOOLEAN PianoNvFileCanConsumeBootNext(UINT16 Number) {
   // A request restored from an unwritable snapshot would run again next boot.
-  return mStarted || mRestoredBootNext!=Number;
+  return (mStarted && mSaveError==EFI_SUCCESS) || mRestoredBootNext!=Number;
 }
 
 STATIC EFI_STATUS Collect(UINT8 *Data,UINTN *Bytes){
@@ -136,11 +137,19 @@ STATIC EFI_STATUS Collect(UINT8 *Data,UINTN *Bytes){
   }return EFI_OUT_OF_RESOURCES;
 }
 EFI_STATUS PianoNvFileSave(BOOLEAN Freeze){
-  if(mExited)return EFI_UNSUPPORTED;if(!mStarted)return EFI_NOT_STARTED;if(mUnavailable)return EFI_DEVICE_ERROR;
+  if(mExited)return EFI_UNSUPPORTED;if(!mStarted)return EFI_NOT_STARTED;
   if(mProtocol.Frozen)return Freeze?EFI_SUCCESS:EFI_NOT_READY;if(mBusy)return EFI_NOT_READY;
+  if(mSaveError!=EFI_SUCCESS){
+    if(!Freeze || !PianoNvFileSaveOptionalError(mSaveError))return mSaveError;
+    // Filesystem close and UFS retirement must still prove that I/O has stopped.
+    mProtocol.Frozen=TRUE;
+    return EFI_SUCCESS;
+  }
   if(mSavedChanges==mProtocol.Changes&&mSequence){if(Freeze)mProtocol.Frozen=TRUE;return EFI_SUCCESS;}
-  if(mSequence==MAX_UINT64)return EFI_OUT_OF_RESOURCES;mBusy=TRUE;
-  UINT64 Changes=mProtocol.Changes;UINT8 *Data=AllocateZeroPool(LIMIT);UINTN Bytes=0;EFI_STATUS S=Data?Collect(Data,&Bytes):EFI_OUT_OF_RESOURCES;
+  mBusy=TRUE;
+  UINT64 Changes=mProtocol.Changes;
+  UINT8 *Data=mSequence==MAX_UINT64?NULL:AllocateZeroPool(LIMIT);
+  UINTN Bytes=0;EFI_STATUS S=Data?Collect(Data,&Bytes):EFI_OUT_OF_RESOURCES;
   if(S==EFI_SUCCESS){CopyMem(Data,"SUNUEFI-NVRAM-v1",16);W32(Data+16,1);W32(Data+20,(UINT32)Bytes);W64(Data+24,mSequence+1);W32(Data+32,PianoGptCrc32(Data,Bytes));
     EFI_FILE_PROTOCOL *Root=NULL,*Dir=NULL,*F=NULL;S=mFs->OpenVolume(mFs,&Root);
     if(S==EFI_SUCCESS)S=Root->Open(Root,&Dir,L"\\sunuefi",EFI_FILE_MODE_READ|EFI_FILE_MODE_WRITE|EFI_FILE_MODE_CREATE,EFI_FILE_DIRECTORY);
@@ -155,6 +164,10 @@ EFI_STATUS PianoNvFileSave(BOOLEAN Freeze){
     if(S==EFI_SUCCESS){mActive=Slot;++mSequence;mSavedChanges=Changes;if(Freeze)mProtocol.Frozen=TRUE;}
   }
   if(Data){ZeroMem(Data,LIMIT);FreePool(Data);}mBusy=FALSE;
-  if(S!=EFI_SUCCESS)mUnavailable=TRUE;
-  DEBUG((DEBUG_WARN,"PIANO_NV_FILE_SAVE status=%r sequence=%lu frozen=%u\n",S,mSequence,mProtocol.Frozen));return S;
+  if(S!=EFI_SUCCESS){
+    mSaveError=S;
+    if(Freeze && PianoNvFileSaveOptionalError(S))mProtocol.Frozen=TRUE;
+  }
+  DEBUG((DEBUG_WARN,"PIANO_NV_FILE_SAVE status=%r sequence=%lu frozen=%u\n",S,mSequence,mProtocol.Frozen));
+  return Freeze && PianoNvFileSaveOptionalError(S)?EFI_SUCCESS:S;
 }
