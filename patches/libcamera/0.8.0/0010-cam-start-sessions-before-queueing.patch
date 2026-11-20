@@ -1,0 +1,220 @@
+From: slwyts <slwyts@foxmail.com>
+Subject: [PATCH] cam: Start all capture sessions before queuing requests
+
+The cam event loop is not running while the application starts its
+sessions. If one camera is already capturing and starting another
+camera takes longer than the first one's buffer budget, there is no
+one to return the completed buffers. This drops frames before the
+application begins dispatching events.
+
+Prepare every session first, start their cameras, and only then queue
+the initial requests. Stop prepared sessions on every failure path
+without increasing the default buffer count.
+
+On Xiaomi Pad 8 Pro, the default four-buffer sessions then delivered
+120 rear frames at 60 fps and 60 front frames at 30 fps with continuous
+sequences after the first captured frames. Interrupting the capture
+and reopening both cameras also preserved continuous frame sequences.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+diff --git a/src/apps/cam/camera_session.cpp b/src/apps/cam/camera_session.cpp
+index 17444a2..6d7fe40 100644
+--- a/src/apps/cam/camera_session.cpp
++++ b/src/apps/cam/camera_session.cpp
+@@ -271,7 +271,7 @@ void CameraSession::infoConfiguration() const
+ 	}
+ }
+ 
+-int CameraSession::start()
++int CameraSession::prepare()
+ {
+ 	int ret;
+ 
+@@ -331,7 +331,20 @@ int CameraSession::start()
+ 
+ 	allocator_ = std::make_unique<FrameBufferAllocator>(camera_);
+ 
+-	return startCapture();
++	ret = prepareBuffers();
++	if (ret)
++		return ret;
++
++	if (sink_) {
++		ret = sink_->start();
++		if (ret) {
++			std::cout << "Failed to start frame sink" << std::endl;
++			return ret;
++		}
++		sinkStarted_ = true;
++	}
++
++	return 0;
+ }
+ 
+ void CameraSession::stop()
+@@ -340,10 +353,11 @@ void CameraSession::stop()
+ 	if (ret)
+ 		std::cout << "Failed to stop capture" << std::endl;
+ 
+-	if (sink_) {
++	if (sinkStarted_) {
+ 		ret = sink_->stop();
+ 		if (ret)
+ 			std::cout << "Failed to stop frame sink" << std::endl;
++		sinkStarted_ = false;
+ 	}
+ 
+ 	sink_.reset();
+@@ -353,7 +367,7 @@ void CameraSession::stop()
+ 	allocator_.reset();
+ }
+ 
+-int CameraSession::startCapture()
++int CameraSession::prepareBuffers()
+ {
+ 	int ret;
+ 
+@@ -402,29 +416,24 @@ int CameraSession::startCapture()
+ 		requests_.push_back(std::move(request));
+ 	}
+ 
+-	if (sink_) {
+-		ret = sink_->start();
+-		if (ret) {
+-			std::cout << "Failed to start frame sink" << std::endl;
+-			return ret;
+-		}
+-	}
++	return 0;
++}
+ 
+-	ret = camera_->start();
+-	if (ret) {
++int CameraSession::start()
++{
++	int ret = camera_->start();
++	if (ret)
+ 		std::cout << "Failed to start capture" << std::endl;
+-		if (sink_)
+-			sink_->stop();
+-		return ret;
+-	}
+ 
++	return ret;
++}
++
++int CameraSession::queueInitialRequests()
++{
+ 	for (std::unique_ptr<Request> &request : requests_) {
+-		ret = queueRequest(request.get());
++		int ret = queueRequest(request.get());
+ 		if (ret < 0) {
+ 			std::cerr << "Can't queue request" << std::endl;
+-			camera_->stop();
+-			if (sink_)
+-				sink_->stop();
+ 			return ret;
+ 		}
+ 	}
+diff --git a/src/apps/cam/camera_session.h b/src/apps/cam/camera_session.h
+index 4442fd9..4ac6d6d 100644
+--- a/src/apps/cam/camera_session.h
++++ b/src/apps/cam/camera_session.h
+@@ -44,13 +44,15 @@ public:
+ 	void listProperties() const;
+ 	void infoConfiguration() const;
+ 
++	int prepare();
+ 	int start();
++	int queueInitialRequests();
+ 	void stop();
+ 
+ 	libcamera::Signal<> captureDone;
+ 
+ private:
+-	int startCapture();
++	int prepareBuffers();
+ 
+ 	int queueRequest(libcamera::Request *request);
+ 	void requestComplete(libcamera::Request *request);
+@@ -65,6 +67,7 @@ private:
+ 
+ 	std::map<const libcamera::Stream *, std::string> streamNames_;
+ 	std::unique_ptr<FrameSink> sink_;
++	bool sinkStarted_ = false;
+ 	unsigned int cameraIndex_;
+ 
+ 	uint64_t last_;
+diff --git a/src/apps/cam/main.cpp b/src/apps/cam/main.cpp
+index 17b30fa..8c9ff8a 100644
+--- a/src/apps/cam/main.cpp
++++ b/src/apps/cam/main.cpp
+@@ -280,17 +280,50 @@ int CamApp::run()
+ 		}
+ 	}
+ 
+-	/* 4. Start capture. */
++	/*
++	 * 4. Prepare all sessions before the first starts. Stream negotiation
++	 * and buffer allocation must not hold up returning another camera's
++	 * completed buffers.
++	 */
++	std::vector<CameraSession *> capturing;
++	auto stopSessions = [&capturing]() {
++		for (CameraSession *session : capturing)
++			session->stop();
++	};
++
+ 	for (const auto &session : sessions) {
+ 		if (!session->options().isSet(OptCapture))
+ 			continue;
+ 
++		capturing.push_back(session.get());
++		ret = session->prepare();
++		if (ret) {
++			std::cout << "Failed to prepare camera session" << std::endl;
++			stopSessions();
++			return ret;
++		}
++	}
++
++	for (CameraSession *session : capturing) {
+ 		ret = session->start();
+ 		if (ret) {
+ 			std::cout << "Failed to start camera session" << std::endl;
++			stopSessions();
+ 			return ret;
+ 		}
++	}
+ 
++	/*
++	 * Starting a second camera can block the camera manager while the
++	 * first one finishes requests. Don't queue work until all cameras
++	 * are ready to deliver and recycle buffers.
++	 */
++	for (CameraSession *session : capturing) {
++		ret = session->queueInitialRequests();
++		if (ret) {
++			stopSessions();
++			return ret;
++		}
+ 		loopUsers_++;
+ 	}
+ 
+@@ -308,14 +341,7 @@ int CamApp::run()
+ 	if (loopUsers_)
+ 		loop_.exec();
+ 
+-	/* 6. Stop capture. */
+-	for (const auto &session : sessions) {
+-		if (!session->options().isSet(OptCapture))
+-			continue;
+-
+-		session->stop();
+-	}
+-
++	stopSessions();
+ 	return 0;
+ }
+ 

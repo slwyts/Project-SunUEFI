@@ -83,6 +83,15 @@
         "url": "https://github.com/libcamera-org/libcamera/blob/v0.8.0/src/libcamera/base/log.cpp",
         "drop_when": "The packaged libcamera builds its logger with AArch64 GCC at -O2 without an array-bounds diagnostic."
       }
+    },
+    {
+      "file": "0010-cam-start-sessions-before-queueing.patch",
+      "sha256": "292016cb4eb548bcc48c7dcff6029b0929ae17ce046829866b61ae59acdb3274",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/libcamera-org/libcamera/blob/v0.8.0/src/apps/cam/main.cpp",
+        "drop_when": "The cam tool can start multiple sessions without running out of queued buffers while the application starts the other cameras."
+      }
     }
   ]
 }
