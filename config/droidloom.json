@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "version": "0.1.0",
+  "release": 49,
+  "package_revision": 4,
+  "commit": "572e1c51c5caf75183efe25ad811f98c1268bf56",
+  "source_date_epoch": 1795184483,
+  "release_url": "https://github.com/denialwm/droidloom/releases/download/packages",
+  "source_sha256": "47f368ce837f7411c984949f74d7b94064d5b0bf226cfa5aebb13c1e97d05704",
+  "arm64_archives": {
+    "runtime": "6e5cf18c7c196f3ffa5a79ca938e0caf8315548610f21bb6db4adae0e35dbc28",
+    "image": "8257effad113503ec5d0ed369e0b2d6d61cd976f37f93ce5b9a206f883a96062",
+    "base": "40712a6eb1bcc451c8c4bdd2ca5b2951f845d041c4746a4bb2a07b3259b49473"
+  }
+}

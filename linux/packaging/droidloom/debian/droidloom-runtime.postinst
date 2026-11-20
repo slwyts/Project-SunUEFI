@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = configure ] && [ -d /run/systemd/system ] && [ -f /etc/droidloom/cell.json ]; then
+    /usr/lib/droidloom/droidloom-package-helper after-install
+fi
+
+#DEBHELPER#

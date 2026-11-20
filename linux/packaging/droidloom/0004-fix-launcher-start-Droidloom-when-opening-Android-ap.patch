@@ -1,0 +1,353 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SunUEFI <slwyts@tuta.io>
+Date: Fri, 20 Nov 2026 23:47:20 +0800
+Subject: [PATCH] fix(launcher): start Droidloom when opening Android apps
+
+Route launches using the default desktop session through its existing systemd start job when stopped. Share setup and keep the last session mode when simultaneous launches need to start Android. Report graphical launch failures through the desktop notification service.
+---
+ docs/desktop-integration.md                   |   9 +-
+ .../src/bin/droidloomctl.rs                   | 196 ++++++++++++------
+ .../droidloom-supervisor/src/boot_notice.rs   |   6 +
+ 3 files changed, 149 insertions(+), 62 deletions(-)
+
+diff --git a/docs/desktop-integration.md b/docs/desktop-integration.md
+index 50aab59..8e31e4c 100644
+--- a/docs/desktop-integration.md
++++ b/docs/desktop-integration.md
+@@ -2,10 +2,11 @@
+ 
+ ## Windows
+ 
+-`droidloomctl start` and `droidloomctl stop` control the complete runtime. Startup
+-is manual. The catalog exports Android launcher activities, labels and icons as
+-XDG desktop applications. `droidloomctl applications` lists the catalog; launches
+-require a running cell.
++`droidloomctl start` and `droidloomctl stop` control the complete runtime. The
++catalog exports Android launcher activities, labels and icons as XDG desktop
++applications. Opening an exported app starts Droidloom if it is stopped; it
++does not need to run at login. `droidloomctl applications` lists the catalog
++while Android is running.
+ 
+ The catalog subscribes to framework package/user/locale events. It snapshots on
+ connection and changes, fetches missing icons in batches, and blocks while idle.
+diff --git a/runtime/droidloom-supervisor/src/bin/droidloomctl.rs b/runtime/droidloom-supervisor/src/bin/droidloomctl.rs
+index adf0ff4..570be50 100644
+--- a/runtime/droidloom-supervisor/src/bin/droidloomctl.rs
++++ b/runtime/droidloom-supervisor/src/bin/droidloomctl.rs
+@@ -4,9 +4,10 @@
+ 
+ use std::{
+     env, fs,
+-    io::Write,
++    io::{self, IsTerminal, Write},
+     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
+-    path::PathBuf,
++    path::{Path, PathBuf},
++    process::Stdio,
+     thread,
+     time::{Duration, Instant},
+ };
+@@ -36,6 +37,15 @@ struct Cli {
+     command: Command,
+ }
+ 
++impl Cli {
++    fn launches_in_session(&self) -> bool {
++        !self.cell
++            && self.socket == Path::new(DEFAULT_CONTROL_SOCKET)
++            && matches!(&self.command, Command::Launch { spec, .. }
++                if spec == Path::new(DEFAULT_CELL_SPEC))
++    }
++}
++
+ #[derive(Debug, Subcommand)]
+ enum Command {
+     /// Install a standalone APK, updating an existing app while retaining its data.
+@@ -131,7 +141,7 @@ enum Command {
+         #[arg(short = 'n', long, default_value_t = 1000, value_parser = clap::value_parser!(u32).range(1..=2000))]
+         lines: u32,
+     },
+-    /// Launch one Android application in the boot-managed runtime.
++    /// Launch one Android application, starting the desktop runtime if needed.
+     Launch {
+         /// Android package name.
+         package: String,
+@@ -194,17 +204,29 @@ enum WindowMode {
+ }
+ 
+ fn main() {
+-    if let Err(error) = run() {
++    let cli = Cli::parse();
++    let notify = cli.launches_in_session()
++        && !cli.json
++        && !io::stderr().is_terminal()
++        && env::var_os("WAYLAND_DISPLAY").is_some();
++    if let Err(error) = run(cli) {
++        if notify {
++            BootNotice::launch_failed(&error.to_string());
++        }
+         eprintln!("droidloomctl: {error}");
+         std::process::exit(1);
+     }
+ }
+ 
+-fn run() -> Result<(), Box<dyn std::error::Error>> {
+-    let cli = Cli::parse();
++fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
+     if let Command::Gpu { choice } = &cli.command {
+         return gpu(choice.as_ref());
+     }
++    if cli.launches_in_session() && !session_is_active()? {
++        // The service starts the presenter before Android and shows the
++        // boot notice. The launch request itself waits for readiness.
++        change_session_service("start", cli.json, None, true)?;
++    }
+     if !cli.cell && cli.socket == PathBuf::from(DEFAULT_CONTROL_SOCKET) {
+         let operation = match &cli.command {
+             Command::Start {
+@@ -445,7 +467,6 @@ fn storage(
+     spec: &std::path::Path,
+     report: &mut dyn FnMut(&str),
+ ) -> Result<(), Box<dyn std::error::Error>> {
+-    use std::io::IsTerminal;
+     use std::os::fd::AsFd;
+     let restore = matches!(cli.command, Command::Restore { .. });
+     let stream = path == std::path::Path::new("-");
+@@ -547,23 +568,65 @@ fn session_lifecycle(
+     requested_mode: Option<SessionMode>,
+     no_wait: bool,
+ ) -> Result<(), Box<dyn std::error::Error>> {
+-    if operation != "stop" && PathBuf::from("/usr/share/droidloom/package.json").is_file() {
+-        let status =
+-            droidloom_cpu_placement::command("/usr/lib/droidloom/droidloom-package-helper")
+-                .arg("prepare")
+-                .status()?;
+-        if !status.success() {
+-            return Err("Droidloom setup did not complete; the runtime was not started".into());
+-        }
+-        let status = droidloom_cpu_placement::command("systemctl")
+-            .args(["--user", "daemon-reload"])
+-            .status()?;
+-        if !status.success() {
+-            return Err("could not reload the installed Droidloom user service".into());
++    change_session_service(operation, json, requested_mode, false)?;
++    let message = if operation == "stop" {
++        "Droidloom is stopped"
++    } else if no_wait {
++        "Droidloom services are running; Android readiness has not been checked. Use `droidloomctl wait` to follow boot progress."
++    } else {
++        let response = request_with_progress(
++            Path::new(DEFAULT_CONTROL_SOCKET),
++            &ControlRequest::WaitReady,
++            &mut |message| {
++                if !json {
++                    eprintln!("{message}");
++                }
++            },
++        )?;
++        if !response.ok {
++            return Err(response.message.into());
+         }
++        "Droidloom is running; Android is ready"
++    };
++    if json {
++        println!(
++            "{}",
++            serde_json::json!({"ok": true, "message": message, "state": if operation == "stop" { "stopped" } else { "running" }})
++        );
++    } else {
++        println!("{message}");
++    }
++    Ok(())
++}
++
++fn session_is_active() -> io::Result<bool> {
++    if !Path::new(DEFAULT_CONTROL_SOCKET).try_exists()? {
++        return Ok(false);
++    }
++    droidloom_cpu_placement::command("systemctl")
++        .args(["--user", "is-active", "--quiet", "droidloom.service"])
++        .status()
++        .map(|status| status.success())
++}
++
++fn session_command(program: &str, json: bool) -> std::process::Command {
++    let mut command = droidloom_cpu_placement::command(program);
++    if json {
++        command.stdout(Stdio::null());
+     }
++    command
++}
++
++fn change_session_service(
++    operation: &str,
++    json: bool,
++    requested_mode: Option<SessionMode>,
++    start_if_stopped: bool,
++) -> Result<(), Box<dyn std::error::Error>> {
+     let mut operation = operation;
+-    if operation != "stop" {
++    let _start_lock = if operation == "stop" {
++        None
++    } else {
+         let runtime =
+             PathBuf::from(env::var_os("XDG_RUNTIME_DIR").ok_or("XDG_RUNTIME_DIR is missing")?);
+         if !runtime.is_absolute() {
+@@ -582,6 +645,34 @@ fn session_lifecycle(
+         // Older clients created this directory with the default 0755 mode.
+         // Keep the presenter's private-socket directory invariant on every start.
+         fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
++
++        // Hold setup and start together so two cold launcher clicks do not
++        // both prompt for authentication or race the presenter's environment.
++        let lock = fs::OpenOptions::new()
++            .write(true)
++            .create(true)
++            .truncate(false)
++            .mode(0o600)
++            .open(directory.join("session-start.lock"))?;
++        lock.lock()?;
++        if start_if_stopped && session_is_active()? {
++            return Ok(());
++        }
++        if Path::new("/usr/share/droidloom/package.json").is_file() {
++            let status = session_command("/usr/lib/droidloom/droidloom-package-helper", json)
++                .arg("prepare")
++                .status()?;
++            if !status.success() {
++                return Err("Droidloom setup did not complete; the runtime was not started".into());
++            }
++            let status = session_command("systemctl", json)
++                .args(["--user", "daemon-reload"])
++                .status()?;
++            if !status.success() {
++                return Err("could not reload the installed Droidloom user service".into());
++            }
++        }
++
+         let path = directory.join("session.env");
+         let previous = match fs::read_to_string(&path) {
+             Ok(value) => value
+@@ -596,10 +687,7 @@ fn session_lifecycle(
+         // A start with a different mode must actually change the running service.
+         if operation == "start"
+             && mode != previous
+-            && droidloom_cpu_placement::command("systemctl")
+-                .args(["--user", "is-active", "--quiet", "droidloom.service"])
+-                .status()?
+-                .success()
++            && session_is_active()?
+         {
+             operation = "restart";
+         }
+@@ -612,15 +700,14 @@ fn session_lifecycle(
+         writeln!(file, "DROIDLOOM_MODE={mode}")?;
+         file.sync_all()?;
+         fs::rename(&temporary, path)?;
+-    }
+-    // Import the caller's live session without requiring a logout after install.
+-    if operation != "stop" {
++
++        // Import the caller's live session without requiring a logout after install.
+         let variables: Vec<_> = ["WAYLAND_DISPLAY", "DISPLAY", "XDG_CURRENT_DESKTOP"]
+             .into_iter()
+             .filter(|name| env::var_os(name).is_some())
+             .collect();
+         if !variables.is_empty() {
+-            let status = droidloom_cpu_placement::command("systemctl")
++            let status = session_command("systemctl", json)
+                 .args(["--user", "import-environment"])
+                 .args(variables)
+                 .status()?;
+@@ -628,11 +715,12 @@ fn session_lifecycle(
+                 return Err("could not import the graphical session environment".into());
+             }
+         }
+-    }
++        Some(lock)
++    };
+     if !json {
+         eprintln!("Waiting for Droidloom services to {operation} (up to 160 seconds)...");
+     }
+-    let mut child = droidloom_cpu_placement::command("systemctl")
++    let mut child = session_command("systemctl", json)
+         .args(["--user", operation, "droidloom.service"])
+         .spawn()?;
+     let started = Instant::now();
+@@ -663,33 +751,6 @@ fn session_lifecycle(
+             format!("{operation} failed; see journalctl --user -u droidloom.service").into(),
+         );
+     }
+-    let message = if operation == "stop" {
+-        "Droidloom is stopped"
+-    } else if no_wait {
+-        "Droidloom services are running; Android readiness has not been checked. Use `droidloomctl wait` to follow boot progress."
+-    } else {
+-        let response = request_with_progress(
+-            &PathBuf::from(DEFAULT_CONTROL_SOCKET),
+-            &ControlRequest::WaitReady,
+-            &mut |message| {
+-                if !json {
+-                    eprintln!("{message}");
+-                }
+-            },
+-        )?;
+-        if !response.ok {
+-            return Err(response.message.into());
+-        }
+-        "Droidloom is running; Android is ready"
+-    };
+-    if json {
+-        println!(
+-            "{}",
+-            serde_json::json!({"ok": true, "message": message, "state": if operation == "stop" { "stopped" } else { "running" }})
+-        );
+-    } else {
+-        println!("{message}");
+-    }
+     Ok(())
+ }
+ 
+@@ -697,6 +758,25 @@ fn session_lifecycle(
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn only_default_desktop_launches_start_the_session() {
++        let uses_session = |arguments: &[&str]| {
++            Cli::try_parse_from(std::iter::once("droidloomctl").chain(arguments.iter().copied()))
++                .unwrap()
++                .launches_in_session()
++        };
++        assert!(uses_session(&["launch", "com.android.settings"]));
++        assert!(uses_session(&["--json", "launch", "com.android.settings"]));
++        assert!(!uses_session(&["--cell", "launch", "com.android.settings"]));
++        assert!(!uses_session(&[
++            "--socket", "/tmp/droidloom.sock", "launch", "com.android.settings"
++        ]));
++        assert!(!uses_session(&[
++            "launch", "com.android.settings", "--spec", "/etc/droidloom/another.json"
++        ]));
++        assert!(!uses_session(&["status"]));
++    }
++
+     #[test]
+     fn density_file_follows_xdg_config_home_then_home() {
+         assert_eq!(
+diff --git a/runtime/droidloom-supervisor/src/boot_notice.rs b/runtime/droidloom-supervisor/src/boot_notice.rs
+index 5b0f52e..9d5fd4c 100644
+--- a/runtime/droidloom-supervisor/src/boot_notice.rs
++++ b/runtime/droidloom-supervisor/src/boot_notice.rs
+@@ -72,6 +72,12 @@ impl BootNotice {
+         self.show("Droidloom could not start", reason, 0);
+     }
+ 
++    /// Reports a desktop launcher failure without replacing the boot notice.
++    pub fn launch_failed(reason: &str) {
++        let reason = reason.lines().next().unwrap_or(reason);
++        Self::none().show("Android app could not open", reason, 0);
++    }
++
+     fn show(&mut self, summary: &str, body: &str, timeout_ms: u32) {
+         let replaces = self.id.to_string();
+         let timeout = timeout_ms.to_string();

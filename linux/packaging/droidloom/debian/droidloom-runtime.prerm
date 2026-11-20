@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    # dpkg tries the new prerm if the installed one fails.
+    upgrade|deconfigure|failed-upgrade)
+        /usr/lib/droidloom/droidloom-package-helper before-upgrade
+        ;;
+    remove)
+        /usr/lib/droidloom/droidloom-package-helper before-remove
+        ;;
+esac
+
+#DEBHELPER#

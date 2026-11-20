@@ -275,6 +275,12 @@ Rust 和实际安装的原生依赖，复用前核对文件摘要和源码记录
 先通过原生包管理器验签、比对归档摘要，再安装。产品任务重打
 `denial` 和 `denial-plugin-manager`，Arch 的 Engine 不重打。
 
+Droidloom 使用独立的原生包。`./build.sh droidloom-package --help` 列出
+Debian 和 Arch 的构建参数：从固定源码为目标发行版编译宿主程序，从上游
+Android 构建目录或固定摘要的 ARM64 归档取得镜像。`runtime`、`image` 和
+`base` 通过原生依赖保证版本配套，安装时不启动容器，也不改原厂 Android。
+首次配置完成后，从桌面点 Android 应用会按需启动 Droidloom。
+
 已有隔离的 ARM64 pacman 构建根目录时，可单独构建并安装完整 Mesa 包；此操作会修改指定的构建根目录，不要直接使用已交付的产品根目录：
 
 ```sh

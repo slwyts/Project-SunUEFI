@@ -1,0 +1,41 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	:
+
+override_dh_auto_install:
+	mkdir -p debian/droidloom-runtime debian/droidloom-image debian/droidloom-base
+	cp -a "$(DROIDLOOM_PAYLOAD)/runtime/." debian/droidloom-runtime/
+	cp -al "$(DROIDLOOM_PAYLOAD)/image/." debian/droidloom-image/
+	cp -al "$(DROIDLOOM_PAYLOAD)/base/." debian/droidloom-base/
+
+override_dh_installsystemd:
+	dh_installsystemd --no-enable --no-start --no-stop-on-upgrade
+
+override_dh_installsystemduser:
+	dh_installsystemduser --no-enable
+
+# Debian's ELF and archive tools must not rewrite Android guest files.
+override_dh_dwz:
+	:
+
+override_dh_strip:
+	dh_strip -pdroidloom-runtime --no-automatic-dbgsym
+
+override_dh_strip_nondeterminism:
+	dh_strip_nondeterminism -pdroidloom-runtime
+
+override_dh_fixperms:
+	dh_fixperms -pdroidloom-runtime
+
+override_dh_makeshlibs:
+	dh_makeshlibs -pdroidloom-runtime
+
+override_dh_shlibdeps:
+	dh_shlibdeps -pdroidloom-runtime
+
+override_dh_builddeb:
+	dh_builddeb -- --root-owner-group -Zzstd -z3

@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    upgrade|deconfigure|failed-upgrade|remove)
+        if [ -x /usr/lib/droidloom/droidloom-package-helper ]; then
+            /usr/lib/droidloom/droidloom-package-helper before-upgrade
+        fi
+        ;;
+esac
+
+#DEBHELPER#

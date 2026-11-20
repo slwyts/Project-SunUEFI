@@ -1,0 +1,35 @@
+Source: droidloom
+Section: utils
+Priority: optional
+Maintainer: Project SunUEFI <slwyts@tuta.io>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.7.2
+Rules-Requires-Root: no
+Homepage: https://github.com/denialwm/droidloom
+
+Package: droidloom-runtime
+Architecture: arm64
+Depends: ${shlibs:Depends}, ${misc:Depends},
+ droidloom-image (= ${binary:Version}),
+ systemd (>= 254), dbus-user-session, pkexec, polkitd,
+ util-linux, mount, e2fsprogs, iproute2, nftables, iptables,
+ adb, pipewire, libvulkan1, tar, zstd
+Recommends: wireplumber, mesa-vulkan-drivers
+Suggests: rsync
+Description: Android applications in native Wayland windows
+ Runs Android applications using Linux namespaces and presents each
+ application in its own Wayland window. Starts on request.
+
+Package: droidloom-image
+Architecture: arm64
+Depends: ${misc:Depends}, droidloom-base (= ${binary:Version})
+Description: Android vendor and guest components for Droidloom
+ Contains the Android vendor partition, guest programs and compatibility
+ files. Per-user data is created separately.
+
+Package: droidloom-base
+Architecture: arm64
+Depends: ${misc:Depends}
+Description: Android system partitions for Droidloom
+ Contains read-only Android system, system_ext and product partitions.
+ These images are separate from the device's Android installation.

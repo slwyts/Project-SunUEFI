@@ -1,0 +1,79 @@
+Subject: Build the ARM64 host programs with Debian multiarch libraries
+
+Use the target pkg-config directories for the Rust dependencies and the
+audio C adapter. Arch Linux ARM uses its existing /usr/lib layout.
+
+--- a/tools/droidloom-update/src/assemble.rs
++++ b/tools/droidloom-update/src/assemble.rs
+@@ -683,13 +683,35 @@
+ pub fn host_build(repo: &Path, work: &Path, sysroot: &Path, jobs: usize) -> Result<PathBuf> {
+     let sysroot = sysroot.canonicalize()?;
+     let lib = sysroot.join("usr/lib");
+-    if !lib.join("pkgconfig").is_dir() {
+-        return fail("the ARM64 sysroot has no usr/lib/pkgconfig");
++    let multiarch = lib.join("aarch64-linux-gnu");
++    let libraries: Vec<_> = [multiarch, lib]
++        .into_iter()
++        .filter(|directory| directory.join("pkgconfig").is_dir())
++        .collect();
++    if libraries.is_empty() {
++        return fail("the ARM64 sysroot has no native pkg-config directory");
+     }
+     let root = sysroot
+         .to_str()
+         .filter(|root| !root.contains(char::is_whitespace));
+     let root = root.ok_or("the ARM64 sysroot path must be UTF-8 without whitespace")?;
++    let pc_directories = std::env::join_paths(
++        libraries
++            .iter()
++            .map(|directory| directory.join("pkgconfig"))
++            .chain([sysroot.join("usr/share/pkgconfig")]),
++    )?;
++    let mut link_flags = format!("-C link-arg=--sysroot={root}");
++    for directory in &libraries {
++        link_flags += &format!(
++            " -C link-arg=-L{0} -C link-arg=-Wl,-rpath-link,{0}",
++            directory.display(),
++        );
++    }
++    let mut c_flags = format!("--sysroot={root}");
++    if sysroot.join("usr/include/aarch64-linux-gnu").is_dir() {
++        c_flags += &format!(" -isystem {root}/usr/include/aarch64-linux-gnu");
++    }
+     let target = work.join(format!("cargo-{CROSS_TARGET}"));
+     let _lock = Lock::acquire(&work.join("host-cross-build.lock"))?;
+     let mut build = Command::new("cargo");
+@@ -702,6 +724,8 @@
+         "LDFLAGS",
+         "RUSTFLAGS",
+         "CARGO_ENCODED_RUSTFLAGS",
++        "PKG_CONFIG_PATH",
++        "PKG_CONFIG_PATH_aarch64_unknown_linux_gnu",
+     ] {
+         build.env_remove(flags);
+     }
+@@ -714,18 +738,16 @@
+         )
+         .env(
+             "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS",
+-            format!(
+-                "-C link-arg=--sysroot={root} -C link-arg=-L{root}/usr/lib -C link-arg=-Wl,-rpath-link,{root}/usr/lib"
+-            ),
++            link_flags,
+         )
+         .env("CC_aarch64_unknown_linux_gnu", "aarch64-linux-gnu-gcc")
+-        .env("CFLAGS_aarch64_unknown_linux_gnu", format!("--sysroot={root}"))
++        .env("CFLAGS_aarch64_unknown_linux_gnu", c_flags)
+         .env("PKG_CONFIG_ALLOW_CROSS", "1")
++        // droidloom-audio's C adapter calls pkg-config directly.
++        .env("PKG_CONFIG_SYSROOT_DIR", root)
++        .env("PKG_CONFIG_LIBDIR", &pc_directories)
+         .env("PKG_CONFIG_SYSROOT_DIR_aarch64_unknown_linux_gnu", root)
+-        .env(
+-            "PKG_CONFIG_LIBDIR_aarch64_unknown_linux_gnu",
+-            format!("{root}/usr/lib/pkgconfig:{root}/usr/share/pkgconfig"),
+-        )
++        .env("PKG_CONFIG_LIBDIR_aarch64_unknown_linux_gnu", pc_directories)
+         .args(["build", "--locked", "--release", "--target", CROSS_TARGET])
+         .arg(format!("-j{jobs}"));
+     for package in HOST_PACKAGES {

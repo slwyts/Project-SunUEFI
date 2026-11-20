@@ -1,0 +1,13 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Droidloom
+Source: https://github.com/denialwm/droidloom
+
+Files: *
+Copyright: Droidloom contributors
+License: GPL-3+
+ See the package's upstream license and dependency notices under
+ /usr/share/licenses/droidloom-runtime, droidloom-image, or droidloom-base.
+
+License: GPL-3+
+ On Debian systems, the GNU General Public License version 3 is available
+ in /usr/share/common-licenses/GPL-3.

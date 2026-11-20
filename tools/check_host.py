@@ -40,6 +40,7 @@ PORTABLE = (
 CI_UNIT = (
     'test_boot_options.py',
     'test_build_input.py',
+    'test_droidloom.py',
     'test_product_core.py',
     'test_late_handoff.py',
     'test_nv_journal.py',

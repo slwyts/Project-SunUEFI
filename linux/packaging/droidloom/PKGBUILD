@@ -1,0 +1,30 @@
+pkgbase=droidloom
+pkgname=(droidloom-runtime droidloom-image droidloom-base)
+pkgver="${DROIDLOOM_VERSION:?}"
+pkgrel="${DROIDLOOM_PKGREL:?}"
+arch=(aarch64)
+pkgdesc='Android applications in native Wayland windows'
+url='https://github.com/denialwm/droidloom'
+license=(GPL-3.0-or-later)
+options=(!strip !debug !lto !purge)
+
+package_droidloom-runtime() {
+  depends=("droidloom-image=$pkgver-$pkgrel" glibc gcc-libs mesa libdrm wayland
+    libxkbcommon libpipewire pipewire 'systemd>=254' polkit util-linux e2fsprogs
+    iproute2 nftables iptables android-tools vulkan-icd-loader tar zstd)
+  optdepends=('wireplumber: automatic host audio routing (or another PipeWire session manager)')
+  cp -a "$DROIDLOOM_PAYLOAD/runtime/." "$pkgdir/"
+}
+
+package_droidloom-image() {
+  pkgdesc='Android vendor and guest components for Droidloom'
+  license=(GPL-3.0-or-later LicenseRef-Android LicenseRef-Mesa)
+  depends=("droidloom-base=$pkgver-$pkgrel")
+  cp -al "$DROIDLOOM_PAYLOAD/image/." "$pkgdir/"
+}
+
+package_droidloom-base() {
+  pkgdesc='Android system partitions for Droidloom'
+  license=(GPL-3.0-or-later LicenseRef-Android Apache-2.0)
+  cp -al "$DROIDLOOM_PAYLOAD/base/." "$pkgdir/"
+}
