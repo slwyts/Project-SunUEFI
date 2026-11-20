@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / 'tools/repo'))
 from products import check_pacman_camera_coverage, overlay_matrix, overlay_set, publication_batches, sha
 import build_ffmpeg_packages as ffmpeg
 from build.overlay_packages import DEBIAN_GNOME, DEBIAN_SHARED, PACMAN_CAMERA_DEFAULTS
+from desktop import build_fingerprint_packages as fingerprint
 from desktop import build_libcamera_packages as libcamera, libcamera_arch
 from desktop.build_pipewire_packages import DEBIAN_PACKAGES
 from desktop.build_plasma_camera_package import RUNTIME as PLASMA_PACKAGES
@@ -68,10 +69,12 @@ class RepoProductsTests(unittest.TestCase):
                           *(DEBIAN_GNOME if target == 'debian-gnome' else ())):
             names = {'ffmpeg': dict.fromkeys(sorted(ffmpeg.RUNTIME), 'arm64'),
                      'libcamera': libcamera.runtime_packages(policy), 'pipewire': DEBIAN_PACKAGES,
-                     'qt_multimedia': QT_PACKAGES, 'plasma_camera': PLASMA_PACKAGES}.get(
+                     'qt_multimedia': QT_PACKAGES, 'plasma_camera': PLASMA_PACKAGES,
+                     'fingerprint': fingerprint.RUNTIME}.get(
                          component, {'test-' + component.replace('_', '-'): 'arm64'})
             version = {'mesa': '27', 'ffmpeg': ffmpeg.package_version(),
-                       'libcamera': libcamera.base_package_version(policy)}.get(component, '1')
+                       'libcamera': libcamera.base_package_version(policy),
+                       'fingerprint': fingerprint.base_package_version(fingerprint.policy())}.get(component, '1')
             packages = {}
             for name, architecture in names.items():
                 if name == missing:

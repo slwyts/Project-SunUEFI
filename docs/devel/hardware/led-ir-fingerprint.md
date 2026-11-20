@@ -207,10 +207,12 @@ QSEECOMPAT 的 lookup 返回 `architecture=2`，命令应使用 64 位地址，
 libfprint 在自己的构建中直接编译同一份后端和依赖源码，不再通过
 `piano-goodix.pc` 链接平台私有 `libpiano-goodix.a`。源码归档和补丁由运行时清单校验，
 Debian、SteamOS 和 Nyarch 各自使用目标发行版的头文件和库编译。
-Debian 构建依赖留在独立 rootfs，要求 libc／GLib 等开发包匹配目标运行库版本，
-依赖由 `dpkg-shlibdeps` 生成；安装前以目标 loader 核对新库和 fprintd 的符号解析。
-Debian 的 `SOURCE.json` 同时校验源码输入、目标 ABI、后端源码归档、二进制摘要、包身份和
-`Depends`；命中时不再创建构建 rootfs 或编译，仍执行目标链接检查与 APT 依赖模拟。
+Debian 以签名软件源提供的源码配方构建 `libfprint-2-2`、`gir1.2-fprint-2.0`、
+`libfprint-2-dev`、`libfprint-2-doc` 和 `libfprint-2-tests`，五个包一同发布。
+镜像只预装运行库，已安装的可选包随库升级；`fprintd` 和 `libpam-fprintd`
+继续用 Debian 官方包。编译依赖只进入构建写层，不会装到系统镜像里。
+从旧 SunUEFI 运行库升级时，GIR 和开发包通过版本化的 `Breaks`／`Replaces`
+接管原先由运行库安装的文件。
 Arch Linux ARM 沿用[发行版配方](../../../config/fingerprint.json)的依赖和文件布局，
 由 `makepkg` 按实际 ELF 生成 `libfprint-2.so=2-64`，直接使用 `[extra]` 的
 fprintd。共用 `[sunuefi]` 保留旧归档供回退，但不再把旧 fprintd 列进活动索引，

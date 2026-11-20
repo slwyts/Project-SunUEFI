@@ -10,6 +10,7 @@ from unittest.mock import patch
 import build_ffmpeg_packages as ffmpeg
 from build import overlay_cache, overlay_packages, overlay_release
 from desktop import debian_package
+from desktop import build_fingerprint_packages as fingerprint
 from desktop import build_libcamera_packages as libcamera
 from desktop.build_pipewire_packages import DEBIAN_PACKAGES
 from desktop.build_plasma_camera_package import RUNTIME as PLASMA_PACKAGES
@@ -131,10 +132,12 @@ class DebianOverlayCacheTests(unittest.TestCase):
                           'fingerprint'):
             names = {'ffmpeg': dict.fromkeys(sorted(ffmpeg.RUNTIME), 'arm64'),
                      'libcamera': libcamera.runtime_packages(policy), 'pipewire': DEBIAN_PACKAGES,
-                     'qt_multimedia': QT_PACKAGES, 'plasma_camera': PLASMA_PACKAGES}.get(
+                     'qt_multimedia': QT_PACKAGES, 'plasma_camera': PLASMA_PACKAGES,
+                     'fingerprint': fingerprint.RUNTIME}.get(
                          component, {'test-' + component.replace('_', '-'): 'arm64'})
             version = {'ffmpeg': ffmpeg.package_version(),
-                       'libcamera': libcamera.base_package_version(policy)}.get(component, '1')
+                       'libcamera': libcamera.base_package_version(policy),
+                       'fingerprint': fingerprint.base_package_version(fingerprint.policy())}.get(component, '1')
             control = self.root / 'payload/DEBIAN/control'
             control.parent.mkdir(parents=True, exist_ok=True)
             records = {}
@@ -185,7 +188,7 @@ class DebianOverlayCacheTests(unittest.TestCase):
         self.assertNotEqual(self.inputs()['installed'], inputs['installed'])
         self.assertIsNone(overlay_cache.restore_debian(self.project, output, 'debian-gnome',
                                                        self.inputs()))
-        package, = cached.glob('libqt6multimedia6_*.deb')
+        package, = cached.glob('libfprint-2-doc_*.deb')
         package.write_bytes(package.read_bytes() + b'changed bytes')
         self.assertIsNone(overlay_cache.restore_debian(self.project, output, 'debian-gnome', inputs))
         self.assertFalse(output.exists())

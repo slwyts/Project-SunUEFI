@@ -869,7 +869,6 @@ def build_overlays(record, rootfs, kernel, run, directory=None, *, uapi=None):
         if gdm_record is None:
             raise ValueError('GDM packages do not match the shared source patches')
         sources['gdm'] = gdm / 'runtime', gdm_record
-    install_overlays(rootfs, run, overlay_packages.debian_packages(sources), desktop=record['desktop'])
     sources['fingerprint'] = build_fingerprint_overlay(
         record, rootfs, kernel, directory / 'fingerprint-packages', uapi)
     return sources
@@ -883,7 +882,7 @@ def install_overlays(rootfs, run, packages, *, desktop, extra=(), published=Fals
     cohort = any(row.get('component') == 'pipewire' and
                  row.get('name') == 'libpipewire-0.3-modules' for row in records.values())
     installed = set()
-    if cohort or any(row.get('component') == 'kwin' for row in records.values()):
+    if any(row.get('component') in ('pipewire', 'kwin', 'fingerprint') for row in records.values()):
         text = capture(['chroot', rootfs, 'dpkg-query', '-W',
                         '-f=${Package}\t${db:Status-Status}\n'])
         installed = {row.split()[0] for row in text.splitlines() if row.endswith('\tinstalled')}
@@ -935,12 +934,13 @@ def install_overlays(rootfs, run, packages, *, desktop, extra=(), published=Fals
 
 
 def build_fingerprint_overlay(record, rootfs, kernel, fingerprint, uapi):
-    """Build libfprint against the same installed runtime as the other packages."""
-    from build_piano_fingerprint import install_debian_desktop, prepare_desktop_backend
+    """Build the complete native package set without installing development packages."""
+    from build_piano_fingerprint import prepare_desktop_backend
     from build_release_helpers import export_uapi
+    from desktop import build_fingerprint_packages
 
     if record['runtime_dir']:
-        install_debian_desktop(rootfs, Path(record['runtime_dir']), fingerprint)
+        metadata = build_fingerprint_packages.build(fingerprint, rootfs, Path(record['runtime_dir']))
     else:
         with tempfile.TemporaryDirectory(prefix='sunuefi-fingerprint-', dir=Path(record['output'])) as temporary:
             work = Path(temporary)
@@ -949,11 +949,8 @@ def build_fingerprint_overlay(record, rootfs, kernel, fingerprint, uapi):
                 export_uapi(Path(record['source']), Path(record['kernel_build']),
                             kernel['source_commit'], uapi)
             prepare_desktop_backend(work, uapi)
-            install_debian_desktop(rootfs, work, fingerprint)
-    metadata = json.loads((fingerprint / 'SOURCE.json').read_text())
-    metadata['packages'] = {'libfprint-2-2': metadata['package']}
-    folder = fingerprint / 'runtime' if (fingerprint / 'runtime').is_dir() else fingerprint
-    return folder, metadata
+            metadata = build_fingerprint_packages.build(fingerprint, rootfs, work)
+    return fingerprint / 'runtime', metadata
 
 
 def build_local_overlays(record, kernel, run):
@@ -1127,9 +1124,6 @@ def execute(record):
                      '--kernel-build', record['kernel_build'], '--output', bundle, '--sysroot', sysroot,
                      '--cc', helper_cc])
             runtime.stage(bundle, rootfs)
-        from build_piano_fingerprint import debian_abi
-        if not published and debian_abi(rootfs) != components['fingerprint']['target_abi']:
-            raise ValueError('The image fingerprint ABI differs from the signed package build root')
         from stage_piano_firmware import stage as stage_firmware, verify_display
         firmware = stage_firmware(Path(record['firmware_source']), rootfs, 'debian',
                                   shared=bool(published), run=run)

@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 import build_ffmpeg_packages as ffmpeg
 from build import overlay_packages as overlays
+from desktop import build_fingerprint_packages as fingerprint
 from desktop import build_libcamera_packages as libcamera
 from desktop.build_pipewire_packages import DEBIAN_PACKAGES
 from desktop.build_plasma_camera_package import RUNTIME as PLASMA_PACKAGES
@@ -66,10 +67,12 @@ class OverlayPackageTests(unittest.TestCase):
             names = {'ffmpeg': dict.fromkeys(sorted(ffmpeg.RUNTIME), 'arm64'),
                      'libcamera': libcamera.runtime_packages(policy), 'pipewire': DEBIAN_PACKAGES,
                      'qt_multimedia': QT_PACKAGES, 'plasma_camera': PLASMA_PACKAGES,
+                     'fingerprint': fingerprint.RUNTIME,
                      'kwin': KWIN_PACKAGES}.get(
                          component, {'test-' + component.replace('_', '-'): 'arm64'})
             version = {'ffmpeg': ffmpeg.package_version(),
-                       'libcamera': libcamera.base_package_version(policy)}.get(component, '1')
+                       'libcamera': libcamera.base_package_version(policy),
+                       'fingerprint': fingerprint.base_package_version(fingerprint.policy())}.get(component, '1')
             records = {}
             for name, architecture in names.items():
                 archive = self.deb(name, version, architecture=architecture)
@@ -96,11 +99,18 @@ class OverlayPackageTests(unittest.TestCase):
                          {*overlays.DEBIAN_SHARED, 'fingerprint', 'kwin'})
         self.assertIn(dependencies[f'libcamera-ipa-{abi}']['sha256'],
                       {row['sha256'] for row in kde.values()})
+        self.assertEqual({row['name'] for row in kde.values() if row['component'] == 'fingerprint'},
+                         fingerprint.RUNTIME.keys())
 
         # Matching versions are insufficient: an older dev archive can have
         # the same version string and different compiler inputs.
         record = json.loads(manifest.read_text())
-        incomplete_kwin = json.loads(manifest.read_text())
+        incomplete_fingerprint = json.loads(manifest.read_text())
+        incomplete_fingerprint['components']['fingerprint']['packages'].pop('libfprint-2-doc')
+        manifest.write_text(json.dumps(incomplete_fingerprint))
+        with self.assertRaisesRegex(ValueError, 'libfprint needs all five native packages'):
+            overlays.read_debian(manifest, 'kde')
+        incomplete_kwin = json.loads(json.dumps(record))
         incomplete_kwin['components']['kwin']['packages'].pop('kwin-data')
         manifest.write_text(json.dumps(incomplete_kwin))
         with self.assertRaisesRegex(ValueError, 'Invalid native KWin package set'):
@@ -145,6 +155,15 @@ class OverlayPackageTests(unittest.TestCase):
         self.assertEqual(upgraded['qt_multimedia'], {'qt6-multimedia-private-dev'})
         denial = overlays.debian_package_selection('denial', set())
         self.assertEqual(denial['qt_multimedia'], set())
+
+    def test_fingerprint_images_preserve_optional_packages_without_installing_them_by_default(self):
+        for desktop in ('gnome', 'kde', 'denial'):
+            with self.subTest(desktop=desktop):
+                self.assertEqual(overlays.debian_package_selection(desktop, set())['fingerprint'],
+                                 {'libfprint-2-2'})
+                installed = {'libfprint-2-dev', 'gir1.2-fprint-2.0'}
+                self.assertEqual(overlays.debian_package_selection(desktop, installed)['fingerprint'],
+                                 installed | {'libfprint-2-2'})
 
     def test_kwin_backport_updates_the_desktop_without_installing_dev_packages(self):
         kwin = {'kwin-wayland', 'kwin-common', 'kwin-data', 'libkwin6'}

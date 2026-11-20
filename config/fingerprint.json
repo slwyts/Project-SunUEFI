@@ -13,6 +13,11 @@
       "version": "1.94.5"
     }
   },
+  "debian": {
+    "recipe_source_version": "1:1.94.10-1",
+    "package_revision": "sunuefi3-1",
+    "file_transfer_version": "1:1.94.100+sunuefi3-1~"
+  },
   "arch": {
     "recipe": "https://gitlab.archlinux.org/archlinux/packaging/packages/libfprint/-/blob/4754ff229c0e4cb566f33e99e962d702bfc52970/PKGBUILD",
     "package_release": "2.1"

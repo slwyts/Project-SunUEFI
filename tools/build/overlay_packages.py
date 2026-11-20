@@ -179,6 +179,9 @@ def verify_bsp_files(rootfs, package_format, *, component='config'):
 def debian_packages(sources):
     """Index the exact files accepted by the individual package builders."""
     verify_debian_camera_packages({name: record for name, (_, record) in sources.items()})
+    from desktop.build_fingerprint_packages import verify_debian_packages
+
+    verify_debian_packages(sources['fingerprint'][1])
     packages = {}
     for component, (folder, record) in sources.items():
         for name, info in record['packages'].items():
@@ -244,6 +247,7 @@ def verify_debian_camera_packages(components):
 
 def debian_package_selection(desktop, installed):
     """Select defaults and keep updating any optional packages already installed."""
+    from desktop.build_fingerprint_packages import LIBRARY as FINGERPRINT_LIBRARY
     from desktop.build_libcamera_packages import abi_version, policy
     from desktop.build_kwin_package import DEFAULT as KWIN_DEFAULT
     from desktop.build_pipewire_packages import DEBIAN_DEFAULT
@@ -255,6 +259,7 @@ def debian_package_selection(desktop, installed):
                 'pipewire': DEBIAN_DEFAULT | {'libspa-0.2-libcamera'},
                 'qt_multimedia': QT_MULTIMEDIA_DEFAULT if desktop == 'kde' else set(),
                 'plasma_camera': {PACKAGE} if desktop == 'kde' else set(),
+                'fingerprint': {FINGERPRINT_LIBRARY},
                 'kwin': KWIN_DEFAULT if desktop == 'kde' else set()}
     return {name: values.union(installed) for name, values in defaults.items()}
 
@@ -305,6 +310,8 @@ def export(directory, target, repository, packages, components=None, *, build_in
 
 
 def read_debian(path, desktop):
+    from desktop.build_fingerprint_packages import verify_debian_packages
+
     manifest = json.loads(path.read_text())
     if (manifest.get('schema_version') != 1 or manifest.get('repo') != 'apt' or
             manifest.get('target') not in ('debian-gnome', 'debian-' + desktop)):
@@ -345,6 +352,7 @@ def read_debian(path, desktop):
             packages[filename] = row
             names.add(name)
     verify_debian_camera_packages(components)
+    verify_debian_packages(components['fingerprint'])
     return components, packages
 
 

@@ -605,19 +605,19 @@ def build_dependency_records(archives):
 
 
 @contextmanager
-def build_root(sysroot, output, builder_root, *, local_dependencies):
+def build_root(sysroot, output, builder_root=None, *, overlay=False):
     rootfs = Path(builder_root).resolve() if builder_root else output / 'builder/rootfs'
     if builder_root and (not rootfs.is_relative_to(ROOT / 'build') or output.is_relative_to(rootfs) or
                          rootfs.is_relative_to(output)):
         raise ValueError('Use an isolated project builder, not a product rootfs')
-    if not local_dependencies:
+    if not overlay:
         if not rootfs.exists():
             rootfs.parent.mkdir(parents=True, exist_ok=True)
             run(['cp', '-a', '--reflink=auto', sysroot, rootfs])
         yield rootfs
         return
 
-    # Do not leave an alternate ABI installed in the reusable Debian builder.
+    # Keep build-only packages and alternate ABIs out of the supplied root.
     lower = rootfs if builder_root else sysroot
     with tempfile.TemporaryDirectory(prefix='builder-', dir=output) as directory:
         stage = Path(directory)
@@ -757,7 +757,7 @@ def build(output, sysroot, jobs, package, patches, runtime, inputs, revision=1,
     if dependency_records:
         recipe['build_dependencies'] = dependency_records
     identity = hashlib.sha256(json.dumps(recipe, sort_keys=True).encode()).hexdigest()[:16]
-    with build_root(sysroot, output, builder_root, local_dependencies=bool(dependency_records)) as rootfs, \
+    with build_root(sysroot, output, builder_root, overlay=bool(dependency_records)) as rootfs, \
             devices(rootfs), (output / 'build.log').open('a') as log:
         work = rootfs / 'build' / package / identity
         cache, source = rootfs / 'build' / package / 'cache', work / 'source'
