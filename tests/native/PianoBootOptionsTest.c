@@ -27,13 +27,13 @@ typedef struct {
   EFI_DEVICE_PATH_PROTOCOL End;
 } FIRMWARE_PATH;
 STATIC FIRMWARE_PATH MenuPath,RetiredPath;
-STATIC UINTN Count,NextNumber,Loads,Order[4],ReadySignals,NextDeletes,CurrentSets,CurrentDeletes,NextSaves;
+STATIC UINTN Count,NextNumber,NextSize,Loads,Order[4],ReadySignals,NextDeletes,CurrentSets,CurrentDeletes,NextSaves;
 STATIC UINTN Adds,Deletes,Position,Refreshes,PrepareCalls,FinishCalls,LoadFileLookups;
 STATIC EFI_STATUS FilesystemStatus;
 STATIC CONST EFI_DEVICE_PATH_PROTOCOL *BootPath;
 STATIC UINTN RetryChecks,AlternatePaths;
 STATIC BOOLEAN HasNext,NextMissing,OrphanMenu,AllowRetry,RetainApplication,ExitOnStart,ExitServices,HasAlternatePath;
-STATIC EFI_STATUS SaveStatus,PrepareStatus,SetStatus,ClearStatus,ImageStatus[4];
+STATIC EFI_STATUS NextReadStatus,SaveStatus,PrepareStatus,SetStatus,ClearStatus,ImageStatus[4];
 STATIC UINT16 Current;
 STATIC UINT8 Optional[]={0,0xff,0,7,8};
 STATIC EFI_HANDLE Volume=(VOID *)0x1234;
@@ -65,7 +65,13 @@ STATIC BOOLEAN Same(CONST CHAR16 *A,CONST CHAR16 *B){
 STATIC EFI_STATUS EFIAPI Get(CHAR16 *Name,EFI_GUID *Guid,UINT32 *Attributes,UINTN *Bytes,VOID *Data){
   assert(Same(Name,L"BootNext")&&Guid==&gEfiGlobalVariableGuid&&!Attributes&&*Bytes==2);
   if(!HasNext)return EFI_NOT_FOUND;
-  *(UINT16 *)Data=(UINT16)NextNumber;return EFI_SUCCESS;
+  if(NextReadStatus!=EFI_SUCCESS)return NextReadStatus;
+  BOOLEAN TooSmall=*Bytes<NextSize;
+  *Bytes=NextSize;
+  if(TooSmall)return EFI_BUFFER_TOO_SMALL;
+  UINT16 Value=(UINT16)NextNumber;
+  memcpy(Data,&Value,NextSize);
+  return EFI_SUCCESS;
 }
 STATIC EFI_STATUS EFIAPI NextVariable(UINTN *Bytes,CHAR16 *Name,EFI_GUID *Guid){
   if(!OrphanMenu || Name[0])return EFI_NOT_FOUND;
@@ -223,12 +229,12 @@ STATIC VOID Reset(VOID){
   memset(&Bs,0,sizeof(Bs));memset(&Rt,0,sizeof(Rt));
   Bs.LocateDevicePath=Locate;Rt.GetVariable=Get;Rt.SetVariable=Set;
   Rt.GetNextVariableName=NextVariable;gBS=&Bs;gRT=&Rt;
-  Count=2;HasNext=NextMissing=OrphanMenu=FALSE;NextNumber=23;
+  Count=2;HasNext=NextMissing=OrphanMenu=FALSE;NextNumber=23;NextSize=sizeof(UINT16);
   Loads=ReadySignals=NextDeletes=CurrentSets=CurrentDeletes=NextSaves=0;
   Adds=Deletes=Refreshes=PrepareCalls=FinishCalls=LoadFileLookups=0;
   BootPath=NULL;Position=MAX_UINTN;SaveStatus=PrepareStatus=FilesystemStatus=EFI_SUCCESS;
   RetryChecks=AlternatePaths=0;AllowRetry=RetainApplication=ExitOnStart=ExitServices=HasAlternatePath=FALSE;
-  SetStatus=ClearStatus=EFI_SUCCESS;Current=MAX_UINT16;
+  NextReadStatus=SetStatus=ClearStatus=EFI_SUCCESS;Current=MAX_UINT16;
   ImageStatus[0]=EFI_SUCCESS;ImageStatus[1]=EFI_NOT_FOUND;ImageStatus[2]=ImageStatus[3]=EFI_LOAD_ERROR;
   MenuPath=FirmwarePath(mPianoSimpleInitBootFileGuid);
   RetiredPath=FirmwarePath((EFI_GUID){0x9ddefc13,0x4746,0x441b,{0x87,0xe9,0x4c,0xd3,0xe1,0x21,0xb0,0x84}});
@@ -298,6 +304,23 @@ STATIC VOID TestFallback(VOID){
   assert(PianoStartBootOption((VOID *)1,&Device,&App,&Dispatch)==EFI_LOAD_ERROR);
   assert(Loads==1&&RetryChecks==1&&Dispatch.StartedSystem&&App.StartCalled);
 }
+STATIC VOID TestBootNextSize(VOID){
+  PIANO_FV_APPLICATION App;
+  EFI_HANDLE Device;
+  PIANO_BOOT_DISPATCH Dispatch={.Selection=PianoBootAutomatic,.PrepareSystem=Prepare,
+    .FinishSystem=FinishSystem,.WatchdogExpired=Expired};
+  CONST UINTN InvalidSizes[]={1,3};
+  for(UINTN I=0;I<ARRAY_SIZE(InvalidSizes);++I){
+    Reset();memset(&App,0,sizeof(App));HasNext=TRUE;NextSize=InvalidSizes[I];ImageStatus[2]=EFI_SUCCESS;
+    assert(PianoStartBootOption((VOID *)1,&Device,&App,&Dispatch)==EFI_SUCCESS);
+    assert(Loads==2&&Order[0]==1&&Order[1]==2&&Device==Volume);
+    assert(HasNext&&!NextDeletes&&!NextSaves&&Dispatch.StartedSystem);
+  }
+
+  Reset();memset(&App,0,sizeof(App));HasNext=TRUE;NextReadStatus=EFI_DEVICE_ERROR;
+  assert(PianoStartBootOption((VOID *)1,&Device,&App,&Dispatch)==EFI_DEVICE_ERROR);
+  assert(!Loads&&!PrepareCalls&&!NextDeletes&&!NextSaves);
+}
 int main(void){
   PIANO_FV_APPLICATION App;EFI_HANDLE Device;
   PIANO_BOOT_DISPATCH Dispatch={.Selection=PianoBootAutomatic,.PrepareSystem=Prepare,
@@ -348,6 +371,7 @@ int main(void){
   assert(PianoStartBootOption((VOID *)1,&Device,&App,&Dispatch)==EFI_DEVICE_ERROR);
   assert(!LoadFileLookups&&!Loads&&!PrepareCalls&&!FinishCalls);
   TestFallback();
+  TestBootNextSize();
   Reset();
   puts("BootOrder, one-time choices, NV save, firmware entry and binary load options passed");
   return 0;

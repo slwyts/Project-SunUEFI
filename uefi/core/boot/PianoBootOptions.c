@@ -273,8 +273,11 @@ EFI_STATUS PianoStartBootOption(EFI_HANDLE Parent,EFI_HANDLE *Device,
   if(Dispatch->Selection==PianoBootAutomatic) {
     UINTN Bytes=sizeof(Next);
     Status=gRT->GetVariable(L"BootNext",&gEfiGlobalVariableGuid,NULL,&Bytes,&Next);
-    if(Status!=EFI_NOT_FOUND && (Status!=EFI_SUCCESS || Bytes!=sizeof(Next)))
-      return mOptionStatus=Status==EFI_SUCCESS?EFI_COMPROMISED_DATA:Status;
+    // Like BDS, ignore an invalid one-time choice without changing BootOrder.
+    if(Status==EFI_BUFFER_TOO_SMALL || (Status==EFI_SUCCESS && Bytes!=sizeof(Next)))
+      Status=EFI_NOT_FOUND;
+    else if(Status!=EFI_SUCCESS && Status!=EFI_NOT_FOUND)
+      return mOptionStatus=Status;
   }
   if(Status==EFI_SUCCESS) {
     // Persist deletion before loading the once-only target, even if it hangs.
