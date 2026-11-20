@@ -2,8 +2,8 @@
 """Install and verify the tracked Piano firmware components in a rootfs.
 
 Every file comes from vendor/firmware: each component directory carries its
-files, a manifest of their sizes and SHA256, and a source note. The native
-display calibration package owns its files; the other components are staged.
+files, a manifest of their sizes and SHA256, and a source note. Native
+packages own the display calibration and fingerprint firmware.
 """
 import hashlib
 import json
@@ -19,7 +19,6 @@ import package_bsp
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPONENTS = ROOT / 'vendor/firmware'
-DISPLAY = 'piano-display-calibration'
 
 
 def components(source=None):
@@ -37,10 +36,8 @@ def components(source=None):
     return found
 
 
-def verify_display(rootfs, package_format, metadata):
-    if metadata is None:
-        return
-    name = package_bsp.DISPLAY_PACKAGE
+def verify_firmware_package(rootfs, package_format, metadata):
+    name = metadata['name']
     if package_format == 'debian':
         query = ['dpkg-query', '-W', '-f=${db:Status-Status} ${Version}', name]
         expected = 'installed ' + metadata['version']
@@ -48,7 +45,7 @@ def verify_display(rootfs, package_format, metadata):
         query = ['pacman', '-Q', name]
         expected = name + ' ' + metadata['version']
     if subprocess.check_output(['chroot', rootfs, *query], text=True).strip() != expected:
-        raise ValueError('Installed display calibration package version differs')
+        raise ValueError(f'Installed {name} package version differs')
     rows = metadata['firmware']
     package_bsp.conflict_check(rootfs, [(row, None) for row in rows.values()], name)
     # Reject missing files as well as conflicts with another package.
@@ -58,32 +55,35 @@ def verify_display(rootfs, package_format, metadata):
         if (path.is_symlink() or not path.is_file() or
                 stat.S_IMODE(path.stat().st_mode) != 0o644 or path.stat().st_size != row['bytes'] or
                 overlay_packages.sha(path) != row['sha256']):
-            raise ValueError('Installed display calibration differs: ' + relative.as_posix())
+            raise ValueError(f'Installed {name} file differs: {relative}')
 
 
-def install_display(source, rootfs, package_format, *, shared, run):
-    name = package_bsp.DISPLAY_PACKAGE
+def verify_firmware_packages(rootfs, package_format, packages):
+    for metadata in packages.values():
+        verify_firmware_package(rootfs, package_format, metadata)
+
+
+def install_firmware_package(source, rootfs, package_format, component, *, shared, run):
+    name, manifest = package_bsp.IMAGE_FIRMWARE[component]
     _, rows = package_bsp.local_firmware_payload(
-        source, package_bsp.DISPLAY_MANIFEST, 'display firmware')
+        source, manifest, component.replace('-', ' '))
+    migration = package_bsp.conflict_check(rootfs, rows, name, adopt_identical=True)
     tmp = guest_resolve(rootfs, '/var/tmp')
     tmp.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix='sunuefi-display-', dir=tmp) as temporary:
+    with tempfile.TemporaryDirectory(prefix=f'sunuefi-{component}-', dir=tmp) as temporary:
         work = Path(temporary)
         work.chmod(0o755)
         if shared:
-            archive, metadata = overlay_packages.bsp_package(
-                ROOT / 'artifacts/packages/bsp/display-firmware' / package_format,
-                package_format, component='display-firmware')
+            archive, metadata = overlay_packages.shared_bsp(package_format, component=component)
         else:
             archive, metadata = overlay_packages.build_bsp(
-                work / 'package', package_format, run, component='display-firmware',
+                work / 'package', package_format, run, component=component,
                 firmware_source=source)
         staged = work / archive.name
         shutil.copyfile(archive, staged)
         if overlay_packages.sha(staged) != metadata['sha256']:
-            raise ValueError('Display calibration package changed during installation')
+            raise ValueError(f'{name} archive changed during installation')
         guest_archive = '/' + staged.relative_to(rootfs).as_posix()
-        migration = package_bsp.conflict_check(rootfs, rows, name, adopt_identical=True)
         moved = []
         try:
             for index, relative in enumerate(migration['adopted']):
@@ -100,13 +100,34 @@ def install_display(source, rootfs, package_format, *, shared, run):
                 from build_nyarch_apps import guest_environment
                 with guest_environment(rootfs) as guest:
                     guest(['pacman', '-U', '--noconfirm', guest_archive])
-            verify_display(rootfs, package_format, metadata)
+            verify_firmware_package(rootfs, package_format, metadata)
         except Exception:
             for path, saved in moved:
                 if not path.exists() and not path.is_symlink():
                     saved.rename(path)
             raise
     return metadata
+
+
+def packaged_components(selected):
+    pinned = {}
+    paths = set()
+    for component, (_, manifest) in package_bsp.IMAGE_FIRMWARE.items():
+        data = package_bsp.read_json(manifest)
+        pinned[data['component']] = (component, data)
+        directory = PurePosixPath(data.get('directory', '.'))
+        paths.update(directory / filename for filename in data['files'])
+    found = {}
+    for directory, _, data in selected:
+        name = data['component']
+        if name in pinned:
+            component, expected = pinned[name]
+            if name in found or data != expected:
+                raise ValueError(f'{component.capitalize()} manifest differs from the fixed source')
+            found[name] = component
+        elif any(directory / filename in paths for filename in data['files']):
+            raise ValueError(f'{name} overlaps firmware owned by a native package')
+    return found
 
 
 def stage(source, rootfs, package_format, *, shared=False, run=None):
@@ -122,27 +143,23 @@ def stage(source, rootfs, package_format, *, shared=False, run=None):
     firmware = rootfs / 'usr/lib/firmware'
     notices = rootfs / 'usr/share/licenses/piano-firmware'
     selected = components(source)
-    display = [manifest for _, manifest, data in selected if data['component'] == DISPLAY]
-    pinned_display = package_bsp.read_json(package_bsp.DISPLAY_MANIFEST)
-    if len(display) > 1 or (display and package_bsp.read_json(display[0]) != pinned_display):
-        raise ValueError('Display calibration manifest differs from the fixed source')
-    display_paths = {PurePosixPath(pinned_display['directory']) / filename
-                     for filename in pinned_display['files']}
-    if any(directory / name in display_paths for directory, _, data in selected
-           if data['component'] != DISPLAY for name in data['files']):
-        raise ValueError('Only the display calibration package may install its firmware files')
-    display_package = (install_display(display[0].parent, rootfs, package_format, shared=shared, run=run)
-                       if display else None)
-    record = {'components': [], 'display_package': display_package}
+    packaged = packaged_components(selected)
+    record = {'components': [], 'packages': {}}
     hashes = {}
     for directory, manifest, data in selected:
-        if data['component'] == DISPLAY:
+        component = packaged.get(data['component'])
+        if component:
+            # Only display calibration is supplied by the shared device artifacts.
+            metadata = install_firmware_package(
+                manifest.parent, rootfs, package_format, component,
+                shared=shared and component == 'display-firmware', run=run)
+            record['packages'][metadata['name']] = metadata
             hashes.update({(directory / filename).as_posix(): row['sha256']
                            for filename, row in data['files'].items()})
             record['components'].append({
-                'component': DISPLAY, 'rom': data['rom'], 'directory': directory.as_posix(),
+                'component': data['component'], 'rom': data['rom'], 'directory': directory.as_posix(),
                 'sha256': hashlib.sha256(manifest.read_bytes()).hexdigest(),
-                'package': display_package['name']})
+                'package': metadata['name']})
             continue
         destination = firmware
         for part in directory.parts:

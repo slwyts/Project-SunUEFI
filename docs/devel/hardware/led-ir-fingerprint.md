@@ -202,7 +202,8 @@ QSEECOMPAT 的 lookup 返回 `architecture=2`，命令应使用 64 位地址，
 静态编译；来源记录在
 [`config/fingerprint.json`](../../../config/fingerprint.json)。
 执行 `sudo piano-fingerprint-ctl info` 可查询设备信息，`--help` 不访问设备。
-签名程序按固件清单随镜像提供，不包含用户模板或密码。
+签名程序与模型由 [本地固件包 `piano-firmware-fingerprint`](../../../linux/bsp/README.md#本地固件包)
+按固件清单安装，不包含用户模板或密码。
 
 libfprint 在自己的构建中直接编译同一份后端和依赖源码，不再通过
 `piano-goodix.pc` 链接平台私有 `libpiano-goodix.a`。源码归档和补丁由运行时清单校验，

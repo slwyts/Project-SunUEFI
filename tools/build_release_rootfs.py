@@ -1124,7 +1124,7 @@ def execute(record):
                      '--kernel-build', record['kernel_build'], '--output', bundle, '--sysroot', sysroot,
                      '--cc', helper_cc])
             runtime.stage(bundle, rootfs)
-        from stage_piano_firmware import stage as stage_firmware, verify_display
+        from stage_piano_firmware import stage as stage_firmware, verify_firmware_packages
         firmware = stage_firmware(Path(record['firmware_source']), rootfs, 'debian',
                                   shared=bool(published), run=run)
         apply_policy(rootfs, out, cfg)
@@ -1153,7 +1153,7 @@ def execute(record):
         if installed.get(power['name']) != power['version']:
             raise ValueError('Installed Piano power profiles package version differs')
         overlay_packages.verify_bsp_files(rootfs, 'debian', component='power-profiles')
-        verify_display(rootfs, 'debian', firmware['display_package'])
+        verify_firmware_packages(rootfs, 'debian', firmware['packages'])
         if installed.get(camera_record['name']) != camera_record['version']:
             raise ValueError('Installed Piano camera package version differs')
         camera.verify_installed(rootfs, 'debian', camera_archive)
@@ -1183,7 +1183,7 @@ def execute(record):
                   'debian_commit': cfg['debian']['commit'],
                   'device_configuration': bsp, 'camera_package': camera_record,
                   'audio_topology_package': topology, 'power_profiles_package': power,
-                  'display_firmware_package': firmware['display_package'],
+                  'firmware_packages': firmware['packages'],
                   **components,
                   'boot_request': boot_request, 'firmware_components': cfg['firmware']['components'],
                   'clock_epoch': clock,

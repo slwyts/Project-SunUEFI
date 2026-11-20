@@ -50,9 +50,10 @@ def debian_identity(path):
 def bsp_package(directory, package_format, *, component='config'):
     """Read the exact common package sealed by the builder."""
     distro, archive_format, architecture = BSP_TARGETS[package_format]
-    expected = {'config': package_bsp.NAME, 'audio-topology': package_bsp.TOPOLOGY_PACKAGE,
-                'display-firmware': package_bsp.DISPLAY_PACKAGE,
-                'power-profiles': package_bsp.POWER_PROFILES_PACKAGE}[component]
+    local_firmware = package_bsp.IMAGE_FIRMWARE.get(component)
+    expected = (local_firmware[0] if local_firmware else
+                {'config': package_bsp.NAME, 'audio-topology': package_bsp.TOPOLOGY_PACKAGE,
+                 'power-profiles': package_bsp.POWER_PROFILES_PACKAGE}[component])
     manifest = directory / 'manifest.json'
     if directory.is_symlink() or manifest.is_symlink() or (directory / '.incomplete').exists():
         raise ValueError('Device package did not complete: ' + str(directory))
@@ -84,12 +85,13 @@ def bsp_package(directory, package_format, *, component='config'):
                 payload[path]['sha256'] != TOPOLOGY_PIN or record.get('public_distribution') is not True):
             raise ValueError('Audio topology package differs from the release policy')
         metadata['firmware'] = payload[path]
-    if component == 'display-firmware':
-        manifest = package_bsp.DISPLAY_MANIFEST
-        _, rows = package_bsp.local_firmware_payload(manifest.parent, manifest, 'display firmware')
+    if local_firmware is not None:
+        _, manifest = local_firmware
+        description = component.replace('-', ' ')
+        _, rows = package_bsp.local_firmware_payload(manifest.parent, manifest, description)
         payload = {row['path']: {**row, 'bytes': len(data)} for row, data in rows}
         if record.get('payload_files') != payload or record.get('public_distribution') is not False:
-            raise ValueError('Display calibration package differs from the fixed source or is not local')
+            raise ValueError(description.capitalize() + ' package differs from the fixed source or is not local')
         metadata['firmware'] = payload
     if component == 'power-profiles':
         payload = {row['path']: {**row, 'bytes': len(data)}
@@ -105,8 +107,10 @@ def build_bsp(directory, package_format, run=None, *, component='config', firmwa
                '--format', archive_format, '--output', directory]
     if component in ('audio-topology', 'power-profiles'):
         command.append('--' + component)
-    if component == 'display-firmware':
-        command.extend(('--display-firmware', firmware_source or package_bsp.DISPLAY_MANIFEST.parent))
+    if component in package_bsp.IMAGE_FIRMWARE:
+        _, manifest = package_bsp.IMAGE_FIRMWARE[component]
+        command.extend(('--' + component, firmware_source or manifest.parent))
+        command = ['env', '-u', overlay_release.ENVIRONMENT, *command]
     if run is None:
         subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
     else:

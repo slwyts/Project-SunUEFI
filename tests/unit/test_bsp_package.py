@@ -2,7 +2,7 @@ import hashlib
 import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
 import sys
@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 from build.check_patch_series import patch_id
 import package_bsp as bsp
+from stage_piano_firmware import packaged_components
 
 TOPOLOGY_TOOLS = all(shutil.which(tool) for tool in ('m4', 'alsatplg'))
 TOPOLOGY_SOURCES = all((ROOT / 'upstream' / name / '.git').exists() for name in bsp.TOPOLOGY_SOURCES)
@@ -327,6 +328,49 @@ class BspPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unowned-existing-file'):
             bsp.conflict_check(root, rows, bsp.DISPLAY_PACKAGE, adopt_identical=True)
 
+    @unittest.skipUnless(shutil.which('dpkg-deb'), 'dpkg-deb unavailable; no fake deb test')
+    def test_fingerprint_deb_preserves_all_raw_firmware_at_the_loader_paths(self):
+        manifest = bsp.FINGERPRINT_MANIFEST
+        out = self.base / 'deb'
+        args = self.args('package', '--format', 'deb', '--fingerprint-firmware',
+                         str(manifest.parent), '--output', str(out))
+        report = bsp.build(args)
+        self.assertEqual(report['component'], 'fingerprint-firmware')
+        self.assertFalse(report['public_distribution'])
+        self.assertEqual(report['depends'], [])
+        artifact = out / next(iter(report['files']))
+        lock = json.loads(manifest.read_text())
+        version = lock['rom'].removeprefix('OS')
+        self.assertEqual(artifact.name, f'piano-firmware-fingerprint_{version}_all.deb')
+        pinned = lock['files']
+        paths = {'./usr/lib/firmware/' + name: record for name, record in pinned.items()}
+        self.assertEqual(set(pinned), {'gfpia.elf', 'piano-goodix-cap-s.bin',
+                                      'piano-goodix-cap-t.bin', 'piano-goodix-dubai-u4.bin'})
+        data = subprocess.check_output(['dpkg-deb', '--fsys-tarfile', artifact])
+        with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+            for path, expected in paths.items():
+                entry = archive.getmember(path)
+                self.assertTrue(entry.isfile())
+                self.assertEqual((entry.mode, entry.uid, entry.gid), (0o644, 0, 0))
+                installed = archive.extractfile(entry).read()
+                self.assertEqual((len(installed), hashlib.sha256(installed).hexdigest()),
+                                 (expected['bytes'], expected['sha256']))
+            self.assertEqual({member.name for member in archive
+                              if not member.isdir() and member.name.startswith('./usr/lib/firmware/')},
+                             set(paths))
+
+    def test_packaged_fingerprint_cannot_be_shadowed_by_a_direct_copy(self):
+        manifest = bsp.FINGERPRINT_MANIFEST
+        pinned = json.loads(manifest.read_text())
+        selected = [(PurePosixPath('.'), manifest, pinned)]
+        self.assertEqual(packaged_components(selected),
+                         {pinned['component']: 'fingerprint-firmware'})
+        with self.assertRaisesRegex(ValueError, 'differs from the fixed source'):
+            packaged_components([(PurePosixPath('.'), manifest, {**pinned, 'rom': 'modified'})])
+        with self.assertRaisesRegex(ValueError, 'overlaps firmware owned by a native package'):
+            packaged_components([*selected, (PurePosixPath('.'), manifest,
+                                              {**pinned, 'component': 'other'})])
+
     def test_power_profiles_adopt_only_identical_unowned_defaults(self):
         root = self.base / 'guest'
         row, data = bsp.power_profiles_payload()[0]
@@ -351,8 +395,8 @@ class BspPackageTests(unittest.TestCase):
             check()
 
     def test_local_firmware_rejects_tampering_and_publication_generation(self):
-        for component, manifest in (('touch', bsp.TOUCH_MANIFEST),
-                                    ('display', bsp.DISPLAY_MANIFEST)):
+        for component, manifest in (('touch', bsp.TOUCH_MANIFEST), ('display', bsp.DISPLAY_MANIFEST),
+                                    ('fingerprint', bsp.FINGERPRINT_MANIFEST)):
             with self.subTest(component=component):
                 source = self.base / component
                 shutil.copytree(manifest.parent, source)

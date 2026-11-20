@@ -86,8 +86,14 @@ ROM 提取 `odm/firmware` 中的这两个文件，再指定该目录和要安装
   --against /absolute/target-root --target arch --format pacman --output build/display-pacman
 ```
 
-SteamOS 与 Nyarch 使用同一份 `any` 格式的 pacman 包。触控和显示包都显式读取
-本地输入。单独构建显示包可不指定目标；安装前用 `--against` 检查目标系统的
+`piano-firmware-fingerprint` 包含 Goodix 的原厂签名程序和三个模型。
+构建按[固件清单](../../vendor/firmware/hyperos4-fingerprint/manifest.json)逐个校验，
+包版本取自原厂 ROM 号。文件原样安装到 `/usr/lib/firmware`。各成品镜像通过原生包装入；
+需要单独安装时，在上面的构建命令中换用
+`--fingerprint-firmware vendor/firmware/hyperos4-fingerprint`。指纹固件包不在公网软件源中。
+
+SteamOS 与 Nyarch 使用同一份 `any` 格式的 pacman 包。三个固件包都显式读取
+本地输入。单独构建显示和指纹包可不指定目标；安装前用 `--against` 检查目标系统的
 包归属和同名的 `.xz`、`.zst` 固件。
 旧镜像若有未登记的文件，先按上面的迁移方法备份再构建；其他包拥有的文件不覆盖。
 若构建后目标系统发生变化，先用 `./build.sh bsp inspect` 加原组件参数及
@@ -97,3 +103,4 @@ SteamOS 与 Nyarch 使用同一份 `any` 格式的 pacman 包。触控和显示�
 安装。换用保留的旧包可以回退，显式卸载用 `apt remove <包名>` 或 `pacman -R <包名>`。
 显示校准在下次内核初始化内屏时加载；移除校准后，普通 SDR 仍可用。若系统把校准打进
 了 initramfs，重启前按发行版的方式重建。
+指纹固件在后端初始化传感器时加载；移除固件不会删除指纹录入。

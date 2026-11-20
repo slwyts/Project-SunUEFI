@@ -164,7 +164,7 @@ def stage(args):
         install_pacman_desktop(root, args.runtime.resolve(), output / 'fingerprint-packages',
                                steamos=steamos)
     fw = ROOT / cfg['firmware']['components']
-    from stage_piano_firmware import stage as stage_firmware, verify_display
+    from stage_piano_firmware import stage as stage_firmware, verify_firmware_packages
     firmware = stage_firmware(fw, root, 'pacman', shared=published_packages is not None)
     # Upstream base selects GDM via Debian paths; use Arch's installed names.
     (root / 'etc/gdm3/daemon.conf').unlink(missing_ok=True)
@@ -256,7 +256,7 @@ def stage(args):
     overlay_packages.verify_bsp_files(root, 'pacman')
     overlay_packages.verify_bsp_files(root, 'pacman', component='power-profiles')
     overlay_packages.verify_topology(root, 'pacman', topology)
-    verify_display(root, 'pacman', firmware['display_package'])
+    verify_firmware_packages(root, 'pacman', firmware['packages'])
     sensors.verify_arch_files(root)
     camera.verify_installed(root, 'pacman', camera_archive)
     from package.v4l2loopback import verify_installed
@@ -270,7 +270,7 @@ def stage(args):
               'root_policy': 'LABEL=PIANOROOT', 'login': cfg['login'],
               'desktop_configuration': desktop, 'initramfs': boot, 'clock_epoch': clock,
               'firmware_components': cfg['firmware']['components'],
-              'display_firmware_package': firmware['display_package'],
+              'firmware_packages': firmware['packages'],
               'packages_sha256': release.digest(output / 'packages.tsv'),
               'camera_package': camera_record, 'audio_topology_package': topology,
               'power_profiles_package': power,

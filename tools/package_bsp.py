@@ -25,10 +25,16 @@ TOUCH_PACKAGE = 'piano-firmware-touch'
 TOUCH_MANIFEST = ROOT / 'vendor/firmware/piano-touch/manifest.json'
 DISPLAY_PACKAGE = 'piano-firmware-display'
 DISPLAY_MANIFEST = ROOT / 'vendor/firmware/piano-display/manifest.json'
+FINGERPRINT_PACKAGE = 'piano-firmware-fingerprint'
+FINGERPRINT_MANIFEST = ROOT / 'vendor/firmware/hyperos4-fingerprint/manifest.json'
 LOCAL_FIRMWARE = {
     TOUCH_PACKAGE: ('touch-firmware', TOUCH_MANIFEST),
     DISPLAY_PACKAGE: ('display-firmware', DISPLAY_MANIFEST),
+    FINGERPRINT_PACKAGE: ('fingerprint-firmware', FINGERPRINT_MANIFEST),
 }
+IMAGE_FIRMWARE = {component: (package, manifest)
+                  for package, (component, manifest) in LOCAL_FIRMWARE.items()
+                  if package in (DISPLAY_PACKAGE, FINGERPRINT_PACKAGE)}
 TOPOLOGY_PACKAGE = 'piano-audio-topology'
 POWER_PROFILES_PACKAGE = 'piano-power-profiles'
 POWER_PROFILES = BSP / 'power-profiles'
@@ -44,6 +50,8 @@ def package_description(package):
         return 'Xiaomi Pad 8 Pro Novatek touchscreen firmware'
     if package == DISPLAY_PACKAGE:
         return 'Xiaomi Pad 8 Pro display calibration firmware'
+    if package == FINGERPRINT_PACKAGE:
+        return 'Xiaomi Pad 8 Pro Goodix fingerprint firmware'
     if package == TOPOLOGY_PACKAGE:
         return 'Xiaomi Pad 8 Pro AudioReach topology'
     if package == POWER_PROFILES_PACKAGE:
@@ -92,10 +100,10 @@ def payload(features):
 
 def local_firmware_payload(source, manifest_path, description):
     manifest = read_json(manifest_path)
-    directory = PurePosixPath(manifest['directory'])
-    require(directory.parts and not directory.is_absolute() and '..' not in directory.parts,
+    directory = PurePosixPath(manifest.get('directory', '.'))
+    require(not directory.is_absolute() and '..' not in directory.parts,
             'Invalid firmware directory: ' + str(directory))
-    require(len(manifest['files']) == 2, 'Expected both panel files for ' + description)
+    require(manifest['files'], 'No files in the manifest for ' + description)
     rows = []
     for filename, record in manifest['files'].items():
         require(Path(filename).name == filename and filename not in ('', '.', '..'),
@@ -215,7 +223,7 @@ def inspect_local_firmware(args, suite, package, source):
     require(args.target in ('debian', 'arch'), 'Use --target debian or arch for ' + description)
     require(overlay_release.ENVIRONMENT not in os.environ,
             f'Local {description} cannot be built as a publication generation')
-    require(args.command != 'package' or args.against or package == DISPLAY_PACKAGE,
+    require(args.command != 'package' or args.against or component in IMAGE_FIRMWARE,
             f'Specify --against with the target root to check {description} ownership')
     manifest, rows = local_firmware_payload(source, manifest_path, description)
     provenance = {'rom': manifest['rom']}
@@ -262,18 +270,21 @@ def inspect_audio_topology(args, suite):
 
 
 def inspect(args):
+    local = next(((package, source)
+                  for package, (component, _) in LOCAL_FIRMWARE.items()
+                  if (source := getattr(args, component.replace('-', '_'))) is not None), None)
     if args.version is None:
-        separate = (args.touch_firmware is not None or args.display_firmware is not None
-                    or args.audio_topology or args.power_profiles)
-        args.version = '0.1.0' if separate else read_json(BSP / 'manifest.json')['version']
+        if local and local[0] == FINGERPRINT_PACKAGE:
+            args.version = read_json(FINGERPRINT_MANIFEST)['rom'].removeprefix('OS')
+        else:
+            separate = local is not None or args.audio_topology or args.power_profiles
+            args.version = '0.1.0' if separate else read_json(BSP / 'manifest.json')['version']
     require(re.fullmatch('[0-9][A-Za-z0-9.+]*', args.version), 'Invalid package version')
     profile = read_json(BSP / 'profiles.json')['profiles'][args.target]
     suite = args.suite or profile['default_suite']
     require(suite and re.fullmatch('[A-Za-z0-9_.-]+', suite), 'Specify an explicit Deepin/target suite')
-    if args.touch_firmware is not None:
-        return inspect_local_firmware(args, suite, TOUCH_PACKAGE, args.touch_firmware)
-    if args.display_firmware is not None:
-        return inspect_local_firmware(args, suite, DISPLAY_PACKAGE, args.display_firmware)
+    if local is not None:
+        return inspect_local_firmware(args, suite, *local)
     if args.audio_topology:
         return inspect_audio_topology(args, suite)
     if args.power_profiles:
@@ -358,6 +369,8 @@ def stage(args):
         elif report['package'] == DISPLAY_PACKAGE:
             copyright = ('Panel calibration derived from Qualcomm / Xiaomi stock QDCM data.\n'
                          'The SunUEFI source license does not cover the calibration data.\n')
+        elif report['package'] == FINGERPRINT_PACKAGE:
+            copyright = (FINGERPRINT_MANIFEST.parent / 'README.md').read_text()
         else:
             copyright = topology_copyright(report['source'])
         (docs / 'copyright').write_text(copyright)
@@ -365,8 +378,9 @@ def stage(args):
         docs.mkdir(parents=True)
         shutil.copyfile(POWER_PROFILES / 'copyright', docs / 'copyright')
     provenance = docs / 'bsp-manifest.json'
-    omitted = ({'files', 'conflict_check'} if report['package'] in (TOPOLOGY_PACKAGE, DISPLAY_PACKAGE)
-               else {'files'})
+    omitted = {'files'}
+    if report['component'] in IMAGE_FIRMWARE or report['package'] == TOPOLOGY_PACKAGE:
+        omitted.add('conflict_check')
     provenance.write_text(json.dumps({k: v for k, v in report.items() if k not in omitted}, indent=2) + '\n')
     for path in [tree, *tree.rglob('*')]:
         if path.is_dir() and not path.is_symlink():
@@ -449,6 +463,8 @@ def debian_package(output, tree, report, configuration):
     section, detail = {
         TOUCH_PACKAGE: ('non-free-firmware/kernel', ' Built from locally supplied stock ROM files.\n'),
         DISPLAY_PACKAGE: ('non-free-firmware/kernel', ' Installs locally supplied panel calibration data.\n'),
+        FINGERPRINT_PACKAGE: ('non-free-firmware/kernel',
+                              ' Installs the stock signed Goodix application and models.\n'),
         TOPOLOGY_PACKAGE: ('kernel', ' Provides the topology loaded by the Qualcomm ASoC driver.\n'),
         POWER_PROFILES_PACKAGE: ('admin', ' Connects the three desktop power modes to TuneD.\n'),
     }.get(package, ('misc', ' Native runtime, Mesa, firmware and modules are distributed separately.\n'))
@@ -616,6 +632,8 @@ def parser():
                            help='Package the two local stock touch firmware files')
     component.add_argument('--display-firmware', type=Path, metavar='DIRECTORY',
                            help='Package the two local display calibration files')
+    component.add_argument('--fingerprint-firmware', type=Path, metavar='DIRECTORY',
+                           help='Package the local Goodix fingerprint application and models')
     component.add_argument('--audio-topology', action='store_true',
                            help='Build the AudioReach topology package from the fixed sources')
     component.add_argument('--power-profiles', action='store_true',

@@ -274,10 +274,11 @@ sudo ./build.sh mesa build/mesa-steamos --format pacman --rootfs build/distros/s
 
 两种产品构建都会检查 Mesa 源码、完整驱动选项和 ARM64 包。CI 分别缓存原生包；复用前核对来源、配方与包摘要，安装后重新检查 ELF 和目标系统的依赖，避免把不匹配的滚动发行版缓存带入镜像。
 
-各产品由 APT 或 pacman 安装 `piano-firmware-display`，根系统组装核对两份
-校准的归属、大小与 SHA256。CI 共用这两个包，只用于组装镜像，不上传到软件源。
-其他设备固件仍按 `vendor/firmware/` 下的组件清单校验后安装。
-恢复已生成的根系统时，只迁移内容吻合且未被其他包持有的旧校准文件。
+各产品由 APT 或 pacman 安装 `piano-firmware-display` 和
+`piano-firmware-fingerprint`，组装时核对包归属、文件大小和 SHA256。显示包来自
+CI 的共用设备产物；指纹包在组装时从固定固件清单直接构建，二者都不上传到软件源。
+续建镜像时，只迁移内容吻合且未被其他包持有的旧文件。其余设备固件仍按
+`vendor/firmware/` 下的组件清单校验后安装。
 
 ### 单独构建的软件包
 
@@ -299,12 +300,12 @@ CPU 型号由 `linux/dts/piano-cpu-model.dtso` 给八个 CPU 节点加标准 `mo
 | --- | --- | --- |
 | Linux 内核与模块 | Debian 的 `bindeb-pkg` 和 Arch 的 `pacman-pkg` 原生包 | 随包安装并维护匹配的模块，由元包选择最新版本 |
 | 设备树 | 组合板级 DTB、overlay 和绑定转换，按内核版本打包 | 生成启动文件时选取同版文件，逐步收敛到内核源码中的板级设备树 |
-| Linux 设备固件 | 显示校准由 `piano-firmware-display` 安装；触控固件可单独[构建本地软件包](../../linux/bsp/README.md#本地固件包)，其他固件仍由组装脚本安装 | 发行版提供通用固件，设备包补齐板级固件 |
+| Linux 设备固件 | 显示校准和指纹固件通过原生包安装；触控固件可单独[构建本地软件包](../../linux/bsp/README.md#本地固件包)，其他固件仍由组装脚本安装 | 发行版提供通用固件，设备包补齐板级固件 |
 | ALSA UCM、udev、笔校准及音频拓扑 | 成品安装 `piano-device-config` 和 `piano-audio-topology` | 开源拓扑随独立包更新，剩余硬件运行文件继续按组件打包 |
 | Mesa、FFmpeg | 已有 Debian 和 pacman 原生包 | 保留目标发行版完整配方、功能和 ABI，按软件源正常更新 |
 | 传感器 | Debian 提供六个原生包；Nyarch 与 SteamOS 共用 `piano-sensors`，FastRPC、libssc 和 SensorProxy 按各自的库接口打包 | 继续通过标准 SensorProxy 接口提供照度和姿态 |
 | PipeWire | Debian、Arch Linux ARM 和 SteamOS 分别重建原生同版包组 | 保留发行版的依赖关系，升级到包含修复的上游版本后删除回移 |
-| 指纹 | libfprint／fprintd 使用目标发行版包，设备权限和模板目录配置归 `piano-device-config` | 继续归集固件和诊断工具，标准认证结果仍取自 libfprint／fprintd |
+| 指纹 | libfprint／fprintd 使用目标发行版包，设备权限和模板目录配置归 `piano-device-config`，固件独立打包 | 诊断工具独立打包，标准认证结果仍取自 libfprint／fprintd |
 | 相机 | 两种包管理器安装 `piano-camera`；`v4l2loopback` 随匹配内核安装 | 标准 libcamera 路径接管后移除过渡服务 |
 | 笔及诊断工具 | `piano-device-config` 安装笔的 BlueZ 服务和依赖；诊断工具仍由构建脚本复制 | 开发工具独立打包，不成为笔输入的依赖 |
 | GNOME／KDE／SteamOS 组件 | Mutter、GDM、GSD、libwacom、Gamescope 等已有原生包，默认设置和会话文件仍有 overlay | 通用修复维护一份补丁，设备配置与产品默认值分开，不覆盖用户设置 |
