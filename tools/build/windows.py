@@ -208,6 +208,46 @@ def graphics_test(_args):
     print(output / 'graphics-readback.exe')
 
 
+def drivers(args):
+    project = ROOT / 'windows/drivers/adreno/adreno.vcxproj'
+    if not args.kit_include:
+        msbuild = shutil.which('msbuild')
+        if not msbuild and os.name == 'nt':
+            locator = Path(os.environ['ProgramFiles(x86)']) / 'Microsoft Visual Studio/Installer/vswhere.exe'
+            if locator.is_file():
+                hits = subprocess.check_output([locator, '-latest', '-products', '*', '-requires',
+                                                'Microsoft.Component.MSBuild', '-find',
+                                                r'MSBuild\**\Bin\MSBuild.exe'], text=True).splitlines()
+                msbuild = next(iter(hits), None)
+        if not msbuild:
+            raise ValueError('Use a Visual Studio/WDK developer shell, or pass --kit-include for LLVM.')
+        subprocess.run([msbuild, project, '/m', '/p:Platform=ARM64', '/p:Configuration=Release'], check=True)
+        return
+
+    compiler, librarian = required_tool('clang-cl'), required_tool('llvm-lib')
+    work = ROOT / 'build/windows/adreno/Release'
+    output = ROOT / 'artifacts/windows/drivers/adreno/Release'
+    work.mkdir(parents=True, exist_ok=True)
+    output.mkdir(parents=True, exist_ok=True)
+    # The WDK and SDK may be separate NuGet packages or a single local kit.
+    includes = [f'/imsvc{path}' for root in args.kit_include
+                for name in ('km', 'km/crt', 'shared', 'ucrt')
+                if (path := root.resolve() / name).is_dir()]
+    units = ET.parse(project).findall('.//{*}ClCompile[@Include]')
+    objects = []
+    for unit in units:
+        source = project.parent / unit.attrib['Include']
+        obj = work / (source.stem + '.obj')
+        subprocess.run([compiler, '--target=aarch64-pc-windows-msvc', '/nologo', '/kernel',
+                        '/std:c17', '/W4', '/WX', '/c', '/D_ARM64_=1',
+                        *includes, f'/Fo{obj}', source], check=True)
+        objects.append(obj)
+    library = output / (project.stem + '.lib')
+    subprocess.run([librarian, f'/out:{library}', *(obj.name for obj in objects)],
+                   cwd=work, check=True)
+    print(library)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
@@ -218,6 +258,10 @@ def main(argv=None):
     build.set_defaults(run=run_media)
     graphics = commands.add_parser('graphics-test', help='Build the ARM64 Direct3D hardware readback test')
     graphics.set_defaults(run=graphics_test)
+    driver = commands.add_parser('drivers', help='Build the ARM64 WDK graphics driver components')
+    driver.add_argument('--kit-include', type=Path, action='append',
+                        help='Use LLVM with this versioned SDK/WDK Include directory (repeat for split kits)')
+    driver.set_defaults(run=drivers)
     args = parser.parse_args(argv)
     try:
         args.run(args)

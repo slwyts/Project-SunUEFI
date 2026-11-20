@@ -161,6 +161,11 @@ LUID 后运行 `graphics-readback.exe --luid 高位:低位`，分别检查 D3D11
 D3D12 的命令完成与结果读回。CI 中的 `--warp` 用微软软件适配器校验测试
 程序本身，不能计作平板的硬件结果。
 
+在已装 WDK 的 Visual Studio 开发者终端，用 `./build.sh windows drivers`
+构建 ARM64 内核驱动部件。使用 LLVM 交叉编译时，传入 `--kit-include`
+及 WDK 中包含 `km/`、`shared/` 的版本目录；分开安装的 SDK 和 WDK 可分别
+传入。产物中的 `adreno.lib` 是处理 GPU 固件的内核库，不是可安装的显示驱动包。
+
 GPU 的同芯片驱动与本机原厂基线见[上游项目](upstreams.md)。在另一部
 SM8750 设备上的测试结果只用来选择实现，不计入 Piano 的发布结果。
 

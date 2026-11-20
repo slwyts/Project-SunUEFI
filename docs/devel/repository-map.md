@@ -16,6 +16,7 @@
 | `linux/configs/`、`linux/dts/` | 手写配置 | 内核配置片段与设备树 overlay，直接修改 |
 | `linux/bsp/`、`linux/rootfs/`、`linux/desktops/` | 手写配方 | 多发行版支持、根系统装配与桌面环境配置，直接修改 |
 | `windows/deployment/` | 手写配方 | Windows 安装和 WinPE 实机检查。由 `./build.sh windows media` 构建，不参与 Linux 镜像或软件源发布。 |
+| `windows/drivers/` | Windows 驱动源码 | 按硬件维护 WDK 工程，`./build.sh windows drivers` 构建 ARM64 内核部件。运行在 Windows 上的硬件验收程序放在对应驱动的 `tests/`。 |
 | `tools/` | 手写脚本 | 构建、打包、检查脚本，直接修改 |
 | `tests/` | 手写测试 | 主机端 Python 和原生 C 测试，直接修改 |
 | `upstream/` | 子模块 | 固定提交的上游源码，不要直接在里面修改，改动通过 `patches/` 表达 |
