@@ -80,7 +80,16 @@ PianoSmbiosAddMemory (EFI_SMBIOS_PROTOCOL *Smbios, EFI_HANDLE Producer, CONST PI
   if (Installed < Layout->DramBytes) {
     Installed = 0;  // An old capacity value cannot cap a larger live map.
   }
-  if (Installed && Total != Installed) {
+  if (Total % SIZE_1MB) {
+    Count = 0;  // Not a complete installed capacity representable by Type 17.
+  }
+  if (Count && (!Installed || Total <= Installed)) {
+    // A larger size label alone is not evidence of additional DDR. These
+    // physical banks already account for all AP-visible addresses.
+    Installed = Total;
+  } else if (Count) {
+    // The controller list includes capacity the populated device disclaims.
+    // Keep the current device size and report only the confirmed AP ranges.
     Count = 0;
   }
   if (!Count) {
@@ -88,8 +97,6 @@ PianoSmbiosAddMemory (EFI_SMBIOS_PROTOCOL *Smbios, EFI_HANDLE Producer, CONST PI
     // never fill a hole from a capacity or infer soldered capacity by rounding.
     Ranges = Layout->Ram;
     Count = Layout->RamCount;
-  } else if (!Installed) {
-    Installed = Total;
   }
   if (!Installed || Installed % SIZE_1MB ||
       Installed / SIZE_1MB > MAX_INT32 || !Count) {

@@ -70,10 +70,26 @@ int main(void) {
   assert(Map[1].ExtendedStartingAddress == SIZE_8TB && Map[1].ExtendedEndingAddress == SIZE_8TB + SIZE_8GB - 1);
 
   Count = 0;
-  Layout.DdrSize = 24;  // The old controller entries cannot describe the upgraded board.
+  Layout.DdrSize = 24;
+  assert(PianoSmbiosAddMemory(&Protocol, NULL, &Layout) == EFI_SUCCESS && Count == 4);
+  assert(Device.Size == 16384);  // A changed size label with no added addresses.
+  Count = 0;
+  Layout.Ram[1].Bytes = SIZE_16GB;  // The new bank now extends beyond the old controller table.
+  Layout.DramBytes = SIZE_1GB + SIZE_16GB;
   assert(PianoSmbiosAddMemory(&Protocol, NULL, &Layout) == EFI_SUCCESS && Count == 4);
   assert(Device.Size == 24576 && Map[0].EndingAddress == SIZE_2GB / SIZE_1KB - 1);
-  assert(Map[1].ExtendedEndingAddress == SIZE_8TB + SIZE_4GB - 1);
+  assert(Map[1].ExtendedEndingAddress == SIZE_8TB + SIZE_16GB - 1);
+  Count = 0;
+  Layout.Ram[1].Bytes = SIZE_4GB;
+  Layout.DramBytes = SIZE_1GB + SIZE_4GB;
+  Layout.DdrSize = 8;  // A stale, larger controller window must not inflate a smaller SKU.
+  assert(PianoSmbiosAddMemory(&Protocol, NULL, &Layout) == EFI_SUCCESS && Count == 4);
+  assert(Device.Size == 8192 && Map[1].ExtendedEndingAddress == SIZE_8TB + SIZE_4GB - 1);
+  Count = 0;
+  Layout.DdrSize = 12;
+  Region(Layout.DdrRegion[2], SIZE_8TB, SIZE_4GB);
+  assert(PianoSmbiosAddMemory(&Protocol, NULL, &Layout) == EFI_SUCCESS && Count == 4);
+  assert(Device.Size == 12288 && Map[0].EndingAddress == (SIZE_1GB + SIZE_8GB) / SIZE_1KB - 1);
   Count = 0;
   Layout.DdrProperties = 0;
   Region(Layout.DdrRegion[2], SIZE_8TB, SIZE_32GB - SIZE_8GB);
