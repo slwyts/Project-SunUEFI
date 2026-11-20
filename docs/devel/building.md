@@ -66,6 +66,25 @@ docker run --rm -v "$PWD:/workspace" -w /workspace sunuefi-builder bash -euc '
 
 原理见[合体 BOOT](boot/combined-boot.md)。
 
+## Windows ARM64 安装介质
+
+在 Linux 构建机上安装 `7z` 和 `wimlib-imagex`，传入自己的微软 ARM64 安装 ISO：
+
+```sh
+./build.sh windows media --iso /path/to/Windows11_arm64.iso
+```
+
+输出位于 `artifacts/windows/media/`。`esp/` 是应合并到 FAT32 启动分区的文件；
+从 `EFI/Microsoft/Boot/bootmgfw.efi` 启动 WinPE，不覆盖已有的 `EFI/BOOT/BOOTAA64.EFI`
+或更改启动顺序。`ntfs/` 是应放在 NTFS 卷上的 Windows Setup 安装源，其中
+`sources/install.wim` 可大于 FAT32 的单文件上限。它不是已安装的 Windows 系统。
+`media.json` 列出实际映像索引、版本和文件 SHA-256；构建不访问设备。
+
+调试首次启动时加 `--probe`，输出到 `artifacts/windows/winpe/`。这份介质只启动
+WinPE，不打开安装程序。启动脚本初始化设备，找到带 `SunUEFI/WinPE/probe.tag`
+的卷后，在同目录记录本次启动、磁盘卷和设备枚举结果，再重启。若 Windows
+没有识别带标记的卷，脚本仍请求重启，不写其他卷。普通安装介质不包含这个启动脚本。
+
 ## 完整系统
 
 各目标共用同一份内核和 UEFI，各自构建根系统：

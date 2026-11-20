@@ -8,6 +8,7 @@ case "$command" in
   sources) python3 tools/prepare_sources.py "$@" ;;
   check) python3 tools/check_host.py --group portable "$@" ;;
   uefi) make uefi ;;
+  windows) python3 tools/build/windows.py "$@" ;;
   trampoline) python3 tools/package_product_trampoline.py "$@" ;;
   module) python3 tools/build_android_product_module.py "$@" ;;
   module-package) python3 tools/build_android_module.py "$@" ;;
@@ -74,7 +75,7 @@ case "$command" in
   install) python3 tools/install_piano.py "$@" ;;
   installer) python3 tools/export_installer.py "$@" ;;
   help|-h|--help)
-    printf '%s\n' 'Usage: ./build.sh sources|check|uefi|trampoline|module|module-package|boot-request|boot-repack|linux|linux-package|camera-package|mesa|sensors|display-calibration|ffmpeg|gsd|gdm|bluez|libcamera|denial|droidloom-package|pipewire|kwin|qt-multimedia|plasma-camera|libwacom|mutter|bsp|repo|rootfs|release-rootfs|nyarch-gnome-rootfs|arch-denial-rootfs|steamos-rootfs|package|all|installer|install' \
+    printf '%s\n' 'Usage: ./build.sh sources|check|uefi|windows|trampoline|module|module-package|boot-request|boot-repack|linux|linux-package|camera-package|mesa|sensors|display-calibration|ffmpeg|gsd|gdm|bluez|libcamera|denial|droidloom-package|pipewire|kwin|qt-multimedia|plasma-camera|libwacom|mutter|bsp|repo|rootfs|release-rootfs|nyarch-gnome-rootfs|arch-denial-rootfs|steamos-rootfs|package|all|installer|install' \
       'Full builds need the documented builder environment; rootfs/Mesa/sensors run in a root ARM64 build container.' \
       'release-rootfs reads its kernel source worktree from build/release/source-manifest.json.' \
       'Building never partitions or flashes a tablet. install is a separate explicit command.' ;;
