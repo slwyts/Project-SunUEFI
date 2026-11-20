@@ -57,6 +57,9 @@ PipeWire 保留 Arch 的拆包和音频依赖；Plasma Camera 使用构建根自
 公网软件源。同一 `libcamera --rootfs` 入口也接受 SteamOS ARM64 构建根，
 生成匹配 Valve Qt 和 GStreamer 的五个包，并保留 CAMSS、UVC 和软件 ISP；
 它不安装 Arch 的 `libpisp` 或文档包。
+用该组 libcamera 和 IPA 在同一个 Valve 构建根运行
+`plasma-camera --rootfs`，可构建使用原有 Qt Multimedia／FFmpeg 后端的
+SteamOS 应用包。这个包不替换系统的 Qt 或 FFmpeg。
 
 | 功能 | 现有服务（旧路径） | 标准硬件路径（替代状态） |
 | --- | --- | --- |

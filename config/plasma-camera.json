@@ -13,5 +13,8 @@
       "key_url": "https://keys.openpgp.org/vks/v1/by-fingerprint/D81C0CB38EB725EF6691C385BB463350D6EF31EF",
       "key_sha256": "854b9a67153e60c1bf0e7c36c9cd15426d65d9a6b1adf8226653102250cc922d"
     }
+  },
+  "steamos": {
+    "package_release": "1.2"
   }
 }

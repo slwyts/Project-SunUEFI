@@ -55,13 +55,33 @@ class PlasmaCameraArchTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'differs from its selected build'):
                 builder.verify_installed_arch_camera(self.root, self.archives, self.proof)
 
-    def test_arch_and_debian_apply_the_same_reviewed_patches(self):
+    def test_pacman_and_debian_apply_the_same_reviewed_patches(self):
         policy = json.loads(builder.CONFIG.read_text())['arch']
         upstream, _ = policy['upstream_package_version'].rsplit('-', 1)
         series = ROOT / 'patches/plasma-camera'
+        pacman_series = series / upstream / 'series.json'
         debian = builder.source_patches(series / '26.08.2/series.json')
-        arch = builder.source_patches(series / upstream / 'series.json')
-        self.assertEqual([path.resolve() for path in arch], [path.resolve() for path in debian])
+        pacman = builder.source_patches(pacman_series)
+        self.assertEqual([path.resolve() for path in pacman], [path.resolve() for path in debian])
+        self.assertIn('steamos', json.loads(pacman_series.read_text())['targets'])
+
+    def test_steamos_selects_installed_qt_and_arch_checks_the_source_release(self):
+        policy = json.loads(builder.CONFIG.read_text())
+        with patch.object(builder.debian_package, 'capture', return_value='qt6-base 6.11.1-1') as query:
+            steamos, minor = builder.pacman_recipe_policy(self.root, 'steamos')
+        query.assert_called_once_with(['chroot', self.root, 'pacman', '-Q', 'qt6-base'])
+        self.assertEqual(minor, '6.11')
+        self.assertEqual(steamos['source'], policy['arch']['source'])
+        self.assertEqual(steamos['package_release'], policy['steamos']['package_release'])
+
+        version = policy['arch']['upstream_package_version']
+        with patch.object(builder.debian_package, 'capture', return_value=f'Version : {version}') as query:
+            self.assertEqual(builder.pacman_recipe_policy(self.root, 'arch'), (policy['arch'], None))
+        query.assert_called_once_with(['chroot', self.root, 'env', 'LC_ALL=C', 'pacman', '-Si',
+                                       'extra/plasma-camera'])
+        with patch.object(builder.debian_package, 'capture', return_value='Version : 1-1'):
+            with self.assertRaisesRegex(ValueError, 'selected Arch archive'):
+                builder.pacman_recipe_policy(self.root, 'arch')
 
 
 if __name__ == '__main__':

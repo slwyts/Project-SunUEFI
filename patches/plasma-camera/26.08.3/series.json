@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "version": "26.08.3",
-  "targets": ["nyarch-gnome", "arch-denial"],
+  "targets": ["nyarch-gnome", "arch-denial", "steamos"],
   "patches": [
     {
       "file": "../26.08.2/0001-libcamera-0.8.patch",

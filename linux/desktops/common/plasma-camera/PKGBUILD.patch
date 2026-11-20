@@ -1,18 +1,19 @@
 --- a/PKGBUILD
 +++ b/PKGBUILD
-@@ -2,9 +2,9 @@
+@@ -2,9 +2,10 @@
  
  pkgname=plasma-camera
  pkgver=26.08.3
 -pkgrel=1
 +pkgrel=@RELEASE@
++_steamos=@STEAMOS@
  pkgdesc='Camera application for Plasma Mobile'
 -arch=(x86_64)
 +arch=(aarch64)
  url='https://apps.kde.org/plasma.camera/'
  license=(GPL-3.0-or-later)
  groups=(kde-applications)
-@@ -16,27 +16,40 @@
+@@ -16,28 +17,64 @@
    ki18n
    kirigami
    kirigami-addons
@@ -20,7 +21,8 @@
 +  libcamera libcamera.so libcamera-base.so
    libgcc
    libstdc++
-   qt6-base
+-  qt6-base
++  'qt6-base@QT_DEPENDENCY@'
    qt6-declarative
    qt6-multimedia
 +  qt6-multimedia-ffmpeg
@@ -37,6 +39,10 @@
 -validpgpkeys=(CA262C6C83DE4D2FB28A332A3A6A4DB839EAA6D7  # Albert Astals Cid <aacid@kde.org>
 -              F23275E4BF10AFC1DF6914A6DBD2CE893E2D1C87  # Christoph Feck <cfeck@kde.org>
 -              D81C0CB38EB725EF6691C385BB463350D6EF31EF) # Heiko Becker <heiko.becker@kde.org>
++if [[ $_steamos == true ]]; then
++  makedepends+=(ninja libglvnd)
++  options=(!lto !debug)
++fi
 +_patches=(@PATCHES@)
 +# The source is verified against KDE's release signature before staging.
 +source=(@SOURCE@ "${_patches[@]}")
@@ -52,12 +58,33 @@
  
  build() {
 -  cmake -B build -S $pkgname-$pkgver
+-  cmake --build build
 +  # Kirigami's CMake package uses the target GCC OpenMP runtime.
 +  local PATH="${PATH#@PACKAGE_TOOLS@/bin:}"
 +  local CC=gcc CXX=g++ CCACHE_COMPILERTYPE=gcc
++  local -a cmake_args=(-DCMAKE_INSTALL_PREFIX=/usr)
++  if [[ $_steamos == true ]]; then
++    PATH=/usr/bin:/bin
++    CC=/usr/bin/gcc
++    CXX=/usr/bin/g++
++    local qt_libdir opengl_libdir glx_libdir
++    qt_libdir=$(pkg-config --variable=libdir Qt6Core)
++    opengl_libdir=$(pkg-config --variable=libdir opengl)
++    glx_libdir=$(pkg-config --variable=libdir glx)
++    test -r "$qt_libdir/cmake/Qt6/qt.toolchain.cmake"
++    cmake_args+=(
++      -G Ninja -DCMAKE_TOOLCHAIN_FILE="$qt_libdir/cmake/Qt6/qt.toolchain.cmake"
++      -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_LIBEXECDIR=lib
++      -DCMAKE_LIBRARY_PATH="$opengl_libdir;$glx_libdir;$qt_libdir"
++      -DOPENGL_opengl_LIBRARY="$opengl_libdir/libOpenGL.so"
++      -DOPENGL_glx_LIBRARY="$glx_libdir/libGLX.so"
++      -DBUILD_TESTING=OFF -DBUILD_QCH=OFF
++    )
++  fi
 +  export PATH CC CXX CCACHE_COMPILERTYPE
 +  unset CCACHE_EXTRAFILES MAKE
-+  cmake -B build -S "$pkgname-$pkgver" -DCMAKE_INSTALL_PREFIX=/usr
-   cmake --build build
++  cmake -B build -S "$pkgname-$pkgver" "${cmake_args[@]}"
++  cmake --build build --parallel @JOBS@
  }
  
+ package() {
