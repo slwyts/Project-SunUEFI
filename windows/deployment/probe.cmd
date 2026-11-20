@@ -32,6 +32,7 @@ set /p "readback="<"%result%\boot.log"
 if "!readback!"=="!stamp!" echo readback=ok>>"%result%\boot.log"
 ver >>"%result%\boot.log"
 reg query HKLM\SYSTEM\CurrentControlSet\Control /v PEFirmwareType >>"%result%\boot.log" 2>&1
+reg query "HKLM\HARDWARE\RESOURCEMAP\System Resources\Physical Memory" /v ".Translated" >"%result%\memory.txt" 2>&1
 (echo list disk&echo list volume&echo exit) | diskpart >"%result%\storage.txt" 2>&1
 pnputil /enum-devices /connected /deviceids >"%result%\devices.txt" 2>&1
 if exist "%SYSTEMROOT%\inf\setupapi.dev.log" copy /y "%SYSTEMROOT%\inf\setupapi.dev.log" "%result%\" >nul

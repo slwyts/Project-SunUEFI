@@ -82,7 +82,8 @@ docker run --rm -v "$PWD:/workspace" -w /workspace sunuefi-builder bash -euc '
 
 调试首次启动时加 `--probe`，输出到 `artifacts/windows/winpe/`。这份介质只启动
 WinPE，不打开安装程序。启动脚本初始化设备，找到带 `SunUEFI/WinPE/probe.tag`
-的卷后，在同目录记录本次启动、磁盘卷和设备枚举结果，再重启。若 Windows
+的卷后，在同目录记录本次启动、磁盘卷和设备，再重启。`memory.txt`
+是 Windows 内核识别的物理内存地址段，不是固件报告的标称容量。若 Windows
 没有识别带标记的卷，脚本仍请求重启，不写其他卷。普通安装介质不包含这个启动脚本。
 
 在已创建独立分区的平板上，从有 root 的 Android 连接 ADB。Linux 主机还需要
@@ -109,7 +110,9 @@ NTFS 系统卷展开选定映像，BCDBoot 生成的微软启动文件放入共�
 进度与失败原因在 ESP 的 `SunUEFI/Deployment/install.log`。如果写 ESP 时连接中断，
 提示中的本地 FAT 镜像保留了原有引导文件；重新刷到 `sunuefi_esp` 即可恢复。
 WinPE 重启后仍遵从原来保存的默认系统；再次选择“启动 Windows”即可进入
-刚部署的 Windows，不会重新运行安装步骤。
+刚部署的 Windows，不会重新运行安装步骤。正式 Windows 首次启动时可能自行注册
+Windows Boot Manager 并将它排在固件启动顺序的首位。其他启动项仍在，
+需要时可在固件或操作系统里重新选择默认项。
 
 ## 完整系统
 

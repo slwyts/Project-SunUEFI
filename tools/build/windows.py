@@ -150,7 +150,12 @@ def media(iso, output, probe=False):
         member(sources, 'boot.wim').rename(wim)
         boot_index = check_ramdisk(member(boot, 'bcd'), sdi, wim)
         if probe:
-            subprocess.run([wimtool, 'update', wim, str(boot_index)], cwd=TEMPLATES, text=True,
+            # cmd.exe seeks to labels by byte offset. Keep the Windows files
+            # independent of the checkout's line-ending policy.
+            for name in ('winpeshl.ini', 'probe.cmd'):
+                text = (TEMPLATES / name).read_text(encoding='utf-8')
+                (work / name).write_bytes(text.replace('\n', '\r\n').encode('utf-8'))
+            subprocess.run([wimtool, 'update', wim, str(boot_index)], cwd=work, text=True,
                            input='add winpeshl.ini /Windows/System32/winpeshl.ini\n'
                                  'add probe.cmd /Windows/System32/sunuefi-probe.cmd\n', check=True)
             marker = esp / 'SunUEFI/WinPE/probe.tag'
