@@ -1,17 +1,21 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: slwyts <slwyts@foxmail.com>
-Date: Tue, 20 Oct 2026 12:00:00 +0000
-Subject: dt-bindings: display: msm: describe SM8750 Adreno and GMU
+From: Jie Zhang <jie.zhang@oss.qualcomm.com>
+Date: Sun, 9 Aug 2026 01:53:09 +0530
+Subject: [PATCH] dt-bindings: display/msm: Document Adreno 830 GPU/GMU
 
-Describe the GPU and management unit resources used on Piano.
+Adreno 830 GPU present in SM8750 chipset belongs to the A8x family of
+Adreno GPU. It is similar to Adreno 840 GPU with some meaningful
+differences like GMEM , register file size etc.
 
-The port retains changes from these linux-piano commits:
-piano: native display (NT36532 DSC) and Adreno 830 GPU (#14) (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+Document Adreno 830 GPU and GMU present in the SM8750 chipset.
 
-Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
-
-Link: https://github.com/blu-sharky/linux-piano/commit/5c2c95fddbe9c29720b7b4e84119357358e9f0cb
-Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+Signed-off-by: Jie Zhang <jie.zhang@oss.qualcomm.com>
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Reviewed-by: Krzysztof Kozlowski <krzysztof.kozlowski@oss.qualcomm.com>
+Patchwork: https://patchwork.freedesktop.org/patch/745129/
+Message-ID: <20260809-pakala-gpu-v1-2-207ad1fac1c7@oss.qualcomm.com>
+Signed-off-by: Rob Clark <robin.clark@oss.qualcomm.com>
+Link: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=ab20121e021588b634671958f7caa346bfa69621
 ---
  Documentation/devicetree/bindings/display/msm/gmu.yaml | 4 +++-
  Documentation/devicetree/bindings/display/msm/gpu.yaml | 2 ++

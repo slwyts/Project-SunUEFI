@@ -14,48 +14,46 @@ Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
 Link: https://github.com/blu-sharky/linux-piano/commit/00b055cd9c1634371cd501530ba5c29de4ab91d4
 Link: https://github.com/blu-sharky/linux-piano/commit/2f6c29345edf991b04ce15d2231e6060412335aa
 Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+
+Scope the unavailable interconnect fallback to the explicit Piano
+board compatible. Scope the XO, clock, regulator and reserved-memory
+exceptions to that board as well. Keep upstream dependency and
+SCM failure handling on other boards.
 ---
- drivers/remoteproc/qcom_q6v5.c     |  20 ++++-
- drivers/remoteproc/qcom_q6v5_pas.c | 134 ++++++++++++++++++++++++++---
- 2 files changed, 137 insertions(+), 17 deletions(-)
+ drivers/remoteproc/qcom_q6v5.c     |  14 +++-
+ drivers/remoteproc/qcom_q6v5_pas.c | 123 ++++++++++++++++++++++++-----
+ 2 files changed, 116 insertions(+), 21 deletions(-)
 
 diff --git a/drivers/remoteproc/qcom_q6v5.c b/drivers/remoteproc/qcom_q6v5.c
-index fe148b4b3775fc98f3ea86fed60a6eb495bb5a0a..3e5e85b34b0ce6f482228e6391b48df41e9ef2a5 100644
+index fe148b4b3775fc98f3ea86fed60a6eb495bb5a0a..4474990b0a2840f29654a748373b6a7500f492b3 100644
 --- a/drivers/remoteproc/qcom_q6v5.c
 +++ b/drivers/remoteproc/qcom_q6v5.c
-@@ -371,10 +371,24 @@ int qcom_q6v5_init(struct qcom_q6v5 *q6v5, struct platform_device *pdev,
- 		return load_state ? -ENOMEM : -EINVAL;
+@@ -372,9 +372,17 @@ int qcom_q6v5_init(struct qcom_q6v5 *q6v5, struct platform_device *pdev,
  	}
  
-+	/*
-+	 * piano: the stock sun vendor tree names an interconnect path whose
-+	 * provider mainline does not bind, so devm_of_icc_get() returns
-+	 * -EPROBE_DEFER and the whole remoteproc parks forever.  Deferring
-+	 * here costs more than the path is worth: without the remoteproc there
-+	 * is no ADSP, hence no pmic-glink, hence no battery or audio.  All
-+	 * consumers (icc_set_bw) are NULL-safe, so continue without the path.
-+	 */
  	q6v5->path = devm_of_icc_get(&pdev->dev, NULL);
 -	if (IS_ERR(q6v5->path))
 -		return dev_err_probe(&pdev->dev, PTR_ERR(q6v5->path),
 -				     "failed to acquire interconnect path\n");
 +	if (IS_ERR(q6v5->path)) {
-+		if (PTR_ERR(q6v5->path) == -EPROBE_DEFER) {
-+			dev_warn(&pdev->dev, "interconnect provider unbound, continuing without it\n");
-+			q6v5->path = NULL;
-+		} else {
-+			return dev_err_probe(&pdev->dev, PTR_ERR(q6v5->path),
++		ret = PTR_ERR(q6v5->path);
++
++		/* The vendor Piano DT can reference an unsupported provider. */
++		if (ret != -EPROBE_DEFER || !of_machine_is_compatible("xiaomi,piano"))
++			return dev_err_probe(&pdev->dev, ret,
 +					     "failed to acquire interconnect path\n");
-+		}
++
++		dev_warn(&pdev->dev, "Piano interconnect provider unbound, continuing without it\n");
++		q6v5->path = NULL;
 +	}
  
  	return 0;
  }
 diff --git a/drivers/remoteproc/qcom_q6v5_pas.c b/drivers/remoteproc/qcom_q6v5_pas.c
-index a005546c265d0eccbdd6a984b04e88c3089ba690..139137b50a5921a15c47b95a58a370621c3c5103 100644
+index a005546c265d0eccbdd6a984b04e88c3089ba690..0f909d20e69085160f021ddafe4c4eb89e7a3622 100644
 --- a/drivers/remoteproc/qcom_q6v5_pas.c
 +++ b/drivers/remoteproc/qcom_q6v5_pas.c
-@@ -617,15 +617,37 @@ static const struct rproc_ops qcom_pas_minidump_ops = {
+@@ -617,27 +617,50 @@ static const struct rproc_ops qcom_pas_minidump_ops = {
  
  static int qcom_pas_init_clock(struct qcom_pas *pas)
  {
@@ -63,25 +61,21 @@ index a005546c265d0eccbdd6a984b04e88c3089ba690..139137b50a5921a15c47b95a58a37062
 -	if (IS_ERR(pas->xo))
 -		return dev_err_probe(pas->dev, PTR_ERR(pas->xo),
 -				     "failed to get xo clock");
-+	/*
-+	 * piano: the stock sun vendor tree wires adsp/cdsp "xo" (and often
-+	 * "aggre2") to clock providers mainline does not bind.  The node DOES
-+	 * list the clock, so the lookup returns -EPROBE_DEFER rather than
-+	 * -ENOENT and devm_clk_get_optional() alone does not help.  Deferring
-+	 * here is fatal to the whole bring-up: the remoteproc never probes, so
-+	 * pmic-glink, battmgr and the ADSP audio chain never come up either.
-+	 * clk_prepare_enable() and clk_disable_unprepare() are NULL-safe, so
-+	 * continue without the clock and let the firmware load proceed.
-+	 */
-+	pas->xo = devm_clk_get_optional(pas->dev, "xo");
++	bool piano = of_machine_is_compatible("xiaomi,piano");
++	int ret;
++
++	/* The vendor Piano DT can reference clocks without a provider. */
++	if (piano)
++		pas->xo = devm_clk_get_optional(pas->dev, "xo");
++	else
++		pas->xo = devm_clk_get(pas->dev, "xo");
 +	if (IS_ERR(pas->xo)) {
-+		if (PTR_ERR(pas->xo) == -EPROBE_DEFER) {
-+			dev_warn(pas->dev, "xo clock provider unbound, continuing without it\n");
-+			pas->xo = NULL;
-+		} else {
-+			return dev_err_probe(pas->dev, PTR_ERR(pas->xo),
-+					     "failed to get xo clock");
-+		}
++		ret = PTR_ERR(pas->xo);
++		if (!piano || ret != -EPROBE_DEFER)
++			return dev_err_probe(pas->dev, ret, "failed to get xo clock");
++
++		dev_warn(pas->dev, "Piano xo clock provider unbound, continuing without it\n");
++		pas->xo = NULL;
 +	}
  
  	pas->aggre2_clk = devm_clk_get_optional(pas->dev, "aggre2");
@@ -89,77 +83,67 @@ index a005546c265d0eccbdd6a984b04e88c3089ba690..139137b50a5921a15c47b95a58a37062
 -		return dev_err_probe(pas->dev, PTR_ERR(pas->aggre2_clk),
 -				     "failed to get aggre2 clock");
 +	if (IS_ERR(pas->aggre2_clk)) {
-+		if (PTR_ERR(pas->aggre2_clk) == -EPROBE_DEFER) {
-+			dev_warn(pas->dev, "aggre2 clock provider unbound, continuing without it\n");
-+			pas->aggre2_clk = NULL;
-+		} else {
-+			return dev_err_probe(pas->dev, PTR_ERR(pas->aggre2_clk),
-+					     "failed to get aggre2 clock");
-+		}
++		ret = PTR_ERR(pas->aggre2_clk);
++		if (!piano || ret != -EPROBE_DEFER)
++			return dev_err_probe(pas->dev, ret, "failed to get aggre2 clock");
++
++		dev_warn(pas->dev, "Piano aggre2 clock provider unbound, continuing without it\n");
++		pas->aggre2_clk = NULL;
 +	}
  
  	return 0;
  }
-@@ -634,10 +656,24 @@ static int qcom_pas_init_regulator(struct qcom_pas *pas)
+ 
+ static int qcom_pas_init_regulator(struct qcom_pas *pas)
  {
++	bool piano = of_machine_is_compatible("xiaomi,piano");
++	int ret;
++
++	/* The vendor Piano DT uses power domains for these rail votes. */
  	pas->cx_supply = devm_regulator_get_optional(pas->dev, "cx");
  	if (IS_ERR(pas->cx_supply)) {
 -		if (PTR_ERR(pas->cx_supply) == -ENODEV)
-+		/*
-+		 * piano bring-up: the stock vendor remoteproc nodes carry
-+		 * cx-supply/mx-supply phandles pointing at downstream
-+		 * rpmh-arc-regulator nodes that no mainline driver binds, so
-+		 * the lookup returns -EPROBE_DEFER forever.  Voltage/rail
-+		 * voting is done through the power-domains path instead, so
-+		 * degrade to "no supply" the same way the dwc3-qcom and
-+		 * qcom_q6v5 icc paths do on this branch.
-+		 */
-+		if (PTR_ERR(pas->cx_supply) == -ENODEV ||
-+		    PTR_ERR(pas->cx_supply) == -EPROBE_DEFER) {
-+			if (PTR_ERR(pas->cx_supply) == -EPROBE_DEFER)
-+				dev_warn(pas->dev,
-+					 "cx supply unresolved, ignoring (power-domains used instead)\n");
- 			pas->cx_supply = NULL;
+-			pas->cx_supply = NULL;
 -		else
-+		} else {
- 			return PTR_ERR(pas->cx_supply);
-+		}
+-			return PTR_ERR(pas->cx_supply);
++		ret = PTR_ERR(pas->cx_supply);
++		if (ret != -ENODEV && (!piano || ret != -EPROBE_DEFER))
++			return ret;
++		if (ret == -EPROBE_DEFER)
++			dev_warn(pas->dev, "Piano cx supply unresolved, using power domain\n");
++		pas->cx_supply = NULL;
  	}
  
  	if (pas->cx_supply)
-@@ -645,10 +681,17 @@ static int qcom_pas_init_regulator(struct qcom_pas *pas)
+@@ -645,10 +668,12 @@ static int qcom_pas_init_regulator(struct qcom_pas *pas)
  
  	pas->px_supply = devm_regulator_get_optional(pas->dev, "px");
  	if (IS_ERR(pas->px_supply)) {
 -		if (PTR_ERR(pas->px_supply) == -ENODEV)
-+		/* piano: see the cx comment above — vendor px/mx supplies point at
-+		 * unbound downstream rpmh-arc-regulator nodes. */
-+		if (PTR_ERR(pas->px_supply) == -ENODEV ||
-+		    PTR_ERR(pas->px_supply) == -EPROBE_DEFER) {
-+			if (PTR_ERR(pas->px_supply) == -EPROBE_DEFER)
-+				dev_warn(pas->dev,
-+					 "px supply unresolved, ignoring (power-domains used instead)\n");
- 			pas->px_supply = NULL;
+-			pas->px_supply = NULL;
 -		else
-+		} else {
- 			return PTR_ERR(pas->px_supply);
-+		}
+-			return PTR_ERR(pas->px_supply);
++		ret = PTR_ERR(pas->px_supply);
++		if (ret != -ENODEV && (!piano || ret != -EPROBE_DEFER))
++			return ret;
++		if (ret == -EPROBE_DEFER)
++			dev_warn(pas->dev, "Piano px supply unresolved, using power domain\n");
++		pas->px_supply = NULL;
  	}
  
  	return 0;
-@@ -788,8 +831,17 @@ static int qcom_pas_assign_memory_region(struct qcom_pas *pas)
+@@ -788,8 +813,16 @@ static int qcom_pas_assign_memory_region(struct qcom_pas *pas)
  					  &pas->region_assign_owners[offset],
  					  perm, perm_size);
  		if (ret < 0) {
 -			dev_err(pas->dev, "assign memory %d failed\n", offset);
 -			return ret;
-+			/*
-+			 * piano: the stock vendor reserved-memory layout indexes
-+			 * differently from mainline's expectation.  Losing the
-+			 * SCM share on one region must not keep the whole
-+			 * remoteproc (and with it pmic-glink/battmgr) down.
-+			 */
-+			dev_warn(pas->dev, "assign memory %d failed: %d (continuing)\n",
++			if (!of_machine_is_compatible("xiaomi,piano")) {
++				dev_err(pas->dev, "assign memory %d failed\n", offset);
++				return ret;
++			}
++			/* The vendor Piano DT can use a different region layout. */
++			dev_warn(pas->dev, "Piano assign memory %d failed: %d (continuing)\n",
 +				 offset, ret);
 +			pas->region_assign_phys[offset] = 0;
 +			pas->region_assign_size[offset] = 0;
@@ -167,7 +151,7 @@ index a005546c265d0eccbdd6a984b04e88c3089ba690..139137b50a5921a15c47b95a58a37062
  		}
  	}
  
-@@ -860,7 +912,14 @@ static int qcom_pas_probe(struct platform_device *pdev)
+@@ -860,7 +893,14 @@ static int qcom_pas_probe(struct platform_device *pdev)
  	}
  
  	rproc->has_iommu = of_property_present(pdev->dev.of_node, "iommus");
@@ -183,7 +167,7 @@ index a005546c265d0eccbdd6a984b04e88c3089ba690..139137b50a5921a15c47b95a58a37062
  	rproc_coredump_set_elf_info(rproc, ELFCLASS32, EM_NONE);
  
  	pas = rproc->priv;
-@@ -1823,6 +1882,47 @@ static const struct qcom_pas_data eliza_cdsp_resource = {
+@@ -1823,6 +1863,47 @@ static const struct qcom_pas_data eliza_cdsp_resource = {
  	.region_assign_vmid = QCOM_SCM_VMID_CDSP,
  };
  
@@ -231,7 +215,7 @@ index a005546c265d0eccbdd6a984b04e88c3089ba690..139137b50a5921a15c47b95a58a37062
  static const struct of_device_id qcom_pas_of_match[] = {
  	{ .compatible = "qcom,eliza-adsp-pas", .data = &sm8550_adsp_resource },
  	{ .compatible = "qcom,eliza-cdsp-pas", .data = &eliza_cdsp_resource },
-@@ -1906,6 +2006,12 @@ static const struct of_device_id qcom_pas_of_match[] = {
+@@ -1906,6 +1987,12 @@ static const struct of_device_id qcom_pas_of_match[] = {
  	{ .compatible = "qcom,sm8650-cdsp-pas", .data = &sm8650_cdsp_resource },
  	{ .compatible = "qcom,sm8650-mpss-pas", .data = &sm8650_mpss_resource },
  	{ .compatible = "qcom,sm8750-mpss-pas", .data = &sm8750_mpss_resource },

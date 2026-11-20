@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 20 Oct 2026 03:58:17 +0800
-Subject: drm/msm/dpu: expose IGCv5 through standard degamma LUT
+Subject: [PATCH] drm/msm/dpu: expose IGCv5 through standard degamma LUT
 
 Pack IGCv5 and GCv2 commands into one REGDMA submission and stage both
 DSPP flushes after the shared queue completes. Advertise the standard
@@ -197,10 +197,10 @@ index 8e9baec875f5372627d1f37c75aadc9530c7ffaa..d669602e9d5bff2981d30b1f5e8b524a
  			drm_crtc_enable_color_mgmt(crtc, 0, true, 0);
  		}
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
-index ceed0d6d2c7c814e8fac1909e48fc74c36bd6716..9fa40480bc092d7e9a22a22ce79bfe269c2a938c 100644
+index f3f415228e21b27bda6106c7a52794708e5ccd13..d0a1d5d6170cf17a19ddcad4c4afd555a38c20b6 100644
 --- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
-@@ -430,6 +430,8 @@ static const struct dpu_dspp_sub_blks sm8750_dspp_sblk = {
+@@ -437,6 +437,8 @@ static const struct dpu_dspp_sub_blks sm8750_regdma_dspp_sblk = {
  		.len = 0x90, .version = 0x60000},
  	.gc = {.name = "gc", .base = 0x17c0,
  		.len = 0x40, .version = 0x20000},

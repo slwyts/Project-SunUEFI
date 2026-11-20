@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Mon, 9 Nov 2026 00:08:36 +0800
-Subject: drm/panel: describe native DisplayID timings and compatible fitted
- input
+Subject: [PATCH] drm/panel: describe native DisplayID timings and compatible
+ fitted input
 
 Build the fixed panel EDID from the calibrated panel data. Keep the preferred native timings and luminance in DisplayID. Use a fitted timing in the base EDID and expose the VGA source mode advertised by its established timing.
 
@@ -15,7 +15,7 @@ Link: https://github.com/slwyts/Project-SunUEFI/commit/b71f783f04c0fbdb8ab94e921
  1 file changed, 157 insertions(+), 4 deletions(-)
 
 diff --git a/drivers/gpu/drm/panel/panel-novatek-nt36532.c b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
-index ce868f44254541b0e5964a216f66171decef064e..3fbd05716bf6dbff442b9d8a68dad934c97e01d8 100644
+index 74df80f81126a6606466e96c85a64ff1ac026a7b..1a3de9c97d689328093fff1bc724e1a0c244e186 100644
 --- a/drivers/gpu/drm/panel/panel-novatek-nt36532.c
 +++ b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
 @@ -13,6 +13,7 @@
@@ -34,7 +34,7 @@ index ce868f44254541b0e5964a216f66171decef064e..3fbd05716bf6dbff442b9d8a68dad934
  #include <drm/drm_mipi_dsi.h>
  #include <drm/drm_modes.h>
  #include <drm/drm_panel.h>
-@@ -55,6 +57,10 @@ struct panel_info {
+@@ -57,6 +59,10 @@ struct panel_info {
  	bool is_dual_dsi;
  	bool piano_reset_sequence;
  	bool supports_scaling;
@@ -45,7 +45,7 @@ index ce868f44254541b0e5964a216f66171decef064e..3fbd05716bf6dbff442b9d8a68dad934
  };
  
  static const struct regulator_bulk_data nt36532_supplies[] = {
-@@ -194,6 +200,147 @@ static int nt36532_unprepare(struct drm_panel *panel)
+@@ -204,6 +210,147 @@ static int nt36532_unprepare(struct drm_panel *panel)
  	return 0;
  }
  
@@ -193,16 +193,16 @@ index ce868f44254541b0e5964a216f66171decef064e..3fbd05716bf6dbff442b9d8a68dad934
  static int nt36532_get_modes(struct drm_panel *panel,
  			     struct drm_connector *connector)
  {
-@@ -202,6 +349,8 @@ static int nt36532_get_modes(struct drm_panel *panel,
- 	unsigned int i;
- 	int count = panel_info->num_modes;
+@@ -216,6 +363,8 @@ static int nt36532_get_modes(struct drm_panel *panel,
+ 		return drm_connector_helper_get_modes_fixed(connector,
+ 						    &panel_info->display_mode);
  
 +	nt36532_update_edid(ctx, connector);
 +
  	for (i = 0; i < panel_info->num_modes; i++) {
  		struct drm_display_mode *mode;
  
-@@ -219,7 +368,7 @@ static int nt36532_get_modes(struct drm_panel *panel,
+@@ -233,7 +382,7 @@ static int nt36532_get_modes(struct drm_panel *panel,
  	if (panel_info->supports_scaling && connector->scaling_mode_property) {
  		static const unsigned int sizes[][2] = {
  			{ 2560, 1708 }, { 2400, 1602 }, { 1920, 1280 },
@@ -211,7 +211,7 @@ index ce868f44254541b0e5964a216f66171decef064e..3fbd05716bf6dbff442b9d8a68dad934
  		};
  		unsigned int j;
  
-@@ -809,7 +958,7 @@ static const struct panel_info csot_panel_info = {
+@@ -824,7 +973,7 @@ static const struct panel_info csot_panel_info = {
  	.is_dual_dsi = true,
  };
  
@@ -220,7 +220,7 @@ index ce868f44254541b0e5964a216f66171decef064e..3fbd05716bf6dbff442b9d8a68dad934
  	.lanes = 4,								\
  	.format = MIPI_DSI_FMT_RGB101010,					\
  	.mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_CLOCK_NON_CONTINUOUS |	\
-@@ -822,14 +971,18 @@ static const struct panel_info csot_panel_info = {
+@@ -837,14 +986,18 @@ static const struct panel_info csot_panel_info = {
  	.init_sequence = _init,							\
  	.piano_reset_sequence = true,						\
  	.supports_scaling = true,						\

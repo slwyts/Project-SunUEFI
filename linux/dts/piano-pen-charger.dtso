@@ -92,12 +92,4 @@
 			};
 		};
 	};
-
-	fragment@3 {
-		target-path = "/soc/pen-dock";
-		__overlay__ {
-			/* The charger now owns the same single SW_PEN_INSERTED. */
-			status = "disabled";
-		};
-	};
 };

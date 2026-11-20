@@ -1,17 +1,20 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: slwyts <slwyts@foxmail.com>
-Date: Tue, 20 Oct 2026 12:00:00 +0000
-Subject: drm/msm/adreno: support the Piano Adreno 830
+From: Jie Zhang <jie.zhang@oss.qualcomm.com>
+Date: Sun, 9 Aug 2026 01:53:08 +0530
+Subject: [PATCH] drm/msm/a8xx: Add support for Adreno 830 GPU
 
-Carry the Adreno catalog and GPU changes used by the SM8750 port.
+Add support for the Adreno 830 GPU present in SM8750 SoC. Adreno 830 GPU
+belongs to the A8x Gen 1 family and it is architecturally close Adreno 840.
+Add a new catalog entry along with the register list to enable support
+for this GPU.
 
-The port retains changes from these linux-piano commits:
-piano: native display (NT36532 DSC) and Adreno 830 GPU (#14) (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
-
-Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
-
-Link: https://github.com/blu-sharky/linux-piano/commit/5c2c95fddbe9c29720b7b4e84119357358e9f0cb
-Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+Signed-off-by: Jie Zhang <jie.zhang@oss.qualcomm.com>
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Patchwork: https://patchwork.freedesktop.org/patch/745127/
+Message-ID: <20260809-pakala-gpu-v1-1-207ad1fac1c7@oss.qualcomm.com>
+Signed-off-by: Rob Clark <robin.clark@oss.qualcomm.com>
+Link: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=2c94d177a927a25d3eb111fe83694b5f84239069
 ---
  drivers/gpu/drm/msm/adreno/a6xx_catalog.c | 334 ++++++++++++++++++++++
  drivers/gpu/drm/msm/adreno/a8xx_gpu.c     |   2 +-

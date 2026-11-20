@@ -1,28 +1,27 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: slwyts <slwyts@foxmail.com>
-Date: Tue, 20 Oct 2026 12:00:00 +0000
-Subject: dt-bindings: display: panel: describe Novatek NT36532
+From: Junjie Cao <junjie.cao@linux.dev>
+Date: Tue, 4 Aug 2026 00:39:20 -0700
+Subject: [PATCH] dt-bindings: display: panel: Add Novatek NT36532
 
-Describe the panel power, clocks and paired display links.
+NT36532 is a driver IC used to drive MIPI-DSI panels. It is found
+in OnePlus Pad 2 tablets with CSOT panels.
 
-The port retains changes from these linux-piano commits:
-piano: native display (NT36532 DSC) and Adreno 830 GPU (#14) (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
-
-Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
-
-Link: https://github.com/blu-sharky/linux-piano/commit/5c2c95fddbe9c29720b7b4e84119357358e9f0cb
-Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+Signed-off-by: Junjie Cao <junjie.cao@linux.dev>
+Acked-by: Conor Dooley <conor.dooley@microchip.com>
+Signed-off-by: Neil Armstrong <neil.armstrong@linaro.org>
+Link: https://patch.msgid.link/20260804073920.85191-1-junjie.cao@linux.dev
+Link: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=1c523f0a930107191c95d96340c69a295a086e5a
 ---
- .../display/panel/novatek,nt36532.yaml        | 107 ++++++++++++++++++
- 1 file changed, 107 insertions(+)
+ .../display/panel/novatek,nt36532.yaml        | 83 +++++++++++++++++++
+ 1 file changed, 83 insertions(+)
  create mode 100644 Documentation/devicetree/bindings/display/panel/novatek,nt36532.yaml
 
 diff --git a/Documentation/devicetree/bindings/display/panel/novatek,nt36532.yaml b/Documentation/devicetree/bindings/display/panel/novatek,nt36532.yaml
 new file mode 100644
-index 0000000000000000000000000000000000000000..493c5f907c858202b79aa9fe2f9f8e50be57117a
+index 0000000000000000000000000000000000000000..c1ab793dd718d0b0d7eca652c082a68e10d11390
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/display/panel/novatek,nt36532.yaml
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,83 @@
 +# SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
 +%YAML 1.2
 +---
@@ -45,8 +44,6 @@ index 0000000000000000000000000000000000000000..493c5f907c858202b79aa9fe2f9f8e50
 +    items:
 +      - enum:
 +          - csot,ppc100hb1-1
-+          - xiaomi,piano-boe-nt36532
-+          - xiaomi,piano-csot-nt36532
 +      - const: novatek,nt36532
 +
 +  reg:
@@ -59,12 +56,6 @@ index 0000000000000000000000000000000000000000..493c5f907c858202b79aa9fe2f9f8e50
 +  vddio-supply:
 +    description: regulator that supplies the I/O voltage
 +
-+  avdd-supply:
-+    description: positive LCD bias supply
-+
-+  avee-supply:
-+    description: negative LCD bias supply
-+
 +  ports: true
 +
 +required:
@@ -73,22 +64,6 @@ index 0000000000000000000000000000000000000000..493c5f907c858202b79aa9fe2f9f8e50
 +  - vddio-supply
 +  - reset-gpios
 +  - ports
-+
-+if:
-+  properties:
-+    compatible:
-+      contains:
-+        enum:
-+          - xiaomi,piano-boe-nt36532
-+          - xiaomi,piano-csot-nt36532
-+then:
-+  required:
-+    - avdd-supply
-+    - avee-supply
-+else:
-+  properties:
-+    avdd-supply: false
-+    avee-supply: false
 +
 +unevaluatedProperties: false
 +

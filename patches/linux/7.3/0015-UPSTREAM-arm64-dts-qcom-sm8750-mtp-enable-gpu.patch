@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jie Zhang <jie.zhang@oss.qualcomm.com>
+Date: Sat, 8 Aug 2026 20:23:12 +0000
+Subject: arm64: dts: qcom: sm8750-mtp: Enable Adreno 830 GPU
+
+Enable GPU for sm8750-mtp platform and provide path for zap
+shader.
+
+Signed-off-by: Jie Zhang <jie.zhang@oss.qualcomm.com>
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Reviewed-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Link: https://patch.msgid.link/20260809-pakala-gpu-v1-5-207ad1fac1c7@oss.qualcomm.com
+Signed-off-by: Bjorn Andersson <andersson@kernel.org>
+
+Link: https://github.com/torvalds/linux/commit/d5eee07a7818e9e65b21d61ef622cd517ab49ddf
+---
+ arch/arm64/boot/dts/qcom/sm8750-mtp.dts | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8750-mtp.dts b/arch/arm64/boot/dts/qcom/sm8750-mtp.dts
+index 9b5fbc004df4ecbb5d34734917aefe643a71e32f..b665d7a3af42b19c9dc3fab880ddfd5c964a7cfc 100644
+--- a/arch/arm64/boot/dts/qcom/sm8750-mtp.dts
++++ b/arch/arm64/boot/dts/qcom/sm8750-mtp.dts
+@@ -935,6 +935,14 @@
+ 	};
+ };
+ 
++&gpu {
++	status = "okay";
++};
++
++&gpu_zap_shader {
++	firmware-name = "qcom/sm8750/gen80000_zap.mbn";
++};
++
+ &i2c3 {
+ 	status = "okay";
+ 

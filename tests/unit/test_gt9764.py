@@ -22,16 +22,20 @@ class Gt9764Tests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(source_patch.read_bytes()).hexdigest(), patch['sha256'])
         with tempfile.TemporaryDirectory(prefix='gt9764-') as directory:
             work = Path(directory)
-            subprocess.run(['git', 'apply', '--include=drivers/media/i2c/gt9764.c',
-                            source_patch], cwd=work, check=True)
-            source = (work / 'drivers/media/i2c/gt9764.c').read_text()
-            # Compile unchanged production functions. Registration is covered
-            # by the normal ARM64 module build, not duplicated in host stubs.
-            begin = source.index('#define GT9764_CONTROL')
-            end = source.index('static const struct v4l2_ctrl_ops gt9764_ctrl_ops')
-            open_begin = source.index('static int gt9764_open')
-            open_end = source.index('static int gt9764_close', open_begin)
-            (work / 'gt9764-driver.h').write_text(source[begin:end] + source[open_begin:open_end])
+            i2c = Path('drivers/media/i2c')
+            common = i2c / 'dw9768.h'
+            variant = i2c / 'dw9768-gt9764ba.c'
+            subprocess.run(['git', 'apply', f'--include={common}',
+                            f'--include={variant}', source_patch], cwd=work, check=True)
+            source = (work / common).read_text()
+            start = source.index('#define DW9768_RING_PD_CONTROL_REG')
+            end = source.index('void gt9764_stop_on_remove')
+            helpers = source[start:end]
+            source = (work / variant).read_text()
+            start = source.index('#define GT9764_AAC_MODE')
+            end = source.index('void gt9764_stop_on_remove')
+            # Exercise the released DAC access and GT9764BA state handling.
+            (work / 'gt9764-driver.h').write_text(helpers + source[start:end])
             executable = work / 'gt9764'
             subprocess.run([
                 'cc', '-std=gnu17', '-O1', '-g', '-Wall', '-Wextra', '-Werror',

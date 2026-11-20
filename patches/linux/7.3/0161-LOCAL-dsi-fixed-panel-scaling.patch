@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sun, 8 Nov 2026 16:36:59 +0800
-Subject: drm/msm: fit smaller source modes to bonded DSI panels
+Subject: [PATCH] drm/msm: fit smaller source modes to bonded DSI panels
 
 Retain the panel's native refresh-specific timings in adjusted_mode and expose the standard None/Full scaling modes. Map every visible plane destination, including cursors, from requested-mode space into the physical mode before pipe splitting. Check and reserve scaler resources against those physical destinations.
 
@@ -331,10 +331,10 @@ index 1ff78be19c926f1cdb0d95792a7539d6269d5a77..abbfbe7ade2a9262b47c59d8bc63111a
  	/* DSC uses one fixed component depth from the attached panel. Expose
  	 * that exact depth; changing it would also require changing the PPS
 diff --git a/drivers/gpu/drm/panel/panel-novatek-nt36532.c b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
-index bc46c063f8dae7adfb28075943ada15488546d09..ce868f44254541b0e5964a216f66171decef064e 100644
+index c036ec934ed7d156c13bfa2418c612f6a397a75d..74df80f81126a6606466e96c85a64ff1ac026a7b 100644
 --- a/drivers/gpu/drm/panel/panel-novatek-nt36532.c
 +++ b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
-@@ -54,6 +54,7 @@ struct panel_info {
+@@ -56,6 +56,7 @@ struct panel_info {
  
  	bool is_dual_dsi;
  	bool piano_reset_sequence;
@@ -342,15 +342,15 @@ index bc46c063f8dae7adfb28075943ada15488546d09..ce868f44254541b0e5964a216f66171d
  };
  
  static const struct regulator_bulk_data nt36532_supplies[] = {
-@@ -199,6 +200,7 @@ static int nt36532_get_modes(struct drm_panel *panel,
+@@ -209,6 +210,7 @@ static int nt36532_get_modes(struct drm_panel *panel,
  	struct nt36532 *ctx = to_nt36532(panel);
  	const struct panel_info *panel_info = ctx->panel_info;
  	unsigned int i;
 +	int count = panel_info->num_modes;
  
- 	for (i = 0; i < panel_info->num_modes; i++) {
- 		struct drm_display_mode *mode;
-@@ -214,6 +216,42 @@ static int nt36532_get_modes(struct drm_panel *panel,
+ 	if (!panel_info->modes)
+ 		return drm_connector_helper_get_modes_fixed(connector,
+@@ -228,6 +230,42 @@ static int nt36532_get_modes(struct drm_panel *panel,
  		drm_mode_set_name(mode);
  		drm_mode_probed_add(connector, mode);
  	}
@@ -393,7 +393,7 @@ index bc46c063f8dae7adfb28075943ada15488546d09..ce868f44254541b0e5964a216f66171d
  
  	connector->display_info.width_mm = panel_info->modes[0].width_mm;
  	connector->display_info.height_mm = panel_info->modes[0].height_mm;
-@@ -221,7 +259,7 @@ static int nt36532_get_modes(struct drm_panel *panel,
+@@ -235,7 +273,7 @@ static int nt36532_get_modes(struct drm_panel *panel,
  		connector->display_info.bpc = panel_info->dsc_cfg->bits_per_component;
  	ctx->connector = connector;
  
@@ -402,7 +402,7 @@ index bc46c063f8dae7adfb28075943ada15488546d09..ce868f44254541b0e5964a216f66171d
  }
  
  static const struct drm_panel_funcs nt36532_panel_funcs = {
-@@ -783,6 +821,7 @@ static const struct panel_info csot_panel_info = {
+@@ -798,6 +836,7 @@ static const struct panel_info csot_panel_info = {
  	.dsc_cfg = &piano_dsc_cfg,						\
  	.init_sequence = _init,							\
  	.piano_reset_sequence = true,						\

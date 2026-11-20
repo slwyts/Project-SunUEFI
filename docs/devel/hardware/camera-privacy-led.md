@@ -1,18 +1,18 @@
 # Piano 实体摄像头隐私灯
 
-隐私灯通过当前 [media 补丁](../../../patches/linux/7.3/0106-LOCAL-media-i2c-keep-piano-privacy-led-on-until-sensors-quiesce.patch)与 [设备树 overlay](../../../linux/dts/piano-camera-privacy-led.dtso)接入默认产品，版本以 [Linux 补丁链](../../../patches/linux/7.3/series.json)为准。Linux 下前后摄像头开流、停流与共享灯的驱动和脉宽调制（PWM）行为已经验证；实体发光尚未进行光学确认。
+隐私灯通过当前 [media 补丁](../../../patches/linux/7.3/0116-LOCAL-media-i2c-keep-piano-privacy-led-on-until-sensors-quiesce.patch)与 [设备树 overlay](../../../linux/dts/piano-camera-privacy-led.dtso)接入默认产品，版本以 [Linux 补丁链](../../../patches/linux/7.3/series.json)为准。Linux 下前后摄像头开流、停流与共享灯的驱动和脉宽调制（PWM）行为已经验证；实体发光尚未进行光学确认。
 
-原厂 Android 的相机预览使 PM8550 LPG2 的 `green` 亮度从 0 变成 4，回到 Home、相机关闭后变回 0；满量程为 255。其间 LightsService 的八个灯颜色全部保持 0， lights HAL 也只提供类型 0～7。这里直接使用已对应的 LED 硬件通道，不模拟 Android framework，也不增加后台守护进程。Linux 当前 LED 满量程同样为 255。
+原厂 Android 的相机预览使 PM8550 LPG2 的 `green` 亮度从 0 变成 4，回到 Home、相机关闭后变回 0；满量程为 255。其间 LightsService 的八个灯颜色全部保持 0， lights HAL 也只提供类型 0～7。这里直接使用已对应的 LED 硬件通道，不模拟 Android framework，也不增加后台守护进程。Linux 使用同样的 255 级硬件 PWM 换算，将 LED class 的亮度上限设为 4。
 
 ## 接线与正常生命周期
 
 `v4l2-subdev.c` 为每个 `led_classdev` 保存一份注册引用数和活跃摄像头数。每个 sensor 保存一个活跃标志，重复获取或释放不会重复计数。第一份注册接管 sysfs/trigger，最后一份安全注销恢复 sysfs。新增 sensor 注册不会清掉另一颗正在使用的灯，一颗停止也不会关闭另一颗的指示灯。
 
-`leds` 与 `led-names = "privacy"` 使用已有标准接口。`privacy-led-brightness = <4 255>` 是本项目提出的 common video binding 扩展，不是既有上游属性；它表示亮度比例并保留 LED 的满量程。当前 Linux 写 4；若 provider 满量程为 511，则换算为 8。共享消费者必须请求相同的数学比例，不同请求在注册时报错。
+两颗传感器使用标准 `leds` 和 `led-names = "privacy"` 指向同一盏灯。`max-brightness = <4>` 写在 LPG2 的 LED 节点，V4L2 按 LED class 的上限点灯。LPG 按硬件 PWM 的满量程 255 换算，保持原厂 4/255 的占空比。
 
 两颗 Piano sensor 在取得运行时电源引用之后、写 stream-on 之前同步获取指示灯。这样不会让前一次异步断电回调在启动过程中误释放新获取的引用。正常停止成功后释放引用；复位保持有效且 MCLK 关闭后，power-off 路径也能释放异常停止留下的引用。移除驱动时先完成这一步，再注销 LED 消费者。
 
-这条联动位于 sensor 和 V4L2 内核路径，不依赖 `piano-camerad`、loopback 或控制 socket；以后更换为 libcamera 时不应在用户空间另加点灯逻辑。亮度比例和共享灯引用处理的上游状态见上文，切换用户空间不会改变这些本地扩展的状态。
+这条联动位于 sensor 和 V4L2 内核路径，不依赖 `piano-camerad`、loopback 或控制 socket；以后更换为 libcamera 时不应在用户空间另加点灯逻辑。共享灯的开关和失败处理由内核完成，切换用户空间时沿用相同的设备树接线。
 
 ## 失败处理
 

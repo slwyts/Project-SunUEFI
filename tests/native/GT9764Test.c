@@ -10,6 +10,8 @@
 
 typedef uint8_t u8;
 typedef uint16_t u16;
+typedef uint32_t u32;
+#define BIT(n) (1U << (n))
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 #define container_of(p, t, m) ((t *)((char *)(p) - offsetof(t, m)))
 #define clamp_t(t, v, lo, hi) ((t)(v) < (lo) ? (lo) : (t)(v) > (hi) ? (hi) : (t)(v))
@@ -111,7 +113,7 @@ static void pm_runtime_put_autosuspend(struct device *dev)
 
 #include "gt9764-driver.h"
 
-static struct gt9764 lens;
+static struct dw9768 lens;
 static struct device dev;
 static struct v4l2_ctrl focus;
 
@@ -129,8 +131,8 @@ static void fresh(unsigned int position)
 	lens.configured = true;
 	lens.powered = true;
 	hardware_position = position;
-	for (unsigned int i = 0; i < ARRAY_SIZE(lens.supplies); i++)
-		lens.supplies[i].supply = gt9764_supply_names[i];
+	lens.supplies[0].supply = "vin";
+	lens.supplies[1].supply = "vdd";
 	writes = fail_at = fail_from = enables = disables = waits = errors = position_count = 0;
 	register_write_count = 0;
 	enable_error = disable_error = pm_refs = 0;

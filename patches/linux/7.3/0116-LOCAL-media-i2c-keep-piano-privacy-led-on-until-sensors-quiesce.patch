@@ -1,20 +1,19 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Fri, 9 Oct 2026 04:58:53 +0800
-Subject: media: v4l2: keep Piano privacy indication until the sensors quiesce
+Subject: [PATCH] media: v4l2: keep Piano privacy indication until the sensors
+ quiesce
 
 Use the shared privacy indicator for the two Piano sensors. Keep the
 indicator active until the driver can establish that the sensor is
 no longer acquiring an image, including after an error in stream stop.
 
+Use the LED class device's configured maximum, as the upstream V4L2
+privacy helper does. Both sensors therefore use the shared provider
+limit without a second brightness setting in their device nodes.
+
 Link: https://github.com/slwyts/Project-SunUEFI/commit/6b534c9da39d65e6e4a01c5e5e7b6df072bdddcc
 Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
----
- drivers/media/i2c/ov32d40.c           |  61 ++++++-
- drivers/media/i2c/s5kjn1.c            |  46 +++++-
- drivers/media/v4l2-core/v4l2-subdev.c | 229 +++++++++++++++++++++++---
- include/media/v4l2-subdev.h           |  26 +++
- 4 files changed, 326 insertions(+), 36 deletions(-)
 
 diff --git a/drivers/media/i2c/ov32d40.c b/drivers/media/i2c/ov32d40.c
 index a872e8e5e28eb5900665a181fd8a501bf0467362..0cec5294c53f6dc2c5da9f2152a652d6e627fc80 100644
@@ -252,7 +251,7 @@ index a707cb740556c2f6c1f8ae225cacd01b69e6c7a0..bca4f0b91f743c952ed65ebb442ae860
  }
  
 diff --git a/drivers/media/v4l2-core/v4l2-subdev.c b/drivers/media/v4l2-core/v4l2-subdev.c
-index e9f81b9be9e24bac6ef51f2bf23842556aef25cb..0a9248ddb0b0547995f586513d93b36f7c4c276e 100644
+index e9f81b9be9e24bac6ef51f2bf23842556aef25cb..e8332866dcef7f73d8cf8a161e972df7c36b5f9a 100644
 --- a/drivers/media/v4l2-core/v4l2-subdev.c
 +++ b/drivers/media/v4l2-core/v4l2-subdev.c
 @@ -14,6 +14,7 @@
@@ -263,7 +262,7 @@ index e9f81b9be9e24bac6ef51f2bf23842556aef25cb..0a9248ddb0b0547995f586513d93b36f
  #include <linux/slab.h>
  #include <linux/string.h>
  #include <linux/types.h>
-@@ -170,23 +171,108 @@ static int subdev_close(struct file *file)
+@@ -170,23 +171,106 @@ static int subdev_close(struct file *file)
  }
  #endif /* CONFIG_VIDEO_V4L2_SUBDEV_API */
  
@@ -275,9 +274,6 @@ index e9f81b9be9e24bac6ef51f2bf23842556aef25cb..0a9248ddb0b0547995f586513d93b36f
 +	struct led_classdev *led;
 +	unsigned int registrations;
 +	unsigned int active;
-+	unsigned int brightness;
-+	u32 numerator;
-+	u32 denominator;
 +};
 +
 +static LIST_HEAD(v4l2_privacy_leds);
@@ -321,7 +317,8 @@ index e9f81b9be9e24bac6ef51f2bf23842556aef25cb..0a9248ddb0b0547995f586513d93b36f
 +			ret = -EAGAIN;
 +			goto out;
 +		}
-+		ret = led_set_brightness_sync(entry->led, entry->brightness);
++		ret = led_set_brightness_sync(entry->led,
++					      entry->led->max_brightness);
 +		if (ret)
 +			goto out;
 +	}
@@ -378,7 +375,7 @@ index e9f81b9be9e24bac6ef51f2bf23842556aef25cb..0a9248ddb0b0547995f586513d93b36f
  static inline int check_which(u32 which)
  {
  	if (which != V4L2_SUBDEV_FORMAT_TRY &&
-@@ -481,12 +567,16 @@ static int call_s_stream(struct v4l2_subdev *sd, int enable)
+@@ -481,12 +565,16 @@ static int call_s_stream(struct v4l2_subdev *sd, int enable)
  	 * already started or stopped subdev. Catch offenders but don't return
  	 * an error yet to avoid regressions.
  	 */
@@ -397,7 +394,7 @@ index e9f81b9be9e24bac6ef51f2bf23842556aef25cb..0a9248ddb0b0547995f586513d93b36f
  		dev_warn(sd->dev, "disabling streaming failed (%d)\n", ret);
  		ret = 0;
  	}
-@@ -2246,6 +2336,21 @@ out:
+@@ -2246,6 +2334,21 @@ out:
  }
  EXPORT_SYMBOL_GPL(v4l2_subdev_routing_validate);
  
@@ -419,7 +416,7 @@ index e9f81b9be9e24bac6ef51f2bf23842556aef25cb..0a9248ddb0b0547995f586513d93b36f
  static void v4l2_subdev_collect_streams(struct v4l2_subdev *sd,
  					struct v4l2_subdev_state *state,
  					u32 pad, u64 streams_mask,
-@@ -2343,6 +2448,8 @@ int v4l2_subdev_enable_streams(struct v4l2_subdev *sd, u32 pad,
+@@ -2343,6 +2446,8 @@ int v4l2_subdev_enable_streams(struct v4l2_subdev *sd, u32 pad,
  	else
  		state = NULL;
  
@@ -428,7 +425,7 @@ index e9f81b9be9e24bac6ef51f2bf23842556aef25cb..0a9248ddb0b0547995f586513d93b36f
  	/*
  	 * Verify that the requested streams exist and that they are not
  	 * already enabled.
-@@ -2687,6 +2794,8 @@ void v4l2_subdev_init(struct v4l2_subdev *sd, const struct v4l2_subdev_ops *ops)
+@@ -2687,6 +2792,8 @@ void v4l2_subdev_init(struct v4l2_subdev *sd, const struct v4l2_subdev_ops *ops)
  	sd->dev_priv = NULL;
  	sd->host_priv = NULL;
  	sd->privacy_led = NULL;
@@ -437,13 +434,11 @@ index e9f81b9be9e24bac6ef51f2bf23842556aef25cb..0a9248ddb0b0547995f586513d93b36f
  	INIT_LIST_HEAD(&sd->async_subdev_endpoint_list);
  #if defined(CONFIG_MEDIA_CONTROLLER)
  	sd->entity.name = sd->name;
-@@ -2732,32 +2841,110 @@ EXPORT_SYMBOL_GPL(v4l2_subdev_is_streaming);
+@@ -2732,32 +2839,81 @@ EXPORT_SYMBOL_GPL(v4l2_subdev_is_streaming);
  int v4l2_subdev_get_privacy_led(struct v4l2_subdev *sd)
  {
  #if IS_REACHABLE(CONFIG_LEDS_CLASS)
 +	struct v4l2_privacy_led *entry;
-+	u32 level[2] = { 1, 1 };
-+	unsigned int brightness;
 +	int ret = 0;
 +
  	sd->privacy_led = led_get(sd->dev, "privacy");
@@ -453,43 +448,21 @@ index e9f81b9be9e24bac6ef51f2bf23842556aef25cb..0a9248ddb0b0547995f586513d93b36f
 +			return 0;
  		return dev_err_probe(sd->dev, PTR_ERR(sd->privacy_led),
  				     "getting privacy LED\n");
-+	}
-+	if (!sd->privacy_led)
-+		return 0;
- 
+-
 -	if (!IS_ERR_OR_NULL(sd->privacy_led)) {
 -		mutex_lock(&sd->privacy_led->led_access);
 -		led_sysfs_disable(sd->privacy_led);
 -		led_trigger_remove(sd->privacy_led);
 -		led_set_brightness(sd->privacy_led, 0);
 -		mutex_unlock(&sd->privacy_led->led_access);
-+	brightness = sd->privacy_led->max_brightness;
-+	if (device_property_present(sd->dev, "privacy-led-brightness")) {
-+		ret = device_property_read_u32_array(sd->dev,
-+				"privacy-led-brightness", level, ARRAY_SIZE(level));
-+		if (ret || !level[0] || !level[1] || level[0] > level[1]) {
-+			ret = dev_err_probe(sd->dev, -EINVAL,
-+					    "invalid privacy LED brightness fraction\n");
-+			goto put_led;
-+		}
-+		brightness = DIV_ROUND_CLOSEST_ULL((u64)brightness * level[0],
-+						 level[1]);
-+		if (!brightness) {
-+			ret = -ERANGE;
-+			goto put_led;
-+		}
  	}
 -#endif
++	if (!sd->privacy_led)
++		return 0;
 +
 +	mutex_lock(&v4l2_privacy_led_lock);
 +	entry = v4l2_privacy_led_find(sd->privacy_led);
 +	if (entry) {
-+		if ((u64)entry->numerator * level[1] !=
-+		    (u64)level[0] * entry->denominator) {
-+			ret = dev_err_probe(sd->dev, -EINVAL,
-+				"shared privacy LED consumers request different brightness\n");
-+			goto unlock;
-+		}
 +		entry->registrations++;
 +		goto unlock;
 +	}
@@ -499,9 +472,6 @@ index e9f81b9be9e24bac6ef51f2bf23842556aef25cb..0a9248ddb0b0547995f586513d93b36f
 +		goto unlock;
 +	}
 +	entry->led = sd->privacy_led;
-+	entry->brightness = brightness;
-+	entry->numerator = level[0];
-+	entry->denominator = level[1];
 +	entry->registrations = 1;
 +	mutex_lock(&entry->led->led_access);
 +	led_sysfs_disable(entry->led);
@@ -518,7 +488,6 @@ index e9f81b9be9e24bac6ef51f2bf23842556aef25cb..0a9248ddb0b0547995f586513d93b36f
 +	mutex_unlock(&v4l2_privacy_led_lock);
 +	if (!ret)
 +		return 0;
-+put_led:
 +	led_put(sd->privacy_led);
 +	sd->privacy_led = NULL;
 +	return ret;

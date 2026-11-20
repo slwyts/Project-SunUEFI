@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Praveen Talari <praveen.talari@oss.qualcomm.com>
+Date: Tue, 18 Aug 2026 13:28:07 +0000
+Subject: spi: qcom-geni: Add shutdown callback to quiesce hardware on reboot
+
+During system reboot, an active SPI transfer can leave the GENI Serial
+Engine in an indeterminate state. On VM-based platforms, if a DMA
+transfer is in progress when the VM is shut down, the SMMU can raise
+context faults as the DMA engine continues to access IOVAs that have
+already been invalidated during VM teardown.
+
+Add a shutdown callback to suspend the SPI controller and abort any
+in-progress transfer, ensuring the DMA engine is idle and all IOVA
+mappings are retired before the system resets.
+
+Signed-off-by: Praveen Talari <praveen.talari@oss.qualcomm.com>
+Link: https://patch.msgid.link/20260818-add-shutdown-and-panic-notifier-for-spi-v3-1-8b62c4bc2d21@oss.qualcomm.com
+Signed-off-by: Mark Brown <broonie@kernel.org>
+
+Link: https://github.com/torvalds/linux/commit/3958b39fa5b76d692ed548ce6c7c563f465ff8fb
+---
+ drivers/spi/spi-geni-qcom.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/spi/spi-geni-qcom.c b/drivers/spi/spi-geni-qcom.c
+index 6c57f8309a3b2c25f19659155c854790d2f90ae9..c65c1788325d7ac7e3ac964d8e15258548671850 100644
+--- a/drivers/spi/spi-geni-qcom.c
++++ b/drivers/spi/spi-geni-qcom.c
+@@ -1066,6 +1066,13 @@ static int spi_geni_target_abort(struct spi_controller *spi)
+ 	return 0;
+ }
+ 
++static void spi_geni_shutdown(struct platform_device *pdev)
++{
++	struct spi_controller *spi = platform_get_drvdata(pdev);
++
++	spi_controller_suspend(spi);
++}
++
+ static int spi_geni_probe(struct platform_device *pdev)
+ {
+ 	int ret, irq;
+@@ -1241,7 +1248,8 @@ static const struct of_device_id spi_geni_dt_match[] = {
+ MODULE_DEVICE_TABLE(of, spi_geni_dt_match);
+ 
+ static struct platform_driver spi_geni_driver = {
+-	.probe  = spi_geni_probe,
++	.probe    = spi_geni_probe,
++	.shutdown = spi_geni_shutdown,
+ 	.driver = {
+ 		.name = "geni_spi",
+ 		.pm = pm_ptr(&spi_geni_pm_ops),

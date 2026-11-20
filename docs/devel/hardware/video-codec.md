@@ -85,7 +85,7 @@ FFmpeg 7 的适配和 Nyarch 完整 FFmpeg 9 软件包，均已在 Iris 硬件�
    内核补丁修正了空 PSC_LAST 的判断，并让带错误的最后一帧也正确结束旧队列。
 
 FFmpeg 缓冲区补丁与 Iris 的 PSC_LAST 修正均已纳入默认构建；内核改动收在
-[`0110-LOCAL-media-iris-quiesce-irq-before-deinit-lock.patch`](../../../patches/linux/7.3/0110-LOCAL-media-iris-quiesce-irq-before-deinit-lock.patch) 中。
+[`0120-LOCAL-media-iris-quiesce-irq-before-deinit-lock.patch`](../../../patches/linux/7.3/0120-LOCAL-media-iris-quiesce-irq-before-deinit-lock.patch) 中。
 FFmpeg 7 和 9 在实机完成 640×480 → 1280×720 → 640×480 的连续切换，
 36 帧全部解码、零解码错误，两版也各完成 12 帧 H.264 硬件编码。
 

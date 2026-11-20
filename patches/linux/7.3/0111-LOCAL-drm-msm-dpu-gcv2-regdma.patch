@@ -1,7 +1,12 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 8 Oct 2026 20:18:58 +0800
-Subject: drm/msm/dpu: drive SM8750 GCv2 through REGDMA
+Subject: [PATCH] drm/msm/dpu: drive SM8750 GCv2 through REGDMA
+
+The mainline shared DSPP descriptor enables the AHB GC backend for
+Kaanapali, Glymur and Eliza. Keep that descriptor for those DPU
+catalogs and put the SM8750 REGDMA GCv2 registers in the separate
+descriptor used by the catalog with the LUTDMA configuration.
 
 Connect the standard DRM gamma LUT to the SM8750 GCv2 DSPP blocks.
 Submit a single descriptor for the assigned DSPPs of a split pipeline
@@ -21,9 +26,9 @@ Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0db
 Link: https://github.com/slwyts/Project-SunUEFI/commit/dcd435d18a08e49c5f46619db31f299cf973a321
 ---
  drivers/gpu/drm/msm/Makefile                  |   2 +
- .../msm/disp/dpu1/catalog/dpu_12_0_sm8750.h   |  11 +
+ .../msm/disp/dpu1/catalog/dpu_12_0_sm8750.h   |  19 +-
  drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c      |  66 +++-
- .../gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c    |   2 +
+ .../gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c    |   7 +
  .../gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h    |  10 +
  drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.c   |  35 +-
  drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.h   |   8 +-
@@ -35,7 +40,7 @@ Link: https://github.com/slwyts/Project-SunUEFI/commit/dcd435d18a08e49c5f46619db
  drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.h    |  23 ++
  drivers/gpu/drm/msm/msm_kms.c                 |  11 +-
  drivers/gpu/drm/msm/msm_kms.h                 |   4 +
- 15 files changed, 664 insertions(+), 14 deletions(-)
+ 15 files changed, 673 insertions(+), 18 deletions(-)
  create mode 100644 drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gcv2.c
  create mode 100644 drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gcv2.h
  create mode 100644 drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c
@@ -55,7 +60,7 @@ index 0b8f2cafed19dd19201e9d0a6d43b636728dd6be..9fb576a0c0a8e0727330cddfc2f8c151
  	disp/dpu1/dpu_hw_top.o \
  	disp/dpu1/dpu_hw_util.o \
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_0_sm8750.h b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_0_sm8750.h
-index 3889eb8a542888bb41d65b6e7f3a51bbdef74218..f5d0f2581efa2661edc2dd2b41d6e4aae23fec8d 100644
+index 3889eb8a542888bb41d65b6e7f3a51bbdef74218..8aa1109dafffd89d9416933e52e826af5a1d5585 100644
 --- a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_0_sm8750.h
 +++ b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_0_sm8750.h
 @@ -19,6 +19,16 @@ static const struct dpu_caps sm8750_dpu_caps = {
@@ -75,6 +80,30 @@ index 3889eb8a542888bb41d65b6e7f3a51bbdef74218..f5d0f2581efa2661edc2dd2b41d6e4aa
  static const struct dpu_mdp_cfg sm8750_mdp = {
  	.name = "top_0",
  	.base = 0, .len = 0x494,
+@@ -197,19 +207,19 @@ static const struct dpu_dspp_cfg sm8750_dspp[] = {
+ 	{
+ 		.name = "dspp_0", .id = DSPP_0,
+ 		.base = 0x54000, .len = 0x1800,
+-		.sblk = &sm8750_dspp_sblk,
++		.sblk = &sm8750_regdma_dspp_sblk,
+ 	}, {
+ 		.name = "dspp_1", .id = DSPP_1,
+ 		.base = 0x56000, .len = 0x1800,
+-		.sblk = &sm8750_dspp_sblk,
++		.sblk = &sm8750_regdma_dspp_sblk,
+ 	}, {
+ 		.name = "dspp_2", .id = DSPP_2,
+ 		.base = 0x58000, .len = 0x1800,
+-		.sblk = &sm8750_dspp_sblk,
++		.sblk = &sm8750_regdma_dspp_sblk,
+ 	}, {
+ 		.name = "dspp_3", .id = DSPP_3,
+ 		.base = 0x5a000, .len = 0x1800,
+-		.sblk = &sm8750_dspp_sblk,
++		.sblk = &sm8750_regdma_dspp_sblk,
+ 	},
+ };
+ 
 @@ -464,6 +474,7 @@ const struct dpu_mdss_cfg dpu_sm8750_cfg = {
  	.mdss_ver = &sm8750_mdss_ver,
  	.caps = &sm8750_dpu_caps,
@@ -203,18 +232,23 @@ index 950df3d66b1d6a3b4103a985c21bbe85c0cac84a..8e9baec875f5372627d1f37c75aadc95
  			drm_crtc_enable_color_mgmt(crtc, 0, true, DPU_GAMMA_LUT_SIZE);
  		} else {
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
-index 9a993cdfab85636c18f5b0392377c96b6f3b981b..ceed0d6d2c7c814e8fac1909e48fc74c36bd6716 100644
+index 107150a8553fe30dda78563fe80fb847ac4796d6..f3f415228e21b27bda6106c7a52794708e5ccd13 100644
 --- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
-@@ -428,6 +428,8 @@ static const struct dpu_dspp_sub_blks sdm845_dspp_sblk = {
- static const struct dpu_dspp_sub_blks sm8750_dspp_sblk = {
- 	.pcc = {.name = "pcc", .base = 0x1700,
- 		.len = 0x90, .version = 0x60000},
-+	.gc = {.name = "gc", .base = 0x17c0,
-+		.len = 0x40, .version = 0x20000},
+@@ -432,6 +432,13 @@ static const struct dpu_dspp_sub_blks sm8750_dspp_sblk = {
+ 		.len = 0x40, .version = 0x10008},
  };
  
++static const struct dpu_dspp_sub_blks sm8750_regdma_dspp_sblk = {
++	.pcc = {.name = "pcc", .base = 0x1700,
++		.len = 0x90, .version = 0x60000},
++	.gc = {.name = "gc", .base = 0x17c0,
++		.len = 0x40, .version = 0x20000},
++};
++
  /*************************************************************
+  * PINGPONG sub blocks config
+  *************************************************************/
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
 index f45faf87333e89bbd463504ae3219609ef6209bd..9b4ce6fd5762c201546be7060086ec0647c1f137 100644
 --- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h

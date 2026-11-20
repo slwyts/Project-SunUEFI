@@ -44,8 +44,8 @@
   },
   "kernel": {
     "target": "release",
-    "abi_epoch": 1795167094,
-    "package_epoch": 1795167094,
+    "abi_epoch": 1795179644,
+    "package_epoch": 1795179644,
     "public_baseline": "352508459733d3e6d349ea5581a8dd2fd8bb4180",
     "patch_series": "patches/linux/7.3/series.json",
     "stable_source_mirrors": [
@@ -72,7 +72,6 @@
       "linux/dts/piano-camera-flash.dtso",
       "linux/dts/piano-camera-privacy-led.dtso",
       "linux/dts/piano-touch-panel.dtso",
-      "linux/dts/piano-pen-dock.dtso",
       "linux/dts/piano-pen-charger.dtso",
       "linux/dts/piano-bluetooth-nvm.dtso",
       "linux/dts/piano-ir-spi-controller.dtso",

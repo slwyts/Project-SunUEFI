@@ -49,7 +49,7 @@ class CiBuildTargetsTests(unittest.TestCase):
         self.assertEqual(targets.select(['docs/user/install-from-artifact.md']), PRODUCTS)
         self.assertEqual(targets.select(['uefi/core/product/PianoProductCore.c', 'linux/config']), PRODUCTS)
         self.assertEqual(targets.select(['README.md', 'docs/status.md']), [])
-        self.assertEqual(targets.select(['linux/dts/piano-pen-dock.dtso']), PRODUCTS)
+        self.assertEqual(targets.select(['linux/dts/piano-pen-charger.dtso']), PRODUCTS)
         self.assertEqual(targets.select([], 'debian-gnome'), ['debian-gnome'])
         self.assertEqual(targets.select(['linux/config'], 'uefi'), ['uefi'])
         self.assertEqual(targets.select(['config/release.json'], 'linux'), ['linux'])

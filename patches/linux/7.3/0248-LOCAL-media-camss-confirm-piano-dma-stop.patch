@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
 Date: Fri, 20 Nov 2026 16:38:28 +0800
-Subject: media: qcom: camss: Confirm Piano DMA stopped before returning
- buffers
+Subject: [PATCH] media: qcom: camss: Confirm Piano DMA stopped before
+ returning buffers
 
 Stop submitting new addresses and verify write-master completion
 against the two outstanding buffers. Check both luma and chroma on
@@ -289,7 +289,7 @@ index cd1b5eede50d01c32b15dcba7f7bcfc90935328c..b868f172ed24e9d6236046bb2a42f4b1
  			      struct vfe_line *line);
  	/* PIX lines with an ISP: apply vfe_line.isp (called locked, streaming) */
 diff --git a/drivers/media/platform/qcom/camss/camss-video.c b/drivers/media/platform/qcom/camss/camss-video.c
-index f928d91aab04c16d5ceda4fd12c857abec76a278..924806407674ed7990c7001c1716d4a3a39f0b03 100644
+index 4fa223cb7557c22d169b0a2707fa6a53bab26737..ff434e0a38b1631b849275cad13f6db261ab738b 100644
 --- a/drivers/media/platform/qcom/camss/camss-video.c
 +++ b/drivers/media/platform/qcom/camss/camss-video.c
 @@ -7,6 +7,8 @@
@@ -298,10 +298,10 @@ index f928d91aab04c16d5ceda4fd12c857abec76a278..924806407674ed7990c7001c1716d4a3
   */
 +#include <linux/iommu/qcom-sm8750-camss.h>
 +#include <linux/kexec.h>
- #include <linux/overflow.h>
  #include <linux/slab.h>
  #include <media/media-entity.h>
-@@ -339,6 +341,19 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
+ #include <media/v4l2-dev.h>
+@@ -310,6 +312,19 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
  	unsigned int started = 0;
  	int ret;
  
@@ -321,7 +321,7 @@ index f928d91aab04c16d5ceda4fd12c857abec76a278..924806407674ed7990c7001c1716d4a3
  	ret = video_device_pipeline_alloc_start(vdev);
  	if (ret < 0) {
  		dev_err(video->camss->dev, "Failed to start media pipeline: %d\n", ret);
-@@ -369,9 +384,16 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
+@@ -340,9 +355,16 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
  	}
  
  	if (video->ops->start_output) {
@@ -339,7 +339,7 @@ index f928d91aab04c16d5ceda4fd12c857abec76a278..924806407674ed7990c7001c1716d4a3
  	}
  
  	return 0;
-@@ -391,9 +413,12 @@ static void video_stop_streaming(struct vb2_queue *q)
+@@ -362,9 +384,12 @@ static void video_stop_streaming(struct vb2_queue *q)
  	struct camss_video *video = vb2_get_drv_priv(q);
  	struct video_device *vdev = &video->vdev;
  
@@ -352,7 +352,7 @@ index f928d91aab04c16d5ceda4fd12c857abec76a278..924806407674ed7990c7001c1716d4a3
  }
  
  static void video_unprepare_streaming(struct vb2_queue *q)
-@@ -802,6 +827,8 @@ int msm_video_register(struct camss_video *video, struct v4l2_device *v4l2_dev,
+@@ -773,6 +798,8 @@ int msm_video_register(struct camss_video *video, struct v4l2_device *v4l2_dev,
  	q->buf_struct_size = sizeof(struct camss_buffer);
  	q->dev = video->camss->dev;
  	q->lock = &video->q_lock;

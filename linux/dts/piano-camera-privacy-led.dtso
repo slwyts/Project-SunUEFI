@@ -6,8 +6,7 @@
  * Default Piano product privacy-indicator wiring.
  * Stock camera preview: green brightness 0 -> 4 -> 0, max 255;
  * framework LightsService ids 0..7 remain zero. Provider: PM8550 LPG2.
- * Both sensors share this physical indicator. The fraction property is the
- * SunUEFI proposed video-interface binding extension in the media patch series.
+ * Both sensors share this physical indicator and its provider brightness limit.
  */
 / {
 	fragment@0 {
@@ -17,7 +16,7 @@
 			#size-cells = <0>;
 			piano_privacy_led: led@2 {
 				reg = <2>;
-				/* Keep the actual LPG provider and its real brightness range. */
+				max-brightness = <4>;
 			};
 		};
 	};
@@ -27,7 +26,6 @@
 		__overlay__ {
 			leds = <&piano_privacy_led>;
 			led-names = "privacy";
-			privacy-led-brightness = <4 255>;
 		};
 	};
 
@@ -36,7 +34,6 @@
 		__overlay__ {
 			leds = <&piano_privacy_led>;
 			led-names = "privacy";
-			privacy-led-brightness = <4 255>;
 		};
 	};
 };

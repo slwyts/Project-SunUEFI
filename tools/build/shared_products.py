@@ -208,7 +208,7 @@ def check_kernel_hot_inputs(root=ROOT):
         raise ValueError('Shared kernel configuration or Module.symvers differs')
     fragments = (('piano-bluetooth.config', 'bluetooth'), ('piano-filesystem.config', 'filesystem'),
                  ('piano-gamepad.config', 'gamepad'),
-                 ('piano-pen-dock.config', 'pen-dock'), ('piano-ir.config', 'ir'),
+                 ('piano-pen-charger.config', 'pen-charger'), ('piano-ir.config', 'ir'),
                  ('piano-flash.config', 'flash'), ('piano-cpucp-early.config', 'early-cpucp'),
                  ('piano-userspace-security.config', 'userspace-security'),
                  ('piano-sleep.config', 'sleep'), ('piano-platform.config', 'platform'))

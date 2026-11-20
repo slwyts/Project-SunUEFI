@@ -24,7 +24,7 @@ class PianoPenRuntimeTests(unittest.TestCase):
         # These are actual source files from the stored kernel patch, not a fake decoder.
         subprocess.run(['git', 'apply', '--include=drivers/input/touchscreen/nt36532e/nt36xxx-pen*',
                         '--include=include/linux/input/xiaomi-pen.h',
-                        str(ROOT / 'patches/linux/7.3/0214-LOCAL-input-nt36532e-pen.patch')],
+                        str(ROOT / 'patches/linux/7.3/0225-LOCAL-input-nt36532e-pen.patch')],
                        cwd=self.work, check=True, capture_output=True)
         self.source.mkdir()
         for name in runtime.PEN_KERNEL_SOURCE_FILES:

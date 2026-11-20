@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sun, 8 Nov 2026 23:39:32 +0800
-Subject: drm/msm: convert fixed-panel HDR signals through calibrated DSPP
- color blocks
+Subject: [PATCH] drm/msm: convert fixed-panel HDR signals through calibrated
+ DSPP color blocks
 
 The fixed-panel DSPP conversion does not change DSI link timings.
 For an SDR colorspace change on an already active fixed panel, keep the
@@ -251,10 +251,10 @@ index 084ea8ecfef4341b33a273717d2d5f09b9f3b872..7781bb6ddb57e6fd9ba3df2d99fc34bf
  
  	uint64_t input_fence_timeout_ns;
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
-index 9fa40480bc092d7e9a22a22ce79bfe269c2a938c..375c7c9a40cc8eaff283fb22f0613685642020ce 100644
+index d0a1d5d6170cf17a19ddcad4c4afd555a38c20b6..21516448f648dbffa0f0786856f1fea4aab0736a 100644
 --- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
-@@ -432,6 +432,8 @@ static const struct dpu_dspp_sub_blks sm8750_dspp_sblk = {
+@@ -439,6 +439,8 @@ static const struct dpu_dspp_sub_blks sm8750_regdma_dspp_sblk = {
  		.len = 0x40, .version = 0x20000},
  	.igc = {.name = "igc", .base = 0x1260,
  		.len = 0x8, .version = 0x50000},

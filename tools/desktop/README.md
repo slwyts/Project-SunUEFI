@@ -62,7 +62,7 @@ input events. A successful response confirms control communication, not drawing
 support. See [pen protocol](../../docs/devel/hardware/pen-protocol.md).
 
 `--send-dock-state` additionally reads the real `SW_PEN_INSERTED` switch from
-the Piano pen-dock driver and sends OEM `51 01` with detached=1/attached=0.
+the SC96231 pen-dock switch and sends OEM `51 01` with detached=1/attached=0.
 It fails if the switch is unavailable instead of assuming the pen was removed.
 This sends one observed state; it is not a complete OEM initialization sequence
 or a persistent dock monitor. The dock driver is currently a separate candidate.

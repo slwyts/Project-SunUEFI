@@ -4,14 +4,14 @@ Date: Sat, 14 Nov 2026 22:14:19 +0800
 Subject: [PATCH] Input: nt36532e: gate requested pen scanning on dock and
  sleep
 
-Consume the existing SW_PEN_INSERTED switch from SC96231 or the Piano dock through an input handler. Keep the requested model while docked and restore it after removal and firmware recovery. Stop scanning before panel or system sleep; defer firmware restore until the controller is awake. Do not add a userspace interface or select an unobserved pen model.
+Consume the existing SW_PEN_INSERTED switch from the SC96231 pen charger through an input handler. Keep the requested model while docked and restore it after removal and firmware recovery. Stop scanning before panel or system sleep; defer firmware restore until the controller is awake. Do not add a userspace interface or select an unobserved pen model.
 ---
- drivers/input/touchscreen/nt36532e/nt36xxx.c | 174 ++++++++++++++++++-
+ drivers/input/touchscreen/nt36532e/nt36xxx.c | 173 ++++++++++++++++++-
  drivers/input/touchscreen/nt36532e/nt36xxx.h |   7 +-
- 2 files changed, 173 insertions(+), 8 deletions(-)
+ 2 files changed, 172 insertions(+), 8 deletions(-)
 
 diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx.c b/drivers/input/touchscreen/nt36532e/nt36xxx.c
-index 7caa2b68a..0460563ef 100644
+index 7caa2b68a5afff34c1b121130ea9f7144f7f01c8..5d6707e36af13e88c721bd416f8a9263facac8b4 100644
 --- a/drivers/input/touchscreen/nt36532e/nt36xxx.c
 +++ b/drivers/input/touchscreen/nt36532e/nt36xxx.c
 @@ -26,6 +26,7 @@
@@ -51,7 +51,7 @@ index 7caa2b68a..0460563ef 100644
  	if (!ret)
  		ts->thp_stylus_mode = mode;
  out:
-@@ -894,19 +904,145 @@ int nvt_thp_restore_stylus(void)
+@@ -894,19 +904,144 @@ int nvt_thp_restore_stylus(void)
  	u8 mode;
  	int ret;
  
@@ -110,8 +110,7 @@ index 7caa2b68a..0460563ef 100644
 +{
 +	struct device *parent = input->dev.parent;
 +
-+	return parent && (device_is_compatible(parent, "southchip,sc96231") ||
-+			  device_is_compatible(parent, "xiaomi,piano-pen-dock"));
++	return parent && device_is_compatible(parent, "southchip,sc96231");
 +}
 +
 +static int nvt_pen_dock_connect(struct input_handler *handler,
@@ -200,7 +199,7 @@ index 7caa2b68a..0460563ef 100644
  static bool nvt_thp_stream_ready(void)
  {
  	return !kfifo_is_empty(&ts->thp_stream_fifo) ||
-@@ -2529,6 +2665,9 @@ static int32_t nvt_ts_probe(struct spi_device *client)
+@@ -2529,6 +2664,9 @@ static int32_t nvt_ts_probe(struct spi_device *client)
  	}
  
  	bTouchIsAwake = 1;
@@ -210,7 +209,7 @@ index 7caa2b68a..0460563ef 100644
  	NVT_LOG("end\n");
  
  #if BOOT_UPDATE_FIRMWARE
-@@ -2625,6 +2764,7 @@ static void nvt_ts_remove(struct spi_device *client)
+@@ -2625,6 +2763,7 @@ static void nvt_ts_remove(struct spi_device *client)
  	nvt_panel_remove_follower(ts);
  
  	bTouchIsAwake = 0;
@@ -218,7 +217,7 @@ index 7caa2b68a..0460563ef 100644
  	WRITE_ONCE(ts->thp_capture_enabled, false);
  	wake_up_interruptible(&ts->thp_stream_wait);
  	proc_remove(ts->thp_game_rollback_proc);
-@@ -2693,6 +2833,8 @@ static void nvt_ts_shutdown(struct spi_device *client)
+@@ -2693,6 +2832,8 @@ static void nvt_ts_shutdown(struct spi_device *client)
  	NVT_LOG("Shutdown driver...\n");
  
  	nvt_panel_remove_follower(ts);
@@ -227,7 +226,7 @@ index 7caa2b68a..0460563ef 100644
  
  	if (ts->power_supply_registered) {
  		power_supply_unreg_notifier(&ts->power_supply_notifier);
-@@ -2726,6 +2868,8 @@ return:
+@@ -2726,6 +2867,8 @@ return:
  *******************************************************/
  static int32_t nvt_ts_suspend(struct device *dev)
  {
@@ -236,7 +235,7 @@ index 7caa2b68a..0460563ef 100644
  	if (!bTouchIsAwake) {
  		NVT_LOG("Touch is already suspend\n");
  		return 0;
-@@ -2740,6 +2884,11 @@ static int32_t nvt_ts_suspend(struct device *dev)
+@@ -2740,6 +2883,11 @@ static int32_t nvt_ts_suspend(struct device *dev)
  
  	NVT_LOG("start\n");
  
@@ -248,7 +247,7 @@ index 7caa2b68a..0460563ef 100644
  	bTouchIsAwake = 0;
  	nvt_input_reset();
  
-@@ -2878,8 +3027,17 @@ MODULE_DEVICE_TABLE(of, nvt_match_table);
+@@ -2878,8 +3026,17 @@ MODULE_DEVICE_TABLE(of, nvt_match_table);
  #ifdef CONFIG_PM
  static int nvt_pm_suspend(struct device *dev)
  {
@@ -266,7 +265,7 @@ index 7caa2b68a..0460563ef 100644
  	nvt_input_reset();
  	ts->dev_pm_suspend = true;
  	reinit_completion(&ts->dev_pm_suspend_completion);
-@@ -2899,9 +3057,11 @@ static int nvt_pm_resume(struct device *dev)
+@@ -2899,9 +3056,11 @@ static int nvt_pm_resume(struct device *dev)
  	 * prepared callback restores scanning instead. */
  	mutex_lock(&ts->lock);
  	if (ts->thp_firmware_ready &&
@@ -280,7 +279,7 @@ index 7caa2b68a..0460563ef 100644
  	mutex_unlock(&ts->lock);
  	NVT_LOG("system resume from pm_suspend2");
 diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx.h b/drivers/input/touchscreen/nt36532e/nt36xxx.h
-index 7d8bf1abb..2c0944b7a 100644
+index 7d8bf1abb7751ebeb247af471c085ea8660521f1..2c0944b7aa9b39289da474513e762b6f5030238a 100644
 --- a/drivers/input/touchscreen/nt36532e/nt36xxx.h
 +++ b/drivers/input/touchscreen/nt36532e/nt36xxx.h
 @@ -21,6 +21,7 @@

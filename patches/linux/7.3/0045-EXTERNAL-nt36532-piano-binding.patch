@@ -1,0 +1,69 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: [PATCH] dt-bindings: display: panel: describe Novatek NT36532
+
+Extend the accepted NT36532 binding with two Piano variants and their ordered bias supplies.
+
+Describe the panel power, clocks and paired display links.
+
+The port retains changes from these linux-piano commits:
+piano: native display (NT36532 DSC) and Adreno 830 GPU (#14) (bluseliu50 <265648257+bluseliu50@users.noreply.github.com>)
+
+Co-authored-by: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/5c2c95fddbe9c29720b7b4e84119357358e9f0cb
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ .../display/panel/novatek,nt36532.yaml        | 24 +++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/display/panel/novatek,nt36532.yaml b/Documentation/devicetree/bindings/display/panel/novatek,nt36532.yaml
+index c1ab793dd718d0b0d7eca652c082a68e10d11390..493c5f907c858202b79aa9fe2f9f8e50be57117a 100644
+--- a/Documentation/devicetree/bindings/display/panel/novatek,nt36532.yaml
++++ b/Documentation/devicetree/bindings/display/panel/novatek,nt36532.yaml
+@@ -20,6 +20,8 @@ properties:
+     items:
+       - enum:
+           - csot,ppc100hb1-1
++          - xiaomi,piano-boe-nt36532
++          - xiaomi,piano-csot-nt36532
+       - const: novatek,nt36532
+ 
+   reg:
+@@ -32,6 +34,12 @@ properties:
+   vddio-supply:
+     description: regulator that supplies the I/O voltage
+ 
++  avdd-supply:
++    description: positive LCD bias supply
++
++  avee-supply:
++    description: negative LCD bias supply
++
+   ports: true
+ 
+ required:
+@@ -41,6 +49,22 @@ required:
+   - reset-gpios
+   - ports
+ 
++if:
++  properties:
++    compatible:
++      contains:
++        enum:
++          - xiaomi,piano-boe-nt36532
++          - xiaomi,piano-csot-nt36532
++then:
++  required:
++    - avdd-supply
++    - avee-supply
++else:
++  properties:
++    avdd-supply: false
++    avee-supply: false
++
+ unevaluatedProperties: false
+ 
+ examples:
