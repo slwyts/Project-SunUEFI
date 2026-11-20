@@ -145,8 +145,9 @@ systemd-boot、Linux 睡眠唤醒和返回 Android；安装 Windows 只使用明
 给出 ACPI 2.0 指针，从设备读回的 XSDT、FADT、DSDT、MADT、GTDT 和 PPTT
 校验和均正确；Linux 的 PSCI 仍从设备树初始化。IORT 使用原厂 XBL 的
 SMMU 中断和设备映射：UFS 的 StreamID 为 `0x60`，USB 为 `0x40`。微软原版
-ARM64 介质自带的 `storufs.inf` 匹配这台设备的 `ACPI\QCOM24A5`，也支持
-标准 UFSHCI 类 `ACPI\CC_010901`。启动文件由固件读出；要证明 Windows 已接管
+ARM64 介质自带的 `storufs.inf` 直接匹配这台设备的 `ACPI\QCOM24A5`。在这版
+WinPE 中，仅用 `_CLS` 描述 UFSHCI 不会生成 INF 中的 `ACPI\CC_010901`，
+不能替代硬件 ID。启动文件由固件读出；要证明 Windows 已接管
 控制器，须在 WinPE 内读写内置卷，不能以看到引导菜单或 INF 匹配代替。
 
 | 功能 | 发布前在 Piano 上检查 |
