@@ -1,6 +1,12 @@
 --- a/PKGBUILD
 +++ b/PKGBUILD
-@@ -14,16 +14,14 @@
+@@ -8,56 +8,58 @@
+ pkgbase=libcamera
+ pkgname=(
+   libcamera
+-  libcamera-docs
+   libcamera-ipa
+   libcamera-tools
    gst-plugin-libcamera
    python-libcamera
  )
@@ -13,22 +19,22 @@
 +arch=(aarch64)
  url="https://libcamera.org/"
 -_url=https://git.libcamera.org/libcamera/libcamera.git
++_steamos=@STEAMOS@
  makedepends=(
    cmake
-   doxygen
+-  doxygen
 -  git
    glib2
-   graphviz
+-  graphviz
    gst-plugins-base
-@@ -30,6 +28,7 @@
    gtest
    libdrm
 +  libevent
    libgcc
    libjpeg-turbo
    libstdc++
-   libpisp
-@@ -37,6 +36,7 @@
+-  libpisp
+   libtiff
    libyaml
    libyuv
    meson
@@ -36,10 +42,15 @@
    pybind11
    python-jinja
    python-ply
-@@ -50,14 +50,8 @@
+   python-pyyaml
+-  python-sphinx
+-  python-sphinx-book-theme
+-  python-sphinxcontrib-doxylink
+   qt6-base
+   qt6-tools
+   sdl2
    systemd
 -  texlive-core
-+  texlive-latexextra
  )
 -source=(
 -  "git+$_url#tag=v$pkgver"
@@ -49,14 +60,29 @@
 -            '8b54cbdf6ed767ae8d52a14480a4653f4f3a1c2187c4ccf7ceb65eaa60c819cce514122591d6e0c2dfc39d7482739f8fdd4090dbaf63701445510eefc88fb19f')
 -b2sums=('1dbd3f78f8d9a2484331798b18b871d7585b5928988e91d586366049d85e3f126e7cfc58494400e69feeec99a77894252d582f0d8f183508e5d1b8220e70f3d5'
 -        '4a0e24feed22d32b83b0ec49c9a7616b77deb26cae82c17a38b54a81a0468e982852147bc2d5e3b611ba014ddbd7647acfe2e68591542420da73945ba1c0d6c2')
++_qt_dependency=qt6-base
++_pisp_dependency=()
++_documentation_dependency=()
++if [[ $_steamos == true ]]; then
++  options=(!debug !lto)
++  if _qt_version=$(pkg-config --modversion Qt6Core 2>/dev/null); then
++    _qt_dependency="qt6-base>=${_qt_version%.*}"
++  fi
++else
++  pkgname+=(libcamera-docs)
++  makedepends+=(doxygen graphviz libpisp python-sphinx python-sphinx-book-theme
++                python-sphinxcontrib-doxylink texlive-latexextra)
++  _pisp_dependency+=(libpisp)
++  _documentation_dependency+=('libcamera-docs: for documentation')
++fi
 +source=(@SOURCES@)
 +sha256sums=(@CHECKSUMS@)
-
+ 
  _pick() {
    local p="$1" f d; shift
-@@ -70,8 +64,11 @@
+@@ -70,8 +72,21 @@
  }
-
+ 
  prepare() {
 -  cd $pkgbase
 -  patch -Np1 < ../$pkgbase-fix-python3.14-macro-redefinition.patch
@@ -65,14 +91,24 @@
 +  for file in @PATCHES@; do
 +    patch --batch --fuzz=0 -Np1 -i "$srcdir/$file"
 +  done
-
++  if [[ $_steamos == true ]]; then
++    # @GLIB_FIX@
++    # GStreamer searches its own sources before the system GLib headers.
++    local header=/usr/include/glib-2.0/gobject/gtype.h
++    if grep -Fqx 'static gpointer type_name##_parent_class = NULL; \' "$header"; then
++      mkdir -p src/gstreamer/gobject
++      sed 's/^static gpointer type_name##_parent_class = NULL;/G_GNUC_UNUSED &/' \
++        "$header" > src/gstreamer/gobject/gtype.h
++    fi
++  fi
+ 
    # add version, so that utils/gen-version.sh may rely on it
    printf "%s\n" "$pkgver" > .tarball-version
-@@ -82,11 +79,17 @@
+@@ -81,15 +96,25 @@
+   local meson_options=(
      -D v4l2=enabled
      -D tracing=disabled
-     -D test=true
-+    -D documentation=enabled
+-    -D test=true
 +    -D gstreamer=enabled
 +    -D pycamera=enabled
 +    -D qcam=enabled
@@ -80,15 +116,24 @@
 +    -D cam=enabled
      -D rpi-awb-nn=disabled
    )
-
++  if [[ $_steamos == true ]]; then
++    meson_options+=(-D test=false -D documentation=disabled -D pipelines=@PIPELINES@)
++  else
++    meson_options+=(-D test=true -D documentation=enabled)
++  fi
+ 
 -  arch-meson $pkgbase build "${meson_options[@]}"
 -  meson compile -C build
 +  arch-meson "$srcdir/@SOURCE_DIR@" build "${meson_options[@]}"
 +  meson compile -C build -j @JOBS@
  }
-
+ 
  check() {
-@@ -114,7 +117,7 @@
++  [[ $_steamos != true ]] || return 0
+   # Skip tests failing due to requiring CLONE_NEWUSER/CLONE_NEWNET
+   local tests=$(
+     meson test -C build --list | awk '{print $3}' \
+@@ -114,11 +139,11 @@
    depends=(
      glibc
      gnutls
@@ -97,25 +142,44 @@
      libelf
      libgcc
      libglvnd
-@@ -134,7 +137,7 @@
+-    libpisp
++    "${_pisp_dependency[@]}"
+     libstdc++
+     libunwind
+     libyaml
+@@ -128,17 +153,19 @@
+   )
+   optdepends=(
+     'gst-plugin-libcamera: GStreamer plugin'
+-    'libcamera-docs: for documentation'
++    "${_documentation_dependency[@]}"
+     'libcamera-tools: for applications'
+   )
    provides=(libcamera.so libcamera-base.so)
-
+ 
    meson install -C build --destdir "$pkgdir"
 -  install -vDm 644 $pkgbase/LICENSES/{BSD-3-Clause,Linux-syscall-note,MIT}.txt -t "$pkgdir/usr/share/licenses/$pkgname/"
 +  install -vDm 644 "$srcdir/@SOURCE_DIR@/LICENSES/"{BSD-3-Clause,Linux-syscall-note,MIT}.txt -t "$pkgdir/usr/share/licenses/$pkgname/"
-
+ 
    (
      cd "$pkgdir"
-@@ -153,6 +156,8 @@
+-    _pick $pkgbase-docs usr/share/doc
++    if [[ $_steamos != true ]]; then
++      _pick $pkgbase-docs usr/share/doc
++    fi
+     _pick $pkgbase-ipa usr/lib/libcamera/
+     _pick $pkgbase-tools usr/bin/{cam,libcamera-bug-report,lc-compliance,qcam}
+     _pick gst-plugin-$pkgbase usr/lib/gstreamer-*
+@@ -153,6 +180,8 @@
      CC-BY-SA-4.0
      CC0-1.0
    )
 +  # This package contains only generated documentation.
 +  options=(!strip)
-
+ 
    mv -v $pkgname/* "$pkgdir"
    mv -v "$pkgdir/usr/share/doc/$pkgbase-$pkgver/" "$pkgdir/usr/share/doc/$pkgbase/"
-@@ -171,19 +176,23 @@
+@@ -171,19 +200,23 @@
    )
    depends=(
      glibc
@@ -126,7 +190,7 @@
    )
    # stripping requires re-signing of IPA libs, so we do it manually
    options=(!strip)
-
+ 
 -  strip $pkgname/usr/lib/libcamera/*{.so,proxy}
 -  for _lib in $pkgname/usr/lib/libcamera/*.so; do
 -    $pkgbase/src/ipa/ipa-sign.sh "$(find build -type f -iname "*ipa-priv-key.pem")" "$_lib" "$_lib.sign"
@@ -142,9 +206,9 @@
 -  install -vDm 644 $pkgbase/LICENSES/BSD-2-Clause.txt -t "$pkgdir/usr/share/licenses/$pkgname/"
 +  install -vDm 644 "$srcdir/@SOURCE_DIR@/LICENSES/BSD-2-Clause.txt" -t "$pkgdir/usr/share/licenses/$pkgname/"
  }
-
+ 
  package_libcamera-tools() {
-@@ -197,7 +206,7 @@
+@@ -197,7 +230,7 @@
    depends=(
      glibc
      gtest
@@ -153,16 +217,24 @@
      libdrm
      libevent libevent-2.1.so libevent_pthreads-2.1.so
      libgcc
-@@ -212,7 +221,7 @@
+@@ -205,14 +238,14 @@
+     libstdc++
+     libtiff libtiff.so
+     libyaml
+-    qt6-base
++    "$_qt_dependency"
+     sdl2
+   )
+   conflicts=("$pkgbase-tests<0.0.1-2")
    replaces=("$pkgbase-tests<0.0.1-2")
-
+ 
    mv -v $pkgname/* "$pkgdir"
 -  install -vDm 644 $pkgbase/LICENSES/BSD-2-Clause.txt -t "$pkgdir/usr/share/licenses/$pkgname/"
 +  install -vDm 644 "$srcdir/@SOURCE_DIR@/LICENSES/BSD-2-Clause.txt" -t "$pkgdir/usr/share/licenses/$pkgname/"
  }
-
+ 
  package_gst-plugin-libcamera() {
-@@ -226,7 +235,7 @@
+@@ -226,7 +259,7 @@
      glibc
      gst-plugins-base-libs
      gstreamer
@@ -171,7 +243,7 @@
      libgcc
      libstdc++
    )
-@@ -242,7 +251,7 @@
+@@ -242,7 +275,7 @@
    )
    depends=(
      glibc

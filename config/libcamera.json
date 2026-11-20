@@ -19,5 +19,10 @@
       "PKGBUILD": "db958d70377e6b17558c8f39fc1a3a6eceea2a309655353ec5938caf4f03081e",
       "libcamera-fix-python3.14-macro-redefinition.patch": "2eb9407d11ea073e3c392bbb584b75803ce1b2a3d73afaefda5c1fa799c151ad"
     }
+  },
+  "steamos": {
+    "package_release": "1.1",
+    "pipelines": ["camss", "imx8-isi", "mali-c55", "rkisp1", "rpi/vc4", "simple", "uvcvideo"],
+    "glib_parent_class_fix": "https://gitlab.gnome.org/GNOME/glib/-/commit/1567250294e9666747ee63f5c6364bbceadd300b"
   }
 }
