@@ -1,4 +1,4 @@
-From 127d721021efd93a3198806dc7e1c31f045235a7 Mon Sep 17 00:00:00 2001
+From 10f2c2056a27cc5da15b60e35a5ae8a5891a7b27 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Mon, 9 Nov 2026 02:15:41 +0800
 Subject: [PATCH] ASoC: qcom: wait for bound APR devices before querying SPF

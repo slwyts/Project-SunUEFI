@@ -1,20 +1,22 @@
-From 1b527996461ddf50364078f2d50d0cffff496c92 Mon Sep 17 00:00:00 2001
+From 7c74fdd238103465f5c30a7f2d6f2c9e2566e721 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 02:58:21 +0800
-Subject: [PATCH] fix(power-supply): invalidate MCA authentication on UCSI
- connection events
+Subject: fix(power-supply): invalidate MCA authentication on UCSI connection
+ events
 
 Deliver physical UCSI connection changes synchronously through the power supply notifier instead of inferring attachment from sampled VBUS. Preserve every processed connection edge even when property notifications coalesce.
 
 Bind authentication attempts, VDM writes and verified results to the attachment generation. Recheck after acquiring the transaction mutex and after replies. Reset old CP/HV policy on a new attachment while retaining authentication through ordinary PD voltage resets.
+
+Invalidate the MCA connection proof whenever UCSI changes the connector power role.
 ---
  drivers/power/supply/piano_mca.c         | 183 +++++++++++++++++++----
  drivers/power/supply/power_supply_core.c |  18 +++
  drivers/usb/typec/ucsi/psy.c             |   8 +
- drivers/usb/typec/ucsi/ucsi.c            |   6 +-
+ drivers/usb/typec/ucsi/ucsi.c            |  24 +--
  drivers/usb/typec/ucsi/ucsi.h            |   2 +
  include/linux/power_supply.h             |   2 +
- 6 files changed, 186 insertions(+), 33 deletions(-)
+ 6 files changed, 195 insertions(+), 42 deletions(-)
 
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
 index b26411858dbf118f3285d68c8fbb2a8c0ac1f172..808e8b8a06e7d215d8d1df007d1f60df2d1efc56 100644
@@ -437,7 +439,7 @@ index b26411858dbf118f3285d68c8fbb2a8c0ac1f172..808e8b8a06e7d215d8d1df007d1f60df
  
  	if (pan_ack)
 diff --git a/drivers/power/supply/power_supply_core.c b/drivers/power/supply/power_supply_core.c
-index 1279785645fbe561e6140e845b5f024b7c17a3aa..c45a7f1e03ae6cf132f9460d12a2d6fd80539505 100644
+index 1279785645fbe561e6140e845b5f024b7c17a3aa..129dfc4b396fbe2559e5648a6412317a72df82be 100644
 --- a/drivers/power/supply/power_supply_core.c
 +++ b/drivers/power/supply/power_supply_core.c
 @@ -161,6 +161,24 @@ void power_supply_changed(struct power_supply *psy)
@@ -445,13 +447,13 @@ index 1279785645fbe561e6140e845b5f024b7c17a3aa..c45a7f1e03ae6cf132f9460d12a2d6fd
  EXPORT_SYMBOL_GPL(power_supply_changed);
  
 +/**
-+ * power_supply_connection_changed - Report a physical connection change
++ * power_supply_connection_changed - Report a connection or power role change
 + * @psy: the power supply whose connection changed
 + *
 + * Notify listeners synchronously before queuing the ordinary property update.
 + * Unlike property notifications, connection changes must not be coalesced: a
-+ * disconnect and reconnect can invalidate state even when ONLINE stays true
-+ * by the time the queued update runs. Callers must be in sleepable context;
++ * disconnect or role swap can invalidate state even when ONLINE is true
++ * again by the time the queued update runs. Callers must be in sleepable context;
 + * listeners must not query properties requiring locks held by the caller.
 + */
 +void power_supply_connection_changed(struct power_supply *psy)
@@ -482,7 +484,7 @@ index c8ebab8ba7e74a224bf9794a4e784fabe91fc842..ba8592a4e49426c2789617f9bf3e9c41
 +	power_supply_connection_changed(con->psy);
 +}
 diff --git a/drivers/usb/typec/ucsi/ucsi.c b/drivers/usb/typec/ucsi/ucsi.c
-index 239693f92de358e3bd2cb31f32ba491fd85715f3..c88cd023a6ad67b0d9ded9fc13167f7a3ba6a185 100644
+index 239693f92de358e3bd2cb31f32ba491fd85715f3..165a7cae05379a135cf4be7bfdb6446cbe837a22 100644
 --- a/drivers/usb/typec/ucsi/ucsi.c
 +++ b/drivers/usb/typec/ucsi/ucsi.c
 @@ -1390,6 +1390,9 @@ static int ucsi_check_connection(struct ucsi_connector *con)
@@ -495,7 +497,32 @@ index 239693f92de358e3bd2cb31f32ba491fd85715f3..c88cd023a6ad67b0d9ded9fc13167f7a
  	if (UCSI_CONSTAT(con, CONNECTED)) {
  		if (prev_state)
  			return 0;
-@@ -1493,7 +1496,8 @@ static void ucsi_handle_connector_change(struct work_struct *work)
+@@ -1477,23 +1480,24 @@ static void ucsi_handle_connector_change(struct work_struct *work)
+ 	change = UCSI_CONSTAT(con, CHANGE);
+ 	role = UCSI_CONSTAT(con, PWR_DIR);
+ 
+-	if ((change & UCSI_CONSTAT_POWER_DIR_CHANGE) && role != prev_role) {
+-		typec_set_pwr_role(con->port, role);
++	if (change & UCSI_CONSTAT_POWER_DIR_CHANGE) {
++		if (role != prev_role)
++			typec_set_pwr_role(con->port, role);
+ 
+-		/* Some power_supply properties vary depending on the power direction when
+-		 * connected
+-		 */
+-		if (UCSI_CONSTAT(con, CONNECTED))
+-			ucsi_port_psy_changed(con);
++		/* A power role swap invalidates the current supply connection. */
++		if (UCSI_CONSTAT(con, CONNECTED) &&
++		    !(change & UCSI_CONSTAT_CONNECT_CHANGE))
++			ucsi_port_psy_connection_changed(con);
+ 
+-		/* Complete pending power role swap */
+-		if (!completion_done(&con->complete))
++		/* Complete pending power role swap. */
++		if (role != prev_role && !completion_done(&con->complete))
+ 			complete(&con->complete);
+ 	}
  
  	if (change & UCSI_CONSTAT_CONNECT_CHANGE) {
  		typec_set_pwr_role(con->port, role);
@@ -543,5 +570,5 @@ index 0a4ea490d5ea8c0764694337c47d808570521efb..36edda34d00bd610559aec8dd4fd68c7
  int power_supply_get_property_from_supplier(struct power_supply *psy,
  					    enum power_supply_property psp,
 -- 
-2.56.1
+2.55.0
 

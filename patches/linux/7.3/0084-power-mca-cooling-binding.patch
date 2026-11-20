@@ -1,4 +1,4 @@
-From f3dfa676fc7c2699d28e59840eeae8fc649690e7 Mon Sep 17 00:00:00 2001
+From 5afba02e64fa30c8b0209310b9a5a4bd0ccb4861 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 10 Nov 2026 02:11:16 +0800
 Subject: [PATCH] dt-bindings: power: describe Xiaomi MCA charger cooling

@@ -11,13 +11,13 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "12085731767550495df307b70f6f49f7a2983f51",
-  "original_target_commit": "40739b6b8bf3cc50cd283cb0393f2599fab51c81",
+  "target_tree": "59fb15193101201d1afa121e32ced4897cf13c4d",
+  "original_target_commit": "514035ab6afa2c5f0f3899c3b0891ec967a116c1",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
       "file": "0000-UPSTREAM-ufs-fix-clock-scaling-deadlock.patch",
-      "original_commit": "d36f72592bda05522774db60dc04eb0ca9bc3cbd",
+      "original_commit": "197b7deabbac25b1d3dbed64f4bc8a61998a0246",
       "committer_date": "2026-11-20T04:51:03+08:00",
       "upstream": {
         "status": "merged",
@@ -25,15 +25,15 @@
         "commit": "c378d4fdb6c7244c3458af886e2bab61f8f56d13",
         "drop_when": "The selected stable kernel contains c378d4fdb6c7 or the equivalent mainline UFS clock-scaling deadlock fix."
       },
-      "sha256": "bfb307563a7779c6cd95dd767f5352802bcd93c464795ea5a20f28512358cb5c",
+      "sha256": "0e9302fa6df70fe081ff1185eae3ccc086e9fd944a2334dc28fb3101edcef139",
       "original_parent": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
       "tree": "72cc2b418283f251a81d964b70e2e3301e892565"
     },
     {
       "file": "0001-platform.patch",
-      "sha256": "3b7dabb2254f92ac16cb736827a1b4fd0c354d9d14df326b9037fe3e1389f7eb",
-      "original_commit": "ecf4edb8ee1f90f4a74b44be48e908f2ffa1119b",
-      "original_parent": "d36f72592bda05522774db60dc04eb0ca9bc3cbd",
+      "sha256": "82118d168e29a3af780f871f00cde942b4f1312c117294fcc5dd60a3b8cf541c",
+      "original_commit": "5b70cfce3ed0baee6351b1163ada62e8740eab44",
+      "original_parent": "197b7deabbac25b1d3dbed64f4bc8a61998a0246",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "e59aca177dc3ce830462633b0179cb73d7b2eede",
       "upstream": {
@@ -44,9 +44,9 @@
     },
     {
       "file": "0002-display.patch",
-      "sha256": "b7f0dc6d0ffa506f8a381803cb8f14cbe4ece7632534cf66e8fb7d96da7962bd",
-      "original_commit": "bcba8a333d646739c28419e1ed2ad5e575c28263",
-      "original_parent": "ecf4edb8ee1f90f4a74b44be48e908f2ffa1119b",
+      "sha256": "91fd57accfaa4f701e7732769461b3dd8f19e46d8eadbac2db299a238a7368c7",
+      "original_commit": "4bf112995ca6d416e19bc46ce59ead50ed2e867a",
+      "original_parent": "5b70cfce3ed0baee6351b1163ada62e8740eab44",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "d8fd3b59accb37ee6f10d7b05474b7050037c833",
       "upstream": {
@@ -57,9 +57,9 @@
     },
     {
       "file": "0003-input-wireless.patch",
-      "sha256": "1cb60cae0ad2c25fbfb43a16d1b4548088562fa12839809006df9d83b9e40d53",
-      "original_commit": "7038b7d4e2afc5099b4e289d99f15e162d1ce3a7",
-      "original_parent": "bcba8a333d646739c28419e1ed2ad5e575c28263",
+      "sha256": "9a3fc2b5cc1d8b2115516de82e641a84a45202366c3837bbf37c86d06fb64a77",
+      "original_commit": "c9132896964fa74ae3b1ed79178f1b5130c01b84",
+      "original_parent": "4bf112995ca6d416e19bc46ce59ead50ed2e867a",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "42de3748e6a9ec2f3b9de511ddbddeb9d618ad2a",
       "upstream": {
@@ -70,9 +70,9 @@
     },
     {
       "file": "0004-media.patch",
-      "sha256": "6c352b5c9f3c38b1faadd996ac8556e4560726b9dcfec7e4bdd29af9c1bc41b6",
-      "original_commit": "64c7580acf28de4b21515d79f19bfd365446cf8b",
-      "original_parent": "7038b7d4e2afc5099b4e289d99f15e162d1ce3a7",
+      "sha256": "a6d9d955052c22f36c0c3adffc5fc8da2562a1563e76cb60ee2ae3ef3b3b678e",
+      "original_commit": "ba96da97fad89b4be769c9bdc856b6aac8b9d230",
+      "original_parent": "c9132896964fa74ae3b1ed79178f1b5130c01b84",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "1a675cf65d56e1f9de532548f4f73c8294831962",
       "upstream": {
@@ -83,9 +83,9 @@
     },
     {
       "file": "0005-audio.patch",
-      "sha256": "9e788d1acc8d3d7497774458feb92e1646ec7882d444f509154c979fbb924a4d",
-      "original_commit": "424fd88e6be60fa9e0bd68295039f7c0e759ceec",
-      "original_parent": "64c7580acf28de4b21515d79f19bfd365446cf8b",
+      "sha256": "13c289403fc6d00affcfcc122044399d57bee0bdafbaf1c1277d48317a3d6722",
+      "original_commit": "ceb0becbf101b2d3e62d4dd20d97a2689b249cfc",
+      "original_parent": "ba96da97fad89b4be769c9bdc856b6aac8b9d230",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "82fa00da518192ea2a0076728599eda9105cdfab",
       "upstream": {
@@ -96,9 +96,9 @@
     },
     {
       "file": "0006-gunyah.patch",
-      "sha256": "c18cf85c05c260a44c6df9023d8c27e03439b0761e12a1b7e2075751ca9c9af8",
-      "original_commit": "0538d7fa691c92b74d1171078e02ea95bd1ea8dd",
-      "original_parent": "424fd88e6be60fa9e0bd68295039f7c0e759ceec",
+      "sha256": "e36f50f7da027c3e1a5519f3173eddb20484a4d2c3172f82ccc259fa1d9d7b77",
+      "original_commit": "3ae7275543e3e3381e51a3da9c8caa876493ade8",
+      "original_parent": "ceb0becbf101b2d3e62d4dd20d97a2689b249cfc",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "bb5b523a727f279b36c663b79845047433ca32ba",
       "upstream": {
@@ -109,9 +109,9 @@
     },
     {
       "file": "0007-bore.patch",
-      "sha256": "79358738abda64fbeef813c64404d8bee037d7cf16862b7cc0c57e5cfad6c0dd",
-      "original_commit": "c94f54aecace77239895ae0485c0c1baa7d0ac81",
-      "original_parent": "0538d7fa691c92b74d1171078e02ea95bd1ea8dd",
+      "sha256": "9b9e423d94cdc9818ca4ce179907a404e25af5a2c21eb8a4dd6fabf442a2fe30",
+      "original_commit": "24818f3d1c9183ff4f3af23a78b9ec083f4555a5",
+      "original_parent": "3ae7275543e3e3381e51a3da9c8caa876493ade8",
       "committer_date": "2026-11-08T00:43:43+08:00",
       "tree": "45a6597c898df27b82faaba335d5ca6adde1ae9b",
       "upstream": {
@@ -122,9 +122,9 @@
     },
     {
       "file": "0008-drm-msm-gem-api.patch",
-      "sha256": "9f9cbc2b6ee4d82cabb0bb70bdb78eb9088f2ee54fe18a6684d81f5749854b2f",
-      "original_commit": "56cc2dc029d1d1782b9e2af9c918f7da6089a12a",
-      "original_parent": "c94f54aecace77239895ae0485c0c1baa7d0ac81",
+      "sha256": "6d80fb99cff6155a326c2b6f270a3d858cdf76a74afbb15316ac7f977a230b6a",
+      "original_commit": "19b5290acd01c19a372188e384c6e09804d64b82",
+      "original_parent": "24818f3d1c9183ff4f3af23a78b9ec083f4555a5",
       "committer_date": "2026-11-08T00:43:43+08:00",
       "tree": "a5d8fff0774b426ac714e0a431ea7980204d0f48",
       "upstream": {
@@ -135,9 +135,9 @@
     },
     {
       "file": "0009-gunyah-rmap-api.patch",
-      "sha256": "a763ba0af855e16bc51e77b6fafcf4e3b02a865b84739358a170ec4259701930",
-      "original_commit": "a8a23f7847c8839c9ccefc3ca5d4fde9d8f02fb4",
-      "original_parent": "56cc2dc029d1d1782b9e2af9c918f7da6089a12a",
+      "sha256": "112a1f351fe68ef08b48031a7a92e149236aaa71ed3eb3675ea08d243b6d6011",
+      "original_commit": "760ea22f22d2faecf894f71fd28db376cc681f4d",
+      "original_parent": "19b5290acd01c19a372188e384c6e09804d64b82",
       "committer_date": "2026-11-08T00:43:43+08:00",
       "tree": "92b054dfe75d4596a2766df1396959637d3649b1",
       "upstream": {
@@ -148,9 +148,9 @@
     },
     {
       "file": "0010-gunyah-dt-availability.patch",
-      "sha256": "1319d0495364f7f854c85bd1563f3984bef68ad25c1421941a058bc798f1c7fb",
-      "original_commit": "e85aa3b3825e2775a0129e5064f71df4a2dc50a8",
-      "original_parent": "a8a23f7847c8839c9ccefc3ca5d4fde9d8f02fb4",
+      "sha256": "4b5cb2b83a108765cd2624d0c47eecde71a943c63a8c59006a0af7baecc39fde",
+      "original_commit": "87892f1757060223673272c7834e8bb1fefe1716",
+      "original_parent": "760ea22f22d2faecf894f71fd28db376cc681f4d",
       "committer_date": "2026-11-08T00:43:43+08:00",
       "tree": "614da0676de15f0d50a2639152ca65b807e62793",
       "upstream": {
@@ -161,9 +161,9 @@
     },
     {
       "file": "0011-fastrpc-drain-ssr-invokes.patch",
-      "sha256": "ee4495e0f04e031faff8c889a2f7584cd86cd787cacfaeb0cc3a0a989eeb45b6",
-      "original_commit": "733a73044489a11df9584ef0c65eeebfeaaa4819",
-      "original_parent": "e85aa3b3825e2775a0129e5064f71df4a2dc50a8",
+      "sha256": "49b8c9c60217acf7c92e480be26059f7d009b1f2d28810f67d5b5debde7c622a",
+      "original_commit": "4001f8fbf92fd89eb6be01f0335a2f7835bb700d",
+      "original_parent": "87892f1757060223673272c7834e8bb1fefe1716",
       "committer_date": "2026-11-08T00:43:43+08:00",
       "tree": "1f6e1c7a38e310e4508823de56dd60a1a14006e6",
       "upstream": {
@@ -174,9 +174,9 @@
     },
     {
       "file": "0012-asoc-q6apm-avoid-unregistered-query.patch",
-      "sha256": "3d24abb2a8d19a3755bf9e37f3e5df73bddbed5458e1e29685b34e70d41def74",
-      "original_commit": "fa5d48f6910cd57588f3aabd4a8a5d4a956991c7",
-      "original_parent": "733a73044489a11df9584ef0c65eeebfeaaa4819",
+      "sha256": "2e04532ea1093342a8ac6611607289405dd882a7f33817297c6241466748ff4d",
+      "original_commit": "2c7ee6d7bb942cd36bc2b297f52f2d0439ba4557",
+      "original_parent": "4001f8fbf92fd89eb6be01f0335a2f7835bb700d",
       "committer_date": "2026-11-08T00:43:43+08:00",
       "tree": "68862e69936b99718ccafd68a74109837fcb7bd1",
       "upstream": {
@@ -187,9 +187,9 @@
     },
     {
       "file": "0013-asoc-va-sm8750-core-votes.patch",
-      "sha256": "e7050662061c2bd94df9d303ed64569dbb7810866ae718cc032b022109664df4",
-      "original_commit": "09ba65ecdcd863690a788f1d27f35f43ca8b05d1",
-      "original_parent": "fa5d48f6910cd57588f3aabd4a8a5d4a956991c7",
+      "sha256": "29a879426384fad61a1949bf7639130979548c6adb41947c8951a0f772b33eca",
+      "original_commit": "9c9445a9b807a558c3a4db4460c48df8ad8c2540",
+      "original_parent": "2c7ee6d7bb942cd36bc2b297f52f2d0439ba4557",
       "committer_date": "2026-11-08T00:43:43+08:00",
       "tree": "1c1a950f8354cfa1926206f058659c1d286074c1",
       "upstream": {
@@ -200,9 +200,9 @@
     },
     {
       "file": "0014-qcomtee-large-shared-memory.patch",
-      "sha256": "3683de38942920658884059b6ec4fc9ed131b7206676da1df8e2eb4c977f1f3b",
-      "original_commit": "935761270560fb54a1cf370eb2efaa4a28f4e95e",
-      "original_parent": "09ba65ecdcd863690a788f1d27f35f43ca8b05d1",
+      "sha256": "837d865f4508fa67d9e755a664ef326352611ce0a1b7cd243f03b66cfdbd77a0",
+      "original_commit": "b2d2db35edcf0fa1b00ee3693dbb99f930ce3397",
+      "original_parent": "9c9445a9b807a558c3a4db4460c48df8ad8c2540",
       "committer_date": "2026-11-08T00:43:43+08:00",
       "tree": "6248dcf14e281ffc656e75d480df30035036ab55",
       "upstream": {
@@ -213,9 +213,9 @@
     },
     {
       "file": "0015-remoteproc-sm8750-cdsp-sync-memory.patch",
-      "sha256": "5cd644384be1c958e6e621485578a5792ffdff2a6f437fe1d0c7151a6310a450",
-      "original_commit": "5069f1c39ddacf3c2cdfd7bcb28ae34ca187db8d",
-      "original_parent": "935761270560fb54a1cf370eb2efaa4a28f4e95e",
+      "sha256": "0ed977a130d115f80ee9371915789d16026c3a3c65ad54556a5650ab7f8978d0",
+      "original_commit": "275a6eccb520ac45581297725d8e36a0ca97527f",
+      "original_parent": "b2d2db35edcf0fa1b00ee3693dbb99f930ce3397",
       "committer_date": "2026-11-08T00:43:43+08:00",
       "tree": "19d34e14e27c49edcfb843071b92f3b18e9e3666",
       "upstream": {
@@ -226,9 +226,9 @@
     },
     {
       "file": "0016-drm-igcv5-high-precision-dither.patch",
-      "sha256": "c3b6476d71f7bde0d968680276f175d3750f8017de84e2966d890254c329d567",
-      "original_commit": "8323590e34e3383fdbc74bbb93e89ab2d0c69a4f",
-      "original_parent": "5069f1c39ddacf3c2cdfd7bcb28ae34ca187db8d",
+      "sha256": "05e3d3958cd8f832db8e98b0db154ebd948e05032e9360cd401db55c52f07699",
+      "original_commit": "9e9909fa55af3875806273e69cd8d3c0251f42cf",
+      "original_parent": "275a6eccb520ac45581297725d8e36a0ca97527f",
       "committer_date": "2026-11-08T00:43:43+08:00",
       "tree": "51597edd74c7bc3288c8b3bd31470ea0ea249f40",
       "upstream": {
@@ -239,9 +239,9 @@
     },
     {
       "file": "0017-uio-piano-fingerprint-control.patch",
-      "sha256": "d5796ed0a263dfc2d9fc45d0f2fee606c15d5d1a8b6d23bbb17a705eb68f77e9",
-      "original_commit": "069589b8b6fef91cbe091c2194de5462a4b95789",
-      "original_parent": "8323590e34e3383fdbc74bbb93e89ab2d0c69a4f",
+      "sha256": "e59e3268f6710b0a0c57b680584debf5d08adee18dcdee100c4fe51eb60f12e6",
+      "original_commit": "d8ea8a36cca21807a324cdc5b02e2c3df31eb06d",
+      "original_parent": "9e9909fa55af3875806273e69cd8d3c0251f42cf",
       "committer_date": "2026-11-08T00:43:44+08:00",
       "tree": "9e6c5333c32be83e286024c67da8f8e44e269690",
       "upstream": {
@@ -252,9 +252,9 @@
     },
     {
       "file": "0018-qcomtee-public-buffers-cma.patch",
-      "sha256": "61d84ee9cbb8197a37b14ec1eda87e4e4628eaa4e778f2ab4ab74e572dbcdf0c",
-      "original_commit": "d77620217ced418f0d4827bb41d389ca84fb9281",
-      "original_parent": "069589b8b6fef91cbe091c2194de5462a4b95789",
+      "sha256": "cc735456c2ebd19479841478c0ab10e8157cb4d6c72533313dcbe97bedc275cd",
+      "original_commit": "4ef444e5a00a662a47caf818fee99b308f157279",
+      "original_parent": "d8ea8a36cca21807a324cdc5b02e2c3df31eb06d",
       "committer_date": "2026-11-08T00:43:44+08:00",
       "tree": "fe6e99e2a483489d97e5c714ed0e759c474ae313",
       "upstream": {
@@ -265,9 +265,9 @@
     },
     {
       "file": "0019-pmic-glink-altmode-connector-children.patch",
-      "sha256": "73c876c145cb7672ff08b27453ed25da99894055e63191cdb88e811d063005db",
-      "original_commit": "50db1982ba39951c8dd7c3a80e5900a3b546e2a7",
-      "original_parent": "d77620217ced418f0d4827bb41d389ca84fb9281",
+      "sha256": "4259fc7dcb0ed253895f2f57e694840458d7d75842a837b48b909337eb0d43b8",
+      "original_commit": "892971703a1db651c0831bea7bded209e1ff438e",
+      "original_parent": "4ef444e5a00a662a47caf818fee99b308f157279",
       "committer_date": "2026-11-08T00:43:44+08:00",
       "tree": "4d822879f87f9ca61b95dd95676ef40b409a87c5",
       "upstream": {
@@ -278,9 +278,9 @@
     },
     {
       "file": "0020-ucsi-glink-connector-children.patch",
-      "sha256": "6947d22f253c7279affe4d65434966d4e690daf4c314b7c41dc4d9c870b215e8",
-      "original_commit": "d8bb1a8b673d3ff80d173fa1fa1a2f5db22e51f4",
-      "original_parent": "50db1982ba39951c8dd7c3a80e5900a3b546e2a7",
+      "sha256": "6cd1e011650f7e95b9b98344aefa033365a826f7eb6193b47c44070bcac5d456",
+      "original_commit": "d2cba590ceb252e333e2da4e632d88d03239ea06",
+      "original_parent": "892971703a1db651c0831bea7bded209e1ff438e",
       "committer_date": "2026-11-08T00:43:44+08:00",
       "tree": "73ec6baacaba8aa2d891fe338bc673b71861ee55",
       "upstream": {
@@ -291,9 +291,9 @@
     },
     {
       "file": "0021-ucsi-prefer-numbered-connectors.patch",
-      "sha256": "8d4a83b4acfb2db9845e83f701e1d952b81695befc05f383653d0f49a82450fa",
-      "original_commit": "2e38bc8b82c02a5e41fe40e600b3852e163be567",
-      "original_parent": "d8bb1a8b673d3ff80d173fa1fa1a2f5db22e51f4",
+      "sha256": "35fbc8d6fbf54544381faebf0f7c233569ad9eeb1b0b441fa7849432ca68b61d",
+      "original_commit": "ee4f820cd1fc431615a8eed8c04b1f4ce5777a5e",
+      "original_parent": "d2cba590ceb252e333e2da4e632d88d03239ea06",
       "committer_date": "2026-11-08T00:43:44+08:00",
       "tree": "657f4540c836746828f52b85031239a1f5fd8a2a",
       "upstream": {
@@ -304,9 +304,9 @@
     },
     {
       "file": "0022-ucsi-initial-usb-mux.patch",
-      "sha256": "8067f4a77c8a8cf6170d9c22d7ee23efbc7b4f363ef1632de6cdb29e71a0a19f",
-      "original_commit": "ef9e11bbbc29fee2216fbd69faaf4c25ef3aa44d",
-      "original_parent": "2e38bc8b82c02a5e41fe40e600b3852e163be567",
+      "sha256": "7461f1dd3747d9c4585719cb6cb2bc2b816639086d4c33b9d6d7429087286d89",
+      "original_commit": "1859d51c9023e775cae2edd83411e876437a5ffc",
+      "original_parent": "ee4f820cd1fc431615a8eed8c04b1f4ce5777a5e",
       "committer_date": "2026-11-08T00:43:44+08:00",
       "tree": "2189658e53c517bc2fb6bb6a74da6dece336b80e",
       "upstream": {
@@ -317,9 +317,9 @@
     },
     {
       "file": "0023-dpu-shared-video-ctl.patch",
-      "sha256": "dd84b4b89951a38fcb8c082eebf9f6ce047d82f4e176d60d74bc7ccff047289d",
-      "original_commit": "6529eae19489a4227391d7eb234e131558e2b869",
-      "original_parent": "ef9e11bbbc29fee2216fbd69faaf4c25ef3aa44d",
+      "sha256": "079bdfefdc2a908534992f3f4f2e87e8ce57cad558a10a67b32fad98e00c8c9d",
+      "original_commit": "c7b4db5f0b4a415e0c757daed305f33ffbc414fd",
+      "original_parent": "1859d51c9023e775cae2edd83411e876437a5ffc",
       "committer_date": "2026-11-08T00:43:44+08:00",
       "tree": "01d40ad5ba41336cf28ee8679db8f3486303c8f8",
       "upstream": {
@@ -330,9 +330,9 @@
     },
     {
       "file": "0024-hid-nanosic-feature-and-release.patch",
-      "sha256": "3d517a9febacb615384fd5fcf86487e25f9d987891deae2be98f0bc75a2aed97",
-      "original_commit": "8a97e634202b1aa19b0b864c027796b883f7a87e",
-      "original_parent": "6529eae19489a4227391d7eb234e131558e2b869",
+      "sha256": "082ddf48c48a43c5d8f7d44219fe97c425ece44a8810a77c0d7b4938c9966642",
+      "original_commit": "c728a92e756103dc8fc54a633efd2e972fe61fd8",
+      "original_parent": "c7b4db5f0b4a415e0c757daed305f33ffbc414fd",
       "committer_date": "2026-11-08T00:43:44+08:00",
       "tree": "2a0aa2946f283b3969db254b9ae99e776e47555e",
       "upstream": {
@@ -343,9 +343,9 @@
     },
     {
       "file": "0025-ucsi-clear-released-connectors.patch",
-      "sha256": "9473aa2f93ac9799568ff12a35a7fe30d5d1e0988ad7d1a3e7ca97f0833a81cd",
-      "original_commit": "7620ff2ee071be4ff740cd8af2d01882926ffbed",
-      "original_parent": "8a97e634202b1aa19b0b864c027796b883f7a87e",
+      "sha256": "ca8919815f3ef56cef9b53ef1c0e0938660c53c08a44a4f25b8eee9c9be5d610",
+      "original_commit": "3545492c617aac0978f5fd5bba0ef7bb56a68cca",
+      "original_parent": "c728a92e756103dc8fc54a633efd2e972fe61fd8",
       "committer_date": "2026-11-08T00:43:44+08:00",
       "tree": "7a90596dc2f37a5989839d2d2b207b85357360c2",
       "upstream": {
@@ -356,9 +356,9 @@
     },
     {
       "file": "0026-mca-recover-pd-input.patch",
-      "sha256": "5394b73b7c773ed66c81eaa0d09992a64c212aebac3d042fda1a76d80b1fc88e",
-      "original_commit": "acb6cd92a0716605fd243be51a104ff6041671f5",
-      "original_parent": "7620ff2ee071be4ff740cd8af2d01882926ffbed",
+      "sha256": "f4135deacc4feba7a20b7b3f0c1f13906fc3bf748ee932c36a86e1fcf5f9ec74",
+      "original_commit": "a0d08730284d33818c4079d92f6477f0edbfebd0",
+      "original_parent": "3545492c617aac0978f5fd5bba0ef7bb56a68cca",
       "committer_date": "2026-11-08T00:43:44+08:00",
       "tree": "104c0dec80ebba01e15a0ea5ad100056c7bf554d",
       "upstream": {
@@ -369,9 +369,9 @@
     },
     {
       "file": "0027-power-piano-mipps-authentication.patch",
-      "sha256": "5a7c86dabf63569152d0d2a89ed87652208eae73e54fb0a0bcc3d26c709286a9",
-      "original_commit": "5cb470550f2ecc2bab5f7dc88beb5e2d7a29c831",
-      "original_parent": "acb6cd92a0716605fd243be51a104ff6041671f5",
+      "sha256": "7da055b1ef6f9a5412bceef1f9ae7a289f89acc6c31e182830139b1f506e1f91",
+      "original_commit": "74dadb3287b2f4c7a736eedcd5a50a2ff74fb765",
+      "original_parent": "a0d08730284d33818c4079d92f6477f0edbfebd0",
       "committer_date": "2026-11-08T00:43:45+08:00",
       "tree": "9207d0bddba61c22d49a7e73ef1ccc3f38f7297a",
       "upstream": {
@@ -382,9 +382,9 @@
     },
     {
       "file": "0028-power-piano-otg-configuration.patch",
-      "sha256": "5e51a03564c4b2554c1374d7284738451f36f64c14203b75ab6b9d1370790660",
-      "original_commit": "899051ce9cf4ddfb294c8ca9b7242f49300749a0",
-      "original_parent": "5cb470550f2ecc2bab5f7dc88beb5e2d7a29c831",
+      "sha256": "1e1bcc46276ef12035ecaefce8e3b221020c97829cd20fdb7c5ec538cab101ad",
+      "original_commit": "a2ca0dd28e7d97b421e0ca8821e7627f26167648",
+      "original_parent": "74dadb3287b2f4c7a736eedcd5a50a2ff74fb765",
       "committer_date": "2026-11-08T00:43:45+08:00",
       "tree": "1d4560fd8bcde8617d14d20272b7fd509a98eff5",
       "upstream": {
@@ -395,9 +395,9 @@
     },
     {
       "file": "0029-hid-xiaomi-p81c-body-gestures.patch",
-      "sha256": "8fee3323ed06e50849196a234fe54b8f98ce263bad35d51a63087f5a7e972dc7",
-      "original_commit": "d5a1c426c361b8c5754b913cc699b9d23d5c8f89",
-      "original_parent": "899051ce9cf4ddfb294c8ca9b7242f49300749a0",
+      "sha256": "225eb8526e41d2f392dbadf0012e3f5a8353c65f41833c08eda254d5f7d6b519",
+      "original_commit": "a31e2ab45f7ccfb43067bd169a81a67017c1be6f",
+      "original_parent": "a2ca0dd28e7d97b421e0ca8821e7627f26167648",
       "committer_date": "2026-11-08T00:43:45+08:00",
       "tree": "633222ecdc916664d53e06b4bdb3a778a63ce02f",
       "upstream": {
@@ -408,9 +408,9 @@
     },
     {
       "file": "0030-ath12k-tx-dma-address.patch",
-      "sha256": "b649129c79c71557989e296f66eb7171bcb08888ef5e95e6279c487ed9f2ce28",
-      "original_commit": "011858be6b658b2b2c0f64dde6993ac915a4c59e",
-      "original_parent": "d5a1c426c361b8c5754b913cc699b9d23d5c8f89",
+      "sha256": "552c8532d23c3501b649bffdfd9761ad8f8b41699aeb8f2b880878e573ef192b",
+      "original_commit": "5cfbf76a8b1d85121701d0908d223cadb712bb88",
+      "original_parent": "a31e2ab45f7ccfb43067bd169a81a67017c1be6f",
       "committer_date": "2026-11-08T01:57:30+08:00",
       "tree": "1cc69c16156b7c49c74dcce6943877f2f89325c9",
       "upstream": {
@@ -422,9 +422,9 @@
     },
     {
       "file": "0031-ath12k-tx-stats-bounds.patch",
-      "sha256": "92a30ce90867e9dd0cbac64e49452c1d021604a233e303498bedf9ddc031e250",
-      "original_commit": "2ca132b600b28beab199163528054e5b1daff6e5",
-      "original_parent": "011858be6b658b2b2c0f64dde6993ac915a4c59e",
+      "sha256": "1c9a7ceefcb20d768e3784313434c881abd4dbee090c7684820a4f31c2239b6e",
+      "original_commit": "2e56b22882dd4c555f63d21ee41dab1ec388fbc6",
+      "original_parent": "5cfbf76a8b1d85121701d0908d223cadb712bb88",
       "committer_date": "2026-11-08T01:57:30+08:00",
       "tree": "407e3b85f756110590bafd7f95d7c8ad7f932aff",
       "upstream": {
@@ -436,9 +436,9 @@
     },
     {
       "file": "0032-ath12k-pci-cma.patch",
-      "sha256": "6d809c0d5054149ac9cc2a113a7134f25f3360cc00cd97db2a627a88e119feba",
-      "original_commit": "e1a2094f6ce90568b77de4ebb773302d73f8f359",
-      "original_parent": "2ca132b600b28beab199163528054e5b1daff6e5",
+      "sha256": "ed45113779688eb21d2ba3c55df7d655192ccc262ee37fa5d5061c04a6366e7c",
+      "original_commit": "25744dfd780ccfa88d0d301883379a2485562451",
+      "original_parent": "2e56b22882dd4c555f63d21ee41dab1ec388fbc6",
       "committer_date": "2026-11-08T01:57:30+08:00",
       "tree": "a249c0edc79cebe34880bce96b8a6e22962b7439",
       "upstream": {
@@ -449,9 +449,9 @@
     },
     {
       "file": "0033-iommu-identity-attach-readback.patch",
-      "sha256": "a03e9c98f1e81fca5df98c0df1eb032658f6713fefccbd92363e50f962d464e8",
-      "original_commit": "ad3ff14be6fc22bbf202f045cac1d9aec74b0183",
-      "original_parent": "e1a2094f6ce90568b77de4ebb773302d73f8f359",
+      "sha256": "8d736b0757d65d8147cfc49b4666d027c6e668bda5bf3d6b506c122f8004b6ff",
+      "original_commit": "0c995157b406836596a9128edb0c98be3255790e",
+      "original_parent": "25744dfd780ccfa88d0d301883379a2485562451",
       "committer_date": "2026-11-08T01:57:30+08:00",
       "tree": "b61f1b3bc20640ed4aefb986f7d665995c104807",
       "upstream": {
@@ -462,9 +462,9 @@
     },
     {
       "file": "0034-iommu-adreno-defer-attach.patch",
-      "sha256": "eff9bf86eaf57fd28dee3dea5941d543338f665eb100453597f4eee91ca3c20b",
-      "original_commit": "b92dfd09b970a866fa9a72b62a51013b84d979ad",
-      "original_parent": "ad3ff14be6fc22bbf202f045cac1d9aec74b0183",
+      "sha256": "4bc943ee4a7eeae274a10c177201a86b0763ab5043efd3f43e2981bf4b47fc3a",
+      "original_commit": "0f0ba111e7ce817a07480d50cb8df5f9addb0e45",
+      "original_parent": "0c995157b406836596a9128edb0c98be3255790e",
       "committer_date": "2026-11-08T01:57:30+08:00",
       "tree": "33c397d7f74752a329aa6796b0b4793f6b02b32a",
       "upstream": {
@@ -475,9 +475,9 @@
     },
     {
       "file": "0035-iommu-media-dma-domain.patch",
-      "sha256": "7c6da9959b500c85c5857ac3fc85e6b21987e9b396a0ea7203ba79eea8d3f58d",
-      "original_commit": "eac2b111d192b5c0f9107ee82a5d33812fd363ab",
-      "original_parent": "b92dfd09b970a866fa9a72b62a51013b84d979ad",
+      "sha256": "57bfae7f11e629a9805c5b05c06e61ebce5f478c97f429022a7cb9e46f06d768",
+      "original_commit": "7eec32891efb5bd95e67a232b509f6a0f2199766",
+      "original_parent": "0f0ba111e7ce817a07480d50cb8df5f9addb0e45",
       "committer_date": "2026-11-08T01:57:31+08:00",
       "tree": "45235a59668e2d8355d0ab29450e230e364838e2",
       "upstream": {
@@ -488,9 +488,9 @@
     },
     {
       "file": "0036-bluetooth-qca-defer-power.patch",
-      "sha256": "a00c699097069c66c5e210deca02c0fdd197eeb3020b9148dc4e47ea32897de3",
-      "original_commit": "71e74c438eedf2e78a799637f2cc8c7344fe8614",
-      "original_parent": "eac2b111d192b5c0f9107ee82a5d33812fd363ab",
+      "sha256": "4907e2f0956c4641d9d4729d73594cc940c7e37c525df8d284bfbc84d48ec596",
+      "original_commit": "a7c1d90386ea514be78024129a4f71275c37f318",
+      "original_parent": "7eec32891efb5bd95e67a232b509f6a0f2199766",
       "committer_date": "2026-11-08T01:57:31+08:00",
       "tree": "78523a10292c7cddde52d361c973da78b32d7755",
       "upstream": {
@@ -501,9 +501,9 @@
     },
     {
       "file": "0037-nanosic-tablet-mode.patch",
-      "sha256": "a00c62203e36ee74da73ce46bc9efd3ff2e184e96e07b753517969464a3d6d15",
-      "original_commit": "92305c82356fc26974e9304ba8e9dc5b30e492ba",
-      "original_parent": "71e74c438eedf2e78a799637f2cc8c7344fe8614",
+      "sha256": "f177673cd5e9f6b85204d81f6aed7c733d6f89972101c7af8604263348465bd1",
+      "original_commit": "f90f2bb2feed820e9f007c82d21d862478c485af",
+      "original_parent": "a7c1d90386ea514be78024129a4f71275c37f318",
       "committer_date": "2026-11-08T01:57:31+08:00",
       "tree": "c9107b11da4ce99d5eeb73cf0b02fd3af29312fe",
       "upstream": {
@@ -514,9 +514,9 @@
     },
     {
       "file": "0038-rpmsg-channel-modalias.patch",
-      "sha256": "36db505c565bd5115c9e31e478cf938d08a33fcfb205045738af711fd4f7e2ed",
-      "original_commit": "ef86a1f16fc81f063f5846b41ebc1b6103535a30",
-      "original_parent": "92305c82356fc26974e9304ba8e9dc5b30e492ba",
+      "sha256": "0cf9758bf0b0f5ae4bac496949cee38e2498a69464f8ca501a643f3739e9f98f",
+      "original_commit": "5f8cb5e5fcf868d4a9fc7b7e886ebb82a6a88121",
+      "original_parent": "f90f2bb2feed820e9f007c82d21d862478c485af",
       "committer_date": "2026-11-08T01:57:31+08:00",
       "tree": "2cf4e29d23c3be3afc159e8a8be6d169e78809c4",
       "upstream": {
@@ -527,9 +527,9 @@
     },
     {
       "file": "0039-pcie-phy-reset-sequence.patch",
-      "sha256": "37a4c2bada89ff2b338e730b14bf8aafbe87a910b386550411e0b84eb2a523d7",
-      "original_commit": "12e322722db6cd46fb09f4324496459e3e63e8b8",
-      "original_parent": "ef86a1f16fc81f063f5846b41ebc1b6103535a30",
+      "sha256": "8a873a488007a5c1394f50bae0a6160e122a35c7f3b6edbe748abb12dc091a31",
+      "original_commit": "57db5269bcadba437dcb3ea96c19a6f1ba56294a",
+      "original_parent": "5f8cb5e5fcf868d4a9fc7b7e886ebb82a6a88121",
       "tree": "bbe38e819d898f7e9bcc537abefe62324b7120dd",
       "committer_date": "2026-11-08T02:32:50+08:00",
       "upstream": {
@@ -540,9 +540,9 @@
     },
     {
       "file": "0040-pmic-glink-freezable-work.patch",
-      "sha256": "712847805cd357f10caf1d756ee8d3388e76cf6ac718e101ee8b5bddbccaf9a1",
-      "original_commit": "7d8b3eface08a7e5738a38f221fd841f4e822226",
-      "original_parent": "12e322722db6cd46fb09f4324496459e3e63e8b8",
+      "sha256": "729a5c0a6080982ccb763332a8494874edd9d8718a7133f9d09d4ce05e8f05e4",
+      "original_commit": "6ed0bf0f62e8789010e2b3b3bd0a9431d4788a11",
+      "original_parent": "57db5269bcadba437dcb3ea96c19a6f1ba56294a",
       "tree": "ec43b64e78e105a34926f04beb87e0638f6ecdef",
       "committer_date": "2026-11-08T02:32:50+08:00",
       "upstream": {
@@ -554,9 +554,9 @@
     },
     {
       "file": "0041-ir-spi-binding.patch",
-      "sha256": "26aa340fff893bc008b496c09fe89741be161495c81a7cc3b699f61278a7df81",
-      "original_commit": "fbf4b41a01e1db10f0e7a50ebbbfd103109192ae",
-      "original_parent": "7d8b3eface08a7e5738a38f221fd841f4e822226",
+      "sha256": "b597085845faf9eba05b1ced81556959abb78caa14da7c05348c9554218c383d",
+      "original_commit": "a045456e8cd4d036b4270be4861cc76cbac92353",
+      "original_parent": "6ed0bf0f62e8789010e2b3b3bd0a9431d4788a11",
       "tree": "cd1db3c263cdea7b29bb5e29b0795e0a31695ac0",
       "committer_date": "2026-11-08T02:39:10+08:00",
       "upstream": {
@@ -567,9 +567,9 @@
     },
     {
       "file": "0042-ir-spi-transmitter.patch",
-      "sha256": "238b3c76a2a3f9d5973a12d58d49c5d739503a777842df2d0bb5a7e0a793125c",
-      "original_commit": "a6ae4ef969444b3392ee400d14498de08944836b",
-      "original_parent": "fbf4b41a01e1db10f0e7a50ebbbfd103109192ae",
+      "sha256": "12162ce74ea7bfacb19bc1cea0e5bd9e31fa074114707ea755560bae7cc6f289",
+      "original_commit": "c0fb34dbb3e1530cdea9935c59bddfe6481b084f",
+      "original_parent": "a045456e8cd4d036b4270be4861cc76cbac92353",
       "tree": "0bad87fd9fe8c21b3a2a952b254a366ac1c6a1d1",
       "committer_date": "2026-11-08T02:39:10+08:00",
       "upstream": {
@@ -580,10 +580,10 @@
     },
     {
       "file": "0043-spi-geni-dma-idle.patch",
-      "sha256": "5b3dfcae6780499fb31edcd77c29d7b3d7c5f102663317afba3b880394836524",
-      "original_commit": "8cb06f46da15dce919577c8694ef98c7a733ccb9",
-      "original_parent": "a6ae4ef969444b3392ee400d14498de08944836b",
-      "tree": "0efa4b4ce226fe23c31177cfbd287d1ef95d0bb3",
+      "sha256": "27a6e91f20706dd84b75851c9054d53c66be49c921693b208892da840e191d1f",
+      "original_commit": "7f648b3f86d5a8bb103f526c6fee62f722714444",
+      "original_parent": "c0fb34dbb3e1530cdea9935c59bddfe6481b084f",
+      "tree": "0c3cc029de2db3c88720892380c76d53be65ae02",
       "committer_date": "2026-11-08T02:39:10+08:00",
       "upstream": {
         "status": "downstream",
@@ -593,10 +593,10 @@
     },
     {
       "file": "0044-s5kjn1-crop-height.patch",
-      "sha256": "87ed9fef74e8f4b21774e88ebf2216f95d8cc90ebc24df412e1e8bf88918463c",
-      "original_commit": "8067326618be4f5026edebc9a224a1dfe0ca714a",
-      "original_parent": "8cb06f46da15dce919577c8694ef98c7a733ccb9",
-      "tree": "467dcae742783e291eda98f7502cfc9a0792ee13",
+      "sha256": "3b15df8eff0c52524b6023c8395d06c16a146ed89b451dc5f98a014f3b8756e5",
+      "original_commit": "cd2d2b0dc40660ea58e09236680beb517faf1ff4",
+      "original_parent": "7f648b3f86d5a8bb103f526c6fee62f722714444",
+      "tree": "db2aaa65f5a9c87756734e98ede14c977178434f",
       "committer_date": "2026-11-08T02:39:11+08:00",
       "upstream": {
         "status": "downstream",
@@ -606,10 +606,10 @@
     },
     {
       "file": "0045-s5kjn1-factory-modes.patch",
-      "sha256": "5b89eb61c067a228e04d02043ea70d2a96b4f2d1a5005a06009586840075cd7d",
-      "original_commit": "7ebb0967dd648fff838feba0836e932bb5441815",
-      "original_parent": "8067326618be4f5026edebc9a224a1dfe0ca714a",
-      "tree": "29693afff9e7bfc8d5ba9d160026538bc11f83cb",
+      "sha256": "d8a4f188c3b8aac9ad24885b29a9c8ddb92f68b847f1cc1fc4a782d44e7866a6",
+      "original_commit": "547aac9703abe911cfd2b3f702b95ddc3816c541",
+      "original_parent": "cd2d2b0dc40660ea58e09236680beb517faf1ff4",
+      "tree": "bfd81217ea062ca203579c8eb83e69e86e1ab96f",
       "committer_date": "2026-11-08T02:39:11+08:00",
       "upstream": {
         "status": "downstream",
@@ -619,10 +619,10 @@
     },
     {
       "file": "0046-ov32d40-mode-timing.patch",
-      "sha256": "a6f2a3edc6706b429c4c425cd21ade6e5e835ed7fd5827350c51a313e5a2a6f0",
-      "original_commit": "5059c982201403303c41854fb111763ad3042d91",
-      "original_parent": "7ebb0967dd648fff838feba0836e932bb5441815",
-      "tree": "3d35fa1a4a0138ea00d4bed871b1f7b0567faf7e",
+      "sha256": "ab1c10ca1ade40d34c0f7807415401cb4d4198c21801231a032fe7360276d3af",
+      "original_commit": "67e41a9aa285fabb50264e61d5263e9fc166b47b",
+      "original_parent": "547aac9703abe911cfd2b3f702b95ddc3816c541",
+      "tree": "14b274cccdd03cee9a7d7d9c7a4ee13de9a1a74a",
       "committer_date": "2026-11-08T02:39:11+08:00",
       "upstream": {
         "status": "downstream",
@@ -632,10 +632,10 @@
     },
     {
       "file": "0047-camss-full-height-nv12.patch",
-      "sha256": "c7d4200df75bec83d366f4a89509875113605783677e9f3454283f6da85b0d00",
-      "original_commit": "5608c8b4a806e2b91d4f64a09ac34d0f9eeb35b9",
-      "original_parent": "5059c982201403303c41854fb111763ad3042d91",
-      "tree": "e95d347f772fadb83ba72ef26437390999da880d",
+      "sha256": "7a5de224179a05bd191efab5f802d41cd0984a3ea5311ee551b7940238ba3ae7",
+      "original_commit": "601b1750bbfda84d664d17694bbb2caa08479c47",
+      "original_parent": "67e41a9aa285fabb50264e61d5263e9fc166b47b",
+      "tree": "9637a3f9cca3ec7c9ba80834de0ebe266eb01994",
       "committer_date": "2026-11-08T02:39:11+08:00",
       "upstream": {
         "status": "downstream",
@@ -645,10 +645,10 @@
     },
     {
       "file": "0048-camss-frame-timestamps.patch",
-      "sha256": "658977e25b6176af5e6960be7d31b2ff9abef351b8febac63f4d0768c6a2f89b",
-      "original_commit": "bce1e22a625a4e343219217bc165d8521c7d1fed",
-      "original_parent": "5608c8b4a806e2b91d4f64a09ac34d0f9eeb35b9",
-      "tree": "ae1643425d638e8830f333fc0d77fa55558cb0b3",
+      "sha256": "6b34c473c95c26b5b15a5c6c07e1d3c12f544c2ff8c54a304bee23dae7420b71",
+      "original_commit": "0f9861da1218e8d318e7abce9bc65a697e18e55b",
+      "original_parent": "601b1750bbfda84d664d17694bbb2caa08479c47",
+      "tree": "4a5fec8ead854e3c1b3aca5c388ca0214afbe00d",
       "committer_date": "2026-11-08T02:39:12+08:00",
       "upstream": {
         "status": "downstream",
@@ -658,10 +658,10 @@
     },
     {
       "file": "0049-camss-tfe-bus-errors.patch",
-      "sha256": "8dd1cc0eb7932f6c35c8b8ccaedabc2e481d37d0f323b88096123b1e935ad14e",
-      "original_commit": "d8dad895efb57f95f627369b21a9d361b0c006e3",
-      "original_parent": "bce1e22a625a4e343219217bc165d8521c7d1fed",
-      "tree": "ab1279815f87f16a6f7e5491ecb85097acd2b4ce",
+      "sha256": "7006c15640b5736ffb8cd8c9b8c32ab9f76208680b834ff990f8d543980e9468",
+      "original_commit": "38e57f237ae4a71dcf26ca5a1f83e26a49e8ffda",
+      "original_parent": "0f9861da1218e8d318e7abce9bc65a697e18e55b",
+      "tree": "2dffa81ef2a8f42de6d38f933f47740f5f67b50a",
       "committer_date": "2026-11-08T02:39:13+08:00",
       "upstream": {
         "status": "downstream",
@@ -671,10 +671,10 @@
     },
     {
       "file": "0050-s5kjn1-readonly-hblank.patch",
-      "sha256": "fbf0c573f3e629f26894b9d7e506b41253cbcf53eaad6e09f0223a993655c493",
-      "original_commit": "eada5e8d148cb72f4853a30d2e22c1af90aab42c",
-      "original_parent": "d8dad895efb57f95f627369b21a9d361b0c006e3",
-      "tree": "c134bd53e5ce619b767883902c1f55eb08acf6d6",
+      "sha256": "05aa6f6cf9d9e24974035fb6fc2027dd04f4e36632440657e8778dc4cf87f45e",
+      "original_commit": "ecb3b06ad27a5f07ad4b0d4fc3681c7aac24a77e",
+      "original_parent": "38e57f237ae4a71dcf26ca5a1f83e26a49e8ffda",
+      "tree": "cd1adf55381dd2bf1df221c0a57f6169bf9fc1e7",
       "committer_date": "2026-11-08T02:39:14+08:00",
       "upstream": {
         "status": "downstream",
@@ -684,10 +684,10 @@
     },
     {
       "file": "0051-camss-pix-alignment.patch",
-      "sha256": "b732c6fc2435e55ec3007c16f38c2d98307180bab0d134e43202906cb3000888",
-      "original_commit": "51e12ee4f3029a0409ad81b168a680871e517f76",
-      "original_parent": "eada5e8d148cb72f4853a30d2e22c1af90aab42c",
-      "tree": "2b6fce5d8d6ec2f69ddb7600595fba575157c41e",
+      "sha256": "01154107bcf40b5303f7f982d13964b610fde26f396b564a13ae77dbcc59403a",
+      "original_commit": "78839c95bf6ff63a9a577f67635930940a0b4b12",
+      "original_parent": "ecb3b06ad27a5f07ad4b0d4fc3681c7aac24a77e",
+      "tree": "2c2fddf41512acc2a2e245bcdc56d583ba665e0e",
       "committer_date": "2026-11-08T02:39:15+08:00",
       "upstream": {
         "status": "downstream",
@@ -697,10 +697,10 @@
     },
     {
       "file": "0052-dpu-gcv2-dark-range.patch",
-      "sha256": "b78944494f0cf5f00e61e6804df7a7a5840e5b904428caa65f8a78d9cee3ee88",
-      "original_commit": "65488e6b0f387193f394ad8594878a42766ea794",
-      "original_parent": "51e12ee4f3029a0409ad81b168a680871e517f76",
-      "tree": "48c2746ffbf59156743fe99f36449b0856b21c7b",
+      "sha256": "97a4ef936e55b670f2fe59d39f13e176adf65e33a3bea1a07ac639988288dfba",
+      "original_commit": "27c801ff8f67eb87986abba2847a6396a82d46aa",
+      "original_parent": "78839c95bf6ff63a9a577f67635930940a0b4b12",
+      "tree": "35d04c7a203a1d282d8277564ba61b44b53698b9",
       "committer_date": "2026-11-08T16:06:02+08:00",
       "upstream": {
         "status": "downstream",
@@ -710,10 +710,10 @@
     },
     {
       "file": "0053-dpu-color-lut-sizes.patch",
-      "sha256": "d2c35de8912c10d6254a7086f505de1caa15fca7e301dd72c6b538a5a03127d5",
-      "original_commit": "f8be0f9deca85a962cd64014fe74307e935b4a25",
-      "original_parent": "65488e6b0f387193f394ad8594878a42766ea794",
-      "tree": "8f12af37a6c99a22dbbdab45287e5b9ff0997ba8",
+      "sha256": "25de8ab5d64ce346d1eea015d6fb55e6f2bc198932d1e87333f4f3a3f49dc77e",
+      "original_commit": "6f405b1307475089f7b77f22cba704b79123606e",
+      "original_parent": "27c801ff8f67eb87986abba2847a6396a82d46aa",
+      "tree": "f0a283fe777bde113d7f8022af7fe20c0318b292",
       "committer_date": "2026-11-08T16:29:18+08:00",
       "upstream": {
         "status": "downstream",
@@ -723,10 +723,10 @@
     },
     {
       "file": "0054-dsi-fixed-panel-scaling.patch",
-      "sha256": "aeaaade0a676306b0c227ca85c0467257dcc150d1b50caa2fefa4aea3e03b2b4",
-      "original_commit": "90ba5ad7285b4c88bd2a61fba345fc05dad3f2f2",
-      "original_parent": "f8be0f9deca85a962cd64014fe74307e935b4a25",
-      "tree": "796267c57b3ce0d8817b721f5e9da6585958bc16",
+      "sha256": "2416d3e052e6046f0215982200db789d3a9818115557492d98e91bffbcad5005",
+      "original_commit": "4e9d1736e19018090f2d0e72edc2d965a4b86796",
+      "original_parent": "6f405b1307475089f7b77f22cba704b79123606e",
+      "tree": "3f81cc45e4a268e7be6d5e1c1890f1c86a482bc5",
       "committer_date": "2026-11-08T16:36:59+08:00",
       "upstream": {
         "status": "downstream",
@@ -736,10 +736,10 @@
     },
     {
       "file": "0055-dsi-default-panel-scaling.patch",
-      "sha256": "bb57936c4f609e31fd62cae7338986402b1768a68d9bd4037921a94ffa5119bc",
-      "original_commit": "5031adcbe8e097e3fa90f3caf725be1ac3f8b816",
-      "original_parent": "90ba5ad7285b4c88bd2a61fba345fc05dad3f2f2",
-      "tree": "d2a637d73f79352f1e71573334059b0035746596",
+      "sha256": "645e601baaf07076ec61b4d1a2883fd96a7a63621c22c3b85337404a7a0607c7",
+      "original_commit": "6b78253dc57ea01795e6c928f71d185273f3a90b",
+      "original_parent": "4e9d1736e19018090f2d0e72edc2d965a4b86796",
+      "tree": "18de893f02fc7a9058cdfa23b36cd1a7a2b57a96",
       "committer_date": "2026-11-08T16:45:11+08:00",
       "upstream": {
         "status": "downstream",
@@ -749,10 +749,10 @@
     },
     {
       "file": "0056-rtc-efi-validate-time.patch",
-      "sha256": "8c59ac2425699c5ea21f0d4677f6f05eebc22007c19ba777f04aedcd1f8e28f3",
-      "original_commit": "3a973f697846b76142206247243effd2ae767c56",
-      "original_parent": "5031adcbe8e097e3fa90f3caf725be1ac3f8b816",
-      "tree": "f2fbc2b95fbbd44ea4609f475607bdd47732628b",
+      "sha256": "4fd015a3cb8f37c53df6c4a6bcf26b6fd43261f000ba629fd16941eb08fd40c1",
+      "original_commit": "2f38af9d86ecc6c6b6b79c2b36e176cc920aef35",
+      "original_parent": "6b78253dc57ea01795e6c928f71d185273f3a90b",
+      "tree": "471231ac53ab513400e131c46be9a44150e04292",
       "committer_date": "2026-11-08T22:32:16+08:00",
       "upstream": {
         "status": "downstream",
@@ -762,10 +762,10 @@
     },
     {
       "file": "0057-dpu-fixed-panel-hdr-conversion.patch",
-      "sha256": "a5d34e11299e02af56f4380e4cf8f546d2080342ffbfe772a88469f0c3634e07",
-      "original_commit": "76853fc45b5d13839ef3d4a6e5de2aa6be6ee974",
-      "original_parent": "3a973f697846b76142206247243effd2ae767c56",
-      "tree": "844c632b66217ac36b93ed15a136a88c4bed95fb",
+      "sha256": "fa0ab62b8a178ec5474105010211429e267be857cef4f8e63cbf9efd95408501",
+      "original_commit": "e69d9e431cec66778b7c833c798d8a63e0da5a50",
+      "original_parent": "2f38af9d86ecc6c6b6b79c2b36e176cc920aef35",
+      "tree": "b03251bb0e2aad977b82987e0fc4cb151bf96516",
       "committer_date": "2026-11-08T23:39:32+08:00",
       "upstream": {
         "status": "downstream",
@@ -775,10 +775,10 @@
     },
     {
       "file": "0058-panel-displayid-description.patch",
-      "sha256": "3b4d70f5f895d43ca3096c567f4363a1a90ac8861182ccde20da672ee72a3491",
-      "original_commit": "7d847084857789ebb0ccd2c9063707571d624d7c",
-      "original_parent": "76853fc45b5d13839ef3d4a6e5de2aa6be6ee974",
-      "tree": "67cb64b9bcc2dbbd1f1edc7f1b51c1241ed855f1",
+      "sha256": "75dee2399e68bb11cd84ab93c276899b49f94972250658afed2214c69f4131e5",
+      "original_commit": "4c7c3d2d360a18f9ebe9fab4e800f637854b6eec",
+      "original_parent": "e69d9e431cec66778b7c833c798d8a63e0da5a50",
+      "tree": "351986cb3816ba3d9f0413c134f1a5c65b0159ee",
       "committer_date": "2026-11-09T00:08:36+08:00",
       "upstream": {
         "status": "downstream",
@@ -788,10 +788,10 @@
     },
     {
       "file": "0059-dpu-output-color-validation.patch",
-      "sha256": "b960d7fbf5d0d6437405e8595dd6fdb531a1e839d92ff4437393b906231ac1e7",
-      "original_commit": "321b050aef05174bd209ac635ce13b529536ebea",
-      "original_parent": "7d847084857789ebb0ccd2c9063707571d624d7c",
-      "tree": "22da9f802ca3b61c37f09e48d6fc382e3a0cedc5",
+      "sha256": "126eb448d2109d961ea63f86e2400fbc4b75602e1ad7fe9859f7275bedd512ba",
+      "original_commit": "8a2a1725381f336cc66db959364f726410331a78",
+      "original_parent": "4c7c3d2d360a18f9ebe9fab4e800f637854b6eec",
+      "tree": "e74f03ff733571c22c38632f3f628a1742fbedc9",
       "committer_date": "2026-11-09T00:41:04+08:00",
       "upstream": {
         "status": "downstream",
@@ -801,10 +801,10 @@
     },
     {
       "file": "0060-apm-wait-for-transport.patch",
-      "sha256": "1789c97bdd605be28fa640688ae73e27c0ef54a1fe820f85ad21382fcc050a80",
-      "original_commit": "127d721021efd93a3198806dc7e1c31f045235a7",
-      "original_parent": "321b050aef05174bd209ac635ce13b529536ebea",
-      "tree": "e0f49e90d1b38e4f58c199a838b5d0c4debc3133",
+      "sha256": "5f94010df276cb6e5ab28223c19ffb8171e1379ac0324ff9f1b722d4b0d34022",
+      "original_commit": "10f2c2056a27cc5da15b60e35a5ae8a5891a7b27",
+      "original_parent": "8a2a1725381f336cc66db959364f726410331a78",
+      "tree": "7da120f264c41797d05b7b112f6a5136b9bc4f0f",
       "committer_date": "2026-11-09T02:15:41+08:00",
       "upstream": {
         "status": "downstream",
@@ -814,10 +814,10 @@
     },
     {
       "file": "0061-apm-state-query-header.patch",
-      "sha256": "ac4b5eb1b74f63ab2450f266c0ed52b346b0e3dd02bb22ec3e5c114d796d4836",
-      "original_commit": "489ff2a7029497aed12d92fea3e6c6f02c50d5ea",
-      "original_parent": "127d721021efd93a3198806dc7e1c31f045235a7",
-      "tree": "53fad3fb8e5b060af05ddd6fe543697e2ff5c7b6",
+      "sha256": "b07c69ef540c5c132b988863fd9697135f0eef012f7d54208f8162e83f8e1c6a",
+      "original_commit": "a3c744097c4813c787dce65a0d38348fc0cce5d2",
+      "original_parent": "10f2c2056a27cc5da15b60e35a5ae8a5891a7b27",
+      "tree": "797bb6cd3b1b94b570111198dc7cfa2c6bd988b7",
       "committer_date": "2026-11-09T02:23:11+08:00",
       "upstream": {
         "status": "downstream",
@@ -827,10 +827,10 @@
     },
     {
       "file": "0062-rtc-protected-counter-epoch.patch",
-      "sha256": "87ac0da1fc963086162858b57b242510b36fd05d2e73d88742e61b7493cade77",
-      "original_commit": "38129eb4e6f57c01ebf428905378280f2310d895",
-      "original_parent": "489ff2a7029497aed12d92fea3e6c6f02c50d5ea",
-      "tree": "d4a0d9e4e9cf4721fb687bbe0858d26248a08a7f",
+      "sha256": "0b8f9439c195a2b95322e89562584e3d0b6a4a4ee9e90a0f804d9abecd7f89bf",
+      "original_commit": "876a14ac05abbd05ef848270c02fd15f887bcfa0",
+      "original_parent": "a3c744097c4813c787dce65a0d38348fc0cce5d2",
+      "tree": "8f9ee41456ef7d40856b5a04520e92ea84db4483",
       "committer_date": "2026-11-09T03:55:38+08:00",
       "upstream": {
         "status": "downstream",
@@ -840,10 +840,10 @@
     },
     {
       "file": "0063-apm-state-error-response.patch",
-      "sha256": "47d152f1ea93874485fdf945a161d195944fd12c9e67501b73c1cd9e37902a60",
-      "original_commit": "0f222347d83bc1e086eb02e78da74480c7a6f0f4",
-      "original_parent": "38129eb4e6f57c01ebf428905378280f2310d895",
-      "tree": "205486053c2766b65834406cc9ca75155bef9a95",
+      "sha256": "31b017793cb84913b1b509d0379671024c6ae7ea082ecf4c2dc50192f0e10d5b",
+      "original_commit": "faf4981a9ddff059ba3ea3b6ca72ced1c5e4c8bc",
+      "original_parent": "876a14ac05abbd05ef848270c02fd15f887bcfa0",
+      "tree": "6488731bbcf4e217cd2a40d7a2cd288af4c212f8",
       "committer_date": "2026-11-09T04:23:24+08:00",
       "upstream": {
         "status": "downstream",
@@ -853,10 +853,10 @@
     },
     {
       "file": "0064-wifi-resume-mac-address.patch",
-      "sha256": "9324b034b09ca07bf62f86bc73917c9aabc9652e5e4546c0c47dce219977d11d",
-      "original_commit": "4a544b7e79b2ee2de97206627f54273dc434b234",
-      "original_parent": "0f222347d83bc1e086eb02e78da74480c7a6f0f4",
-      "tree": "8aaebca934e23611f054ac764efffd3a07ed6503",
+      "sha256": "995b2bb430af2ea9efe96b42d7c49a0fed592a2b8755b0b6c51b5a6bcb181217",
+      "original_commit": "00d1b5ea3e2561a3d70c51aebbc3064da0bab7ab",
+      "original_parent": "faf4981a9ddff059ba3ea3b6ca72ced1c5e4c8bc",
+      "tree": "37aeff258a6dfcdbb5f21120d15167567dc047e7",
       "committer_date": "2026-11-09T06:01:40+08:00",
       "upstream": {
         "status": "downstream",
@@ -866,10 +866,10 @@
     },
     {
       "file": "0065-dpu-debugfs-state-lock.patch",
-      "sha256": "fb042167b23b11f96e74c00107c02f863b49bcf9c2f17833fae5a8dda6d6460c",
-      "original_commit": "ab475043136f114af8672e28d9ec8200b5cda923",
-      "original_parent": "4a544b7e79b2ee2de97206627f54273dc434b234",
-      "tree": "ad0221ba6b7320dd76270891424737719abb120e",
+      "sha256": "5b9a3cfd21b87c7b11d10a5d99ba6744d11a4629bcd600b84750264a745ca46b",
+      "original_commit": "a339a082b3d34488f55871ab46e34966ca1228b4",
+      "original_parent": "00d1b5ea3e2561a3d70c51aebbc3064da0bab7ab",
+      "tree": "f059297c77eaa65dbb9651aa22be805861ae7343",
       "committer_date": "2026-11-09T06:26:04+08:00",
       "upstream": {
         "status": "downstream",
@@ -879,10 +879,10 @@
     },
     {
       "file": "0066-dpu-piano-bilinear-sampling.patch",
-      "sha256": "29c0a434180ceded5ec5edddc86d888e38ab9d79edb76ea3b918889ec597b383",
-      "original_commit": "2ce1f88b5ec8c16a17e44369fbf809b4b38a4784",
-      "original_parent": "ab475043136f114af8672e28d9ec8200b5cda923",
-      "tree": "d9eb90f7a50435063ac362fe9833ee4fafb00e83",
+      "sha256": "cb78e625d86a86c92d6694105a7b5d35a077fcd1a90dcd63ed09bd8b94223dd8",
+      "original_commit": "ce8e84d5987026cdc13dde216d4e3904cc8e3dbe",
+      "original_parent": "a339a082b3d34488f55871ab46e34966ca1228b4",
+      "tree": "209ee38c8434a36a3d7e81888460286a6ec7f51a",
       "committer_date": "2026-11-09T16:46:50+08:00",
       "upstream": {
         "status": "downstream",
@@ -892,10 +892,10 @@
     },
     {
       "file": "0067-hid-xiaomi-focus-pen.patch",
-      "sha256": "7bd192814b858b1f40aa76f9a4441f3164bd49e7be6f701eef6d08c16bc539d0",
-      "original_commit": "f61916dd317606ae6324340638c498bbfe536807",
-      "original_parent": "2ce1f88b5ec8c16a17e44369fbf809b4b38a4784",
-      "tree": "15cb9df6a60aea5beb1819ed37663b18e44372da",
+      "sha256": "20f31436abbdba050d139f962d972a7d4d40a5836bcac3bb406cb082ebfa54fe",
+      "original_commit": "6b229a3db5f082298413c6aee9d622462ee1bc61",
+      "original_parent": "ce8e84d5987026cdc13dde216d4e3904cc8e3dbe",
+      "tree": "10bc3d6553ba2d3dacf909bfc5f4b50b1c7b821c",
       "committer_date": "2026-11-09T16:52:10+08:00",
       "upstream": {
         "status": "downstream",
@@ -905,11 +905,11 @@
     },
     {
       "file": "0068-power-mca-stop-work.patch",
-      "sha256": "9603716efda1993cef4274880c6c7d20fa2afa87f387fae469263d9517315ca9",
-      "original_commit": "126f5cd122ddfaae407744e93a972fabd0dec00e",
-      "original_parent": "f61916dd317606ae6324340638c498bbfe536807",
+      "sha256": "02ba80b371423fee2a7fa73d5311504038e659f623a370f5abbf3947e43a7cb2",
+      "original_commit": "80be4b127fa4a9d4240c177a3a072b317d80a9af",
+      "original_parent": "6b229a3db5f082298413c6aee9d622462ee1bc61",
       "committer_date": "2026-11-08T02:10:20+08:00",
-      "tree": "308ff247df4ac14b3821a37a40222285fd680c09",
+      "tree": "6dac2cacbea50ec86f6b31eea1fc33d17fe07bbd",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -918,11 +918,11 @@
     },
     {
       "file": "0069-power-mipps-session-cleanup.patch",
-      "sha256": "a9cc00affacf14ca7ce7192cdb069fce50bdea592b7ab85c26848a0d7548a03a",
-      "original_commit": "876ad735e874989495d831a007cce720b68cebee",
-      "original_parent": "126f5cd122ddfaae407744e93a972fabd0dec00e",
+      "sha256": "a8e4633a2bf4a2a2918b8e844d53e8cbc749a156bad1c76d5e3367dcfb231a1c",
+      "original_commit": "96fcad90430e0fb9e12e48edcad921c717c15c11",
+      "original_parent": "80be4b127fa4a9d4240c177a3a072b317d80a9af",
       "committer_date": "2026-11-08T02:49:10+08:00",
-      "tree": "d889f76de82c052294b52cc2f0ee6bf324a6f46e",
+      "tree": "cfa72c3288f037b348cd2a20e389be8a48cd7714",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -931,11 +931,11 @@
     },
     {
       "file": "0070-power-mca-connection-events.patch",
-      "sha256": "c198df14351336e14392ef5d6aab2d8c0dca1e686a757fbf70e9c82bf85d9f2c",
-      "original_commit": "1b527996461ddf50364078f2d50d0cffff496c92",
-      "original_parent": "876ad735e874989495d831a007cce720b68cebee",
+      "sha256": "fd37d1c8e83dae00b960190ff890f8485db972b4da3739bd35b10adc75b3be6a",
+      "original_commit": "7c74fdd238103465f5c30a7f2d6f2c9e2566e721",
+      "original_parent": "96fcad90430e0fb9e12e48edcad921c717c15c11",
       "committer_date": "2026-11-08T02:58:21+08:00",
-      "tree": "36671b5a993403090b65173bd600a0facfd6c1d7",
+      "tree": "9dfde6e6549771dd5a0b6db6ea701f6183da2125",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -944,11 +944,11 @@
     },
     {
       "file": "0071-power-sc8541-stop-watchdog.patch",
-      "sha256": "231520aa6958dd6bebc674582352c80158b37b420c1120cb6d1a53ad32412e4a",
-      "original_commit": "b8af56a7575d4eac038d09b487d25f0dd3525c33",
-      "original_parent": "1b527996461ddf50364078f2d50d0cffff496c92",
+      "sha256": "854a5f74587c3e55af2928371086cfa4f642784511e3c87a81ac565786371f9c",
+      "original_commit": "0ddeebd98600b8daeac146172fb480fdfcd8d04b",
+      "original_parent": "7c74fdd238103465f5c30a7f2d6f2c9e2566e721",
       "committer_date": "2026-11-08T07:40:31+08:00",
-      "tree": "65e94b683f01b9d1e9ee13589c17e32ce031a69b",
+      "tree": "14995d66ddafe0f506c57896695df68b1902dfae",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -957,11 +957,11 @@
     },
     {
       "file": "0072-power-mca-direct-charge-session-pm.patch",
-      "sha256": "174e01813f9adf2131610e5ae143007b15b1b079ee02508f1ea303a5d529074c",
-      "original_commit": "aa4ab81ae2d91cc0a742f17a94859b0a5ae402aa",
-      "original_parent": "b8af56a7575d4eac038d09b487d25f0dd3525c33",
+      "sha256": "a69112d323e7943ce871212ed8370317398f59cac734c8e2618f3038501ef5a8",
+      "original_commit": "09ff880806f926a62b40fc536ede500f5fe58aa4",
+      "original_parent": "0ddeebd98600b8daeac146172fb480fdfcd8d04b",
       "committer_date": "2026-11-08T07:41:01+08:00",
-      "tree": "650f3bad2c56946f85d49d324bc828eb4f482cb8",
+      "tree": "84cd298a912dbb0d023b7b700f3127c8236e6f91",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -970,11 +970,11 @@
     },
     {
       "file": "0073-power-mca-clear-proof-on-vbus-loss.patch",
-      "sha256": "2a73c46e552ca742faa27a3ed7d7bde70b7260c4823678ab6d20913324d43ade",
-      "original_commit": "96ae4a9d0e892220c3d38148d142812d06490977",
-      "original_parent": "aa4ab81ae2d91cc0a742f17a94859b0a5ae402aa",
+      "sha256": "1beab9fdd43eb3dd1a2647d456b0cf6a6eba38a9e4bb0c9bd8897dee9beec10c",
+      "original_commit": "d60323ce15a2c0329e346c73985b9bfdda103f74",
+      "original_parent": "09ff880806f926a62b40fc536ede500f5fe58aa4",
       "committer_date": "2026-11-08T09:13:00+08:00",
-      "tree": "56110f99bbf9e8c96d844d176ddcf23089e3bce7",
+      "tree": "49eb58f7ceae87bbeac45960cf29508f8e70669e",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -983,11 +983,11 @@
     },
     {
       "file": "0074-hid-nanosic-resume-fifo-keepalive.patch",
-      "sha256": "150dddc4ca5e3f8a717edbc6cc3340d6c1f03969c1eabf156f08701e79c7fada",
-      "original_commit": "3b4e35b9d7a481bf1a20a19651428fc5cc5453a2",
-      "original_parent": "96ae4a9d0e892220c3d38148d142812d06490977",
+      "sha256": "580588585414f13cb0f03e0a3f72d3c883a516e1a158f0b630d9450becbc72f7",
+      "original_commit": "30e77bc708c36366ce96fa0a6794b895263bd2e7",
+      "original_parent": "d60323ce15a2c0329e346c73985b9bfdda103f74",
       "committer_date": "2026-11-08T09:13:32+08:00",
-      "tree": "94d49af9884054cc90a35c9bb79780cc68bcbcc6",
+      "tree": "f053d51a1076b1787d3c75798153ba4112fa9350",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -996,11 +996,11 @@
     },
     {
       "file": "0075-power-mca-normal-charging-tables.patch",
-      "sha256": "e963ef72da9f039d8fed82ae6fef5b8a64ce912d975108ff80d2b570cc440754",
-      "original_commit": "79aa8da26eab31d843f71ff1a5dd0304f2da733d",
-      "original_parent": "3b4e35b9d7a481bf1a20a19651428fc5cc5453a2",
+      "sha256": "0aea70f7c19984b4bb360c678aef200b3566e554af63ddf4b658e27ec79cbb88",
+      "original_commit": "89cd855a7aff5cdbc271fdb85b50d6b30a676e9a",
+      "original_parent": "30e77bc708c36366ce96fa0a6794b895263bd2e7",
       "committer_date": "2026-11-08T17:07:12+08:00",
-      "tree": "dc3d7a04fdc252ad5ba3bf36f43716384b585e97",
+      "tree": "1a4a75d957e21a0ea534fce9f66c1323717e7348",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1009,11 +1009,11 @@
     },
     {
       "file": "0076-power-mca-normal-termination-hysteresis.patch",
-      "sha256": "9bc3001717db6ba295c69a0a8613fac530cc02042c39526994c188c036f988e1",
-      "original_commit": "3ef450b541f72d20a23271a2d2c1517f2ae0c0d7",
-      "original_parent": "79aa8da26eab31d843f71ff1a5dd0304f2da733d",
+      "sha256": "340775c9e9a0f6dc6517915ba617f4134f01f020d7584c16a481224eed136b66",
+      "original_commit": "0b7cb19f0a283fd9c71bcca488d8bcaba7cdc523",
+      "original_parent": "89cd855a7aff5cdbc271fdb85b50d6b30a676e9a",
       "committer_date": "2026-11-08T18:02:33+08:00",
-      "tree": "8c719fec548400a66690acc6c6547632b095fa25",
+      "tree": "e230ca7adf1673e606dcdf0e89faf09a406fa4d4",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1022,11 +1022,11 @@
     },
     {
       "file": "0077-power-mca-charge-enable-feedback.patch",
-      "sha256": "ca788cac5f875cf5cb6c6f89623b76960ea262a80f895194380d4b36b0607f9b",
-      "original_commit": "64d6863d9e1b3a901a1dad960be2e9f8f2db6360",
-      "original_parent": "3ef450b541f72d20a23271a2d2c1517f2ae0c0d7",
+      "sha256": "772e720394fd56db6f8f4b44b801b89a31c1c94190a5b60a719fe66add0e4977",
+      "original_commit": "ba2a7c7606bf6e6813598b3b397f099895228227",
+      "original_parent": "0b7cb19f0a283fd9c71bcca488d8bcaba7cdc523",
       "committer_date": "2026-11-08T22:26:13+08:00",
-      "tree": "2636c4b45c3fdea8d41145a08adf1249dd620d52",
+      "tree": "9ffa0c3166423686a60a9a266c7d169f15c8a304",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1035,11 +1035,11 @@
     },
     {
       "file": "0078-power-piano-parallel-battery-pack.patch",
-      "sha256": "d358bc83ad3445f9b15b670089bac01abe42c743dfc7abcb820ad561e22f30f5",
-      "original_commit": "99d65b7eb45f0cbe24ec4929911a47fbcc0aa381",
-      "original_parent": "64d6863d9e1b3a901a1dad960be2e9f8f2db6360",
+      "sha256": "c58ae97aa5b3cb6515f7056cfa4f1f3a579f25d3d8be68e7cce8d4838373ee16",
+      "original_commit": "332cb78b18f5f55b49e13e8047dcd28afec8b0be",
+      "original_parent": "ba2a7c7606bf6e6813598b3b397f099895228227",
       "committer_date": "2026-11-08T22:28:29+08:00",
-      "tree": "81f03c9b6a02748490423cb30741cafa17b4e97c",
+      "tree": "9b9e3f86a3c26f123256dae0e917b29dba25a365",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1048,11 +1048,11 @@
     },
     {
       "file": "0079-power-mca-buck-session.patch",
-      "sha256": "21d95caea3ad1fe55dde1972231accb96138a4599eb03d9171d2bbb92d14123c",
-      "original_commit": "ac61deb966ccfab736ebda86845fb49dd547ba3b",
-      "original_parent": "99d65b7eb45f0cbe24ec4929911a47fbcc0aa381",
+      "sha256": "2437d44f98445b23755862afcab3f525e8378052da4da33ee54a6067a804d058",
+      "original_commit": "3f5d80788ad1ce96ec92584cb5b57999641980cb",
+      "original_parent": "332cb78b18f5f55b49e13e8047dcd28afec8b0be",
       "committer_date": "2026-11-09T19:33:44+08:00",
-      "tree": "6f6fa8d49778ef67d33d5f7b6bc86c429c80ee49",
+      "tree": "e4da9b1995b658f8984d7e0acfc7424966abee89",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1061,11 +1061,11 @@
     },
     {
       "file": "0080-power-bq27xxx-auth-binding.patch",
-      "sha256": "07ee94d6a698df2a341fb5cf4822faae9db5b8b1d28484416617ab9f0acd3f50",
-      "original_commit": "e42a1cde81353951875d6f7358270e8b989bfc7a",
-      "original_parent": "ac61deb966ccfab736ebda86845fb49dd547ba3b",
+      "sha256": "b7fc78897fcce1ccb22fe86c97a3e1fbe88abbd8e200620e51f5e2b7870c2497",
+      "original_commit": "6ff3945bf85893ac36ce82a1d0e37b07b645686b",
+      "original_parent": "3f5d80788ad1ce96ec92584cb5b57999641980cb",
       "committer_date": "2026-11-09T22:26:59+08:00",
-      "tree": "89fc62cebe5f811a94dd46f72bb75bac239d4700",
+      "tree": "d9fe219fcc346ba4a957f6cc5e3fd5f27caeaa70",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1074,11 +1074,11 @@
     },
     {
       "file": "0081-power-bq27xxx-authentication.patch",
-      "sha256": "a12349c9410958691109a080ce08911b04ef49c3cdd9e72aa55845ca8d781b90",
-      "original_commit": "500b0b9f062b789027b95e4dd0ced687980dca9d",
-      "original_parent": "e42a1cde81353951875d6f7358270e8b989bfc7a",
+      "sha256": "eeb87fdf292cb007330f8836108012c14de6af53abe5e414a2fe1d5516fe3e87",
+      "original_commit": "84566cb9e6a51f0792b065487a37662864f216d5",
+      "original_parent": "6ff3945bf85893ac36ce82a1d0e37b07b645686b",
       "committer_date": "2026-11-09T22:28:31+08:00",
-      "tree": "7a712ba86526e030932e4a2314cbf04904622d06",
+      "tree": "cf4cfc6351bc4a95244f80a1fabf6521b14412fa",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1087,11 +1087,11 @@
     },
     {
       "file": "0082-arm64-sm8750-cpu-capacity.patch",
-      "sha256": "366c9fc8258bf5a36cc142f3762bca961361583c923315ea037250948d460c77",
-      "original_commit": "d906684ba27d0977fa39e3ca8f1ab670a8013f51",
-      "original_parent": "500b0b9f062b789027b95e4dd0ced687980dca9d",
+      "sha256": "5beae757c8d386cd939c288f5d7f288a050fc9b62bc768b99c07f8b189918119",
+      "original_commit": "0c1ff4042fb367c41353ae6903f437c0d5fde1ea",
+      "original_parent": "84566cb9e6a51f0792b065487a37662864f216d5",
       "committer_date": "2026-11-09T23:39:17+08:00",
-      "tree": "07e126359a192e047036192ef808b6a7ca9798da",
+      "tree": "1c657d951a19a0724a1dd166d494e1a8b0baf559",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1100,11 +1100,11 @@
     },
     {
       "file": "0083-build-piano-oryon-optimization.patch",
-      "sha256": "b8c85e541ba083347ab648ad3b166f110c6a3b4b1c6cc78b8d7909b64dafe2f6",
-      "original_commit": "646cb23f9d813aeda62a4942ef67a5fad79efc82",
-      "original_parent": "d906684ba27d0977fa39e3ca8f1ab670a8013f51",
+      "sha256": "f608faa87cbec8b16cf62c18ece3e5d5f5ae98cae0904a5f56d64eb46d946aad",
+      "original_commit": "00b0b0471e580d13da8c0c04b84ef14d770ef80f",
+      "original_parent": "0c1ff4042fb367c41353ae6903f437c0d5fde1ea",
       "committer_date": "2026-11-10T00:31:39+08:00",
-      "tree": "ed5c84217c73edb8f87f19dc2dfcb08a0963f43b",
+      "tree": "d31de70bd2a0394e0d29c716217974387d821599",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1113,11 +1113,11 @@
     },
     {
       "file": "0084-power-mca-cooling-binding.patch",
-      "sha256": "fa61f69afbb65cb4bef9453c9537324d4895a5f3aa3bb1b8290f13d447da38e1",
-      "original_commit": "f3dfa676fc7c2699d28e59840eeae8fc649690e7",
-      "original_parent": "646cb23f9d813aeda62a4942ef67a5fad79efc82",
+      "sha256": "bd556dab87011d4a32823de09a55b7dd88eca83664941f360a8c49b930cfc4a9",
+      "original_commit": "5afba02e64fa30c8b0209310b9a5a4bd0ccb4861",
+      "original_parent": "00b0b0471e580d13da8c0c04b84ef14d770ef80f",
       "committer_date": "2026-11-10T02:11:16+08:00",
-      "tree": "effba644f006eb109ce3b4d57a00c2aba0eafa2f",
+      "tree": "bf02063ad0e96b2acf7fbbb8c77e056a7f21d107",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1126,11 +1126,11 @@
     },
     {
       "file": "0085-power-mca-thermal-charge-limit.patch",
-      "sha256": "2908b3782a11197b728c75818a54d7cffe02e5fa5127e07bf38cde04111b8af9",
-      "original_commit": "cd720ea99c80b88e3ab56ff73bee8d5e8f3abe43",
-      "original_parent": "f3dfa676fc7c2699d28e59840eeae8fc649690e7",
+      "sha256": "9d84923fcbb60877b1830f102eb80c5ef2668a69a4f204c7f083b58884a20a02",
+      "original_commit": "5a9dbc0719df4e5f3d8c0aba7a7c9fdb125adc95",
+      "original_parent": "5afba02e64fa30c8b0209310b9a5a4bd0ccb4861",
       "committer_date": "2026-11-10T02:13:47+08:00",
-      "tree": "1acf322e0af1b976b333212954af74bc1ddcc179",
+      "tree": "5cc7cab5d357208f2748564afd067bf7f98d6c94",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1139,11 +1139,11 @@
     },
     {
       "file": "0086-power-mca-restore-pump-budget.patch",
-      "sha256": "69ea9c974e456caa2792299e1bf5912408ccfccb556dc1f2945b67b2f89539a9",
-      "original_commit": "1ca1d5b6457a7a6c927d766af8329ab26c1e9909",
-      "original_parent": "cd720ea99c80b88e3ab56ff73bee8d5e8f3abe43",
+      "sha256": "29c07f89e86b91af0793a3c0feae1896651c030bfc3a9b2a218859352f26b610",
+      "original_commit": "60945147cb7eeba28ad2b91567de06dc42c1f461",
+      "original_parent": "5a9dbc0719df4e5f3d8c0aba7a7c9fdb125adc95",
       "committer_date": "2026-11-10T02:21:27+08:00",
-      "tree": "321bff02ffa630faf1c571ddbfc330cae8f533dd",
+      "tree": "8246cf4b85720c04cf6c34380c7b93f2d0b34524",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1152,11 +1152,11 @@
     },
     {
       "file": "0087-power-mca-low-current-pmic.patch",
-      "sha256": "ec02cd5d37b91c4ccc080b6c89a93a89dc0c6a08e52fbc8429803b78ab5aaed5",
-      "original_commit": "a4d722e2dba449ce2d9b61503c2ef7048440375b",
-      "original_parent": "1ca1d5b6457a7a6c927d766af8329ab26c1e9909",
+      "sha256": "6f2726ea5fdb95793d382a2a85fa64b5e14e780160c83d4af31aeff888e3f011",
+      "original_commit": "8a4c8fabf85022dd4fcf64f4e568f73f5b71f9df",
+      "original_parent": "60945147cb7eeba28ad2b91567de06dc42c1f461",
       "committer_date": "2026-11-10T02:30:19+08:00",
-      "tree": "a3d1cabc635fca9ac4399894a918bc81c030b65b",
+      "tree": "d7fe031fcc5b1b1512db0a13f8a6965f851bd869",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1165,11 +1165,11 @@
     },
     {
       "file": "0088-power-mca-preserve-stop-reason.patch",
-      "sha256": "b591fc7c35e8a81d09de0640fc285fa98f6c4d59108d1856c6577f9a4793c1dc",
-      "original_commit": "444f2192fc56fd2c0edfab96393fc833b0986d59",
-      "original_parent": "a4d722e2dba449ce2d9b61503c2ef7048440375b",
+      "sha256": "b54dcfb08fe15b1e9fa80a8afe7f959f37d488b2bf7923e44a3ef4af623fcc03",
+      "original_commit": "b8829fda33d65b9c96d5f60683bf3ddd7e4a3148",
+      "original_parent": "8a4c8fabf85022dd4fcf64f4e568f73f5b71f9df",
       "committer_date": "2026-11-10T02:31:21+08:00",
-      "tree": "fc8f9509caab1438105ea5d6e9cbfb4d0abbb265",
+      "tree": "cda34cf806263664532803ba10d61761d07f80de",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1178,11 +1178,11 @@
     },
     {
       "file": "0089-power-mca-clear-pump-retry.patch",
-      "sha256": "cfdceb7e72c42fac7827f1531d6a6ffb9ceb60d062e7ee5eef544e3e40e57126",
-      "original_commit": "682f270fcc27434888cb6a3427b2051c221835a1",
-      "original_parent": "444f2192fc56fd2c0edfab96393fc833b0986d59",
+      "sha256": "96eb7f607a97d748038b716b4861462bfaf0608daf16397b9a4527ba55bc2b6f",
+      "original_commit": "ae46872a2fdfcdfd27afc788f0d2b02420505dc6",
+      "original_parent": "b8829fda33d65b9c96d5f60683bf3ddd7e4a3148",
       "committer_date": "2026-11-10T02:35:43+08:00",
-      "tree": "d5997ec3cf37884d553e4d1eb32cfdf94087374c",
+      "tree": "4c0b472ff103f7fd143f2c488c10aa2b7b18e24b",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1191,11 +1191,11 @@
     },
     {
       "file": "0090-power-mca-initial-cooling-state.patch",
-      "sha256": "f2fb52833b4bae99a75caf616514833c2105404a84c02a26348455671c68d3d9",
-      "original_commit": "61cfb2ae4fb74628e70d9970c6e4ae92df4cb5cc",
-      "original_parent": "682f270fcc27434888cb6a3427b2051c221835a1",
+      "sha256": "254e542bbde16dc1ca890f20f0043e09272f3ab263e831db227f66612472ba43",
+      "original_commit": "c3bda2852e3f964baff96061278e69bb6316f622",
+      "original_parent": "ae46872a2fdfcdfd27afc788f0d2b02420505dc6",
       "committer_date": "2026-11-10T02:45:01+08:00",
-      "tree": "bb8929e90ddc6b23b17ce0ccd011f6162c983fbb",
+      "tree": "7d4d5a1b8126fcbbcda6bb50d56aff239a8174f7",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1204,11 +1204,11 @@
     },
     {
       "file": "0091-dpu-hdr-identity-gamma.patch",
-      "sha256": "48cb8ebc24c90a9875e4fe4c0e9135927c6551b4ab638950c2b72b85b4f19be3",
-      "original_commit": "33c1ed6e3fb31a8dc12146ed0b71c043796a34c2",
-      "original_parent": "61cfb2ae4fb74628e70d9970c6e4ae92df4cb5cc",
+      "sha256": "83d079d9958c6fad392c65aa1f36ac38874431a690c19f4010f0dcfc5c8ed40f",
+      "original_commit": "6dfcb0fe63ec10eb2f3c25294b32d84447faf625",
+      "original_parent": "c3bda2852e3f964baff96061278e69bb6316f622",
       "committer_date": "2026-11-10T20:30:12+08:00",
-      "tree": "7097260acdee3d6fc4aa5a9cd9919084579a892d",
+      "tree": "feb4d92562450e4f001bea2625aa5ea306693da6",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1217,11 +1217,11 @@
     },
     {
       "file": "0092-nanosic-detachable-leds.patch",
-      "sha256": "af46c38eb110a25d7c769d7942cf5314e4a32e55f02b499845bbbc7b3b1e2efc",
-      "original_commit": "58216018c1f9de758c735879be21b89ad64cd2de",
-      "original_parent": "33c1ed6e3fb31a8dc12146ed0b71c043796a34c2",
+      "sha256": "1da0a6bc0332fb54736a9d8d969c902ef4c8f3385c4483d38ca2baddb69981c4",
+      "original_commit": "4b88ec907983f795245464360898a505652aacdc",
+      "original_parent": "6dfcb0fe63ec10eb2f3c25294b32d84447faf625",
       "committer_date": "2026-11-10T20:30:13+08:00",
-      "tree": "7844f7473e2b6207fe6578d6bf84017961ce6c5d",
+      "tree": "455eca5b1f7e224b12e3657801d467576cd84ea0",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1230,11 +1230,11 @@
     },
     {
       "file": "0093-power-mca-charge-inhibition.patch",
-      "sha256": "ad67799f801217dc34b33fc15388065dd37bc1e778e48601203adfab8cd9bc26",
-      "original_commit": "660e1d041c71a7bcd60f11536d104f3a47c6d963",
-      "original_parent": "58216018c1f9de758c735879be21b89ad64cd2de",
+      "sha256": "99ad1245d04736306a7f686af8018260d5a7ac1e41930f633dc41cb7ad855a42",
+      "original_commit": "de82b44c74e58958c2cef75ab2bb0d31474e2373",
+      "original_parent": "4b88ec907983f795245464360898a505652aacdc",
       "committer_date": "2026-11-10T17:57:45+08:00",
-      "tree": "37e644ed17fdd568d4ac51342b43ad222cd7bc39",
+      "tree": "dd015cc0f01f47a5658cc154cc62112db2b416f8",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1243,11 +1243,11 @@
     },
     {
       "file": "0094-power-piano-poweroff-charging.patch",
-      "sha256": "9aaf6324a132abd1693573bfb2d13563f703ffab0f834d2c79c273c1f096c97a",
-      "original_commit": "5337ba7b730c6d83772a1d56885c5acfce96d6a8",
-      "original_parent": "660e1d041c71a7bcd60f11536d104f3a47c6d963",
+      "sha256": "471377a8c6b5651014518801b8a0d5cfaecf76081e331fa42649934bebea142d",
+      "original_commit": "49967fbc57c3cb60fc63569566851d5853ba4f8c",
+      "original_parent": "de82b44c74e58958c2cef75ab2bb0d31474e2373",
       "committer_date": "2026-11-10T19:47:33+08:00",
-      "tree": "7b8c14740196fa29ff53021cfcb01a913e3eb77d",
+      "tree": "5e1f8c46d2b935aa7aadd26009dfb62a3c578a54",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1256,11 +1256,11 @@
     },
     {
       "file": "0095-input-nt36532e-matrix.patch",
-      "sha256": "7753195208abc942f7a1de828b315d5afb94ad61bc8174d7e99dd30ef8c2aacd",
-      "original_commit": "857181bca28c399b8cf17750dfe9f55fcbd61253",
-      "original_parent": "5337ba7b730c6d83772a1d56885c5acfce96d6a8",
+      "sha256": "d2df230c0e3f7587a95e4468c820f26e03f7a839507d347d6624052d494c9df7",
+      "original_commit": "a073b1c8f98af8ad6ebb3d9106b11252d86ce681",
+      "original_parent": "49967fbc57c3cb60fc63569566851d5853ba4f8c",
       "committer_date": "2026-11-10T23:45:14+08:00",
-      "tree": "d0f1477c4c92586ae361b67811bbf4482f906425",
+      "tree": "d702c7708b8d0fc3b5d9daecc50b1b51435743ec",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1269,11 +1269,11 @@
     },
     {
       "file": "0096-power-mca-session-recovery.patch",
-      "sha256": "7e58870993829bcc9273d48ef83b57f90692915d9495092351967609b5d8d2fd",
-      "original_commit": "8e1c3d77d38922a1dcba85065d45bdad356892ff",
-      "original_parent": "857181bca28c399b8cf17750dfe9f55fcbd61253",
+      "sha256": "a4c2504a67e0e27358b1dc810328c3ead5ca031d97f1cb4fa3d3f7c74e114661",
+      "original_commit": "2e6c9c60c2769f7e236d4d0e029204dffc40ff1a",
+      "original_parent": "a073b1c8f98af8ad6ebb3d9106b11252d86ce681",
       "committer_date": "2026-11-10T23:49:41+08:00",
-      "tree": "060a69888aa713945fa2f48d1b9d365f81297f63",
+      "tree": "2dbd3d5b07d9fec541b8fc0893e2d16e0d670b70",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1282,11 +1282,11 @@
     },
     {
       "file": "0097-power-bq27xxx-suspend-recovery.patch",
-      "sha256": "10077c8c69bde9696e4c78f56c5cd3e32588c978444937601deda286702c03e3",
-      "original_commit": "57d8c660f66411612b506479ce0a0a322f80c298",
-      "original_parent": "8e1c3d77d38922a1dcba85065d45bdad356892ff",
+      "sha256": "01b8b01a419c62b639a807756004248ad60da63f8b99a1471c1f157288350933",
+      "original_commit": "134e12640685622374665d14c3c29471b3402cc3",
+      "original_parent": "2e6c9c60c2769f7e236d4d0e029204dffc40ff1a",
       "committer_date": "2026-11-10T23:49:41+08:00",
-      "tree": "df4a7605ea159a1b567798c50728e9bc13017898",
+      "tree": "544383dbb8308ea16224236c41ae1a7cd8a52496",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1295,11 +1295,11 @@
     },
     {
       "file": "0098-iio-piano-gen4-thermistors.patch",
-      "sha256": "f9ebf5329398ccfb4907bceb9e49d7e9f6f2aa3cc9547ffb64ed6f8a76cd6a4a",
-      "original_commit": "1657a62d0ab1cf2a0da49d8d325b68f813beb08d",
-      "original_parent": "57d8c660f66411612b506479ce0a0a322f80c298",
+      "sha256": "cbd4c85a1f3671e3d4d29877dd8015bcd0bcc67770936c0999651269d9d18330",
+      "original_commit": "59b508d09776874436b16409b4f51452b6115be7",
+      "original_parent": "134e12640685622374665d14c3c29471b3402cc3",
       "committer_date": "2026-11-11T00:18:30+08:00",
-      "tree": "5b88986b23fbdef59f604236941c9922ba16e8d9",
+      "tree": "594289db9659168040da1a63e914b2a6db662539",
       "upstream": {
         "status": "downstream",
         "url": "https://lore.kernel.org/all/20260731-pmic5_gen4_adc-v1-0-9c49b2eea6f9@oss.qualcomm.com/",
@@ -1308,11 +1308,11 @@
     },
     {
       "file": "0099-power-mca-full-recharge.patch",
-      "sha256": "749580283a82c90c70872c531255b5767c222eb3a5202af2cae6be1562bfed62",
-      "original_commit": "7ebae501d61b9fd434f9c9a2add664d70b7102ef",
-      "original_parent": "1657a62d0ab1cf2a0da49d8d325b68f813beb08d",
+      "sha256": "b93ad3c72c3c2c871c916bf84c6b478de4bb7a0a590004646874bf99b95f3a74",
+      "original_commit": "53c06376d4c7a07c5b6b8672a52572ffa375945f",
+      "original_parent": "59b508d09776874436b16409b4f51452b6115be7",
       "committer_date": "2026-11-11T00:18:30+08:00",
-      "tree": "b7b0d301551e57595771c9db79e6b36d0147e0a0",
+      "tree": "e77556d4b18d59952656bdf950962fca3b2bdefc",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1321,11 +1321,11 @@
     },
     {
       "file": "0100-power-bq27z561-original-temperature.patch",
-      "sha256": "c0490ea68b7a7e9ef9ba788f5cb7c092ed678048cd9a85b8fac216ea0406708d",
-      "original_commit": "f9716b820a04987c0975af88ba7a60cb877a8a19",
-      "original_parent": "7ebae501d61b9fd434f9c9a2add664d70b7102ef",
+      "sha256": "9db499656aa7a8eca28c4b03c42cf0cf258da6072262d897f20f196b2cbb34ed",
+      "original_commit": "5e3a5f4131c881a6a31183dcc2d7ff2efc635024",
+      "original_parent": "53c06376d4c7a07c5b6b8672a52572ffa375945f",
       "committer_date": "2026-11-11T00:25:30+08:00",
-      "tree": "4bc84ca2ec13b0101a656c7905eb66867cbc3a8b",
+      "tree": "76701d5fedfa11e28bf37467479a60d7a54becdc",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1334,11 +1334,11 @@
     },
     {
       "file": "0101-power-mca-skin-thermal-policy.patch",
-      "sha256": "8f0c3fd13025368d12364cea84595fc686e964b2d39d506e5aeb60e6c3d0c0a1",
-      "original_commit": "223ce4681992177cc882de44449672f86e1e6e44",
-      "original_parent": "f9716b820a04987c0975af88ba7a60cb877a8a19",
+      "sha256": "2db64279346c010708c6d4d107c97ec3ffe3444ca5389a3396c084fc84f70aee",
+      "original_commit": "2822562d278a0674f0d96fa6d29beb0b3519f448",
+      "original_parent": "5e3a5f4131c881a6a31183dcc2d7ff2efc635024",
       "committer_date": "2026-11-11T00:25:30+08:00",
-      "tree": "e1dab31165b6bf4e8d6201da5a596d952a9a572d",
+      "tree": "eb0e44a279f611942dabbef661d927ffbd002d49",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1347,11 +1347,11 @@
     },
     {
       "file": "0102-soc-qcom-pmic-glink-rpmsg-registration.patch",
-      "sha256": "cee3a3fb09f1de7def8b829cc1c55b8ac7c4d33a8ca9c6dc4bc800f85c514b50",
-      "original_commit": "b9a2c0ca2cbf8f3bb7230c0645f8408cdcd31217",
-      "original_parent": "223ce4681992177cc882de44449672f86e1e6e44",
+      "sha256": "740c1ec6a4f770603514c5e3cb276a32fcff339c809396719e86bfb2c3bfcf41",
+      "original_commit": "a67b1fa0e4fdb32683b66110edcf0030bc5cd42e",
+      "original_parent": "2822562d278a0674f0d96fa6d29beb0b3519f448",
       "committer_date": "2026-11-11T03:17:19+08:00",
-      "tree": "26b7d608929eee4a8022da169700339dae9199b3",
+      "tree": "2d474a658ea763bb2b7a84ad1cb8cc75e6f04ea7",
       "upstream": {
         "status": "downstream",
         "url": "https://gitlab.com/Linaro/arm64-laptops/linux/-/commit/8c309c7e852a49118ddc2ee54c3d8b7c74466f6a",
@@ -1360,11 +1360,11 @@
     },
     {
       "file": "0103-power-mca-authenticated-ffc.patch",
-      "sha256": "95e7244c2d733cbbcdc5de09cb768db7c69a11aa02e46dca950f05783459a8d0",
-      "original_commit": "c5d9658ef6890e72f58e647e1e493341f7c756be",
-      "original_parent": "b9a2c0ca2cbf8f3bb7230c0645f8408cdcd31217",
+      "sha256": "45b9a1f50377fba8362876dbd8947597aa2451633492686a379c021cb3bf093c",
+      "original_commit": "ee8356f22c0dc28219b7b8d8348a330bcca63b91",
+      "original_parent": "a67b1fa0e4fdb32683b66110edcf0030bc5cd42e",
       "committer_date": "2026-11-12T00:06:47+08:00",
-      "tree": "c8c58dbe9fe70dc0139735ba1e97d0fce284f77a",
+      "tree": "a5b2f7ad3aa2984a63a66ba872c4cce89613b23b",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1373,11 +1373,11 @@
     },
     {
       "file": "0104-power-mca-ffc-teardown-reference.patch",
-      "sha256": "ed9fdf4240da69de43ecd1f83e9f3ee811fb8ce2bd5ed1aefaa0cc4687f00b79",
-      "original_commit": "aaf56ec0f323ba56f4b9ff3824286fa9874eceee",
-      "original_parent": "c5d9658ef6890e72f58e647e1e493341f7c756be",
+      "sha256": "4f74e5c375f2aedee2df5dde11f0f7e434ad094ee473b3e4500df3c1e71f4773",
+      "original_commit": "1e53da2724fcbfa1fdc4c695c4cce0eb360f7866",
+      "original_parent": "ee8356f22c0dc28219b7b8d8348a330bcca63b91",
       "committer_date": "2026-11-12T00:22:59+08:00",
-      "tree": "a432e6b6a81da8c1ef9f2e939902fe9a1dd73426",
+      "tree": "a49eb11c0d7940719e56fc301c79bf92d56c39fb",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1386,11 +1386,11 @@
     },
     {
       "file": "0105-dpu-piano-fractional-sampling.patch",
-      "sha256": "a274d8b41b438194b325aa39120a8aeb34e96f022d1937e8f06672d4d2d6236e",
-      "original_commit": "ccb6ebe893027bfa56a6d3d925c431b146f412d2",
-      "original_parent": "aaf56ec0f323ba56f4b9ff3824286fa9874eceee",
+      "sha256": "ded7198fe305f9edea3ff68542dbaacfbe2e1bb4620b1fd9a6d119101de52039",
+      "original_commit": "482bf20c7e2c5e9552d3438120c47be89ff2caa8",
+      "original_parent": "1e53da2724fcbfa1fdc4c695c4cce0eb360f7866",
       "committer_date": "2026-11-12T23:02:24+08:00",
-      "tree": "c9589d7a4fa029b7697d9d75488b0685814f0ed2",
+      "tree": "06d1a75d4efbdcfbc9c8c663a11f45bd691a9d46",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1399,11 +1399,11 @@
     },
     {
       "file": "0106-power-mca-stock-cycle-policy.patch",
-      "sha256": "d1541345166321f8806d7be361486aad0bdb81fef7c1a3f9abc4010d10c83d1a",
-      "original_commit": "529035ea96cbf9b71263cd4c311d219524870038",
-      "original_parent": "ccb6ebe893027bfa56a6d3d925c431b146f412d2",
+      "sha256": "b725f1ce14a342e6e9bd60c39700ded6b519cfded39577da3c17fac5e13159cb",
+      "original_commit": "bbe91fe8d5d7c20e8c671ffc5f98fffce47e815e",
+      "original_parent": "482bf20c7e2c5e9552d3438120c47be89ff2caa8",
       "committer_date": "2026-11-14T00:09:57+08:00",
-      "tree": "caea6f493bfd2a2c254b5c07984751643a82eac6",
+      "tree": "787d3082688cdae57aa0a1cf309ad14d2cd07923",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1412,11 +1412,11 @@
     },
     {
       "file": "0107-power-mca-qc-direct-charge.patch",
-      "sha256": "e7e7898c94044e512c1fc3a4fdb79f9ea407b4c4cf1b2696bc9382df055872e0",
-      "original_commit": "781ab552ed76271e32123868cb564dee1fa0120d",
-      "original_parent": "529035ea96cbf9b71263cd4c311d219524870038",
+      "sha256": "3d82a5ccbe9293d245c487324eca9ee0a3a7d6c226e5078d2c738411f43fae2f",
+      "original_commit": "cc29bf762223385d23a19c2d8ee0979b7b3fd9a2",
+      "original_parent": "bbe91fe8d5d7c20e8c671ffc5f98fffce47e815e",
       "committer_date": "2026-11-14T03:28:55+08:00",
-      "tree": "d35125bf320438f3b8c0e45ab42b91f0932a4bf8",
+      "tree": "a7bac05ac6892a4377c8078b9698392a8a5fd00e",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1425,11 +1425,11 @@
     },
     {
       "file": "0108-power-mca-third-pps-limits.patch",
-      "sha256": "f333d663610ced4d88bac63c44baa7f7d938ea07e6624db1fc3a06af78971bc8",
-      "original_commit": "e5d6b8824f1a62de2b172b35c58d1c1ccfd0afe8",
-      "original_parent": "781ab552ed76271e32123868cb564dee1fa0120d",
+      "sha256": "3985e879ec738e5857e1ad783067612d70dcdfe0328f7f13797bcb6d41848ba9",
+      "original_commit": "53f0e8539574f4ffc0b720bfee0a7ec5f739e537",
+      "original_parent": "cc29bf762223385d23a19c2d8ee0979b7b3fd9a2",
       "committer_date": "2026-11-14T03:41:04+08:00",
-      "tree": "eefff045c8e2fcb36a2c1342260a4dd8a0306d71",
+      "tree": "6c062e26514ab0cee47c293697dd4f4b99ee7bb8",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1438,11 +1438,11 @@
     },
     {
       "file": "0109-power-mca-pps-voltage-steps.patch",
-      "sha256": "ca872de6a00c62f23efd281b1fb74361f348daf677bdcfe3ccc38a4dc37a8245",
-      "original_commit": "08a015d044f3c7afc3e901d13301edb51fede22c",
-      "original_parent": "e5d6b8824f1a62de2b172b35c58d1c1ccfd0afe8",
+      "sha256": "751497015eb6907bf49fd9a565c5121492153885f8993e108e2037611c5d9913",
+      "original_commit": "8fc87adebc8c1acbb9208590c951107f68c355f5",
+      "original_parent": "53f0e8539574f4ffc0b720bfee0a7ec5f739e537",
       "committer_date": "2026-11-14T03:47:47+08:00",
-      "tree": "9b784969d4dddfac1424485d1fff5e15b92b8823",
+      "tree": "ac30510503b679d5258c1a87c2a343e8c955c666",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1451,11 +1451,11 @@
     },
     {
       "file": "0110-power-mca-battery-health-current.patch",
-      "sha256": "f6024a0a8f9d9c6540b3bf5a6c230eb8823f4d643614c28ed569203d36ed6d9f",
-      "original_commit": "bc861ce18cd88591b382b692af04b2e273394d7c",
-      "original_parent": "08a015d044f3c7afc3e901d13301edb51fede22c",
+      "sha256": "abb19f9187b93a07fa1277fb829dd93458df026f2398aa11748fb5534c16804b",
+      "original_commit": "81905bc18485cb1a4507b3f86bf0ea3c7d2189a3",
+      "original_parent": "8fc87adebc8c1acbb9208590c951107f68c355f5",
       "committer_date": "2026-11-14T03:57:05+08:00",
-      "tree": "08931f882e6f29e632f13c4be4fa96a6ebf78203",
+      "tree": "a2b49a612a16ec58af12625749f0cbffead04566",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1464,11 +1464,11 @@
     },
     {
       "file": "0111-power-mca-source-voltage-window.patch",
-      "sha256": "6dae54c8e6fb3629279632d6cad8e03ada467de87b83c77f34ebb37044c2093f",
-      "original_commit": "db3a3c211fc6b58e392bb6ee22ef1759e39ad6b6",
-      "original_parent": "bc861ce18cd88591b382b692af04b2e273394d7c",
+      "sha256": "4fca6e7a486cf40c4eb37e00d469fdefde5446568ae3be5747c8cc8b3be9faad",
+      "original_commit": "8c52996146d8a7d34d9d7f80835a0e33b0dc3c54",
+      "original_parent": "81905bc18485cb1a4507b3f86bf0ea3c7d2189a3",
       "committer_date": "2026-11-14T04:26:52+08:00",
-      "tree": "b5dfd47807581ed15f08be30d69500ed978a9a79",
+      "tree": "de5646d48d3874aed6183b85e403090e03cb130c",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1477,11 +1477,11 @@
     },
     {
       "file": "0112-power-direct-charge-conversion-modes.patch",
-      "sha256": "0e322c9706b34bd821e711c51c5b6e211dfc90096048235573efd6e721eab39b",
-      "original_commit": "ef0908719b9baf112ef2a947449660f2108b38ff",
-      "original_parent": "db3a3c211fc6b58e392bb6ee22ef1759e39ad6b6",
+      "sha256": "1379170008bb4558cb25717204c114126fa5424e24444b547c67c6a0e1c55c73",
+      "original_commit": "30380a0dc74476af44b558cdb5139a38516c5b55",
+      "original_parent": "8c52996146d8a7d34d9d7f80835a0e33b0dc3c54",
       "committer_date": "2026-11-14T05:10:30+08:00",
-      "tree": "bb73a3342f47658e070981e3c5bd96fb6c984079",
+      "tree": "5fd3e789f0bf14685ed3b1015e1f36c48bfa4dc0",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1490,11 +1490,11 @@
     },
     {
       "file": "0113-camss-remove-register-debug.patch",
-      "sha256": "1dcbb6a4953b845455a2c4a4db886a0a97ea4a131ccb67c6c86cc4f575244933",
-      "original_commit": "104e1a5915f90fc1b2f8a9de6d08112b109f1b09",
-      "original_parent": "ef0908719b9baf112ef2a947449660f2108b38ff",
+      "sha256": "2e1867d8d5908c49c2333f42fddca36ac43d574fd95d20b2359a55987edf6318",
+      "original_commit": "d41ebf42257b5f2a6662430896eb989e0f135fed",
+      "original_parent": "30380a0dc74476af44b558cdb5139a38516c5b55",
       "committer_date": "2026-11-14T21:48:56+08:00",
-      "tree": "91d5aae36ce6625a95c01103de420d8e4d298c8a",
+      "tree": "62e35a22cbb21c792d279e0c309de17465915b93",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1503,11 +1503,11 @@
     },
     {
       "file": "0114-camss-pix-capture-formats.patch",
-      "sha256": "3b6d4352c838808507dd18d2025e07a8f4946a8e1ab9957c98ec4de23224397e",
-      "original_commit": "583d5f28c4ca2d6467063c3e04e4fe856761443b",
-      "original_parent": "104e1a5915f90fc1b2f8a9de6d08112b109f1b09",
+      "sha256": "1f49d09f5ada80f44dcdcb4c92a5089c70287669bba897b8270fa079aa73b794",
+      "original_commit": "277fa499c67b80f3ea5117640e6d505ec90d598b",
+      "original_parent": "d41ebf42257b5f2a6662430896eb989e0f135fed",
       "committer_date": "2026-11-14T21:59:54+08:00",
-      "tree": "e958590dfeb7bad440bf8bc987d748a0f7ced0ff",
+      "tree": "256561b538088422c46881813c140c6c7dbcbf19",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1516,11 +1516,11 @@
     },
     {
       "file": "0115-media-ov32d40-binding.patch",
-      "sha256": "dac9da2ac1f426e7f5cdd9f923ea1ba598a5578dca952e1c80e008ee15055973",
-      "original_commit": "7f87e9b8805fcf7b94f451ce98e8a1775320e152",
-      "original_parent": "583d5f28c4ca2d6467063c3e04e4fe856761443b",
+      "sha256": "cc059bd97d7b1514f6e560cfc5192d42b7ebe2e1da32ffb7b6f8d1226fcd391e",
+      "original_commit": "a067a06c4ff15e3a743cdb75f4d787419908860b",
+      "original_parent": "277fa499c67b80f3ea5117640e6d505ec90d598b",
       "committer_date": "2026-11-14T23:03:04+08:00",
-      "tree": "e5d7757375d320e34fe48b2c99c3b3a32ab54631",
+      "tree": "7bb213f9874e7a4a669ed2554e8f12a44b3a0169",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI/blob/main/patches/linux/7.3/0004-media.patch",
@@ -1529,11 +1529,11 @@
     },
     {
       "file": "0116-media-camss-bayer-clock-binding.patch",
-      "sha256": "bd867e9eaa4158050faf78ac6006f7560927c902fbfbec212152e811fae40cd0",
-      "original_commit": "3b11c4b999a035a123a74031cd2e0768ce775334",
-      "original_parent": "7f87e9b8805fcf7b94f451ce98e8a1775320e152",
+      "sha256": "d08030210bc15c4e50ad4939d9f491660542c4d1ca2571df990d02716ff58ee8",
+      "original_commit": "39bd469a796ae06cd3ad6f2b4610331eb12b8851",
+      "original_parent": "a067a06c4ff15e3a743cdb75f4d787419908860b",
       "committer_date": "2026-11-14T23:04:09+08:00",
-      "tree": "4a4b77eeef0aafbb7e66f67c4f91384756baa6f8",
+      "tree": "56ccbf3cc92a9652b09666758a36da88349dba2e",
       "upstream": {
         "status": "downstream",
         "url": "https://lore.kernel.org/linux-media/20260508-add-support-for-camss-on-sm8750-v3-0-fc6861a65c67@oss.qualcomm.com/",
@@ -1542,10 +1542,10 @@
     },
     {
       "file": "0117-media-camss-csid-vfe-links.patch",
-      "sha256": "782c0cd92798808259814648e78709eda37a38db1c6921f041b6abfde59db640",
-      "original_commit": "2b4e37d564c1adee4c942ed96be0f4739a122a89",
-      "original_parent": "3b11c4b999a035a123a74031cd2e0768ce775334",
-      "tree": "dff936db04e046ec771e8f25756b39569e0574fa",
+      "sha256": "a4eed53e615ff12e6c0ae3992841f86110aa3e62403eb41ce2ef88ac474423b4",
+      "original_commit": "7cbf707b8ca926b9e4079dacabb857c5e43b5deb",
+      "original_parent": "39bd469a796ae06cd3ad6f2b4610331eb12b8851",
+      "tree": "95ba1a888fd058f502c3706174ce90950f97bf1d",
       "committer_date": "2026-11-15T00:40:18+08:00",
       "upstream": {
         "status": "downstream",
@@ -1555,10 +1555,10 @@
     },
     {
       "file": "0118-media-camss-csid-source-formats.patch",
-      "sha256": "676c0921fb5f63f661bfaff92de54b1e3c51a8e50459229c8239160d2fa46472",
-      "original_commit": "f614052c014959a14db030dfbbaf785f93831652",
-      "original_parent": "2b4e37d564c1adee4c942ed96be0f4739a122a89",
-      "tree": "1014a4e2268567ecedc2d95c57d6a354783670ea",
+      "sha256": "1e3d5c7e85748e3b6afc640316a9ebad85377115b64829c929b8eaf30ed0126f",
+      "original_commit": "df72bb13845d7ff0b552060980bbce9cebee355c",
+      "original_parent": "7cbf707b8ca926b9e4079dacabb857c5e43b5deb",
+      "tree": "be46467f8d89e306aa985bbad720ae2331d053ea",
       "committer_date": "2026-11-15T00:53:33+08:00",
       "upstream": {
         "status": "downstream",
@@ -1568,10 +1568,10 @@
     },
     {
       "file": "0119-clock-sm8750-mclk-power-binding.patch",
-      "sha256": "40c8cfcb3d22e818d07c204238bf590b08987568cc508dc39b5f35af98617050",
-      "original_commit": "cc8339bf365e9f402daa0509d4cd174ace8ed6e6",
-      "original_parent": "f614052c014959a14db030dfbbaf785f93831652",
-      "tree": "d7171ad7c22bf0002423ad34b221a54d20992040",
+      "sha256": "6990a9542510ef6cd8695f13a8b6a0d00409fa20ae88c1f96568202f0ef2c495",
+      "original_commit": "c8b5d7c9c1fa69cc7adafa8d2260556bb8985909",
+      "original_parent": "df72bb13845d7ff0b552060980bbce9cebee355c",
+      "tree": "16f5de2725c773bb2af13a934276b04d3957bde4",
       "committer_date": "2026-11-15T01:21:54+08:00",
       "upstream": {
         "status": "downstream",
@@ -1581,10 +1581,10 @@
     },
     {
       "file": "0120-arm64-sm8750-mclk-power.patch",
-      "sha256": "fb2e643768698d36a15b29d6d6ecb6eb3b6d4c99a2e20a8b7c017c3faa70a4ea",
-      "original_commit": "c8fcbbc7456b361f8aa65006bfd8111c401831ef",
-      "original_parent": "cc8339bf365e9f402daa0509d4cd174ace8ed6e6",
-      "tree": "e745d00e4b6b51d94bf676a3f7d002eac9c7dc9c",
+      "sha256": "e2dccb03bc25f0e1c6882a2b66aa329443384aa510591bba2a8a1fb110156eae",
+      "original_commit": "0142ca5fe4f5ad2b11ba90dc235402cf1102ae49",
+      "original_parent": "c8b5d7c9c1fa69cc7adafa8d2260556bb8985909",
+      "tree": "fc85453328dfe0a60a7050daaf3dc754f82af144",
       "committer_date": "2026-11-15T01:22:15+08:00",
       "upstream": {
         "status": "downstream",
@@ -1594,11 +1594,11 @@
     },
     {
       "file": "0121-hid-xiaomi-pen-pressure.patch",
-      "sha256": "4087a7d255bbaf28d384a4422d3533fdc267bac8697dcef325aede466026a597",
-      "original_commit": "7891f3fac5be7ddfa397abd3a25b87b64460def3",
-      "original_parent": "c8fcbbc7456b361f8aa65006bfd8111c401831ef",
+      "sha256": "3d53fdea67a0214bdb30d7f1544281941de2cf8c7035f7e29645229fa2c08118",
+      "original_commit": "805f0dbb08ba78a12f6b968aad142ad29dd85ac7",
+      "original_parent": "0142ca5fe4f5ad2b11ba90dc235402cf1102ae49",
       "committer_date": "2026-11-14T22:04:44+08:00",
-      "tree": "c798fa30a0dead7e06a7b5c8143589eb35367062",
+      "tree": "0f19392cbc79955bc413dae3aeae779ae524b4cf",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1607,11 +1607,11 @@
     },
     {
       "file": "0122-input-nt36532e-pen-scan.patch",
-      "sha256": "c28eaf91d38f8f9f2d7a00d6686ad7c31abfd296adbe2d2726d6f96dfb42e5bf",
-      "original_commit": "500b66d8fe8b703a5a54dc0ab69f60086f48da4f",
-      "original_parent": "7891f3fac5be7ddfa397abd3a25b87b64460def3",
+      "sha256": "ab4db71bb7194ec61eb395ccb7e01de83507b6136a4cbd3927c74bb5ddb1780e",
+      "original_commit": "7ae6f9f9b724e69fb731a3c1d02da1b145835998",
+      "original_parent": "805f0dbb08ba78a12f6b968aad142ad29dd85ac7",
       "committer_date": "2026-11-14T22:40:22+08:00",
-      "tree": "5111ef2a2096b14ea5df57038c86048826536a0b",
+      "tree": "513d286f6c347b1a789d0efc3096cc57e55642b2",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1620,11 +1620,11 @@
     },
     {
       "file": "0123-input-nt36532e-pen.patch",
-      "sha256": "914e2d8f48ef84bf3dbb932c1d2ac2c35bbac65e4ab2b9740518f154d56c96e5",
-      "original_commit": "22029aaab327b8d98a563be23cec1aa1785df35a",
-      "original_parent": "500b66d8fe8b703a5a54dc0ab69f60086f48da4f",
+      "sha256": "ac3e5b93db0da9df04c33ddfefe64d5c78fb4d649b1605673db8d94dea728bec",
+      "original_commit": "a2644bfc0106c20a3e4b9b62043b70adbf802b34",
+      "original_parent": "7ae6f9f9b724e69fb731a3c1d02da1b145835998",
       "committer_date": "2026-11-15T01:11:01+08:00",
-      "tree": "e11f78527a918ba11baebcda49fd8d814bca8bac",
+      "tree": "3dea34b5da27a43112b10e8a4fdbc9dc410a0309",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1633,11 +1633,11 @@
     },
     {
       "file": "0125-media-gt9764ba-binding.patch",
-      "sha256": "ec2b0538e600385a901f5e19af02b1f6537c8f40ab6be0f296f361bc60508ad2",
-      "original_commit": "e85abf4089659e931d33b21e334dfaebd0477f57",
-      "original_parent": "22029aaab327b8d98a563be23cec1aa1785df35a",
+      "sha256": "cfb6087979f90342b5d9d7c9027c7db48e1e6cfba52347e8f7f56e105595d00c",
+      "original_commit": "a4e4b435a4c2ba8ad78e10e21eb876880c85abf4",
+      "original_parent": "a2644bfc0106c20a3e4b9b62043b70adbf802b34",
       "committer_date": "2026-11-16T11:16:46+08:00",
-      "tree": "1ca5d4e744c1dd83936894cdf72d51604de86f88",
+      "tree": "5d7a56c757c5d7c9194ee736f61d3fcb80fec515",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1646,11 +1646,11 @@
     },
     {
       "file": "0126-media-gt9764ba-lens.patch",
-      "sha256": "b0863b153730aed4c49ff7e1fc00e1c049e64fd0c0e8959ca73e90ea50059717",
-      "original_commit": "57d21b70f3e608dbd5dea160dec12841c63113f9",
-      "original_parent": "e85abf4089659e931d33b21e334dfaebd0477f57",
+      "sha256": "a9d5913d331b85a494a59d6c6e2a62a0d1a372a64862822bfab74cac55d5398a",
+      "original_commit": "d3f4ff738d4e86f8879ff03446680294b36dd77f",
+      "original_parent": "a4e4b435a4c2ba8ad78e10e21eb876880c85abf4",
       "committer_date": "2026-11-16T11:16:46+08:00",
-      "tree": "4c37d63e90f4b86c3daa2e87244b82669a86d9d8",
+      "tree": "983e64b63684f2954a737b49c1727d40cfe1cee9",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1659,11 +1659,11 @@
     },
     {
       "file": "0127-power-charging-state-feedback.patch",
-      "sha256": "c3c09eff4719d6621f12d1c95e4c7e6f17ef779c42855fbc331125fedebf68ef",
-      "original_commit": "5c4a33372d713fd9091975e28314c98321527507",
-      "original_parent": "57d21b70f3e608dbd5dea160dec12841c63113f9",
+      "sha256": "1c415c2604cdce11ed078d4b52bd28c148f345649ec7349d77171c650def837b",
+      "original_commit": "9c00aee0c8de8102e0f581cd7201fdc58dce0961",
+      "original_parent": "d3f4ff738d4e86f8879ff03446680294b36dd77f",
       "committer_date": "2026-11-18T02:42:00+08:00",
-      "tree": "c9d6ff8ef95bd544e696457eb5fdf15c8b3f60f6",
+      "tree": "1b6dce8f19c29f4e55f3769a52eb5951fa2668c5",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1672,11 +1672,11 @@
     },
     {
       "file": "0128-power-mca-response-identity.patch",
-      "sha256": "84a870c9d3797817324e78027517f4644e2352ad84124da37466ced33632f6d2",
-      "original_commit": "df19a432c7ec9eb2ac874ac6d2c19cb15c96298f",
-      "original_parent": "5c4a33372d713fd9091975e28314c98321527507",
+      "sha256": "26900e0ecfcf426e31f826d720faa8931c0454bc62684f7983ec326f5a566a65",
+      "original_commit": "faecebdd5ebeaa1a1c4d37cd45d92e47a321653f",
+      "original_parent": "9c00aee0c8de8102e0f581cd7201fdc58dce0961",
       "committer_date": "2026-11-18T03:10:00+08:00",
-      "tree": "e7cb7d9e874825ba2995eddeac49a19397334b43",
+      "tree": "eb2473fc04ecc6e071b79f5b640709e732e8aa7a",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1685,11 +1685,11 @@
     },
     {
       "file": "0130-power-mca-warm-pmic-compensation.patch",
-      "sha256": "004ec43faf92df8c4c548f69d4e33218bd2ce0c50e6189c6345ae68e6c61c204",
-      "original_commit": "0c0675778540e91e12951dc260ea3ed30251a90e",
-      "original_parent": "df19a432c7ec9eb2ac874ac6d2c19cb15c96298f",
+      "sha256": "45794caac1977acd400509ac8c5fd44f314e80b695b8f751f448b09024232ca3",
+      "original_commit": "3744498d127603bb0aac0a3572f6a01d84c8e7d1",
+      "original_parent": "faecebdd5ebeaa1a1c4d37cd45d92e47a321653f",
       "committer_date": "2026-11-18T04:18:12+08:00",
-      "tree": "d290d5a2e6048f60f2df471be1e8a90a74e7a004",
+      "tree": "79b5917abe20d3166c26013c46fa798e7f7fb019",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1698,11 +1698,11 @@
     },
     {
       "file": "0131-power-bq27z561-average-power.patch",
-      "sha256": "e6fb8489cb56e39071eb7d023c4d582cfdb5065a9195a3794c3a418465ec4bae",
-      "original_commit": "38c0c2568f60d8f740621b23966c854d147050c4",
-      "original_parent": "0c0675778540e91e12951dc260ea3ed30251a90e",
+      "sha256": "10092de1e2a1ecc7a004921d20a979ba12fcee4066954c95510f399639fb749f",
+      "original_commit": "3912da9abce05aed036f948dbf97500ef7cbbaf4",
+      "original_parent": "3744498d127603bb0aac0a3572f6a01d84c8e7d1",
       "committer_date": "2026-11-18T04:18:12+08:00",
-      "tree": "d6ab05bd02a105b519f1520a6d4d31c0d0946b13",
+      "tree": "bc609d38401a782307950ed06fe20630e0f9b10a",
       "upstream": {
         "status": "downstream",
         "url": "https://www.ti.com/lit/ug/sluuc54c/sluuc54c.pdf",
@@ -1711,11 +1711,11 @@
     },
     {
       "file": "0132-power-mca-connector-overtemperature.patch",
-      "sha256": "ace2e34419430606d1c9fb50789138a53d115bcce0cd319c3408f390e1726733",
-      "original_commit": "1735cf1fa278dc553f6af7bbd630a2d3d83aa8be",
-      "original_parent": "38c0c2568f60d8f740621b23966c854d147050c4",
+      "sha256": "388a13f2a9d34da09c1e167df1dd2bbec25f6694cfbfe175e973f427097d511a",
+      "original_commit": "02d1996461900c7bfd9d4a30c733e67e93d8e598",
+      "original_parent": "3912da9abce05aed036f948dbf97500ef7cbbaf4",
       "committer_date": "2026-11-18T05:03:00+08:00",
-      "tree": "47506e1f1b87dd329d473ade94c797c37e0958ee",
+      "tree": "1823b2c5e06e6ba65083c7721fd2f07cdac76b4f",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1724,11 +1724,11 @@
     },
     {
       "file": "0133-media-s5kjn1-guard-active-mode.patch",
-      "sha256": "7434996bc3d2264f5f190718abbcc82bdeb7e04d838c1c14acbcdf2dc002df38",
-      "original_commit": "57825b14a42b4f36812563066ddea131dbb5e2fd",
-      "original_parent": "1735cf1fa278dc553f6af7bbd630a2d3d83aa8be",
+      "sha256": "06be5048889ae24a24f93b22e160d47fa205a5b5794355bea870e7af43062b14",
+      "original_commit": "a7857f6ca04523f0d9ee350289ecb24ac87f27e5",
+      "original_parent": "02d1996461900c7bfd9d4a30c733e67e93d8e598",
       "committer_date": "2026-11-18T18:49:00+08:00",
-      "tree": "13e0de31aac3ab2a9ee246a432b68678609ea950",
+      "tree": "287d9655f1fa4d51e4bcf3b51df96222984e1518",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1737,11 +1737,11 @@
     },
     {
       "file": "0134-media-s5kjn1-program-mode-before-controls.patch",
-      "sha256": "099c289d54cc9998788c67883656d155d100bff6f7fa1387d7f9359b93c89f8d",
-      "original_commit": "6150e21c1480679364a383c1f45927cd2df5caf1",
-      "original_parent": "57825b14a42b4f36812563066ddea131dbb5e2fd",
+      "sha256": "3e20a84a0264ab07d608ed2945bce908555c58c12ed196172cccb98dbd1bdd15",
+      "original_commit": "e65d989a5bf29e155fbaf80d1226102a4bc8c131",
+      "original_parent": "a7857f6ca04523f0d9ee350289ecb24ac87f27e5",
       "committer_date": "2026-11-18T18:49:00+08:00",
-      "tree": "72c36f428e22c89584f0bea007d7eee005de3bae",
+      "tree": "757cb1bbd9d46d74f3a802366c4f93c431aec0cb",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1750,11 +1750,11 @@
     },
     {
       "file": "0135-media-camss-validate-capture-dma-ranges.patch",
-      "sha256": "06d624426ecf2d4bd9dcc874e5bb789cf88cd4a747dff5ee4bed0c94b3e57df7",
-      "original_commit": "23f4a40a57a9e2f872f7f9ce4ac0f872f29b97b7",
-      "original_parent": "6150e21c1480679364a383c1f45927cd2df5caf1",
+      "sha256": "7fbbf883ee52616bf5291c3959a1861b66640745ebfd9a7ab31fa5108ffc63ee",
+      "original_commit": "4c7c25e32d0eb4c35744ed957cae782e9e68bdc0",
+      "original_parent": "e65d989a5bf29e155fbaf80d1226102a4bc8c131",
       "committer_date": "2026-11-18T19:39:38+08:00",
-      "tree": "003d4690bc06a31b93faaf23f8f2a95fabd52a81",
+      "tree": "4f0bdd215ca91e00d8baa2f068ae17a384f5f2d8",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1763,11 +1763,11 @@
     },
     {
       "file": "0136-media-iris-encoder-frame-interval.patch",
-      "sha256": "61f0742845cde59acc876962187dc9e613dfc92744825c448d14857ab46b673c",
-      "original_commit": "4d3098b68f4d844b27dda939f621fdc446756f12",
-      "original_parent": "23f4a40a57a9e2f872f7f9ce4ac0f872f29b97b7",
+      "sha256": "ea0d7170e593e56be5142d7f49145f2a4d4cc6076cbd6d2560f7e1edfbbbc7d0",
+      "original_commit": "667783231744745eab5b74c71cd4c992499a80c3",
+      "original_parent": "4c7c25e32d0eb4c35744ed957cae782e9e68bdc0",
       "committer_date": "2026-11-18T20:30:45+08:00",
-      "tree": "de36198c1880392319c501ff6a19f52a9a05eeb5",
+      "tree": "a170d44799689a3c931c1c252b9e9a07155ecbe3",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1776,11 +1776,11 @@
     },
     {
       "file": "0137-LOCAL-leds-qcom-flash-fix-safety-timer.patch",
-      "sha256": "133e8884556fea9fb274a7be0d21ff8f83e25be14440d893bd24115072b804ec",
-      "original_commit": "e0b45eba1747d5c5156e2c928696708718725547",
-      "original_parent": "4d3098b68f4d844b27dda939f621fdc446756f12",
+      "sha256": "be6ce4758e520a1f3ada6cce628ae67c6d6224645f826b269527284be9ba8e99",
+      "original_commit": "e3f20935482ea3578dc3e8319c6db9ac88a95aae",
+      "original_parent": "667783231744745eab5b74c71cd4c992499a80c3",
       "committer_date": "2026-11-19T09:13:34+08:00",
-      "tree": "3c224a4ed6e56303c3416a317401072ca4a73ca1",
+      "tree": "406300e91bdbd58454fe064505f60e35b7f37870",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1789,24 +1789,24 @@
     },
     {
       "file": "0138-LOCAL-spi-geni-qcom-map-large-gpi-transfers.patch",
-      "original_commit": "476b8a4189ae3ed5d3cc344fcaffc17cafaa673f",
-      "original_parent": "e0b45eba1747d5c5156e2c928696708718725547",
+      "original_commit": "1d09ef8cfd2ec7d5f6041efaf503822904e895cf",
+      "original_parent": "e3f20935482ea3578dc3e8319c6db9ac88a95aae",
       "committer_date": "2026-11-19T21:10:21+08:00",
-      "tree": "f06cf0b217b8905fb4ff5e54ea4b58a4154eaa89",
+      "tree": "47d633a9c645859b476b2360fc690d52142ff839",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
         "drop_when": "The accepted GENI/GPI path must send an entire standard LIRC waveform in one SPI transfer without segment rejection or extra gaps; verify on the Piano transmitter."
       },
-      "sha256": "431af533627cd7a71ee7e6ed32cd40d3d4ed8bde76b07ea5fdff108136a3b8ec"
+      "sha256": "0b27869cb49cf11cf8d3f6eb03dd592efc7c74bd86e762b6b743c68b01be89d4"
     },
     {
       "file": "0139-LOCAL-dmaengine-qcom-gpi-clear-config-on-release.patch",
-      "sha256": "32b1ce4257de20c9dd4e2c87a16e125d24fb6143faca0b7d781283b41b40c17e",
-      "original_commit": "e627b81d562e6b8191b70cf14d01e0791c16374a",
-      "original_parent": "476b8a4189ae3ed5d3cc344fcaffc17cafaa673f",
+      "sha256": "fed194979fa37062eda305b735f1af99298ea19d9324daf2809cd50fde35f458",
+      "original_commit": "ff78bf7e3bee4597da51fb26cbe85d6c442bd71e",
+      "original_parent": "1d09ef8cfd2ec7d5f6041efaf503822904e895cf",
       "committer_date": "2026-11-19T22:01:44+08:00",
-      "tree": "05ed265667804b977d25b0f5f91eb25e1b25a441",
+      "tree": "4e9c11d532bad8fd756c61c457d06eee6e0563a6",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1815,11 +1815,11 @@
     },
     {
       "file": "0140-LOCAL-power-bq27xxx-stop-gauge-io-on-shutdown.patch",
-      "sha256": "b9005725aa66c7d40dd1f4769fc19b8aed78095c0593f470e5c92b3c73d54cae",
-      "original_commit": "b72bc954939893f7151364f2e72ee522244896b3",
-      "original_parent": "e627b81d562e6b8191b70cf14d01e0791c16374a",
+      "sha256": "66e82859e56816a13eca6b4315aace27ff9e3080e87744d7f6cab10f99367fb0",
+      "original_commit": "5de91b740523b7c62259df526c79fe965af8de12",
+      "original_parent": "ff78bf7e3bee4597da51fb26cbe85d6c442bd71e",
       "committer_date": "2026-11-20T00:49:21+08:00",
-      "tree": "9cba57b588e475420028134e9f0fb03547a3287f",
+      "tree": "2eeacca8fbad4f8ba03e0078ac855ba731229f15",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1828,11 +1828,11 @@
     },
     {
       "file": "0141-LOCAL-media-camss-serialize-buffer-completion.patch",
-      "sha256": "4c4471768627b592d57e26a815fb161dbaa1c8c85c69e187a9e0ef422bd82d92",
-      "original_commit": "b8c802d8c815c3d9b4f421ee05c660dafc6e32ef",
-      "original_parent": "b72bc954939893f7151364f2e72ee522244896b3",
+      "sha256": "d18b5e86644b89974953e6e37a2c06a7abcdab3836eac35575cc4ea1bc0ab7c9",
+      "original_commit": "50fc1f8d89046bddc8a3329f0553c1e5914a449e",
+      "original_parent": "5de91b740523b7c62259df526c79fe965af8de12",
       "committer_date": "2026-11-20T04:10:27+08:00",
-      "tree": "3c79902071e6d9f44047fc9c9cf7914317770336",
+      "tree": "45ec31cae0f558e240ce91e3579041ad0424d39b",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1841,11 +1841,11 @@
     },
     {
       "file": "0142-LOCAL-media-s5kjn1-group-exposure-and-gain.patch",
-      "sha256": "034bc5d35b58bef91ab7893f10f244d854cf386aa0c144ac92495d2c75344e26",
-      "original_commit": "9e2ce74bf155b433e8b387c501f34a33b2d79bb8",
-      "original_parent": "b8c802d8c815c3d9b4f421ee05c660dafc6e32ef",
+      "sha256": "73404143aaa27c71b375449c8b7b84f83263f1228fa8d221a4360e058d29ea67",
+      "original_commit": "0df890e5f841ac382b3accad1eb40814647ba7e4",
+      "original_parent": "50fc1f8d89046bddc8a3329f0553c1e5914a449e",
       "committer_date": "2026-11-20T13:20:29+08:00",
-      "tree": "490b663909a0d7c6b947b00ec574e0a1f1324fae",
+      "tree": "cc5e6adc5625e34a4ae4883f5702529a5821d115",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1854,11 +1854,11 @@
     },
     {
       "file": "0143-LOCAL-media-camss-release-csid-parent-on-power-error.patch",
-      "sha256": "c030d87844605afcb19f8a4b18a38b07d4ad309724698c71bb5b24f8416ce80f",
-      "original_commit": "9d3ac434a8aa2b7a7e1064558c373262be3e7499",
-      "original_parent": "9e2ce74bf155b433e8b387c501f34a33b2d79bb8",
+      "sha256": "8f8b4196db1b03f955b3393b36f40634c297e34e9a32a8497b55e29449197498",
+      "original_commit": "c98a636d19dc8f0e8758238768465ac335de4cc4",
+      "original_parent": "0df890e5f841ac382b3accad1eb40814647ba7e4",
       "committer_date": "2026-11-20T13:42:29+08:00",
-      "tree": "1063b28aaf50a52f210b0658c8a40fc92cdf03fd",
+      "tree": "cec66833c62af184c3c05ba8a3a3f6efd9380c0c",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/torvalds/linux/commit/c5af8db84c01585e077019d5fd384c57a9fcad2f",
@@ -1867,11 +1867,11 @@
     },
     {
       "file": "0144-LOCAL-media-v4l2-flash-preserve-torch-intensity.patch",
-      "sha256": "ee5006645e8e12256eaea1237f31f72c0425fccf909171b29b473bb20ac572d9",
-      "original_commit": "40739b6b8bf3cc50cd283cb0393f2599fab51c81",
-      "original_parent": "9d3ac434a8aa2b7a7e1064558c373262be3e7499",
+      "sha256": "0a4720c1926ffbea4c73098d403dfe00774326bafdcb82509bfab79fec6366a0",
+      "original_commit": "514035ab6afa2c5f0f3899c3b0891ec967a116c1",
+      "original_parent": "c98a636d19dc8f0e8758238768465ac335de4cc4",
       "committer_date": "2026-11-20T14:30:34+08:00",
-      "tree": "12085731767550495df307b70f6f49f7a2983f51",
+      "tree": "59fb15193101201d1afa121e32ced4897cf13c4d",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/torvalds/linux/commit/42bd6f59ae90244484746696aabcafc0003f59c7",
@@ -2021,7 +2021,7 @@
       },
       "stock_format": "Charger header LE32: magic 0x20240725, version 2, initialized 0/1, available 1; power_off_mode is LE32 at partition byte offset 0x1000. ABL consumes 1 and writes 2. All other bytes are preserved.",
       "stock_callers": "MiuiBatteryServiceImpl receives ACTION_SHUTDOWN and calls IMiCharge.setMiChargePath(charger_partition_poweroffmode, 1) only while plugged, for selected power-off reasons and outside ship mode. The stock charger_partition driver has no shutdown notifier.",
-      "write_scope": "Only SYS_POWER_OFF with a connected sink reported by UCSI and fresh ADSP VBUS and OTG checks in one ADSP and UCSI connection session. Identify a unique charger GPT partition beneath the internal SM8750 UFS controller. No header locking, no other stock fields, no ship mode or MCA shutdown-property changes.",
+      "write_scope": "Only SYS_POWER_OFF with a connected sink reported by UCSI, fresh ADSP VBUS and OTG checks, and a final live ADSP sink role check in one ADSP and UCSI connection session. Identify a unique charger GPT partition beneath the internal SM8750 UFS controller. No header locking, no other stock fields, no ship mode or MCA shutdown-property changes.",
       "sink_evidence": "Stock qcom_adsp_pd_protocol.ko (SHA-256 8c0da82fad9bd4d2f236a2dd40d4eef6c29132591f4522b3fc5753d5e4d78bee) reads CID at wire ID 0x21020 and OTG attachment at 0x21021 with protocol v2. The same board reports CID 0 with and without a cable; VBUS reads about 4.75 V while UCSI is a connected sink and drops to 0 after unplugging."
     },
     "authenticated_ffc": {

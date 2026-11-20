@@ -1,4 +1,4 @@
-From 7ebb0967dd648fff838feba0836e932bb5441815 Mon Sep 17 00:00:00 2001
+From 547aac9703abe911cfd2b3f702b95ddc3816c541 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Fri, 6 Nov 2026 22:15:00 +0800
 Subject: [PATCH] media: s5kjn1: support Piano factory 19.2 MHz modes

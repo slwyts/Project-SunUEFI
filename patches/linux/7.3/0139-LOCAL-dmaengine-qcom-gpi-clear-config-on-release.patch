@@ -1,8 +1,7 @@
-From e627b81d562e6b8191b70cf14d01e0791c16374a Mon Sep 17 00:00:00 2001
+From ff78bf7e3bee4597da51fb26cbe85d6c442bd71e Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 19 Nov 2026 22:01:44 +0800
-Subject: [PATCH] dmaengine: qcom: gpi: Clear the peripheral configuration on
- release
+Subject: dmaengine: qcom: gpi: Clear the peripheral configuration on release
 
 The GPI channel survives dma_release_channel(), but its peripheral
 configuration does not. Leaving the freed pointer in the channel
@@ -14,19 +13,1529 @@ Clear the configuration pointer when freeing it so the next client
 allocates its own configuration.
 
 Fixes: 5d0c3533a19f ("dmaengine: qcom: Add GPI dma driver")
+
+Only release DMA rings after the target GPI channel and event ring confirm shutdown.
+Fence callbacks before stopping GPI and distinguish a reset payload ring from a failed restart.
+Give GENI I2C DMA its own buffers and retain them across an unconfirmed stop.
 ---
- drivers/dma/qcom/gpi.c | 1 +
- 1 file changed, 1 insertion(+)
+ drivers/dma/qcom/gpi.c             | 553 +++++++++++++++++++++--------
+ drivers/i2c/busses/i2c-qcom-geni.c | 295 +++++++++------
+ 2 files changed, 575 insertions(+), 273 deletions(-)
 
 diff --git a/drivers/dma/qcom/gpi.c b/drivers/dma/qcom/gpi.c
-index a5055a6273af..abf7a7e7bfee 100644
+index a5055a6273af62543532c41620556503dab35ea0..409afde42f0ffeb12e0d1f1c1b9d72267f800555 100644
 --- a/drivers/dma/qcom/gpi.c
 +++ b/drivers/dma/qcom/gpi.c
-@@ -2011,6 +2011,7 @@ static void gpi_free_chan_resources(struct dma_chan *chan)
- 	gpi_free_ring(&gchan->ch_ring, gpii);
- 	vchan_free_chan_resources(&gchan->vc);
- 	kfree(gchan->config);
-+	gchan->config = NULL;
+@@ -6,6 +6,7 @@
  
+ #include <dt-bindings/dma/qcom-gpi.h>
+ #include <linux/bitfield.h>
++#include <linux/delay.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/dmaengine.h>
+ #include <linux/module.h>
+@@ -491,7 +492,12 @@ struct gchan {
+ 	void __iomem *ch_cmd_reg;
+ 	u32 dir;
+ 	struct gpi_ring ch_ring;
+-	void *config;
++	union {
++		struct gpi_spi_config spi;
++		struct gpi_i2c_config i2c;
++	} config;
++	bool config_valid;
++	bool issued_since_reset;
+ };
+ 
+ struct gpii {
+@@ -508,14 +514,19 @@ struct gpii {
+ 	struct mutex ctrl_lock;
+ 	enum gpi_ev_state ev_state;
+ 	bool configured_irq;
++	bool irq_paused;
+ 	enum gpi_pm_state pm_state;
+ 	rwlock_t pm_lock;
+ 	struct gpi_ring ev_ring;
+ 	struct tasklet_struct ev_task; /* event processing tasklet */
+ 	struct completion cmd_completion;
+ 	enum gpi_cmd gpi_cmd;
++	u32 cmd_chid;
+ 	u32 cntxt_type_irq_msk;
+ 	bool ieob_set;
++	bool unusable;
++	bool payload_reset;
++	u32 unconfirmed_channels;
+ };
+ 
+ #define MAX_TRE 3
+@@ -537,6 +548,7 @@ static irqreturn_t gpi_handle_irq(int irq, void *data);
+ static void gpi_ring_recycle_ev_element(struct gpi_ring *ring);
+ static int gpi_ring_add_element(struct gpi_ring *ring, void **wp);
+ static void gpi_process_events(struct gpii *gpii);
++static void gpi_retain_rings(struct gpii *gpii);
+ 
+ static inline struct gchan *to_gchan(struct dma_chan *dma_chan)
+ {
+@@ -667,50 +679,69 @@ static int gpi_config_interrupts(struct gpii *gpii, enum gpii_irq_settings setti
+ 	return 0;
+ }
+ 
+-/* Sends gpii event or channel command */
++/* A timed-out command may still complete. Do not issue another one yet. */
++static int gpi_wait_for_cmd(struct gpii *gpii)
++{
++	if (gpii->gpi_cmd == GPI_MAX_CMD)
++		return 0;
++
++	if (!wait_for_completion_timeout(&gpii->cmd_completion,
++					 msecs_to_jiffies(CMD_TIMEOUT_MS))) {
++		dev_err_ratelimited(gpii->gpi_dev->dev,
++				    "cmd: %s completion timeout:%u\n",
++				    TO_GPI_CMD_STR(gpii->gpi_cmd), gpii->cmd_chid);
++		return -ETIMEDOUT;
++	}
++
++	write_lock_irq(&gpii->pm_lock);
++	gpii->gpi_cmd = GPI_MAX_CMD;
++	write_unlock_irq(&gpii->pm_lock);
++	return 0;
++}
++
++/* Sends gpii event or channel command. The caller holds ctrl_lock. */
+ static int gpi_send_cmd(struct gpii *gpii, struct gchan *gchan,
+ 			enum gpi_cmd gpi_cmd)
+ {
+ 	u32 chid = MAX_CHANNELS_PER_GPII;
+-	unsigned long timeout;
+ 	void __iomem *cmd_reg;
++	u32 ack_offset, ack_mask;
+ 	u32 cmd;
++	int ret;
+ 
+ 	if (gpi_cmd >= GPI_MAX_CMD)
+ 		return -EINVAL;
+-	if (IS_CHAN_CMD(gpi_cmd))
++
++	ret = gpi_wait_for_cmd(gpii);
++	if (ret)
++		return ret;
++
++	if (IS_CHAN_CMD(gpi_cmd)) {
+ 		chid = gchan->chid;
++		ack_offset = GPII_n_CNTXT_SRC_CH_IRQ_CLR_OFFS(gpii->gpii_id);
++		ack_mask = BIT(chid);
++	} else {
++		ack_offset = GPII_n_CNTXT_SRC_EV_CH_IRQ_CLR_OFFS(gpii->gpii_id);
++		ack_mask = BIT(0);
++	}
+ 
+ 	dev_dbg(gpii->gpi_dev->dev,
+ 		"sending cmd: %s:%u\n", TO_GPI_CMD_STR(gpi_cmd), chid);
+ 
+-	/* send opcode and wait for completion */
+-	reinit_completion(&gpii->cmd_completion);
+-	gpii->gpi_cmd = gpi_cmd;
+-
+ 	cmd_reg = IS_CHAN_CMD(gpi_cmd) ? gchan->ch_cmd_reg : gpii->ev_cmd_reg;
+ 	cmd = IS_CHAN_CMD(gpi_cmd) ? GPII_n_CH_CMD(gpi_cmd_info[gpi_cmd].opcode, chid) :
+ 				     GPII_n_EV_CMD(gpi_cmd_info[gpi_cmd].opcode, 0);
+-	gpi_write_reg(gpii, cmd_reg, cmd);
+-	timeout = wait_for_completion_timeout(&gpii->cmd_completion,
+-					      msecs_to_jiffies(CMD_TIMEOUT_MS));
+-	if (!timeout) {
+-		dev_err(gpii->gpi_dev->dev, "cmd: %s completion timeout:%u\n",
+-			TO_GPI_CMD_STR(gpi_cmd), chid);
+-		return -EIO;
+-	}
+-
+-	/* confirm new ch state is correct , if the cmd is a state change cmd */
+-	if (gpi_cmd_info[gpi_cmd].state == STATE_IGNORE)
+-		return 0;
+ 
+-	if (IS_CHAN_CMD(gpi_cmd) && gchan->ch_state == gpi_cmd_info[gpi_cmd].state)
+-		return 0;
+-
+-	if (!IS_CHAN_CMD(gpi_cmd) && gpii->ev_state == gpi_cmd_info[gpi_cmd].state)
+-		return 0;
++	write_lock_irq(&gpii->pm_lock);
++	/* A latched interrupt from an earlier state cannot acknowledge this command. */
++	gpi_write_reg(gpii, gpii->regs + ack_offset, ack_mask);
++	reinit_completion(&gpii->cmd_completion);
++	gpii->gpi_cmd = gpi_cmd;
++	gpii->cmd_chid = chid;
++	gpi_write_reg(gpii, cmd_reg, cmd);
++	write_unlock_irq(&gpii->pm_lock);
+ 
+-	return -EIO;
++	return gpi_wait_for_cmd(gpii);
+ }
+ 
+ /* program transfer ring DB register */
+@@ -739,6 +770,9 @@ static void gpi_process_ieob(struct gpii *gpii)
+ {
+ 	gpi_write_reg(gpii, gpii->ieob_clr_reg, BIT(0));
+ 
++	if (gpii->pm_state != ACTIVE_STATE)
++		return;
++
+ 	gpi_config_interrupts(gpii, MASK_IEOB_SETTINGS, 0);
+ 	tasklet_hi_schedule(&gpii->ev_task);
+ }
+@@ -757,6 +791,9 @@ static void gpi_process_ch_ctrl_irq(struct gpii *gpii)
+ 	gpi_write_reg(gpii, gpii->regs + offset, (u32)ch_irq);
+ 
+ 	for (chid = 0; chid < MAX_CHANNELS_PER_GPII; chid++) {
++		enum gpi_cmd cmd = gpii->gpi_cmd;
++		bool pending = IS_CHAN_CMD(cmd) && gpii->cmd_chid == chid;
++
+ 		if (!(BIT(chid) & ch_irq))
+ 			continue;
+ 
+@@ -770,16 +807,12 @@ static void gpi_process_ch_ctrl_irq(struct gpii *gpii)
+ 		 * not change hardware status. So overwriting software state
+ 		 * to default state.
+ 		 */
+-		if (gpii->gpi_cmd == GPI_CH_CMD_DE_ALLOC)
++		if (pending && cmd == GPI_CH_CMD_DE_ALLOC)
+ 			state = DEFAULT_CH_STATE;
+ 		gchan->ch_state = state;
+ 
+-		/*
+-		 * Triggering complete all if ch_state is not a stop in process.
+-		 * Stop in process is a transition state and we will wait for
+-		 * stop interrupt before notifying.
+-		 */
+-		if (gchan->ch_state != CH_STATE_STOP_IN_PROC)
++		if (pending && (state == gpi_cmd_info[cmd].state ||
++				gpi_cmd_info[cmd].state == STATE_IGNORE))
+ 			complete_all(&gpii->cmd_completion);
+ 	}
+ }
+@@ -857,6 +890,8 @@ static irqreturn_t gpi_handle_irq(int irq, void *data)
+ 
+ 		/* event control irq */
+ 		if (type & GPII_n_CNTXT_TYPE_IRQ_MSK_EV_CTRL) {
++			enum gpi_cmd cmd = gpii->gpi_cmd;
++			bool pending = cmd >= GPI_EV_CMD_BEGIN && cmd <= GPI_EV_CMD_END;
+ 			u32 ev_state;
+ 			u32 ev_ch_irq;
+ 
+@@ -877,13 +912,15 @@ static irqreturn_t gpi_handle_irq(int irq, void *data)
+ 			 * cmd does not change hardware status. So overwriting
+ 			 * software state to default state.
+ 			 */
+-			if (gpii->gpi_cmd == GPI_EV_CMD_DEALLOC)
++			if (pending && cmd == GPI_EV_CMD_DEALLOC && (ev_ch_irq & BIT(0)))
+ 				ev_state = DEFAULT_EV_CH_STATE;
+ 
+ 			gpii->ev_state = ev_state;
+ 			dev_dbg(gpii->gpi_dev->dev, "setting EV state to %s\n",
+ 				TO_GPI_EV_STATE_STR(gpii->ev_state));
+-			complete_all(&gpii->cmd_completion);
++			if (pending && (ev_ch_irq & BIT(0)) &&
++			    ev_state == gpi_cmd_info[cmd].state)
++				complete_all(&gpii->cmd_completion);
+ 			type &= ~(GPII_n_CNTXT_TYPE_IRQ_MSK_EV_CTRL);
+ 		}
+ 
+@@ -916,7 +953,7 @@ static void gpi_process_imed_data_event(struct gchan *gchan,
+ {
+ 	struct gpii *gpii = gchan->gpii;
+ 	struct gpi_ring *ch_ring = &gchan->ch_ring;
+-	void *tre = ch_ring->base + (ch_ring->el_size * imed_event->tre_index);
++	void *tre;
+ 	struct dmaengine_result result;
+ 	struct gpi_desc *gpi_desc;
+ 	struct virt_dma_desc *vd;
+@@ -932,6 +969,7 @@ static void gpi_process_imed_data_event(struct gchan *gchan,
+ 		return;
+ 	}
+ 
++	tre = ch_ring->base + (ch_ring->el_size * imed_event->tre_index);
+ 	spin_lock_irqsave(&gchan->vc.lock, flags);
+ 	vd = vchan_next_desc(&gchan->vc);
+ 	if (!vd) {
+@@ -998,7 +1036,7 @@ static void gpi_process_xfer_compl_event(struct gchan *gchan,
+ {
+ 	struct gpii *gpii = gchan->gpii;
+ 	struct gpi_ring *ch_ring = &gchan->ch_ring;
+-	void *ev_rp = to_virtual(ch_ring, compl_event->ptr);
++	void *ev_rp;
+ 	struct virt_dma_desc *vd;
+ 	struct gpi_desc *gpi_desc;
+ 	struct dmaengine_result result;
+@@ -1012,6 +1050,7 @@ static void gpi_process_xfer_compl_event(struct gchan *gchan,
+ 		return;
+ 	}
+ 
++	ev_rp = to_virtual(ch_ring, compl_event->ptr);
+ 	spin_lock_irqsave(&gchan->vc.lock, flags);
+ 	vd = vchan_next_desc(&gchan->vc);
+ 	if (!vd) {
+@@ -1136,7 +1175,7 @@ static void gpi_ev_tasklet(unsigned long data)
+ 	struct gpii *gpii = (struct gpii *)data;
+ 
+ 	read_lock(&gpii->pm_lock);
+-	if (!REG_ACCESS_VALID(gpii->pm_state)) {
++	if (gpii->pm_state != ACTIVE_STATE) {
+ 		read_unlock(&gpii->pm_lock);
+ 		dev_err(gpii->gpi_dev->dev, "not processing any events, pm_state:%s\n",
+ 			TO_GPI_PM_STR(gpii->pm_state));
+@@ -1177,19 +1216,19 @@ static void gpi_mark_stale_events(struct gchan *gchan)
+ 	}
+ }
+ 
+-/* reset sw state and issue channel reset or de-alloc */
+-static int gpi_reset_chan(struct gchan *gchan, enum gpi_cmd gpi_cmd)
++/* Reset the channel and discard the previous transfer ring contents. */
++static int gpi_reset_chan(struct gchan *gchan)
+ {
+ 	struct gpii *gpii = gchan->gpii;
+ 	struct gpi_ring *ch_ring = &gchan->ch_ring;
+ 	LIST_HEAD(list);
+ 	int ret;
+ 
+-	ret = gpi_send_cmd(gpii, gchan, gpi_cmd);
+-	if (ret) {
+-		dev_err(gpii->gpi_dev->dev, "Error with cmd:%s ret:%d\n",
+-			TO_GPI_CMD_STR(gpi_cmd), ret);
+-		return ret;
++	/* The previous reset may have completed after our wait timed out. */
++	if (READ_ONCE(gchan->ch_state) != CH_STATE_ALLOCATED) {
++		ret = gpi_send_cmd(gpii, gchan, GPI_CH_CMD_RESET);
++		if (ret)
++			return ret;
+ 	}
+ 
+ 	/* initialize the local ring ptrs */
+@@ -1207,6 +1246,9 @@ static int gpi_reset_chan(struct gchan *gchan, enum gpi_cmd gpi_cmd)
+ 	spin_lock(&gchan->vc.lock);
+ 	vchan_get_all_descriptors(&gchan->vc, &list);
+ 	spin_unlock(&gchan->vc.lock);
++	gchan->issued_since_reset = false;
++	WRITE_ONCE(gpii->unconfirmed_channels,
++		   gpii->unconfirmed_channels & ~BIT(gchan->chid));
+ 	write_unlock_irq(&gpii->pm_lock);
+ 	vchan_dma_desc_free_list(&gchan->vc, &list);
+ 
+@@ -1236,8 +1278,12 @@ static int gpi_start_chan(struct gchan *gchan)
+ static int gpi_stop_chan(struct gchan *gchan)
+ {
+ 	struct gpii *gpii = gchan->gpii;
++	enum gpi_ch_state state = READ_ONCE(gchan->ch_state);
+ 	int ret;
+ 
++	if (state == CH_STATE_STOPPED || state == CH_STATE_ALLOCATED)
++		return 0;
++
+ 	ret = gpi_send_cmd(gpii, gchan, GPI_CH_CMD_STOP);
+ 	if (ret) {
+ 		dev_err(gpii->gpi_dev->dev, "Error with cmd:%s ret:%d\n",
+@@ -1454,8 +1500,7 @@ static void gpi_queue_xfer(struct gpii *gpii, struct gchan *gchan,
+ 	*wp = ch_tre;
+ }
+ 
+-/* reset and restart transfer channel */
+-static int gpi_terminate_all(struct dma_chan *chan)
++static int gpi_terminate(struct dma_chan *chan, bool restart)
+ {
+ 	struct gchan *gchan = to_gchan(chan);
+ 	struct gpii *gpii = gchan->gpii;
+@@ -1471,53 +1516,95 @@ static int gpi_terminate_all(struct dma_chan *chan)
+ 	schid = (gchan->protocol == QCOM_GPI_UART) ? gchan->chid : 0;
+ 	echid = (gchan->protocol == QCOM_GPI_UART) ? schid + 1 : MAX_CHANNELS_PER_GPII;
+ 
+-	/* stop the channel */
+-	for (i = schid; i < echid; i++) {
+-		gchan = &gpii->gchan[i];
++	if (gpii->unusable) {
++		ret = gpii->payload_reset ? 0 : -EIO;
++		goto terminate_exit;
++	}
+ 
+-		/* disable ch state so no more TRE processing */
+-		write_lock_irq(&gpii->pm_lock);
+-		gchan->pm_state = PREPARE_TERMINATE;
+-		write_unlock_irq(&gpii->pm_lock);
++	/* Drain callbacks and block new ones even if a command has timed out. */
++	write_lock_irq(&gpii->pm_lock);
++	for (i = schid; i < echid; i++)
++		gpii->gchan[i].pm_state = PREPARE_TERMINATE;
++	write_unlock_irq(&gpii->pm_lock);
+ 
+-		/* send command to Stop the channel */
+-		ret = gpi_stop_chan(gchan);
++	ret = -EIO;
++	if (gpii->pm_state != ACTIVE_STATE)
++		goto terminate_exit;
++
++	ret = gpi_wait_for_cmd(gpii);
++	if (ret)
++		goto terminate_exit;
++
++	for (i = schid; i < echid; i++) {
++		if (!gpii->gchan[i].ch_ring.configured) {
++			ret = -EIO;
++			goto terminate_exit;
++		}
++	}
++
++	for (i = schid; i < echid; i++) {
++		ret = gpi_stop_chan(&gpii->gchan[i]);
++		if (ret)
++			goto terminate_exit;
+ 	}
+ 
+ 	/* reset the channels (clears any pending tre) */
+ 	for (i = schid; i < echid; i++) {
+ 		gchan = &gpii->gchan[i];
+ 
+-		ret = gpi_reset_chan(gchan, GPI_CH_CMD_RESET);
++		ret = gpi_reset_chan(gchan);
+ 		if (ret) {
+ 			dev_err(gpii->gpi_dev->dev, "Error resetting channel ret:%d\n", ret);
+ 			goto terminate_exit;
+ 		}
++	}
+ 
+-		/* reprogram channel CNTXT */
+-		ret = gpi_alloc_chan(gchan, false);
+-		if (ret) {
+-			dev_err(gpii->gpi_dev->dev, "Error alloc_channel ret:%d\n", ret);
+-			goto terminate_exit;
++	if (!restart) {
++		if (echid - schid == MAX_CHANNELS_PER_GPII) {
++			gpii->payload_reset = true;
++			gpi_retain_rings(gpii);
+ 		}
++		goto terminate_exit;
+ 	}
+ 
+-	/* restart the channels */
+-	for (i = schid; i < echid; i++) {
+-		gchan = &gpii->gchan[i];
++	/* The old descriptors are gone. Restore each channel with an empty ring. */
++	for (i = schid; i < echid; i++)
++		gpi_alloc_chan(&gpii->gchan[i], false);
+ 
+-		ret = gpi_start_chan(gchan);
++	for (i = schid; i < echid; i++) {
++		ret = gpi_send_cmd(gpii, &gpii->gchan[i], GPI_CH_CMD_START);
+ 		if (ret) {
+-			dev_err(gpii->gpi_dev->dev, "Error Starting Channel ret:%d\n", ret);
++			dev_err(gpii->gpi_dev->dev, "Failed to restart empty channel: %d\n", ret);
++			if (echid - schid == MAX_CHANNELS_PER_GPII) {
++				gpii->payload_reset = true;
++				gpi_retain_rings(gpii);
++				ret = 0;
++			}
+ 			goto terminate_exit;
+ 		}
+ 	}
++	write_lock_irq(&gpii->pm_lock);
++	for (i = schid; i < echid; i++)
++		gpii->gchan[i].pm_state = ACTIVE_STATE;
++	write_unlock_irq(&gpii->pm_lock);
+ 
+ terminate_exit:
++	if (ret) {
++		for (i = schid; i < echid; i++) {
++			if (READ_ONCE(gpii->gchan[i].issued_since_reset))
++				WRITE_ONCE(gpii->unconfirmed_channels,
++					   gpii->unconfirmed_channels | BIT(i));
++		}
++	}
+ 	mutex_unlock(&gpii->ctrl_lock);
+ 	return ret;
+ }
+ 
++static int gpi_terminate_all(struct dma_chan *chan)
++{
++	return gpi_terminate(chan, true);
++}
++
+ /* pause dma transfer for all channels */
+ static int gpi_pause(struct dma_chan *chan)
+ {
+@@ -1536,6 +1623,16 @@ static int gpi_pause(struct dma_chan *chan)
+ 		mutex_unlock(&gpii->ctrl_lock);
+ 		return 0;
+ 	}
++	if (gpii->pm_state != ACTIVE_STATE) {
++		mutex_unlock(&gpii->ctrl_lock);
++		return -EIO;
++	}
++
++	ret = gpi_wait_for_cmd(gpii);
++	if (ret) {
++		mutex_unlock(&gpii->ctrl_lock);
++		return ret;
++	}
+ 
+ 	/* send stop command to stop the channels */
+ 	for (i = 0; i < MAX_CHANNELS_PER_GPII; i++) {
+@@ -1547,6 +1644,7 @@ static int gpi_pause(struct dma_chan *chan)
+ 	}
+ 
+ 	disable_irq(gpii->irq);
++	gpii->irq_paused = true;
+ 
+ 	/* Wait for threads to complete out */
+ 	tasklet_kill(&gpii->ev_task);
+@@ -1572,11 +1670,27 @@ static int gpi_resume(struct dma_chan *chan)
+ 		mutex_unlock(&gpii->ctrl_lock);
+ 		return 0;
+ 	}
++	if (gpii->pm_state != PAUSE_STATE) {
++		mutex_unlock(&gpii->ctrl_lock);
++		return -EIO;
++	}
+ 
+-	enable_irq(gpii->irq);
++	if (gpii->irq_paused) {
++		enable_irq(gpii->irq);
++		gpii->irq_paused = false;
++	}
++
++	ret = gpi_wait_for_cmd(gpii);
++	if (ret) {
++		mutex_unlock(&gpii->ctrl_lock);
++		return ret;
++	}
+ 
+ 	/* send start command to start the channels */
+ 	for (i = 0; i < MAX_CHANNELS_PER_GPII; i++) {
++		if (READ_ONCE(gpii->gchan[i].ch_state) == CH_STATE_STARTED)
++			continue;
++
+ 		ret = gpi_send_cmd(gpii, &gpii->gchan[i], GPI_CH_CMD_START);
+ 		if (ret) {
+ 			dev_err(gpii->gpi_dev->dev, "Error starting chan, ret:%d\n", ret);
+@@ -1605,26 +1719,43 @@ static int
+ gpi_peripheral_config(struct dma_chan *chan, struct dma_slave_config *config)
+ {
+ 	struct gchan *gchan = to_gchan(chan);
+-	void *new_config;
+-
+-	if (!config->peripheral_config)
+-		return -EINVAL;
+-
+-	new_config = krealloc(gchan->config, config->peripheral_size, GFP_NOWAIT);
+-	if (!new_config)
+-		return -ENOMEM;
++	struct gpii *gpii = gchan->gpii;
++	unsigned long flags;
++	size_t size;
++	int ret = -EINVAL;
++
++	switch (gchan->protocol) {
++	case QCOM_GPI_SPI:
++		size = sizeof(gchan->config.spi);
++		break;
++	case QCOM_GPI_I2C:
++		size = sizeof(gchan->config.i2c);
++		break;
++	default:
++		size = 0;
++		break;
++	}
+ 
+-	gchan->config = new_config;
+-	memcpy(gchan->config, config->peripheral_config, config->peripheral_size);
++	write_lock_irqsave(&gpii->pm_lock, flags);
++	gchan->config_valid = false;
++	if (gpii->pm_state != ACTIVE_STATE || gchan->pm_state != ACTIVE_STATE) {
++		ret = -EIO;
++	} else if (size && config->peripheral_config &&
++		   config->peripheral_size == size) {
++		memcpy(&gchan->config, config->peripheral_config, size);
++		gchan->config_valid = true;
++		ret = 0;
++	}
++	write_unlock_irqrestore(&gpii->pm_lock, flags);
+ 
+-	return 0;
++	return ret;
+ }
+ 
+ static int gpi_create_i2c_tre(struct gchan *chan, struct gpi_desc *desc,
+ 			      struct scatterlist *sgl, enum dma_transfer_direction direction,
+ 			      unsigned long flags)
+ {
+-	struct gpi_i2c_config *i2c = chan->config;
++	const struct gpi_i2c_config *i2c = &chan->config.i2c;
+ 	struct device *dev = chan->gpii->gpi_dev->dev;
+ 	unsigned int tre_idx = 0;
+ 	dma_addr_t address;
+@@ -1702,7 +1833,7 @@ static int gpi_create_i2c_tre(struct gchan *chan, struct gpi_desc *desc,
+ static int gpi_create_spi_tre(struct gchan *chan, struct gpi_desc *desc,
+ 			      struct scatterlist *sgl, enum dma_transfer_direction direction)
+ {
+-	struct gpi_spi_config *spi = chan->config;
++	const struct gpi_spi_config *spi = &chan->config.spi;
+ 	struct device *dev = chan->gpii->gpi_dev->dev;
+ 	unsigned int tre_idx = 0;
+ 	dma_addr_t address;
+@@ -1804,25 +1935,33 @@ gpi_prep_slave_sg(struct dma_chan *chan, struct scatterlist *sgl,
+ 	struct device *dev = gpii->gpi_dev->dev;
+ 	struct gpi_ring *ch_ring = &gchan->ch_ring;
+ 	struct gpi_desc *gpi_desc;
++	struct dma_async_tx_descriptor *tx = NULL;
++	unsigned long pm_flags;
+ 	u32 nr, nr_tre = 0;
+-	u8 set_config;
++	bool set_config;
+ 	int i;
+ 
+-	gpii->ieob_set = false;
+ 	if (!is_slave_direction(direction)) {
+ 		dev_err(gpii->gpi_dev->dev, "invalid dma direction: %d\n", direction);
+ 		return NULL;
+ 	}
+ 
+-	if (sg_len > 1) {
+-		dev_err(dev, "Multi sg sent, we support only one atm: %d\n", sg_len);
++	if (sg_len != 1) {
++		dev_err(dev, "expected one DMA segment, got %u\n", sg_len);
+ 		return NULL;
+ 	}
+ 
+-	nr_tre = 3;
+-	set_config = *(u32 *)gchan->config;
+-	if (!set_config)
+-		nr_tre = 2;
++	read_lock_irqsave(&gpii->pm_lock, pm_flags);
++	if (gpii->pm_state != ACTIVE_STATE || gchan->pm_state != ACTIVE_STATE ||
++	    !gchan->config_valid)
++		goto unlock;
++
++	gpii->ieob_set = false;
++	if (gchan->protocol == QCOM_GPI_SPI)
++		set_config = gchan->config.spi.set_config;
++	else
++		set_config = gchan->config.i2c.set_config;
++	nr_tre = set_config ? 3 : 2;
+ 	if (direction == DMA_DEV_TO_MEM) /* rx */
+ 		nr_tre = 1;
+ 
+@@ -1830,15 +1969,15 @@ gpi_prep_slave_sg(struct dma_chan *chan, struct scatterlist *sgl,
+ 	nr = gpi_ring_num_elements_avail(ch_ring);
+ 	if (nr < nr_tre) {
+ 		dev_err(dev, "not enough space in ring, avail:%u required:%u\n", nr, nr_tre);
+-		return NULL;
++		goto unlock;
+ 	}
+ 
+ 	if (!(flags & DMA_PREP_INTERRUPT) && (nr - nr_tre < 2))
+-		return NULL;
++		goto unlock;
+ 
+ 	gpi_desc = kzalloc_obj(*gpi_desc, GFP_NOWAIT);
+ 	if (!gpi_desc)
+-		return NULL;
++		goto unlock;
+ 
+ 	/* create TREs for xfer */
+ 	if (gchan->protocol == QCOM_GPI_SPI) {
+@@ -1848,7 +1987,7 @@ gpi_prep_slave_sg(struct dma_chan *chan, struct scatterlist *sgl,
+ 	} else {
+ 		dev_err(dev, "invalid peripheral: %d\n", gchan->protocol);
+ 		kfree(gpi_desc);
+-		return NULL;
++		goto unlock;
+ 	}
+ 
+ 	/* set up the descriptor */
+@@ -1856,7 +1995,10 @@ gpi_prep_slave_sg(struct dma_chan *chan, struct scatterlist *sgl,
+ 	gpi_desc->len = sg_dma_len(sgl);
+ 	gpi_desc->num_tre  = i;
+ 
+-	return vchan_tx_prep(&gchan->vc, &gpi_desc->vd, flags);
++	tx = vchan_tx_prep(&gchan->vc, &gpi_desc->vd, flags);
++unlock:
++	read_unlock_irqrestore(&gpii->pm_lock, pm_flags);
++	return tx;
+ }
+ 
+ /* rings transfer ring db to being transfer */
+@@ -1872,6 +2014,8 @@ static void gpi_issue_pending(struct dma_chan *chan)
+ 	int i;
+ 
+ 	read_lock_irqsave(&gpii->pm_lock, pm_lock_flags);
++	if (gpii->pm_state != ACTIVE_STATE || gchan->pm_state != ACTIVE_STATE)
++		goto unlock;
+ 
+ 	/* move all submitted descriptors to issued list */
+ 	spin_lock_irqsave(&gchan->vc.lock, flags);
+@@ -1881,10 +2025,8 @@ static void gpi_issue_pending(struct dma_chan *chan)
+ 	spin_unlock_irqrestore(&gchan->vc.lock, flags);
+ 
+ 	/* nothing to do list is empty */
+-	if (!vd) {
+-		read_unlock_irqrestore(&gpii->pm_lock, pm_lock_flags);
+-		return;
+-	}
++	if (!vd)
++		goto unlock;
+ 
+ 	gpi_desc = to_gpi_desc(vd);
+ 	for (i = 0; i < gpi_desc->num_tre; i++) {
+@@ -1893,16 +2035,73 @@ static void gpi_issue_pending(struct dma_chan *chan)
+ 	}
+ 
+ 	gpi_desc->db = ch_ring->wp;
++	WRITE_ONCE(gchan->issued_since_reset, true);
+ 	gpi_write_ch_db(gchan, &gchan->ch_ring, gpi_desc->db);
++unlock:
+ 	read_unlock_irqrestore(&gpii->pm_lock, pm_lock_flags);
+ }
+ 
++static void gpi_retain_rings(struct gpii *gpii)
++{
++	int i;
++
++	write_lock_irq(&gpii->pm_lock);
++	gpii->pm_state = PREPARE_TERMINATE;
++	for (i = 0; i < MAX_CHANNELS_PER_GPII; i++)
++		gpii->gchan[i].pm_state = PREPARE_TERMINATE;
++	/* Publish the retained channel state to gpi_find_avail_gpii(). */
++	smp_store_release(&gpii->unusable, true);
++	write_unlock_irq(&gpii->pm_lock);
++	dev_err(gpii->gpi_dev->dev, "GPII %u disabled; retaining DMA rings\n",
++		gpii->gpii_id);
++}
++
++static int gpi_release_hw_chan(struct gchan *gchan)
++{
++	int ret;
++
++	ret = gpi_stop_chan(gchan);
++	if (ret)
++		return ret;
++
++	ret = gpi_reset_chan(gchan);
++	if (ret)
++		return ret;
++
++	return gpi_send_cmd(gchan->gpii, gchan, GPI_CH_CMD_DE_ALLOC);
++}
++
++static int gpi_release_ev_ring(struct gpii *gpii)
++{
++	int ret;
++
++	if (!gpii->ev_ring.configured)
++		return 0;
++
++	write_lock_irq(&gpii->pm_lock);
++	gpii->pm_state = PREPARE_TERMINATE;
++	write_unlock_irq(&gpii->pm_lock);
++	tasklet_kill(&gpii->ev_task);
++
++	ret = gpi_send_cmd(gpii, NULL, GPI_EV_CMD_DEALLOC);
++	if (ret)
++		return ret;
++
++	gpi_disable_interrupts(gpii);
++	gpi_free_ring(&gpii->ev_ring, gpii);
++	write_lock_irq(&gpii->pm_lock);
++	gpii->pm_state = DISABLE_STATE;
++	write_unlock_irq(&gpii->pm_lock);
++
++	return 0;
++}
++
+ static int gpi_ch_init(struct gchan *gchan)
+ {
+ 	struct gpii *gpii = gchan->gpii;
+ 	const int ev_factor = gpii->gpi_dev->ev_factor;
+ 	u32 elements;
+-	int i = 0, ret = 0;
++	int i, allocated = 0, ret = 0;
+ 
+ 	gchan->pm_state = CONFIG_STATE;
+ 
+@@ -1940,7 +2139,7 @@ static int gpi_ch_init(struct gchan *gchan)
+ 	ret = gpi_alloc_ev_chan(gpii);
+ 	if (ret) {
+ 		dev_err(gpii->gpi_dev->dev, "error alloc_ev_chan:%d\n", ret);
+-		goto error_alloc_ev_ring;
++		goto retain;
+ 	}
+ 
+ 	/* Allocate all channels */
+@@ -1948,8 +2147,9 @@ static int gpi_ch_init(struct gchan *gchan)
+ 		ret = gpi_alloc_chan(&gpii->gchan[i], true);
+ 		if (ret) {
+ 			dev_err(gpii->gpi_dev->dev, "Error allocating chan:%d\n", ret);
+-			goto error_alloc_chan;
++			goto retain;
+ 		}
++		allocated++;
+ 	}
+ 
+ 	/* start channels  */
+@@ -1957,24 +2157,47 @@ static int gpi_ch_init(struct gchan *gchan)
+ 		ret = gpi_start_chan(&gpii->gchan[i]);
+ 		if (ret) {
+ 			dev_err(gpii->gpi_dev->dev, "Error start chan:%d\n", ret);
+-			goto error_start_chan;
++			goto retain;
+ 		}
+ 	}
+ 	return ret;
+ 
+-error_start_chan:
+-	for (i = i - 1; i >= 0; i--) {
+-		gpi_stop_chan(&gpii->gchan[i]);
+-		gpi_send_cmd(gpii, gchan, GPI_CH_CMD_RESET);
++retain:
++	write_lock_irq(&gpii->pm_lock);
++	gpii->pm_state = PREPARE_TERMINATE;
++	for (i = 0; i < MAX_CHANNELS_PER_GPII; i++)
++		gpii->gchan[i].pm_state = CONFIG_STATE;
++	write_unlock_irq(&gpii->pm_lock);
++
++	/* Finish an outstanding command before using the reported HW state. */
++	if (gpi_wait_for_cmd(gpii))
++		goto retain_rings;
++
++	/*
++	 * A failed allocation may have completed after the timeout. Its DMA
++	 * base was not programmed, but the channel must still be released.
++	 */
++	for (i = 0; i < MAX_CHANNELS_PER_GPII; i++) {
++		struct gchan *chan = &gpii->gchan[i];
++
++		if (i >= allocated && READ_ONCE(chan->ch_state) == CH_STATE_NOT_ALLOCATED)
++			continue;
++		if (gpi_release_hw_chan(chan))
++			goto retain_rings;
+ 	}
+-	i = 2;
+-error_alloc_chan:
+-	for (i = i - 1; i >= 0; i--)
+-		gpi_reset_chan(gchan, GPI_CH_CMD_DE_ALLOC);
+-error_alloc_ev_ring:
+-	gpi_disable_interrupts(gpii);
++	if (gpi_release_ev_ring(gpii))
++		goto retain_rings;
++	return ret;
++
++retain_rings:
++	gpi_retain_rings(gpii);
++	return ret;
++
+ error_config_int:
+ 	gpi_free_ring(&gpii->ev_ring, gpii);
++	write_lock_irq(&gpii->pm_lock);
++	gpii->pm_state = DISABLE_STATE;
++	write_unlock_irq(&gpii->pm_lock);
+ exit_gpi_init:
+ 	return ret;
+ }
+@@ -1985,33 +2208,31 @@ static void gpi_free_chan_resources(struct dma_chan *chan)
+ 	struct gchan *gchan = to_gchan(chan);
+ 	struct gpii *gpii = gchan->gpii;
+ 	enum gpi_pm_state cur_state;
+-	int ret, i;
++	int i;
+ 
+ 	mutex_lock(&gpii->ctrl_lock);
+ 
+ 	cur_state = gchan->pm_state;
+-
+-	/* disable ch state so no more TRE processing for this channel */
+ 	write_lock_irq(&gpii->pm_lock);
+ 	gchan->pm_state = PREPARE_TERMINATE;
++	gchan->config_valid = false;
+ 	write_unlock_irq(&gpii->pm_lock);
+ 
+-	/* attempt to do graceful hardware shutdown */
+-	if (cur_state == ACTIVE_STATE) {
+-		gpi_stop_chan(gchan);
++	if (gpii->unusable)
++		goto exit_free;
+ 
+-		ret = gpi_send_cmd(gpii, gchan, GPI_CH_CMD_RESET);
+-		if (ret)
+-			dev_err(gpii->gpi_dev->dev, "error resetting channel:%d\n", ret);
+-
+-		gpi_reset_chan(gchan, GPI_CH_CMD_DE_ALLOC);
++	if (gpii->irq_paused) {
++		enable_irq(gpii->irq);
++		gpii->irq_paused = false;
+ 	}
+ 
+-	/* free all allocated memory */
+-	gpi_free_ring(&gchan->ch_ring, gpii);
+-	vchan_free_chan_resources(&gchan->vc);
+-	kfree(gchan->config);
++	if (REG_ACCESS_VALID(cur_state)) {
++		if (gpi_wait_for_cmd(gpii) || gpi_release_hw_chan(gchan))
++			goto retain_rings;
++	}
+ 
++	if (gchan->ch_ring.configured)
++		gpi_free_ring(&gchan->ch_ring, gpii);
  	write_lock_irq(&gpii->pm_lock);
  	gchan->pm_state = DISABLE_STATE;
+ 	write_unlock_irq(&gpii->pm_lock);
+@@ -2021,31 +2242,13 @@ static void gpi_free_chan_resources(struct dma_chan *chan)
+ 		if (gpii->gchan[i].ch_ring.configured)
+ 			goto exit_free;
+ 
+-	/* deallocate EV Ring */
+-	cur_state = gpii->pm_state;
+-	write_lock_irq(&gpii->pm_lock);
+-	gpii->pm_state = PREPARE_TERMINATE;
+-	write_unlock_irq(&gpii->pm_lock);
+-
+-	/* wait for threads to complete out */
+-	tasklet_kill(&gpii->ev_task);
+-
+-	/* send command to de allocate event ring */
+-	if (cur_state == ACTIVE_STATE)
+-		gpi_send_cmd(gpii, NULL, GPI_EV_CMD_DEALLOC);
+-
+-	gpi_free_ring(&gpii->ev_ring, gpii);
+-
+-	/* disable interrupts */
+-	if (cur_state == ACTIVE_STATE)
+-		gpi_disable_interrupts(gpii);
+-
+-	/* set final state to disable */
+-	write_lock_irq(&gpii->pm_lock);
+-	gpii->pm_state = DISABLE_STATE;
+-	write_unlock_irq(&gpii->pm_lock);
++	if (!gpi_release_ev_ring(gpii))
++		goto exit_free;
+ 
++retain_rings:
++	gpi_retain_rings(gpii);
+ exit_free:
++	vchan_free_chan_resources(&gchan->vc);
+ 	mutex_unlock(&gpii->ctrl_lock);
+ }
+ 
+@@ -2058,18 +2261,23 @@ static int gpi_alloc_chan_resources(struct dma_chan *chan)
+ 
+ 	mutex_lock(&gpii->ctrl_lock);
+ 
++	ret = -EIO;
++	if (gpii->unusable)
++		goto unlock;
++
+ 	/* allocate memory for transfer ring */
+ 	ret = gpi_alloc_ring(&gchan->ch_ring, CHAN_TRES,
+ 			     sizeof(struct gpi_tre), gpii);
+ 	if (ret)
+-		goto xfer_alloc_err;
++		goto unlock;
+ 
+ 	ret = gpi_ch_init(gchan);
++	if (ret && !gpii->unusable) {
++		gpi_free_ring(&gchan->ch_ring, gpii);
++		gchan->pm_state = DISABLE_STATE;
++	}
+ 
+-	mutex_unlock(&gpii->ctrl_lock);
+-
+-	return ret;
+-xfer_alloc_err:
++unlock:
+ 	mutex_unlock(&gpii->ctrl_lock);
+ 
+ 	return ret;
+@@ -2088,6 +2296,12 @@ static int gpi_find_avail_gpii(struct gpi_dev *gpi_dev, u32 seid)
+ 		tx_chan = &gpi_dev->gpiis[gpii].gchan[GPI_TX_CHAN];
+ 		rx_chan = &gpi_dev->gpiis[gpii].gchan[GPI_RX_CHAN];
+ 
++		/* A retained channel may still access this serial engine. */
++		if (smp_load_acquire(&gpi_dev->gpiis[gpii].unusable) &&
++		    ((tx_chan->ch_ring.configured && tx_chan->seid == seid) ||
++		     (rx_chan->ch_ring.configured && rx_chan->seid == seid)))
++			return -EIO;
++
+ 		if (rx_chan->vc.chan.client_count && rx_chan->seid == seid)
+ 			return gpii;
+ 		if (tx_chan->vc.chan.client_count && tx_chan->seid == seid)
+@@ -2103,7 +2317,8 @@ static int gpi_find_avail_gpii(struct gpi_dev *gpi_dev, u32 seid)
+ 		rx_chan = &gpi_dev->gpiis[gpii].gchan[GPI_RX_CHAN];
+ 
+ 		/* check if gpii is configured */
+-		if (tx_chan->vc.chan.client_count ||
++		if (READ_ONCE(gpi_dev->gpiis[gpii].unusable) ||
++		    tx_chan->vc.chan.client_count ||
+ 		    rx_chan->vc.chan.client_count)
+ 			continue;
+ 
+@@ -2250,6 +2465,7 @@ static int gpi_probe(struct platform_device *pdev)
+ 		tasklet_init(&gpii->ev_task, gpi_ev_tasklet,
+ 			     (unsigned long)gpii);
+ 		init_completion(&gpii->cmd_completion);
++		gpii->gpi_cmd = GPI_MAX_CMD;
+ 		gpii->gpii_id = i;
+ 		gpii->regs = gpi_dev->ee_base;
+ 		gpii->gpi_dev = gpi_dev;
+@@ -2312,8 +2528,33 @@ static const struct of_device_id gpi_of_match[] = {
+ };
+ MODULE_DEVICE_TABLE(of, gpi_of_match);
+ 
++static void gpi_shutdown(struct platform_device *pdev)
++{
++	struct gpi_dev *gpi_dev = platform_get_drvdata(pdev);
++	unsigned int i;
++
++	/* A DMA client may already have unbound while retaining its buffers. */
++	for (i = 0; i < gpi_dev->max_gpii; i++) {
++		struct gpii *gpii = &gpi_dev->gpiis[i];
++		u32 channels;
++
++		while ((channels = READ_ONCE(gpii->unconfirmed_channels))) {
++			struct dma_chan *chan = &gpii->gchan[__ffs(channels)].vc.chan;
++			int ret = gpi_terminate(chan, false);
++
++			if (!ret)
++				continue;
++			dev_err_ratelimited(gpi_dev->dev,
++					    "GPII %u DMA stop unconfirmed (%d); keeping the system on\n",
++					    i, ret);
++			msleep(1000);
++		}
++	}
++}
++
+ static struct platform_driver gpi_driver = {
+ 	.probe = gpi_probe,
++	.shutdown = gpi_shutdown,
+ 	.driver = {
+ 		.name = KBUILD_MODNAME,
+ 		.of_match_table = gpi_of_match,
+diff --git a/drivers/i2c/busses/i2c-qcom-geni.c b/drivers/i2c/busses/i2c-qcom-geni.c
+index c4c6202ff15a8c546c4aae28b31765a3546b7c76..67a27eabd30f18b2009d4a7f9bf755ff4e7affc8 100644
+--- a/drivers/i2c/busses/i2c-qcom-geni.c
++++ b/drivers/i2c/busses/i2c-qcom-geni.c
+@@ -6,6 +6,7 @@
+ 
+ #include <linux/acpi.h>
+ #include <linux/clk.h>
++#include <linux/delay.h>
+ #include <linux/dmaengine.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/dma/qcom-gpi-dma.h>
+@@ -96,21 +97,25 @@ struct geni_i2c_desc {
+ 
+ #define QCOM_I2C_MIN_NUM_OF_MSGS_MULTI_DESC	2
+ 
++struct geni_i2c_gpi_buffer {
++	void *data;
++	dma_addr_t addr;
++	u16 len;
++};
++
+ /**
+  * struct geni_i2c_gpi_multi_desc_xfer - Structure for multi transfer support
+  *
+  * @msg_idx_cnt: Current message index being processed in the transfer
+  * @unmap_msg_cnt: Number of messages that have been unmapped
+  * @irq_cnt: Number of transfer completion interrupts received
+- * @dma_buf: Array of virtual addresses for DMA-safe buffers
+- * @dma_addr: Array of DMA addresses corresponding to the buffers
++ * @buffers: Outstanding write buffers
+  */
+ struct geni_i2c_gpi_multi_desc_xfer {
+ 	u32 msg_idx_cnt;
+ 	u32 unmap_msg_cnt;
+ 	u32 irq_cnt;
+-	void **dma_buf;
+-	dma_addr_t *dma_addr;
++	struct geni_i2c_gpi_buffer *buffers;
+ };
+ 
+ struct geni_i2c_dev {
+@@ -138,8 +143,11 @@ struct geni_i2c_dev {
+ 	struct dma_chan *rx_c;
+ 	bool no_dma;
+ 	bool gpi_mode;
++	bool gpi_failed;
+ 	bool is_tx_multi_desc_xfer;
+ 	u32 num_msgs;
++	struct geni_i2c_gpi_buffer gpi_tx;
++	struct geni_i2c_gpi_buffer gpi_rx;
+ 	struct geni_i2c_gpi_multi_desc_xfer i2c_multi_desc_config;
+ 	const struct geni_i2c_desc *dev_data;
+ };
+@@ -346,7 +354,7 @@ static irqreturn_t geni_i2c_irq(int irq, void *dev)
+ 	if (!cur ||
+ 	    m_stat & (M_CMD_FAILURE_EN | M_CMD_ABORT_EN) ||
+ 	    dm_rx_st & (DM_I2C_CB_ERR)) {
+-		if (m_stat & M_GP_IRQ_1_EN)
++		if (cur && m_stat & M_GP_IRQ_1_EN)
+ 			geni_i2c_check_addr_data_nack(gi2c);
+ 		if (m_stat & M_GP_IRQ_3_EN)
+ 			geni_i2c_err(gi2c, BUS_PROTO);
+@@ -412,9 +420,9 @@ static irqreturn_t geni_i2c_irq(int irq, void *dev)
+ 		writel_relaxed(dm_rx_st, base + SE_DMA_RX_IRQ_CLR);
+ 
+ 	/* if this is err with done-bit not set, handle that through timeout. */
+-	if (m_stat & M_CMD_DONE_EN ||
+-	    dm_tx_st & TX_DMA_DONE ||
+-	    dm_rx_st & RX_DMA_DONE)
++	if (!gi2c->gpi_mode && (m_stat & M_CMD_DONE_EN ||
++			       dm_tx_st & TX_DMA_DONE ||
++			       dm_rx_st & RX_DMA_DONE))
+ 		complete(&gi2c->done);
+ 	if (m_stat & M_CMD_CANCEL_EN)
+ 		complete(&gi2c->cancel_done);
+@@ -601,6 +609,8 @@ static void i2c_gpi_cb_result(void *cb, const struct dmaengine_result *result)
+ 	struct geni_i2c_dev *gi2c = cb;
+ 	struct geni_i2c_gpi_multi_desc_xfer *tx_multi_xfer;
+ 
++	guard(spinlock_irqsave)(&gi2c->lock);
++
+ 	if (result->result != DMA_TRANS_NOERROR) {
+ 		dev_err(gi2c->se.dev, "DMA txn failed:%d\n", result->result);
+ 		gi2c->err = -EIO;
+@@ -608,99 +618,118 @@ static void i2c_gpi_cb_result(void *cb, const struct dmaengine_result *result)
+ 		dev_dbg(gi2c->se.dev, "DMA xfer has pending: %d\n", result->residue);
+ 	}
+ 
+-	if (gi2c->is_tx_multi_desc_xfer) {
++	if (gi2c->is_tx_multi_desc_xfer && !gi2c->err) {
+ 		tx_multi_xfer = &gi2c->i2c_multi_desc_config;
+-		tx_multi_xfer->irq_cnt++;
++		WRITE_ONCE(tx_multi_xfer->irq_cnt, tx_multi_xfer->irq_cnt + 1);
+ 	}
+ 
+ 	complete(&gi2c->done);
+ }
+ 
+-static void geni_i2c_gpi_unmap(struct geni_i2c_dev *gi2c, struct i2c_msg *msg,
+-			       void *tx_buf, dma_addr_t tx_addr,
+-			       void *rx_buf, dma_addr_t rx_addr)
++static void geni_i2c_gpi_unmap(struct geni_i2c_dev *gi2c,
++			       struct geni_i2c_gpi_buffer *buffer, bool read,
++			       struct i2c_msg *msg)
+ {
+-	if (tx_buf) {
+-		dma_unmap_single(gi2c->se.dev->parent, tx_addr, msg->len, DMA_TO_DEVICE);
+-		i2c_put_dma_safe_msg_buf(tx_buf, msg, !gi2c->err);
+-	}
++	if (!buffer->data)
++		return;
+ 
+-	if (rx_buf) {
+-		dma_unmap_single(gi2c->se.dev->parent, rx_addr, msg->len, DMA_FROM_DEVICE);
+-		i2c_put_dma_safe_msg_buf(rx_buf, msg, !gi2c->err);
+-	}
++	dma_unmap_single(gi2c->se.dev->parent, buffer->addr, buffer->len,
++			 read ? DMA_FROM_DEVICE : DMA_TO_DEVICE);
++	if (msg)
++		i2c_put_dma_safe_msg_buf(buffer->data, msg, true);
++	else
++		kfree(buffer->data);
++	buffer->data = NULL;
+ }
+ 
+ /**
+  * geni_i2c_gpi_multi_desc_unmap() - Unmaps DMA buffers post multi message TX transfers
+  * @gi2c: I2C dev handle
+- * @msgs: Array of I2C  messages
+- * @peripheral: Pointer to gpi_i2c_config
++ * @completed: Number of messages whose DMA accesses have finished
+  */
+-static void geni_i2c_gpi_multi_desc_unmap(struct geni_i2c_dev *gi2c, struct i2c_msg msgs[],
+-					  struct gpi_i2c_config *peripheral)
++static void geni_i2c_gpi_multi_desc_unmap(struct geni_i2c_dev *gi2c, u32 completed)
+ {
+-	u32 msg_xfer_cnt, wr_idx = 0;
+ 	struct geni_i2c_gpi_multi_desc_xfer *tx_multi_xfer = &gi2c->i2c_multi_desc_config;
++	u32 i;
+ 
+-	msg_xfer_cnt = gi2c->err ? tx_multi_xfer->msg_idx_cnt : tx_multi_xfer->irq_cnt;
++	for (i = tx_multi_xfer->unmap_msg_cnt; i < completed; i++)
++		geni_i2c_gpi_unmap(gi2c, &tx_multi_xfer->buffers[i], false, NULL);
++	tx_multi_xfer->unmap_msg_cnt = completed;
++}
+ 
+-	/* Unmap the processed DMA buffers based on the received interrupt count */
+-	for (; tx_multi_xfer->unmap_msg_cnt < msg_xfer_cnt; tx_multi_xfer->unmap_msg_cnt++) {
+-		wr_idx = tx_multi_xfer->unmap_msg_cnt;
+-		geni_i2c_gpi_unmap(gi2c, &msgs[wr_idx],
+-				   tx_multi_xfer->dma_buf[wr_idx],
+-				   tx_multi_xfer->dma_addr[wr_idx],
+-				   NULL, 0);
++static void geni_i2c_gpi_free_buffers(struct geni_i2c_dev *gi2c)
++{
++	struct geni_i2c_gpi_multi_desc_xfer *multi = &gi2c->i2c_multi_desc_config;
+ 
+-		if (tx_multi_xfer->unmap_msg_cnt == gi2c->num_msgs - 1) {
+-			kfree(tx_multi_xfer->dma_buf);
+-			kfree(tx_multi_xfer->dma_addr);
+-			break;
+-		}
++	if (multi->buffers) {
++		geni_i2c_gpi_multi_desc_unmap(gi2c, multi->msg_idx_cnt);
++		kfree(multi->buffers);
++		multi->buffers = NULL;
+ 	}
++	geni_i2c_gpi_unmap(gi2c, &gi2c->gpi_tx, false, NULL);
++	geni_i2c_gpi_unmap(gi2c, &gi2c->gpi_rx, true, NULL);
++}
++
++static int geni_i2c_gpi_terminate(struct geni_i2c_dev *gi2c)
++{
++	int tx_ret, rx_ret;
++
++	tx_ret = dmaengine_terminate_sync(gi2c->tx_c);
++	rx_ret = dmaengine_terminate_sync(gi2c->rx_c);
++	return tx_ret ?: rx_ret;
++}
++
++static int geni_i2c_gpi_recover(struct geni_i2c_dev *gi2c)
++{
++	int ret = geni_i2c_gpi_terminate(gi2c);
++
++	if (ret)
++		return ret;
++
++	geni_i2c_gpi_free_buffers(gi2c);
++	WRITE_ONCE(gi2c->gpi_failed, false);
++	return 0;
+ }
+ 
+ /**
+- * geni_i2c_gpi_multi_xfer_timeout_handler() - Handles multi message transfer timeout
+- * @dev: Pointer to the corresponding dev node
+- * @multi_xfer: Pointer to the geni_i2c_gpi_multi_desc_xfer
+- * @transfer_timeout_msecs: Timeout value in milliseconds
+- * @transfer_comp: Completion object of the transfer
++ * geni_i2c_gpi_wait_multi() - Wait for outstanding GPI write messages
++ * @gi2c: I2C controller
++ * @timeout: Timeout in jiffies
+  *
+  * This function waits for the completion of each processed transfer messages
+  * based on the interrupts generated upon transfer completion.
+  *
+  * Return: On success returns 0, -ETIMEDOUT on timeout.
+  */
+-static int geni_i2c_gpi_multi_xfer_timeout_handler(struct device *dev,
+-						   struct geni_i2c_gpi_multi_desc_xfer *multi_xfer,
+-						   u32 transfer_timeout_msecs,
+-						   struct completion *transfer_comp)
++static int geni_i2c_gpi_wait_multi(struct geni_i2c_dev *gi2c, unsigned long timeout)
+ {
+-	int i;
+-	u32 time_left;
+-
+-	for (i = 0; i < multi_xfer->msg_idx_cnt - 1; i++) {
+-		reinit_completion(transfer_comp);
+-
+-		if (multi_xfer->msg_idx_cnt != multi_xfer->irq_cnt) {
+-			time_left = wait_for_completion_timeout(transfer_comp,
+-								transfer_timeout_msecs);
+-			if (!time_left) {
+-				dev_err(dev, "%s: Transfer timeout\n", __func__);
+-				return -ETIMEDOUT;
+-			}
++	struct geni_i2c_gpi_multi_desc_xfer *multi = &gi2c->i2c_multi_desc_config;
++
++	for (;;) {
++		scoped_guard(spinlock_irqsave, &gi2c->lock) {
++			if (gi2c->err)
++				return gi2c->err;
++			if (multi->irq_cnt == multi->msg_idx_cnt)
++				return 0;
++			if (multi->irq_cnt > multi->msg_idx_cnt)
++				return -EIO;
++			reinit_completion(&gi2c->done);
+ 		}
++		if (!timeout)
++			break;
++		timeout = wait_for_completion_timeout(&gi2c->done, timeout);
+ 	}
+-	return 0;
++	dev_err(gi2c->se.dev, "GPI multi-message transfer timed out\n");
++	return -ETIMEDOUT;
+ }
+ 
+ static int geni_i2c_gpi(struct geni_i2c_dev *gi2c, struct i2c_msg msgs[],
+-			struct dma_slave_config *config, dma_addr_t *dma_addr_p,
+-			void **buf, unsigned int op, struct dma_chan *dma_chan)
++			struct dma_slave_config *config, unsigned int op,
++			struct dma_chan *dma_chan)
+ {
+ 	struct gpi_i2c_config *peripheral;
++	struct geni_i2c_gpi_buffer *buffer;
++	struct i2c_msg dma_msg;
+ 	unsigned int flags;
+ 	void *dma_buf = NULL;
+ 	dma_addr_t addr = 0;
+@@ -726,7 +755,10 @@ static int geni_i2c_gpi(struct geni_i2c_dev *gi2c, struct i2c_msg msgs[],
+ 		goto skip_tx_dma_map;
+ 	}
+ 
+-	dma_buf = i2c_get_dma_safe_msg_buf(&msgs[msg_idx], 1);
++	/* The caller must be able to release its buffer after a failed STOP. */
++	dma_msg = msgs[msg_idx];
++	dma_msg.flags &= ~I2C_M_DMA_SAFE;
++	dma_buf = i2c_get_dma_safe_msg_buf(&dma_msg, 1);
+ 	if (!dma_buf) {
+ 		ret = -ENOMEM;
+ 		goto out;
+@@ -792,9 +824,6 @@ skip_tx_dma_map:
+ 	desc->callback_result = i2c_gpi_cb_result;
+ 	desc->callback_param = gi2c;
+ 
+-	if (!((msgs[msg_idx].flags & I2C_M_RD) && op == I2C_WRITE))
+-		gi2c_gpi_xfer->msg_idx_cnt++;
+-
+ 	cookie = dmaengine_submit(desc);
+ 	if (dma_submit_error(cookie)) {
+ 		dev_err(gi2c->se.dev,
+@@ -803,27 +832,29 @@ skip_tx_dma_map:
+ 		goto err_config;
+ 	}
+ 
+-	if (gi2c->is_tx_multi_desc_xfer) {
+-		gi2c_gpi_xfer->dma_buf[msg_idx] = dma_buf;
+-		gi2c_gpi_xfer->dma_addr[msg_idx] = addr;
++	if (dma_buf) {
++		if (gi2c->is_tx_multi_desc_xfer)
++			buffer = &gi2c_gpi_xfer->buffers[msg_idx];
++		else
++			buffer = op == I2C_WRITE ? &gi2c->gpi_tx : &gi2c->gpi_rx;
++		buffer->data = dma_buf;
++		buffer->addr = addr;
++		buffer->len = msgs[msg_idx].len;
++		gi2c_gpi_xfer->msg_idx_cnt++;
++	}
+ 
++	if (gi2c->is_tx_multi_desc_xfer) {
+ 		dma_async_issue_pending(gi2c->tx_c);
+ 
+ 		if ((msg_idx == (gi2c->num_msgs - 1)) || flags & DMA_PREP_INTERRUPT) {
+-			ret = geni_i2c_gpi_multi_xfer_timeout_handler(gi2c->se.dev, gi2c_gpi_xfer,
+-								      XFER_TIMEOUT, &gi2c->done);
++			ret = geni_i2c_gpi_wait_multi(gi2c, XFER_TIMEOUT);
+ 			if (ret) {
+ 				dev_err(gi2c->se.dev,
+ 					"I2C multi write msg transfer timeout: %d\n",
+ 					ret);
+-				gi2c->err = ret;
+ 				return ret;
+ 			}
+ 		}
+-	} else {
+-		/* Non multi descriptor message transfer */
+-		*buf = dma_buf;
+-		*dma_addr_p = addr;
+ 	}
+ 	return 0;
+ 
+@@ -836,7 +867,6 @@ err_config:
+ 	}
+ 
+ out:
+-	gi2c->err = ret;
+ 	return ret;
+ }
+ 
+@@ -846,8 +876,6 @@ static int geni_i2c_gpi_xfer(struct geni_i2c_dev *gi2c, struct i2c_msg msgs[], i
+ 	struct gpi_i2c_config peripheral = {};
+ 	int i, ret = 0;
+ 	unsigned long time_left;
+-	dma_addr_t tx_addr, rx_addr;
+-	void *tx_buf = NULL, *rx_buf = NULL;
+ 	struct geni_i2c_gpi_multi_desc_xfer *tx_multi_xfer;
+ 	const struct geni_i2c_clk_fld *itr = gi2c->clk_fld;
+ 
+@@ -893,19 +921,19 @@ static int geni_i2c_gpi_xfer(struct geni_i2c_dev *gi2c, struct i2c_msg msgs[], i
+ 	}
+ 
+ 	if (gi2c->is_tx_multi_desc_xfer) {
+-		tx_multi_xfer->dma_buf = kcalloc(num, sizeof(void *), GFP_KERNEL);
+-		tx_multi_xfer->dma_addr = kzalloc_objs(dma_addr_t, num);
+-		if (!tx_multi_xfer->dma_buf || !tx_multi_xfer->dma_addr) {
+-			ret = -ENOMEM;
+-			goto err;
+-		}
++		tx_multi_xfer->buffers = kzalloc_objs(*tx_multi_xfer->buffers, num);
++		if (!tx_multi_xfer->buffers)
++			return -ENOMEM;
+ 	}
+ 
+ 	for (i = 0; i < num; i++) {
+-		gi2c->cur = &msgs[i];
+-		gi2c->err = 0;
+-		reinit_completion(&gi2c->done);
+-		dev_dbg(gi2c->se.dev, "msg[%d].len:%d\n", i, gi2c->cur->len);
++		scoped_guard(spinlock_irqsave, &gi2c->lock) {
++			gi2c->cur = &msgs[i];
++			if (!gi2c->is_tx_multi_desc_xfer)
++				gi2c->err = 0;
++			reinit_completion(&gi2c->done);
++		}
++		dev_dbg(gi2c->se.dev, "msg[%d].len:%d\n", i, msgs[i].len);
+ 
+ 		peripheral.stretch = 0;
+ 		if (i < num - 1)
+@@ -915,14 +943,12 @@ static int geni_i2c_gpi_xfer(struct geni_i2c_dev *gi2c, struct i2c_msg msgs[], i
+ 		if (i > 0 && (!(msgs[i].flags & I2C_M_RD)))
+ 			peripheral.multi_msg = false;
+ 
+-		ret =  geni_i2c_gpi(gi2c, msgs, &config,
+-				    &tx_addr, &tx_buf, I2C_WRITE, gi2c->tx_c);
++		ret = geni_i2c_gpi(gi2c, msgs, &config, I2C_WRITE, gi2c->tx_c);
+ 		if (ret)
+ 			goto err;
+ 
+ 		if (msgs[i].flags & I2C_M_RD) {
+-			ret =  geni_i2c_gpi(gi2c, msgs, &config,
+-					    &rx_addr, &rx_buf, I2C_READ, gi2c->rx_c);
++			ret = geni_i2c_gpi(gi2c, msgs, &config, I2C_READ, gi2c->rx_c);
+ 			if (ret)
+ 				goto err;
+ 
+@@ -934,31 +960,33 @@ static int geni_i2c_gpi_xfer(struct geni_i2c_dev *gi2c, struct i2c_msg msgs[], i
+ 			time_left = wait_for_completion_timeout(&gi2c->done, XFER_TIMEOUT);
+ 			if (!time_left) {
+ 				dev_err(gi2c->se.dev, "%s:I2C timeout\n", __func__);
+-				gi2c->err = -ETIMEDOUT;
++				ret = -ETIMEDOUT;
++				goto err;
+ 			}
+ 		}
+ 
+-		if (gi2c->err) {
+-			ret = gi2c->err;
++		ret = READ_ONCE(gi2c->err);
++		if (ret)
+ 			goto err;
+-		}
+ 
+-		if (!gi2c->is_tx_multi_desc_xfer)
+-			geni_i2c_gpi_unmap(gi2c, &msgs[i], tx_buf, tx_addr, rx_buf, rx_addr);
+-		else if (tx_multi_xfer->unmap_msg_cnt != tx_multi_xfer->irq_cnt)
+-			geni_i2c_gpi_multi_desc_unmap(gi2c, msgs, &peripheral);
++		if (gi2c->is_tx_multi_desc_xfer) {
++			geni_i2c_gpi_multi_desc_unmap(gi2c, READ_ONCE(tx_multi_xfer->irq_cnt));
++		} else {
++			geni_i2c_gpi_unmap(gi2c, &gi2c->gpi_tx, false, NULL);
++			geni_i2c_gpi_unmap(gi2c, &gi2c->gpi_rx, true, &msgs[i]);
++		}
+ 	}
+ 
++	geni_i2c_gpi_free_buffers(gi2c);
+ 	return num;
+ 
+ err:
+ 	dev_err(gi2c->se.dev, "GPI transfer failed: %d\n", ret);
+-	dmaengine_terminate_sync(gi2c->rx_c);
+-	dmaengine_terminate_sync(gi2c->tx_c);
+-	if (gi2c->is_tx_multi_desc_xfer)
+-		geni_i2c_gpi_multi_desc_unmap(gi2c, msgs, &peripheral);
+-	else
+-		geni_i2c_gpi_unmap(gi2c, &msgs[i], tx_buf, tx_addr, rx_buf, rx_addr);
++	if (geni_i2c_gpi_recover(gi2c)) {
++		/* GPI blocks old callbacks even when it cannot stop the channels. */
++		WRITE_ONCE(gi2c->gpi_failed, true);
++		dev_err(gi2c->se.dev, "GPI stop unconfirmed; retaining transfer buffers\n");
++	}
+ 
+ 	return ret;
+ }
+@@ -993,15 +1021,23 @@ static int geni_i2c_xfer(struct i2c_adapter *adap,
+ 			 int num)
+ {
+ 	struct geni_i2c_dev *gi2c = i2c_get_adapdata(adap);
++	unsigned long flags;
+ 	int ret;
+ 
+-	ret = pm_runtime_get_sync(gi2c->se.dev);
+-	if (ret < 0) {
+-		dev_err(gi2c->se.dev, "error turning SE resources:%d\n", ret);
+-		pm_runtime_put_noidle(gi2c->se.dev);
+-		/* Set device in suspended since resume failed */
+-		pm_runtime_set_suspended(gi2c->se.dev);
+-		return ret;
++	if (gi2c->gpi_failed) {
++		/* Reuse the runtime-PM reference held since the failure. */
++		ret = geni_i2c_gpi_recover(gi2c);
++		if (ret)
++			return ret;
++	} else {
++		ret = pm_runtime_get_sync(gi2c->se.dev);
++		if (ret < 0) {
++			dev_err(gi2c->se.dev, "error turning SE resources:%d\n", ret);
++			pm_runtime_put_noidle(gi2c->se.dev);
++			/* Set device in suspended since resume failed */
++			pm_runtime_set_suspended(gi2c->se.dev);
++			return ret;
++		}
+ 	}
+ 
+ 	ret = gi2c->dev_data->set_rate(&gi2c->se, gi2c->clk_freq_out);
+@@ -1014,9 +1050,12 @@ static int geni_i2c_xfer(struct i2c_adapter *adap,
+ 		ret = geni_i2c_fifo_xfer(gi2c, msgs, num);
+ 
+ out_pm:
+-	pm_runtime_put_autosuspend(gi2c->se.dev);
++	spin_lock_irqsave(&gi2c->lock, flags);
+ 	gi2c->cur = NULL;
+ 	gi2c->err = 0;
++	spin_unlock_irqrestore(&gi2c->lock, flags);
++	if (!gi2c->gpi_failed)
++		pm_runtime_put_autosuspend(gi2c->se.dev);
+ 	return ret;
+ }
+ 
+@@ -1236,15 +1275,34 @@ static void geni_i2c_remove(struct platform_device *pdev)
+ 	struct geni_i2c_dev *gi2c = platform_get_drvdata(pdev);
+ 
+ 	i2c_del_adapter(&gi2c->adap);
++	if (gi2c->gpi_failed) {
++		if (geni_i2c_gpi_recover(gi2c)) {
++			dev_err(gi2c->se.dev, "GPI stop unconfirmed; retaining DMA resources\n");
++			kfree(gi2c->i2c_multi_desc_config.buffers);
++			return;
++		}
++		pm_runtime_put_sync(gi2c->se.dev);
++	}
+ 	release_gpi_dma(gi2c);
+ }
+ 
+ static void geni_i2c_shutdown(struct platform_device *pdev)
+ {
+ 	struct geni_i2c_dev *gi2c = platform_get_drvdata(pdev);
++	int ret;
+ 
+ 	/* Make client i2c transfers start failing */
+ 	i2c_mark_adapter_suspended(&gi2c->adap);
++	if (!gi2c->gpi_failed)
++		return;
++
++	/* A new kernel could reuse these buffers even if this driver retains them. */
++	while ((ret = geni_i2c_gpi_recover(gi2c))) {
++		dev_err_ratelimited(gi2c->se.dev,
++				    "GPI DMA stop unconfirmed (%d); keeping the system on\n", ret);
++		msleep(1000);
++	}
++	pm_runtime_put_noidle(gi2c->se.dev);
+ }
+ 
+ static int __maybe_unused geni_i2c_runtime_suspend(struct device *dev)
+@@ -1252,6 +1310,9 @@ static int __maybe_unused geni_i2c_runtime_suspend(struct device *dev)
+ 	int ret = 0;
+ 	struct geni_i2c_dev *gi2c = dev_get_drvdata(dev);
+ 
++	if (READ_ONCE(gi2c->gpi_failed))
++		return -EBUSY;
++
+ 	disable_irq(gi2c->irq);
+ 
+ 	if (gi2c->dev_data->power_off) {
+-- 
+2.55.0
+

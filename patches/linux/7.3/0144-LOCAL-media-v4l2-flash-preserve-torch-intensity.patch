@@ -1,4 +1,4 @@
-From 40739b6b8bf3cc50cd283cb0393f2599fab51c81 Mon Sep 17 00:00:00 2001
+From 514035ab6afa2c5f0f3899c3b0891ec967a116c1 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@tuta.io>
 Date: Fri, 20 Nov 2026 14:30:34 +0800
 Subject: [PATCH] media: v4l2-flash: Preserve the selected torch intensity

@@ -1,4 +1,4 @@
-From 71e74c438eedf2e78a799637f2cc8c7344fe8614 Mon Sep 17 00:00:00 2001
+From a7c1d90386ea514be78024129a4f71275c37f318 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 01:57:31 +0800
 Subject: [PATCH] Bluetooth: qca: defer when the power sequencer is not ready

@@ -1,7 +1,7 @@
-From 9e2ce74bf155b433e8b387c501f34a33b2d79bb8 Mon Sep 17 00:00:00 2001
+From 0df890e5f841ac382b3accad1eb40814647ba7e4 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@tuta.io>
 Date: Fri, 20 Nov 2026 13:20:29 +0800
-Subject: [PATCH] media: i2c: s5kjn1: Apply exposure and analogue gain together
+Subject: media: i2c: s5kjn1: Apply exposure and analogue gain together
 
 Applications can supply exposure and analogue gain in one V4L2 control
 request. Cluster the two controls and write them under the sensor's
@@ -21,12 +21,14 @@ CCI error handling, and frame length retry with the ARM64 V4L2 core and
 a test register bus.
 
 Assisted-by: LLM
+
+Require reinitialization before accepting live updates after a failed sensor register transaction.
 ---
- drivers/media/i2c/s5kjn1.c | 104 ++++++++++++++++++++++++-------------
- 1 file changed, 68 insertions(+), 36 deletions(-)
+ drivers/media/i2c/s5kjn1.c | 114 +++++++++++++++++++++++++------------
+ 1 file changed, 78 insertions(+), 36 deletions(-)
 
 diff --git a/drivers/media/i2c/s5kjn1.c b/drivers/media/i2c/s5kjn1.c
-index 7fa76f12f6a68d34b5b16995bfca9c54131fba8b..853171c78240f355fbd3104e4d0f71e379f690fc 100644
+index 7fa76f12f6a68d34b5b16995bfca9c54131fba8b..09d97a45067c2cc98c125800583ba59a40b6b932 100644
 --- a/drivers/media/i2c/s5kjn1.c
 +++ b/drivers/media/i2c/s5kjn1.c
 @@ -31,6 +31,8 @@
@@ -60,7 +62,15 @@ index 7fa76f12f6a68d34b5b16995bfca9c54131fba8b..853171c78240f355fbd3104e4d0f71e3
  	struct v4l2_ctrl *vflip;
  	struct v4l2_ctrl *hflip;
  	unsigned long mclk_rate;
-@@ -753,47 +761,69 @@ static const struct s5kjn1_mode s5kjn1_supported_modes[] = {
+@@ -121,6 +129,7 @@ struct s5kjn1 {
+ 
+ 	const struct s5kjn1_mode *mode;
+ 	bool mode_programmed;
++	bool controls_need_reinit;
+ 	bool stream_pm_held;	/* The one reference acquired for privacy capture. */
+ };
+ 
+@@ -753,47 +762,77 @@ static const struct s5kjn1_mode s5kjn1_supported_modes[] = {
  
  #include "s5kjn1-piano.h"
  
@@ -77,6 +87,8 @@ index 7fa76f12f6a68d34b5b16995bfca9c54131fba8b..853171c78240f355fbd3104e4d0f71e3
 +
 +	/* A failed write must not prevent releasing the hold. */
 +	release_ret = cci_write(s5kjn1->regmap, S5KJN1_REG_GROUP_HOLD, 0, NULL);
++	if (ret || release_ret)
++		s5kjn1->controls_need_reinit = true;
 +
 +	return ret ?: release_ret;
 +}
@@ -98,8 +110,10 @@ index 7fa76f12f6a68d34b5b16995bfca9c54131fba8b..853171c78240f355fbd3104e4d0f71e3
 +
 +	if (s5kjn1->mode_programmed) {
 +		ret = cci_write(s5kjn1->regmap, S5KJN1_REG_VTS, vts, NULL);
-+		if (ret)
++		if (ret) {
++			s5kjn1->controls_need_reinit = true;
 +			return ret;
++		}
 +	}
 +
 +	return __v4l2_ctrl_modify_range(exposure, exposure->minimum, max_exposure,
@@ -132,6 +146,10 @@ index 7fa76f12f6a68d34b5b16995bfca9c54131fba8b..853171c78240f355fbd3104e4d0f71e3
 -		return 0;
 +		return ctrl->id == V4L2_CID_VBLANK ?
 +		       s5kjn1_set_vblank(s5kjn1, ctrl->val) : 0;
++
++	/* A failed group update may have changed only some of the registers. */
++	if (s5kjn1->controls_need_reinit)
++		return -EIO;
  
  	pm = pm_runtime_get_if_active(s5kjn1->dev);
  	if (IS_ENABLED(CONFIG_PM) && pm <= 0)
@@ -154,7 +172,7 @@ index 7fa76f12f6a68d34b5b16995bfca9c54131fba8b..853171c78240f355fbd3104e4d0f71e3
  		break;
  	case V4L2_CID_VFLIP:
  	case V4L2_CID_HFLIP:
-@@ -860,17 +890,17 @@ static int s5kjn1_init_controls(struct s5kjn1 *s5kjn1)
+@@ -860,17 +899,17 @@ static int s5kjn1_init_controls(struct s5kjn1 *s5kjn1)
  					   S5KJN1_VTS_MAX - mode->height, 1,
  					   vblank);
  
@@ -181,7 +199,7 @@ index 7fa76f12f6a68d34b5b16995bfca9c54131fba8b..853171c78240f355fbd3104e4d0f71e3
  
  	v4l2_ctrl_new_std_menu_items(ctrl_hdlr, &s5kjn1_ctrl_ops,
  				     V4L2_CID_TEST_PATTERN,
-@@ -896,6 +926,7 @@ static int s5kjn1_init_controls(struct s5kjn1 *s5kjn1)
+@@ -896,6 +935,7 @@ static int s5kjn1_init_controls(struct s5kjn1 *s5kjn1)
  	if (ret)
  		goto error_free_hdlr;
  
@@ -189,7 +207,15 @@ index 7fa76f12f6a68d34b5b16995bfca9c54131fba8b..853171c78240f355fbd3104e4d0f71e3
  	s5kjn1->sd.ctrl_handler = ctrl_hdlr;
  
  	return 0;
-@@ -1035,6 +1066,7 @@ static int s5kjn1_set_pad_format(struct v4l2_subdev *sd,
+@@ -964,6 +1004,7 @@ static int s5kjn1_enable_streams(struct v4l2_subdev *sd,
+ 	if (ret)
+ 		goto error;
+ 
++	s5kjn1->controls_need_reinit = false;
+ 	s5kjn1->mode_programmed = true;
+ 	ret = __v4l2_ctrl_handler_setup(s5kjn1->sd.ctrl_handler);
+ 
+@@ -1035,6 +1076,7 @@ static int s5kjn1_set_pad_format(struct v4l2_subdev *sd,
  				 struct v4l2_subdev_format *fmt)
  {
  	struct s5kjn1 *s5kjn1 = to_s5kjn1(sd);
@@ -197,7 +223,7 @@ index 7fa76f12f6a68d34b5b16995bfca9c54131fba8b..853171c78240f355fbd3104e4d0f71e3
  	s64 hblank, vblank, exposure_max;
  	const struct s5kjn1_mode *mode;
  
-@@ -1066,10 +1098,10 @@ static int s5kjn1_set_pad_format(struct v4l2_subdev *sd,
+@@ -1066,10 +1108,10 @@ static int s5kjn1_set_pad_format(struct v4l2_subdev *sd,
  	__v4l2_ctrl_s_ctrl(s5kjn1->vblank, vblank);
  
  	exposure_max = mode->vts - mode->exposure_margin;
@@ -210,3 +236,6 @@ index 7fa76f12f6a68d34b5b16995bfca9c54131fba8b..853171c78240f355fbd3104e4d0f71e3
  
  set_format:
  	*v4l2_subdev_state_get_format(state, 0) = fmt->format;
+-- 
+2.55.0
+

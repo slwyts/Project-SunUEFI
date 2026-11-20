@@ -1,4 +1,4 @@
-From ccb6ebe893027bfa56a6d3d925c431b146f412d2 Mon Sep 17 00:00:00 2001
+From 482bf20c7e2c5e9552d3438120c47be89ff2caa8 Mon Sep 17 00:00:00 2001
 From: directorhorse <74277661+directorhorse@users.noreply.github.com>
 Date: Thu, 12 Nov 2026 23:02:24 +0800
 Subject: [PATCH] drm/msm/dpu: apply Piano bilinear sampling to fractional

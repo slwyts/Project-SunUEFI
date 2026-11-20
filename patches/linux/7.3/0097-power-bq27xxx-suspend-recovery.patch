@@ -1,4 +1,4 @@
-From 57d8c660f66411612b506479ce0a0a322f80c298 Mon Sep 17 00:00:00 2001
+From 134e12640685622374665d14c3c29471b3402cc3 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Tue, 10 Nov 2026 23:43:19 +0800
 Subject: [PATCH] fix(power): restore BQ polling after a failed suspend

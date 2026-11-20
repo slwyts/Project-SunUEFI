@@ -1,4 +1,4 @@
-From b9a2c0ca2cbf8f3bb7230c0645f8408cdcd31217 Mon Sep 17 00:00:00 2001
+From a67b1fa0e4fdb32683b66110edcf0030bc5cd42e Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Wed, 11 Nov 2026 03:17:19 +0800
 Subject: [PATCH] fix(soc): defer PMIC GLINK RPMSG registration until platform

@@ -1,4 +1,4 @@
-From 64c7580acf28de4b21515d79f19bfd365446cf8b Mon Sep 17 00:00:00 2001
+From ba96da97fad89b4be769c9bdc856b6aac8b9d230 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 20 Oct 2026 12:00:00 +0000
 Subject: [PATCH] feat(media): port Piano media support to Linux 7.3

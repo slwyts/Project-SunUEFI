@@ -1,4 +1,4 @@
-From 7ebae501d61b9fd434f9c9a2add664d70b7102ef Mon Sep 17 00:00:00 2001
+From 53c06376d4c7a07c5b6b8672a52572ffa375945f Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Wed, 11 Nov 2026 00:18:30 +0800
 Subject: [PATCH] power: supply: piano_mca: implement ordinary full and

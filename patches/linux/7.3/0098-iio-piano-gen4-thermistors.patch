@@ -1,4 +1,4 @@
-From 1657a62d0ab1cf2a0da49d8d325b68f813beb08d Mon Sep 17 00:00:00 2001
+From 59b508d09776874436b16409b4f51452b6115be7 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Wed, 11 Nov 2026 00:18:30 +0800
 Subject: [PATCH] iio: adc: support mixed Gen3 and Gen4 Piano thermistors

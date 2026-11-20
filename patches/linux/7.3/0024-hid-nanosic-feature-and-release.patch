@@ -1,4 +1,4 @@
-From 8a97e634202b1aa19b0b864c027796b883f7a87e Mon Sep 17 00:00:00 2001
+From c728a92e756103dc8fc54a633efd2e972fe61fd8 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 22 Oct 2026 18:25:53 +0800
 Subject: [PATCH] HID: nanosic: describe unsupported reports and release full

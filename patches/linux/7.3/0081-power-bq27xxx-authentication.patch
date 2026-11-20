@@ -1,4 +1,4 @@
-From 500b0b9f062b789027b95e4dd0ced687980dca9d Mon Sep 17 00:00:00 2001
+From 84566cb9e6a51f0792b065487a37662864f216d5 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Mon, 9 Nov 2026 22:28:31 +0800
 Subject: [PATCH] feat(power): verify BQ27Z561 battery challenges before

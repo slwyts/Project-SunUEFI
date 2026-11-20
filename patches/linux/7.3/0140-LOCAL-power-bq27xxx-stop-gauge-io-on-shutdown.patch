@@ -1,7 +1,7 @@
-From b72bc954939893f7151364f2e72ee522244896b3 Mon Sep 17 00:00:00 2001
+From 5de91b740523b7c62259df526c79fe965af8de12 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Fri, 20 Nov 2026 00:49:21 +0800
-Subject: [PATCH] power: supply: bq27xxx: stop gauge I/O on shutdown
+Subject: power: supply: bq27xxx: stop gauge I/O on shutdown
 
 A queued power supply notification can read STATUS after the I2C
 adapter has stopped accepting transfers. The gauge has no I2C shutdown
@@ -16,12 +16,15 @@ for removal, keeping the existing removal-time charge-mode restore.
 The shutdown callback itself does not write to the gauge.
 
 Fixes: 9f78c607600c ("i2c: qcom-geni: Add shutdown callback for i2c")
+
+Establish shutdown dependencies on the two gauges before enabling FFC.
 ---
  drivers/power/supply/bq27xxx_battery.c      | 55 +++++++++++++--------
  drivers/power/supply/bq27xxx_battery_i2c.c  |  9 ++++
  drivers/power/supply/bq27xxx_battery_test.c | 48 +++++++++++++++---
+ drivers/power/supply/piano_mca.c            | 55 +++++++++++++++++++--
  include/linux/power/bq27xxx_battery.h       |  1 +
- 4 files changed, 87 insertions(+), 26 deletions(-)
+ 5 files changed, 137 insertions(+), 31 deletions(-)
 
 diff --git a/drivers/power/supply/bq27xxx_battery.c b/drivers/power/supply/bq27xxx_battery.c
 index 0726da5fb0abcad4c6278c1e675f2299631e0d1e..163e6a22a4faff7f58bfe4b668bbd5d06d9cee75 100644
@@ -267,6 +270,114 @@ index f18106e47e2e0f063219dfcafdd2695470b1bd46..5fea3c0bf35a0031dbb0b0c7c114b7cc
  #if IS_ENABLED(CONFIG_BATTERY_BQ27XXX_IIO)
  	KUNIT_CASE(bq27xxx_original_iio_values_test),
  	KUNIT_CASE(bq27xxx_original_iio_range_test),
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index af2efe8cc610317b7f01f0038315d7210b878851..7c621a80e9331a4a7bbe52225a06574a830c849d 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -581,8 +581,11 @@ struct mca_resp {
+ 	u8 data[MCA_DATA_LEN];
+ } __packed;
+ 
++static char *piano_mca_supplied_to[] = { "bq27z561-0", "bq27z561-1" };
++
+ struct piano_mca {
+ 	struct device *dev;
++	struct device *gauge_devices[ARRAY_SIZE(piano_mca_supplied_to)];
+ 	u32 pd_protocol_version;
+ 	__le32 otg_config[4];
+ 	bool otg_config_valid;
+@@ -2337,8 +2340,6 @@ static void piano_mca_apply_policy(struct piano_mca *mca, unsigned int generatio
+ 	piano_mca_apply_input_policy(mca, generation, connection);
+ }
+ 
+-static char *piano_mca_supplied_to[] = { "bq27z561-0", "bq27z561-1" };
+-
+ static int piano_mca_battery_alert(struct piano_mca *mca)
+ {
+ 	union power_supply_propval health;
+@@ -2532,13 +2533,54 @@ static int piano_mca_battery_state(struct piano_mca *mca)
+ 	return 0;
+ }
+ 
+-/* No raised PMIC voltage is retained across a partial gauge-mode update. */
+-static int piano_mca_set_gauge_modes(struct piano_mca *mca, bool fast)
++static void piano_mca_unlink_gauge(struct piano_mca *mca, unsigned int index)
++{
++	struct device *gauge = mca->gauge_devices[index];
++
++	if (!gauge)
++		return;
++	device_link_remove(mca->dev, gauge);
++	put_device(gauge);
++	mca->gauge_devices[index] = NULL;
++}
++
++static int piano_mca_link_gauge(struct piano_mca *mca, struct device *gauge,
++				 unsigned int index)
++{
++	if (mca->gauge_devices[index] == gauge)
++		return 0;
++
++	/* Restore standard mode before the gauge and its I2C bus shut down. */
++	if (!device_link_add(mca->dev, gauge, DL_FLAG_STATELESS))
++		return -ENODEV;
++	piano_mca_unlink_gauge(mca, index);
++	mca->gauge_devices[index] = get_device(gauge);
++	return 0;
++}
++
++static int piano_mca_set_gauge_mode(struct piano_mca *mca, struct power_supply *psy,
++				    unsigned int index, bool fast)
+ {
+ 	union power_supply_propval value = {
+ 		.intval = fast ? POWER_SUPPLY_CHARGE_TYPE_FAST :
+ 				POWER_SUPPLY_CHARGE_TYPE_STANDARD,
+ 	};
++	int ret = -ESHUTDOWN;
++
++	guard(rwsem_read)(&psy->epc_sem);
++	if (psy->removing)
++		return -ENODEV;
++	if (READ_ONCE(system_state) <= SYSTEM_RUNNING)
++		ret = piano_mca_link_gauge(mca, psy->dev.parent, index);
++	if (fast && ret)
++		return ret;
++
++	return power_supply_set_property(psy, POWER_SUPPLY_PROP_CHARGE_TYPE, &value);
++}
++
++/* No raised PMIC voltage is retained across a partial gauge-mode update. */
++static int piano_mca_set_gauge_modes(struct piano_mca *mca, bool fast)
++{
+ 	struct power_supply *psy;
+ 	int i, ret = 0, error;
+ 
+@@ -2548,7 +2590,7 @@ static int piano_mca_set_gauge_modes(struct piano_mca *mca, bool fast)
+ 			ret = ret ?: -ENODEV;
+ 			continue;
+ 		}
+-		error = power_supply_set_property(psy, POWER_SUPPLY_PROP_CHARGE_TYPE, &value);
++		error = piano_mca_set_gauge_mode(mca, psy, i, fast);
+ 		power_supply_put(psy);
+ 		ret = ret ?: error;
+ 	}
+@@ -5527,6 +5569,7 @@ static void piano_mca_stop_work(struct piano_mca *mca)
+ static void piano_mca_stop(void *data)
+ {
+ 	struct piano_mca *mca = data;
++	unsigned int i;
+ 
+ 	mutex_lock(&mca->policy_lock);
+ 	if (mca->policy_stopped) {
+@@ -5540,6 +5583,8 @@ static void piano_mca_stop(void *data)
+ 		disable_delayed_work_sync(&mca->connector_work);
+ 	guard(mutex)(&mca->policy_lock);
+ 	piano_mca_stop_work(mca);
++	for (i = 0; i < ARRAY_SIZE(mca->gauge_devices); i++)
++		piano_mca_unlink_gauge(mca, i);
+ }
+ 
+ /* debugfs: write a property id to "prop", read the raw reply from "data" */
 diff --git a/include/linux/power/bq27xxx_battery.h b/include/linux/power/bq27xxx_battery.h
 index 64b0e9e8c8147dd8e576cc4ec64317b61e8fb390..ccaa2d0ef36b696b76b6acfb24bc23188b09963e 100644
 --- a/include/linux/power/bq27xxx_battery.h
@@ -279,3 +390,6 @@ index 64b0e9e8c8147dd8e576cc4ec64317b61e8fb390..ccaa2d0ef36b696b76b6acfb24bc2318
  extern const struct dev_pm_ops bq27xxx_battery_battery_pm_ops;
  
  #endif
+-- 
+2.55.0
+

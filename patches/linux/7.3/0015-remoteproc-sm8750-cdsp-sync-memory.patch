@@ -1,4 +1,4 @@
-From 5069f1c39ddacf3c2cdfd7bcb28ae34ca187db8d Mon Sep 17 00:00:00 2001
+From 275a6eccb520ac45581297725d8e36a0ca97527f Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 22 Oct 2026 07:46:25 +0800
 Subject: [PATCH] remoteproc: qcom: pas: share SM8750 CDSP global sync memory

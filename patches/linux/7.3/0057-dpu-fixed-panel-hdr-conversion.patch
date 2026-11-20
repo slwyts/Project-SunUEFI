@@ -1,8 +1,8 @@
-From 76853fc45b5d13839ef3d4a6e5de2aa6be6ee974 Mon Sep 17 00:00:00 2001
+From e69d9e431cec66778b7c833c798d8a63e0da5a50 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sun, 8 Nov 2026 23:39:32 +0800
-Subject: [PATCH] drm/msm: convert fixed-panel HDR signals through calibrated
- DSPP color blocks
+Subject: drm/msm: convert fixed-panel HDR signals through calibrated DSPP
+ color blocks
 
 The fixed-panel DSPP conversion does not change DSI link timings.
 For an SDR colorspace change on an already active fixed panel, keep the
@@ -12,25 +12,26 @@ for HDR transitions, routing changes and actual mode changes.
 
 Link: https://github.com/MiCode/vendor_opensource_display-drivers/blob/aa06fd1757c28dce96fbe4e04d4530ec21b52aac/msm/sde/sde_encoder.c#L5376
 
+Retry programming both DSPPs on the next active commit when a prior REGDMA transaction fails.
 ---
- drivers/gpu/drm/msm/Makefile                     |   2 +
- drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c         |  33 ++++-
- drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.h         |   1 +
- drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c   |   2 +
- drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h   |   2 +
- drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c       |   3 +
- drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.c  |  59 +++++++++
- drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.h  |  18 +++
- drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c          |   2 +
- drivers/gpu/drm/msm/disp/dpu1/dpu_kms.h          |   1 +
- drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c       |  30 ++++-
- drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.h       |   5 +
- drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c | 161 +++++++++++++++++++++++
- drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.h |  25 ++++
- drivers/gpu/drm/msm/dsi/dsi_manager.c            |  60 +++++++--
- drivers/gpu/drm/msm/msm_kms.h                    |   3 +
- drivers/gpu/drm/panel/panel-novatek-nt36532.c    | 115 +++++++++++++++-
- 17 files changed, 498 insertions(+), 24 deletions(-)
+ drivers/gpu/drm/msm/Makefile                  |   2 +
+ drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c      |  62 +++++--
+ drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.h      |   3 +
+ .../gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c    |   2 +
+ .../gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h    |   2 +
+ drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c    |   3 +
+ .../gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.c   |  59 +++++++
+ .../gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.h   |  18 ++
+ drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c       |   2 +
+ drivers/gpu/drm/msm/disp/dpu1/dpu_kms.h       |   1 +
+ drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c    |  38 ++++-
+ drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.h    |   5 +
+ .../gpu/drm/msm/disp/dpu1/dpu_output_color.c  | 161 ++++++++++++++++++
+ .../gpu/drm/msm/disp/dpu1/dpu_output_color.h  |  25 +++
+ drivers/gpu/drm/msm/dsi/dsi_manager.c         |  60 +++++--
+ drivers/gpu/drm/msm/msm_kms.h                 |   3 +
+ drivers/gpu/drm/panel/panel-novatek-nt36532.c | 115 ++++++++++++-
+ 17 files changed, 525 insertions(+), 36 deletions(-)
  create mode 100644 drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.c
  create mode 100644 drivers/gpu/drm/msm/disp/dpu1/dpu_hw_gamutv43.h
  create mode 100644 drivers/gpu/drm/msm/disp/dpu1/dpu_output_color.c
@@ -50,7 +51,7 @@ index 89c61b0313ee3ebef147e462bbf31a7e9f863b9d..fd62b93b2740847943b8bf5e0941e3f4
  	disp/dpu1/dpu_hw_merge3d.o \
  	disp/dpu1/dpu_hw_top.o \
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
-index 4f4e318a358f80ecbb662ff6db7ab4f34802825d..4a0a753841ea8a7ce0580026a052c1236dc3b47b 100644
+index 4f4e318a358f80ecbb662ff6db7ab4f34802825d..73c5f120859091f1404ecbcee634b481798d0857 100644
 --- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
 @@ -25,6 +25,7 @@
@@ -61,16 +62,39 @@ index 4f4e318a358f80ecbb662ff6db7ab4f34802825d..4a0a753841ea8a7ce0580026a052c123
  #include "dpu_hw_igcv5.h"
  #include "dpu_hw_lm.h"
  #include "dpu_hw_ctl.h"
-@@ -907,6 +908,8 @@ static void _dpu_crtc_setup_cp_blocks(struct drm_crtc *crtc)
+@@ -897,21 +898,26 @@ static void _dpu_crtc_get_gc_lut(struct drm_crtc_state *state,
+ 	gc_lut->flags = high_precision ? PGC_HIGH_PRECISION : 0;
+ }
+ 
+-static void _dpu_crtc_setup_cp_blocks(struct drm_crtc *crtc)
++static void _dpu_crtc_setup_cp_blocks(struct drm_crtc *crtc,
++				     struct drm_crtc_state *state)
+ {
+-	struct drm_crtc_state *state = crtc->state;
+-	struct dpu_crtc_state *cstate = to_dpu_crtc_state(crtc->state);
++	struct dpu_crtc *dpu_crtc = to_dpu_crtc(crtc);
++	struct dpu_crtc_state *cstate = to_dpu_crtc_state(state);
++	struct dpu_kms *kms = _dpu_crtc_get_kms(crtc);
+ 	struct dpu_crtc_mixer *mixer = cstate->mixers;
+ 	struct dpu_hw_pcc_cfg cfg;
+ 	struct dpu_hw_gc_lut *gc_lut;
  	struct dpu_hw_ctl *ctl;
  	struct dpu_hw_dspp *dspp;
  	struct dpu_hw_dspp *gc_master = NULL;
-+	struct dpu_output_color *output_color = _dpu_crtc_get_kms(crtc)->output_color;
++	struct dpu_output_color *output_color = kms->output_color;
 +	unsigned int output_mode = cstate->output_color_mode;
  	u32 gc_mask = 0;
  	int i, ret, gc_mixers = 0, gcv2_ret = 0;
  
-@@ -931,7 +934,7 @@ static void _dpu_crtc_setup_cp_blocks(struct drm_crtc *crtc)
+-
+-	if (!state->color_mgmt_changed && !drm_atomic_crtc_needs_modeset(state))
++	if (!state->color_mgmt_changed && !drm_atomic_crtc_needs_modeset(state) &&
++	    !(state->active && dpu_crtc->color_update_pending &&
++	      dpu_lutdma_ready(kms->lutdma)))
+ 		return;
+ 
+ 	/* GC2 uses the downstream broadcast programming model: submit once
+@@ -931,7 +937,7 @@ static void _dpu_crtc_setup_cp_blocks(struct drm_crtc *crtc)
  		gc_lut = NULL;
  		if (gc_mixers != cstate->num_mixers) {
  			gcv2_ret = -EINVAL;
@@ -79,7 +103,7 @@ index 4f4e318a358f80ecbb662ff6db7ab4f34802825d..4a0a753841ea8a7ce0580026a052c123
  			gc_lut = kzalloc_obj(*gc_lut);
  			if (!gc_lut)
  				gcv2_ret = -ENOMEM;
-@@ -939,7 +942,16 @@ static void _dpu_crtc_setup_cp_blocks(struct drm_crtc *crtc)
+@@ -939,7 +945,16 @@ static void _dpu_crtc_setup_cp_blocks(struct drm_crtc *crtc)
  				_dpu_crtc_get_gc_lut(state, gc_lut, gc_master->ops.setup_color);
  		}
  		if (!gcv2_ret) {
@@ -97,7 +121,23 @@ index 4f4e318a358f80ecbb662ff6db7ab4f34802825d..4a0a753841ea8a7ce0580026a052c123
  				const struct drm_color_lut *igc_lut = state->degamma_lut ?
  					state->degamma_lut->data : NULL;
  
-@@ -1007,6 +1019,9 @@ static void _dpu_crtc_setup_cp_blocks(struct drm_crtc *crtc)
+@@ -952,7 +967,14 @@ static void _dpu_crtc_setup_cp_blocks(struct drm_crtc *crtc)
+ 		}
+ 		kfree(gc_lut);
+ 		if (gcv2_ret) {
+-			drm_err(crtc->dev, "color REGDMA programming failed: %d\n", gcv2_ret);
++			drm_err_ratelimited(crtc->dev, "color REGDMA programming failed: %d\n",
++					    gcv2_ret);
++			/*
++			 * DRM has already swapped the requested state. The next commit
++			 * may have the same properties and no color_mgmt_changed flag.
++			 * Retry with the next commit's requested color settings.
++			 */
++			dpu_crtc->color_update_pending = true;
+ 			if (state->event && state->event->base.fence)
+ 				dma_fence_set_error(state->event->base.fence, gcv2_ret);
+ 			/* Do not apply only PCC after the combined LUT update failed. */
+@@ -1007,8 +1029,12 @@ static void _dpu_crtc_setup_cp_blocks(struct drm_crtc *crtc)
  			if (gc_master && gc_master->ops.setup_color)
  				ctl->ops.update_pending_flush_dspp(ctl,
  					mixer[i].hw_dspp->idx, DPU_DSPP_IGC);
@@ -106,8 +146,20 @@ index 4f4e318a358f80ecbb662ff6db7ab4f34802825d..4a0a753841ea8a7ce0580026a052c123
 +					mixer[i].hw_dspp->idx, DPU_DSPP_GAMUT);
  		}
  	}
++	dpu_crtc->color_update_pending = false;
  }
-@@ -1745,6 +1760,8 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
+ 
+ static void dpu_crtc_atomic_begin(struct drm_crtc *crtc,
+@@ -1041,7 +1067,7 @@ static void dpu_crtc_atomic_begin(struct drm_crtc *crtc,
+ 
+ 	_dpu_crtc_blend_setup(crtc);
+ 
+-	_dpu_crtc_setup_cp_blocks(crtc);
++	_dpu_crtc_setup_cp_blocks(crtc, drm_atomic_get_new_crtc_state(state, crtc));
+ 
+ 	/*
+ 	 * PP_DONE irq is only used by command mode for now.
+@@ -1745,6 +1771,8 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
  {
  	struct drm_crtc_state *crtc_state = drm_atomic_get_new_crtc_state(state,
  									  crtc);
@@ -116,7 +168,7 @@ index 4f4e318a358f80ecbb662ff6db7ab4f34802825d..4a0a753841ea8a7ce0580026a052c123
  	struct dpu_crtc *dpu_crtc = to_dpu_crtc(crtc);
  	struct dpu_crtc_state *cstate = to_dpu_crtc_state(crtc_state);
  
-@@ -1756,6 +1773,10 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
+@@ -1756,6 +1784,10 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
  	bool needs_dirtyfb = dpu_crtc_needs_dirtyfb(crtc_state);
  	struct dpu_kms *kms = _dpu_crtc_get_kms(crtc);
  
@@ -127,7 +179,18 @@ index 4f4e318a358f80ecbb662ff6db7ab4f34802825d..4a0a753841ea8a7ce0580026a052c123
  	/* The core accepts smaller blobs up to the advertised maximum. GC
  	 * resamples them; the IGC backend requires its complete uniform grid.
  	 */
-@@ -1777,9 +1798,10 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
+@@ -1765,8 +1797,8 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
+ 	    drm_color_lut_size(crtc_state->degamma_lut) != DPU_IGCV5_LUT_SIZE)
+ 		return -EINVAL;
+ 
+-	/* A hardware failure latches the engine unusable. Do not accept a
+-	 * later gamma update as though its transport were still initialized.
++	/* An unconfirmed reset latches the engine unusable. Do not accept a
++	 * later gamma update while the previous DMA may still be running.
+ 	 */
+ 	if (crtc_state->enable &&
+ 	    (crtc_state->color_mgmt_changed || drm_atomic_crtc_needs_modeset(crtc_state)) &&
+@@ -1777,9 +1809,10 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
  	if (rc)
  		return rc;
  
@@ -140,7 +203,7 @@ index 4f4e318a358f80ecbb662ff6db7ab4f34802825d..4a0a753841ea8a7ce0580026a052c123
  		rc = dpu_crtc_assign_resources(crtc, crtc_state);
  		if (rc < 0)
  			return rc;
-@@ -1840,8 +1862,7 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
+@@ -1840,8 +1873,7 @@ static int dpu_crtc_atomic_check(struct drm_crtc *crtc,
  		return rc;
  	}
  
@@ -151,10 +214,26 @@ index 4f4e318a358f80ecbb662ff6db7ab4f34802825d..4a0a753841ea8a7ce0580026a052c123
  		crtc_state->mode_changed = false;
  
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.h
-index 084ea8ecfef4341b33a273717d2d5f09b9f3b872..c0ee8a14ba3863f7a2002c30f436d66a024eaaeb 100644
+index 084ea8ecfef4341b33a273717d2d5f09b9f3b872..7781bb6ddb57e6fd9ba3df2d99fc34bf181c3bad 100644
 --- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.h
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.h
-@@ -211,6 +211,7 @@ struct dpu_crtc_state {
+@@ -136,6 +136,7 @@ struct dpu_crtc_frame_event {
+  * @enabled       : whether the DPU CRTC is currently enabled. updated in the
+  *                  commit-thread, not state-swap time which is earlier, so
+  *                  safe to make decisions on during VBLANK on/off work
++ * @color_update_pending: REGDMA color programming must be retried by the commit thread
+  * @feature_list  : list of color processing features supported on a crtc
+  * @active_list   : list of color processing features are active
+  * @dirty_list    : list of color processing features are dirty
+@@ -164,6 +165,7 @@ struct dpu_crtc {
+ 	u64 play_count;
+ 	ktime_t vblank_cb_time;
+ 	bool enabled;
++	bool color_update_pending;
+ 
+ 	struct list_head feature_list;
+ 	struct list_head active_list;
+@@ -211,6 +213,7 @@ struct dpu_crtc_state {
  	bool bw_control;
  	bool bw_split_vote;
  	bool vfp_update;
@@ -331,7 +410,7 @@ index a5f7779c2d03845a4682142f891ad8e567f12886..80e2cfc370d666f279c51f48cafaf293
  	struct platform_device *pdev;
  	bool rpm_enabled;
 diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c
-index 29e6703354de1cfc8148f406f6b24db026ba0419..275c5ac545762bfd2387c32000de72d62b2dce05 100644
+index 29e6703354de1cfc8148f406f6b24db026ba0419..3a33c69d2f47ba35d00f0093dd25dbf365862d73 100644
 --- a/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_lutdma.c
 @@ -15,6 +15,7 @@
@@ -378,7 +457,27 @@ index 29e6703354de1cfc8148f406f6b24db026ba0419..275c5ac545762bfd2387c32000de72d6
  	ret = dpu_hw_color_regdma_last_offset(words, REGDMA_BUFFER_SIZE, &last_offset);
  	if (ret)
  		goto unlock;
-@@ -238,6 +247,21 @@ int dpu_lutdma_submit_color(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl,
+@@ -221,14 +230,16 @@ int dpu_lutdma_submit_color(struct dpu_lutdma *dma, struct dpu_hw_ctl *ctl,
+ 				 done & REGDMA_DONE, 10, 20000);
+ 	errors = readl(dma->mmio + dma->cfg->db_base + REGDMA_ERROR_STATUS) & REGDMA_ERROR_MASK;
+ 	if (ret || errors) {
+-		WRITE_ONCE(dma->faulted, true);
+-		drm_err(dma->kms->dev, "color REGDMA failure ctl=%u done=%#x error=%#x ret=%d\n",
+-			ctl->idx, done, errors, ret);
++		drm_err_ratelimited(dma->kms->dev,
++				    "color REGDMA failure ctl=%u done=%#x error=%#x ret=%d\n",
++				    ctl->idx, done, errors, ret);
+ 		ret = ret ? ret : -EIO;
+ 		if (queue_reset(dma, ctl->idx)) {
++			WRITE_ONCE(dma->faulted, true);
+ 			drm_err(dma->kms->dev, "REGDMA reset unconfirmed; retaining GEM/VM/clocks\n");
+ 			goto unlock;
+ 		}
++		/* A reset stopped DMA. A later commit can replace the color tables. */
+ 	} else {
+ 		drm_dbg_kms(dma->kms->dev, "color REGDMA completed ctl=%u status=%#x\n", ctl->idx, done);
+ 	}
+@@ -238,6 +249,21 @@ unlock:
  	return ret;
  }
  
@@ -727,7 +826,7 @@ index 64106ebcd49382a183f4b9e48e9fee087e44c7b8..5bcab97affe357b64406af4eae609465
  	void (*irq_preinstall)(struct msm_kms *kms);
  	int (*irq_postinstall)(struct msm_kms *kms);
 diff --git a/drivers/gpu/drm/panel/panel-novatek-nt36532.c b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
-index 77e4be3017c130db4c1ae5eb1a8346b7b6d891bd..cf1fb2dad15e9c3d88f5b486fc6642584ea972ae 100644
+index ce868f44254541b0e5964a216f66171decef064e..3bb843748d0f7d835f6d29206b54d3f4bad7a563 100644
 --- a/drivers/gpu/drm/panel/panel-novatek-nt36532.c
 +++ b/drivers/gpu/drm/panel/panel-novatek-nt36532.c
 @@ -13,6 +13,7 @@
@@ -900,3 +999,6 @@ index 77e4be3017c130db4c1ae5eb1a8346b7b6d891bd..cf1fb2dad15e9c3d88f5b486fc664258
  
  static const struct of_device_id nt36532_of_match[] = {
  	{ .compatible = "csot,ppc100hb1-1", .data = &csot_panel_info },
+-- 
+2.55.0
+

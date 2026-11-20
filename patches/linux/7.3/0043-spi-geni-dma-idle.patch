@@ -1,8 +1,7 @@
-From 8cb06f46da15dce919577c8694ef98c7a733ccb9 Mon Sep 17 00:00:00 2001
+From 7f648b3f86d5a8bb103f526c6fee62f722714444 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Fri, 6 Nov 2026 17:55:13 +0800
-Subject: [PATCH] spi: geni-qcom: retain failed DMA transfers and support idle
- pins
+Subject: spi: geni-qcom: retain failed DMA transfers and support idle pins
 
 Do not let SPI core unmap a timed-out message until both GPI channels
 acknowledge termination. Preserve the transfer and its runtime-PM
@@ -14,12 +13,14 @@ of falling back to an unavailable FIFO and the separate SE DMA path.
 Support an optional idle pinctrl state for MOSI-driven transmitters.
 Wait for the serial engine to become inactive before switching pins;
 restore the default mux before the next message.
+
+Check each GPI configuration and submission before issuing the SPI command.
 ---
- drivers/spi/spi-geni-qcom.c | 92 ++++++++++++++++++++++++++++++-------
- 1 file changed, 76 insertions(+), 16 deletions(-)
+ drivers/spi/spi-geni-qcom.c | 116 +++++++++++++++++++++++++++++-------
+ 1 file changed, 95 insertions(+), 21 deletions(-)
 
 diff --git a/drivers/spi/spi-geni-qcom.c b/drivers/spi/spi-geni-qcom.c
-index 6c57f8309a3..40ff8414c9c 100644
+index 6c57f8309a3b2c25f19659155c854790d2f90ae9..c01dbcd92b7ac489ca3adca566a9a007d872211a 100644
 --- a/drivers/spi/spi-geni-qcom.c
 +++ b/drivers/spi/spi-geni-qcom.c
 @@ -7,14 +7,17 @@
@@ -48,7 +49,7 @@ index 6c57f8309a3..40ff8414c9c 100644
  	struct dma_chan *tx;
  	struct dma_chan *rx;
  	int cur_xfer_mode;
-@@ -242,9 +246,67 @@ static void handle_se_timeout(struct spi_controller *spi)
+@@ -242,9 +246,67 @@ reset_if_dma:
  static void handle_gpi_timeout(struct spi_controller *spi)
  {
  	struct spi_geni_master *mas = spi_controller_get_devdata(spi);
@@ -126,7 +127,60 @@ index 6c57f8309a3..40ff8414c9c 100644
  		break;
  	default:
  		dev_err(mas->dev, "Abort on Mode:%d not supported", mas->cur_xfer_mode);
-@@ -682,20 +745,13 @@ static int spi_geni_init(struct spi_geni_master *mas)
+@@ -426,6 +489,7 @@ static int setup_gsi_xfer(struct spi_transfer *xfer, struct spi_geni_master *mas
+ 	struct dma_slave_config config = {};
+ 	struct gpi_spi_config peripheral = {};
+ 	struct dma_async_tx_descriptor *tx_desc, *rx_desc;
++	dma_cookie_t cookie;
+ 	int ret;
+ 
+ 	config.peripheral_config = &peripheral;
+@@ -478,8 +542,15 @@ static int setup_gsi_xfer(struct spi_transfer *xfer, struct spi_geni_master *mas
+ 	peripheral.fragmentation = list_is_last(&xfer->transfer_list, &spi->cur_msg->transfers) ?
+ 				   xfer->cs_change : !xfer->cs_change;
+ 
++	ret = dmaengine_slave_config(mas->tx, &config);
++	if (ret)
++		return ret;
++
+ 	if (peripheral.cmd & SPI_RX) {
+-		dmaengine_slave_config(mas->rx, &config);
++		ret = dmaengine_slave_config(mas->rx, &config);
++		if (ret)
++			return ret;
++
+ 		rx_desc = dmaengine_prep_slave_sg(mas->rx, xfer->rx_sg.sgl, xfer->rx_sg.nents,
+ 						  DMA_DEV_TO_MEM, flags);
+ 		if (!rx_desc) {
+@@ -492,7 +563,6 @@ static int setup_gsi_xfer(struct spi_transfer *xfer, struct spi_geni_master *mas
+ 	 * Prepare the TX always, even for RX or tx_buf being null, we would
+ 	 * need TX to be prepared per GSI spec
+ 	 */
+-	dmaengine_slave_config(mas->tx, &config);
+ 	tx_desc = dmaengine_prep_slave_sg(mas->tx, xfer->tx_sg.sgl, xfer->tx_sg.nents,
+ 					  DMA_MEM_TO_DEV, flags);
+ 	if (!tx_desc) {
+@@ -503,9 +573,16 @@ static int setup_gsi_xfer(struct spi_transfer *xfer, struct spi_geni_master *mas
+ 	tx_desc->callback_result = spi_gsi_callback_result;
+ 	tx_desc->callback_param = spi;
+ 
+-	if (peripheral.cmd & SPI_RX)
+-		dmaengine_submit(rx_desc);
+-	dmaengine_submit(tx_desc);
++	if (peripheral.cmd & SPI_RX) {
++		cookie = dmaengine_submit(rx_desc);
++		ret = dma_submit_error(cookie);
++		if (ret)
++			return ret;
++	}
++	cookie = dmaengine_submit(tx_desc);
++	ret = dma_submit_error(cookie);
++	if (ret)
++		return ret;
+ 
+ 	if (peripheral.cmd & SPI_RX)
+ 		dma_async_issue_pending(mas->rx);
+@@ -682,20 +759,13 @@ static int spi_geni_init(struct spi_geni_master *mas)
  	switch (fifo_disable) {
  	case 1:
  		ret = spi_geni_grab_gpi_chan(mas);
@@ -154,7 +208,7 @@ index 6c57f8309a3..40ff8414c9c 100644
  
  	case 0:
  		mas->cur_xfer_mode = GENI_SE_FIFO;
-@@ -1117,6 +1173,10 @@ static int spi_geni_probe(struct platform_device *pdev)
+@@ -1117,6 +1187,10 @@ static int spi_geni_probe(struct platform_device *pdev)
  	spi->max_speed_hz = 50000000;
  	spi->max_dma_len = 0xffff0; /* 24 bits for tx/rx dma length */
  	spi->prepare_message = spi_geni_prepare_message;
@@ -166,5 +220,5 @@ index 6c57f8309a3..40ff8414c9c 100644
  	spi->can_dma = geni_can_dma;
  	spi->dma_map_dev = dev->parent;
 -- 
-2.56.0
+2.55.0
 

@@ -1,4 +1,4 @@
-From 223ce4681992177cc882de44449672f86e1e6e44 Mon Sep 17 00:00:00 2001
+From 2822562d278a0674f0d96fa6d29beb0b3519f448 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Wed, 11 Nov 2026 00:25:30 +0800
 Subject: [PATCH] power: supply: piano_mca: apply the factory high-load thermal

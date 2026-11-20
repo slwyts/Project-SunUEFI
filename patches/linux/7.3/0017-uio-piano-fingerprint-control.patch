@@ -1,4 +1,4 @@
-From 069589b8b6fef91cbe091c2194de5462a4b95789 Mon Sep 17 00:00:00 2001
+From d8ea8a36cca21807a324cdc5b02e2c3df31eb06d Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 22 Oct 2026 08:21:53 +0800
 Subject: [PATCH] uio: add Piano secure fingerprint power and interrupt control

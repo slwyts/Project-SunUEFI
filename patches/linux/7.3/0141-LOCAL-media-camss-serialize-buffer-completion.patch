@@ -1,7 +1,7 @@
-From b8c802d8c815c3d9b4f421ee05c660dafc6e32ef Mon Sep 17 00:00:00 2001
+From 50fc1f8d89046bddc8a3329f0553c1e5914a449e Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Fri, 20 Nov 2026 04:10:27 +0800
-Subject: [PATCH] media: camss: Serialize buffer completion with stream-off
+Subject: media: camss: Serialize buffer completion with stream-off
 
 Prevent the completion interrupt from programming new addresses after
 the write masters stop. Wait for in-flight VFE or forwarded CSID
@@ -13,13 +13,183 @@ drain. Verified normal cancellation and stream reopening on both SM8750
 camera paths.
 
 Assisted-by: LLM
----
- .../media/platform/qcom/camss/camss-vfe-17x.c |  7 +++--
- drivers/media/platform/qcom/camss/camss-vfe.c | 28 +++++++++++++++----
- 2 files changed, 28 insertions(+), 7 deletions(-)
 
+Wait for the whole SM8750 pipeline to start before handing capture buffers to DMA.
+---
+ .../platform/qcom/camss/camss-csid-980.c      |  76 ++++++-----
+ .../media/platform/qcom/camss/camss-csid.c    |   2 +-
+ .../media/platform/qcom/camss/camss-csid.h    |   3 +
+ .../media/platform/qcom/camss/camss-vfe-17x.c |   7 +-
+ .../platform/qcom/camss/camss-vfe-gen4.c      |   2 +
+ drivers/media/platform/qcom/camss/camss-vfe.c | 120 +++++++++++++-----
+ drivers/media/platform/qcom/camss/camss-vfe.h |   1 +
+ .../media/platform/qcom/camss/camss-video.c   |   6 +
+ .../media/platform/qcom/camss/camss-video.h   |   1 +
+ 9 files changed, 144 insertions(+), 74 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-csid-980.c b/drivers/media/platform/qcom/camss/camss-csid-980.c
+index 47f514130f58361b44e491f1a1c0b394a7b885b9..0b573698818d3bbd9e06ee24f808ef339e389fe1 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid-980.c
++++ b/drivers/media/platform/qcom/camss/camss-csid-980.c
+@@ -457,7 +457,7 @@ static void __csid_configure_rdi_pix_store(struct csid_device *csid, u8 rdi)
+ 	writel(val, csid->base + CSID_RDI_PIX_STORE_CFG0(rdi));
+ }
+ 
+-static void __csid_configure_rdi_stream(struct csid_device *csid, u8 enable, u8 port, u8 vc)
++static void __csid_configure_rdi_stream(struct csid_device *csid, u8 port, u8 vc)
+ {
+ 	u32 val;
+ 	u8 lane_cnt = csid->phy.lane_cnt;
+@@ -516,7 +516,7 @@ static void __csid_configure_rdi_stream(struct csid_device *csid, u8 enable, u8
+ 
+ 	val = 0;
+ 	writel(val, csid->base + rdi_ctrl_offset);
+-	if (frame_timing && enable) {
++	if (frame_timing) {
+ 		/* Record the old latch values while the path is still disabled.
+ 		 * The same FIFO continuity checks used by IPP then detect even a
+ 		 * lost first SOF. Every physical frame must produce its markers.
+@@ -537,11 +537,7 @@ static void __csid_configure_rdi_stream(struct csid_device *csid, u8 enable, u8
+ 		       CSID_PATH_ERROR_IRQS, csid->base + CSID_RDI0_IRQ_MASK);
+ 	}
+ 
+-	val = readl(csid->base + rdi_cfg0_offset);
+-
+-	if (enable)
+-		val |= RDI_CFG0_EN;
+-
++	val = readl(csid->base + rdi_cfg0_offset) | RDI_CFG0_EN;
+ 	writel(val, csid->base + rdi_cfg0_offset);
+ }
+ 
+@@ -569,8 +565,7 @@ static u32 __csid_ipp_cfa(u32 code)
+ 	}
+ }
+ 
+-static void __csid_configure_ipp_stream(struct csid_device *csid, u8 enable,
+-					u8 vc)
++static void __csid_configure_ipp_stream(struct csid_device *csid, u8 vc)
+ {
+ 	struct v4l2_mbus_framefmt *input_format =
+ 		&csid->fmt[MSM_CSID_PAD_FIRST_SRC + CSID_IPP_PORT];
+@@ -582,15 +577,6 @@ static void __csid_configure_ipp_stream(struct csid_device *csid, u8 enable,
+ 
+ 	writel(0, csid->base + CSID_IPP_CTRL);
+ 
+-	if (!enable) {
+-		writel(0, csid->base + CSID_IPP_IRQ_MASK);
+-		val = readl(csid->base + CSID_TOP_IRQ_MASK) & ~CSID_IPP_TOP_IRQ;
+-		writel(val, csid->base + CSID_TOP_IRQ_MASK);
+-		val = readl(csid->base + CSID_IPP_CFG0) & ~RDI_CFG0_EN;
+-		writel(val, csid->base + CSID_IPP_CFG0);
+-		return;
+-	}
+-
+ 	val = RDI_CFG0_TIMESTAMP_EN | CSID_TIMESTAMP_STROBE;
+ 	val |= RDI_CFG0_RETIME_BS;	/* SOF retiming off, as downstream */
+ 	val |= format->decode_format << RDI_CFG0_DECODE_FORMAT;
+@@ -630,32 +616,43 @@ static void __csid_configure_ipp_stream(struct csid_device *csid, u8 enable,
+ 	writel(val, csid->base + CSID_IPP_CFG0);
+ }
+ 
+-static void csid_configure_stream(struct csid_device *csid, u8 enable)
++void csid_980_prepare_port(struct csid_device *csid, int port)
+ {
+-	u8 i, k;
++	if (csid->phy.need_vc_update) {
++		__csid_configure_rx(csid, &csid->phy);
++		__csid_configure_rx_vc(csid, 0);
++		csid->phy.need_vc_update = false;
++	}
++	if (csid_port_is_ipp(csid, port))
++		__csid_configure_ipp_stream(csid, 0);
++	else
++		__csid_configure_rdi_stream(csid, port, 0);
++}
+ 
+-	__csid_configure_rx(csid, &csid->phy);
++void csid_980_start_port(struct csid_device *csid, int port, unsigned int buffers)
++{
++	unsigned int i;
+ 
+-	for (i = 0; i < MSM_CSID_MAX_SRC_STREAMS_980; i++) {
+-		if (csid->phy.en_vc & BIT(i)) {
+-			if (csid_port_is_ipp(csid, i))
+-				__csid_configure_ipp_stream(csid, enable, 0);
+-			else
+-				__csid_configure_rdi_stream(csid, enable, i, 0);
+-			__csid_configure_rx_vc(csid, 0);
++	/* Each address needs an AUP before resuming at a frame boundary. */
++	for (i = 0; i < buffers; i++) {
++		__csid_aup_update(csid, port);
++		__csid_rup_update(csid, port);
++	}
++	if (!buffers)
++		__csid_rup_update(csid, port);
+ 
+-			for (k = 0; k < CAMSS_INIT_BUF_COUNT; k++) {
+-				__csid_aup_update(csid, i);
+-				__csid_rup_update(csid, i);
+-			}
++	if (csid_port_is_ipp(csid, port))
++		writel(RDI_CTRL_START_CMD, csid->base + CSID_IPP_CTRL);
++	else
++		__csid_ctrl_rdi(csid, true, port);
++}
+ 
+-			if (csid_port_is_ipp(csid, i))
+-				writel(enable ? RDI_CTRL_START_CMD : 0,
+-				       csid->base + CSID_IPP_CTRL);
+-			else
+-				__csid_ctrl_rdi(csid, enable, i);
+-		}
+-	}
++void csid_980_stop_port(struct csid_device *csid, int port)
++{
++	if (csid_port_is_ipp(csid, port))
++		writel(0, csid->base + CSID_IPP_CTRL);
++	else
++		__csid_ctrl_rdi(csid, false, port);
+ }
+ 
+ static int csid_configure_testgen_pattern(struct csid_device *csid, s32 val)
+@@ -795,7 +792,6 @@ static void csid_subdev_init(struct csid_device *csid)
+ }
+ 
+ const struct csid_hw_ops csid_ops_980 = {
+-	.configure_stream = csid_configure_stream,
+ 	.configure_testgen_pattern = csid_configure_testgen_pattern,
+ 	.hw_version = csid_hw_version,
+ 	.isr = csid_isr,
+diff --git a/drivers/media/platform/qcom/camss/camss-csid.c b/drivers/media/platform/qcom/camss/camss-csid.c
+index b55cf8a9bd2b8f1a487fb42ae6814a8b0b94474a..15abb9923150a8fbf6908e78224e66b915522080 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid.c
++++ b/drivers/media/platform/qcom/camss/camss-csid.c
+@@ -777,7 +777,7 @@ static int csid_set_stream(struct v4l2_subdev *sd, int enable)
+ 			return -ENOLINK;
+ 	}
+ 
+-	if (csid->phy.need_vc_update) {
++	if (csid->phy.need_vc_update && csid->res->hw_ops->configure_stream) {
+ 		csid->res->hw_ops->configure_stream(csid, enable);
+ 		csid->phy.need_vc_update = false;
+ 	}
+diff --git a/drivers/media/platform/qcom/camss/camss-csid.h b/drivers/media/platform/qcom/camss/camss-csid.h
+index 8edf3548d692a7b9346fe6bbe4d03a2f52deb8a8..1e95008acd0d2a951300b500234564f6febdbe89 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid.h
++++ b/drivers/media/platform/qcom/camss/camss-csid.h
+@@ -223,6 +223,9 @@ extern const struct csid_hw_ops csid_ops_4_7;
+ extern const struct csid_hw_ops csid_ops_340;
+ extern const struct csid_hw_ops csid_ops_680;
+ extern const struct csid_hw_ops csid_ops_980;
++void csid_980_prepare_port(struct csid_device *csid, int port);
++void csid_980_start_port(struct csid_device *csid, int port, unsigned int buffers);
++void csid_980_stop_port(struct csid_device *csid, int port);
+ extern const struct csid_hw_ops csid_ops_gen2;
+ extern const struct csid_hw_ops csid_ops_gen3;
+ extern const struct csid_hw_ops csid_ops_gen4;
 diff --git a/drivers/media/platform/qcom/camss/camss-vfe-17x.c b/drivers/media/platform/qcom/camss/camss-vfe-17x.c
-index e5ee7e717..812376382 100644
+index e5ee7e717b3bcb88916249cb710d90e840082a4a..812376382f0e80e1fa9ecf9fa8ca6b21482a008e 100644
 --- a/drivers/media/platform/qcom/camss/camss-vfe-17x.c
 +++ b/drivers/media/platform/qcom/camss/camss-vfe-17x.c
 @@ -507,7 +507,7 @@ static void vfe_isr_reg_update(struct vfe_device *vfe, enum vfe_line_id line_id)
@@ -43,8 +213,21 @@ index e5ee7e717..812376382 100644
  
  	ready_buf = output->buf[0];
  	if (!ready_buf) {
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe-gen4.c b/drivers/media/platform/qcom/camss/camss-vfe-gen4.c
+index 3cc899d29920f343c4a05acd73baf20f51e49452..5f9d050396cce97138a131fc3e33c465170f1d09 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe-gen4.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe-gen4.c
+@@ -721,6 +721,8 @@ static const struct camss_video_ops vfe_video_ops_gen4 = {
+ static void vfe_subdev_init(struct device *dev, struct vfe_device *vfe)
+ {
+ 	vfe->video_ops = vfe_video_ops_gen4;
++	if (IS_VFE_980(vfe))
++		vfe->video_ops.start_output = vfe_start_output_980;
+ }
+ 
+ static void vfe_global_reset(struct vfe_device *vfe)
 diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
-index f546f2d35..85db2f61d 100644
+index f546f2d35ae166401bad2ebd15899a226d2966c0..c59d9814917381e118be4040ee1d17e2b526dcf0 100644
 --- a/drivers/media/platform/qcom/camss/camss-vfe.c
 +++ b/drivers/media/platform/qcom/camss/camss-vfe.c
 @@ -648,6 +648,8 @@ void vfe_buf_done(struct vfe_device *vfe, int wm)
@@ -56,7 +239,113 @@ index f546f2d35..85db2f61d 100644
  
  	/* CSID forwards DMA completion independently of the VFE BUS error IRQ.
  	 * Serialize both paths so a delayed error IRQ cannot publish a bad frame.
-@@ -1030,17 +1032,28 @@ static int vfe_disable_output(struct vfe_line *line)
+@@ -712,6 +714,56 @@ out_unlock:
+ 	spin_unlock_irqrestore(&vfe->output_lock, flags);
+ }
+ 
++static void vfe_arm_output_v2(struct vfe_line *line)
++{
++	struct vfe_device *vfe = to_vfe(line);
++	struct vfe_output *output = &line->output;
++	const struct vfe_hw_ops *ops = vfe->res->hw_ops;
++	unsigned int i;
++
++	lockdep_assert_held(&vfe->output_lock);
++	output->state = VFE_OUTPUT_ON;
++	ops->vfe_wm_start(vfe, output->wm_idx[0], line);
++
++	for (i = 0; i < CAMSS_INIT_BUF_COUNT; i++) {
++		output->buf[i] = vfe_buf_get_pending(output);
++		if (!output->buf[i])
++			break;
++		output->gen2.active_num++;
++		ops->vfe_wm_update(vfe, output->wm_idx[0],
++				   output->buf[i]->addr[0], line);
++
++		if (!vfe->res->reg_update_after_csid_config)
++			ops->reg_update(vfe, line->id);
++	}
++}
++
++int vfe_start_output_980(struct camss_video *vid)
++{
++	struct vfe_line *line = container_of(vid, struct vfe_line, video_out);
++	struct vfe_device *vfe = to_vfe(line);
++	struct vfe_output *output = &line->output;
++	struct csid_device *csid = &vfe->camss->csid[vfe->id];
++	unsigned long flags;
++
++	mutex_lock(&vfe->stream_lock);
++	if (WARN_ON(output->state != VFE_OUTPUT_RESERVED)) {
++		mutex_unlock(&vfe->stream_lock);
++		return -EINVAL;
++	}
++
++	/* Configure the receiver with its path closed, then arm the WM. */
++	csid_980_prepare_port(csid, line->id);
++	spin_lock_irqsave(&vfe->output_lock, flags);
++	vfe_arm_output_v2(line);
++	csid_980_start_port(csid, line->id, output->gen2.active_num);
++	vfe->was_streaming = 1;
++	spin_unlock_irqrestore(&vfe->output_lock, flags);
++	mutex_unlock(&vfe->stream_lock);
++
++	return 0;
++}
++
+ int vfe_enable_output_v2(struct vfe_line *line)
+ {
+ 	struct vfe_device *vfe = to_vfe(line);
+@@ -720,7 +772,6 @@ int vfe_enable_output_v2(struct vfe_line *line)
+ 	struct media_pad *sensor_pad;
+ 	unsigned long flags;
+ 	unsigned int frame_skip = 0;
+-	unsigned int i;
+ 
+ 	sensor_pad = camss_find_sensor_pad(&line->subdev.entity);
+ 	if (sensor_pad) {
+@@ -748,8 +799,6 @@ int vfe_enable_output_v2(struct vfe_line *line)
+ 
+ 	WARN_ON(output->gen2.active_num);
+ 
+-	output->state = VFE_OUTPUT_ON;
+-
+ 	output->sequence = 0;
+ 	output->frame_sequence = 0;
+ 	output->last_sof_ticks = 0;
+@@ -759,19 +808,8 @@ int vfe_enable_output_v2(struct vfe_line *line)
+ 	output->wait_reg_update = 0;
+ 	reinit_completion(&output->reg_update);
+ 
+-	ops->vfe_wm_start(vfe, output->wm_idx[0], line);
+-
+-	for (i = 0; i < CAMSS_INIT_BUF_COUNT; i++) {
+-		output->buf[i] = vfe_buf_get_pending(output);
+-		if (!output->buf[i])
+-			break;
+-		output->gen2.active_num++;
+-		ops->vfe_wm_update(vfe, output->wm_idx[0],
+-				   output->buf[i]->addr[0], line);
+-
+-		if (!vfe->res->reg_update_after_csid_config)
+-			ops->reg_update(vfe, line->id);
+-	}
++	if (!vfe->video_ops.start_output)
++		vfe_arm_output_v2(line);
+ 
+ 	spin_unlock_irqrestore(&vfe->output_lock, flags);
+ 
+@@ -845,7 +883,8 @@ int vfe_enable_v2(struct vfe_line *line)
+ 	if (ret < 0)
+ 		goto error_enable_output;
+ 
+-	vfe->was_streaming = 1;
++	if (!vfe->video_ops.start_output)
++		vfe->was_streaming = 1;
+ 
+ 	return 0;
+ 
+@@ -1030,17 +1069,35 @@ static int vfe_disable_output(struct vfe_line *line)
  {
  	struct vfe_device *vfe = to_vfe(line);
  	struct vfe_output *output = &line->output;
@@ -66,10 +355,17 @@ index f546f2d35..85db2f61d 100644
  	unsigned int i;
  
  	spin_lock_irqsave(&vfe->output_lock, flags);
++	if (vfe->video_ops.start_output && output->state == VFE_OUTPUT_RESERVED) {
++		/* An upstream start failed before publishing any buffer. */
++		spin_unlock_irqrestore(&vfe->output_lock, flags);
++		return 0;
++	}
 +	output->state = VFE_OUTPUT_STOPPING;
  	for (i = 0; i < output->wm_num; i++)
 -		vfe->res->hw_ops->vfe_wm_stop(vfe, output->wm_idx[i]);
 +		ops->vfe_wm_stop(vfe, output->wm_idx[i]);
++	if (vfe->video_ops.start_output)
++		csid_980_stop_port(&camss->csid[vfe->id], line->id);
  	output->gen2.active_num = 0;
  	output->frame_timeline_error = true;
  	output->frame_timeline_initialized = false;
@@ -86,7 +382,32 @@ index f546f2d35..85db2f61d 100644
  	return vfe_reset(vfe);
  }
  
-@@ -1432,6 +1445,7 @@ int vfe_flush_buffers(struct camss_video *vid,
+@@ -1055,19 +1112,15 @@ int vfe_disable(struct vfe_line *line)
+ 	struct vfe_device *vfe = to_vfe(line);
+ 	int ret;
+ 
+-	ret = vfe_disable_output(line);
+-	if (ret)
+-		goto error;
+-
+-	vfe_put_output(line);
+-
+ 	mutex_lock(&vfe->stream_lock);
+-
+-	vfe->stream_count--;
++	ret = vfe_disable_output(line);
++	if (!ret) {
++		vfe_put_output(line);
++		vfe->stream_count--;
++	}
+ 
+ 	mutex_unlock(&vfe->stream_lock);
+ 
+-error:
+ 	return ret;
+ }
+ 
+@@ -1432,6 +1485,7 @@ int vfe_flush_buffers(struct camss_video *vid,
  	struct vfe_device *vfe = to_vfe(line);
  	struct vfe_output *output;
  	unsigned long flags;
@@ -94,7 +415,7 @@ index f546f2d35..85db2f61d 100644
  
  	output = &line->output;
  
-@@ -1439,11 +1453,15 @@ int vfe_flush_buffers(struct camss_video *vid,
+@@ -1439,11 +1493,15 @@ int vfe_flush_buffers(struct camss_video *vid,
  
  	vfe_buf_flush_pending(output, state);
  
@@ -114,3 +435,47 @@ index f546f2d35..85db2f61d 100644
  
  	if (output->last_buffer) {
  		vb2_buffer_done(&output->last_buffer->vb.vb2_buf, state);
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.h b/drivers/media/platform/qcom/camss/camss-vfe.h
+index 8399037849702add115e77788b12c7db4a916fbf..cd1b5eede50d01c32b15dcba7f7bcfc90935328c 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.h
++++ b/drivers/media/platform/qcom/camss/camss-vfe.h
+@@ -347,6 +347,7 @@ int vfe_get_output_v2(struct vfe_line *line);
+  * Return 0 on success or a negative error code otherwise
+  */
+ int vfe_enable_output_v2(struct vfe_line *line);
++int vfe_start_output_980(struct camss_video *vid);
+ 
+ /*
+  * vfe_queue_buffer_v2 - Add empty buffer
+diff --git a/drivers/media/platform/qcom/camss/camss-video.c b/drivers/media/platform/qcom/camss/camss-video.c
+index 34d15edbe19a55638486083659d0b606c612df60..f928d91aab04c16d5ceda4fd12c857abec76a278 100644
+--- a/drivers/media/platform/qcom/camss/camss-video.c
++++ b/drivers/media/platform/qcom/camss/camss-video.c
+@@ -368,6 +368,12 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
+ 		started++;
+ 	}
+ 
++	if (video->ops->start_output) {
++		ret = video->ops->start_output(video);
++		if (ret)
++			goto error;
++	}
++
+ 	return 0;
+ 
+ error:
+diff --git a/drivers/media/platform/qcom/camss/camss-video.h b/drivers/media/platform/qcom/camss/camss-video.h
+index dc62c1400e4d3bc8b60c271d9fc207d651aeb03b..344f688eece73935ec489d4b73b5a3c82e57b4f4 100644
+--- a/drivers/media/platform/qcom/camss/camss-video.h
++++ b/drivers/media/platform/qcom/camss/camss-video.h
+@@ -37,6 +37,7 @@ struct camss_video_ops {
+ 	int (*queue_buffer)(struct camss_video *vid, struct camss_buffer *buf);
+ 	int (*flush_buffers)(struct camss_video *vid,
+ 			     enum vb2_buffer_state state);
++	int (*start_output)(struct camss_video *vid);
+ };
+ 
+ struct camss_video {
+-- 
+2.55.0
+

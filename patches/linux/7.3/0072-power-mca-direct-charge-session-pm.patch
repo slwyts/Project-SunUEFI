@@ -1,4 +1,4 @@
-From aa4ab81ae2d91cc0a742f17a94859b0a5ae402aa Mon Sep 17 00:00:00 2001
+From 09ff880806f926a62b40fc536ede500f5fe58aa4 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 07:41:01 +0800
 Subject: [PATCH] fix(power-supply): bind direct charging to its session and

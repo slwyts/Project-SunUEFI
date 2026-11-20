@@ -1,4 +1,4 @@
-From 2e38bc8b82c02a5e41fe40e600b3852e163be567 Mon Sep 17 00:00:00 2001
+From ee4f820cd1fc431615a8eed8c04b1f4ce5777a5e Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 22 Oct 2026 11:52:43 +0800
 Subject: [PATCH] usb: typec: ucsi: prefer explicit connector numbers over

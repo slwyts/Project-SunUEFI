@@ -1,4 +1,4 @@
-From d36f72592bda05522774db60dc04eb0ca9bc3cbd Mon Sep 17 00:00:00 2001
+From 197b7deabbac25b1d3dbed64f4bc8a61998a0246 Mon Sep 17 00:00:00 2001
 From: Joonhoe Kim <26rote@gmail.com>
 Date: Fri, 16 Oct 2026 21:46:08 +0900
 Subject: scsi: ufs: core: Fix a deadlock between clock scaling and device

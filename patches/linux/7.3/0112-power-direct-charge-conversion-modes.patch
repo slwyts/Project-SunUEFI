@@ -1,4 +1,4 @@
-From ef0908719b9baf112ef2a947449660f2108b38ff Mon Sep 17 00:00:00 2001
+From 30380a0dc74476af44b558cdb5139a38516c5b55 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sat, 14 Nov 2026 05:10:30 +0800
 Subject: [PATCH] feat(power): support factory 1:1 direct-charge selection

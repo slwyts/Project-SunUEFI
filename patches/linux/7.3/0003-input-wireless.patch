@@ -1,4 +1,4 @@
-From 7038b7d4e2afc5099b4e289d99f15e162d1ce3a7 Mon Sep 17 00:00:00 2001
+From c9132896964fa74ae3b1ed79178f1b5130c01b84 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 20 Oct 2026 12:00:00 +0000
 Subject: [PATCH] feat(input-wireless): port Piano input-wireless support to

@@ -1,4 +1,4 @@
-From 58216018c1f9de758c735879be21b89ad64cd2de Mon Sep 17 00:00:00 2001
+From 4b88ec907983f795245464360898a505652aacdc Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Tue, 10 Nov 2026 02:14:12 +0800
 Subject: [PATCH] HID: nanosic: expose cover LEDs only while attached

@@ -1,4 +1,4 @@
-From 51e12ee4f3029a0409ad81b168a680871e517f76 Mon Sep 17 00:00:00 2001
+From 78839c95bf6ff63a9a577f67635930940a0b4b12 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sat, 7 Nov 2026 08:32:43 +0000
 Subject: [PATCH] media: camss: Preserve SM8750 TFE write-master address units

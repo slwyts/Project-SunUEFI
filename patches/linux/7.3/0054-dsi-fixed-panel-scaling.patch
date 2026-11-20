@@ -1,4 +1,4 @@
-From 90ba5ad7285b4c88bd2a61fba345fc05dad3f2f2 Mon Sep 17 00:00:00 2001
+From 4e9d1736e19018090f2d0e72edc2d965a4b86796 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sun, 8 Nov 2026 16:36:59 +0800
 Subject: [PATCH] drm/msm: fit smaller source modes to bonded DSI panels

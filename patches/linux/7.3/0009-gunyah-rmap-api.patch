@@ -1,4 +1,4 @@
-From a8a23f7847c8839c9ccefc3ca5d4fde9d8f02fb4 Mon Sep 17 00:00:00 2001
+From 760ea22f22d2faecf894f71fd28db376cc681f4d Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 20 Oct 2026 14:10:00 +0000
 Subject: [PATCH] fix(gunyah): use Linux 7.3 reverse mapping iterator

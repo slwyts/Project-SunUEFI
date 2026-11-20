@@ -1,4 +1,4 @@
-From c94f54aecace77239895ae0485c0c1baa7d0ac81 Mon Sep 17 00:00:00 2001
+From 24818f3d1c9183ff4f3af23a78b9ec083f4555a5 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 20 Oct 2026 12:00:00 +0000
 Subject: [PATCH] feat(sched): integrate CachyOS BORE 6.8.0

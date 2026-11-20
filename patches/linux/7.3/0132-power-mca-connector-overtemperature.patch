@@ -1,4 +1,4 @@
-From 1735cf1fa278dc553f6af7bbd630a2d3d83aa8be Mon Sep 17 00:00:00 2001
+From 02d1996461900c7bfd9d4a30c733e67e93d8e598 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@tuta.io>
 Date: Wed, 18 Nov 2026 05:03:00 +0800
 Subject: fix(power): isolate the Piano USB connector on overtemperature
@@ -121,7 +121,7 @@ index e56d78da96b2397bc0d349e95a0947550987bb5e..a080578f518a8f4ca1e0d7c1044eb9a3
  	default KUNIT_ALL_TESTS
  	help
 diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
-index b6306756301874ba0b89d20ce02fb7a31d37f6c5..b1d1c5fe4cab3bbd0b50cd95a3b2d3046c11179d 100644
+index 9adbe4f611150d1490d4acc4e69612750748009a..af2efe8cc610317b7f01f0038315d7210b878851 100644
 --- a/drivers/power/supply/piano_mca.c
 +++ b/drivers/power/supply/piano_mca.c
 @@ -33,12 +33,14 @@
@@ -153,9 +153,9 @@ index b6306756301874ba0b89d20ce02fb7a31d37f6c5..b1d1c5fe4cab3bbd0b50cd95a3b2d304
  #define MCA_PROP_UVDM_STATE	0x21012
 +#define MCA_PROP_CID_STATUS	0x2101f	/* connector ID status, u8 */
  #define MCA_PROP_OTG_PLUGIN	0x21020	/* physical source attachment, u8 */
+ #define MCA_PROP_SNK_SRC_MODE	0x21022	/* active power role, le32 */
  #define MCA_VDM_LEN		16
- #define MCA_DATA_ROLE_UFP	1
-@@ -550,6 +554,12 @@ enum piano_mca_cp {
+@@ -552,6 +556,12 @@ enum piano_mca_cp {
  	MCA_CP_DONE,		/* buck charging until detach */
  };
  
@@ -168,7 +168,7 @@ index b6306756301874ba0b89d20ce02fb7a31d37f6c5..b1d1c5fe4cab3bbd0b50cd95a3b2d304
  struct mca_req {
  	__le32 owner;
  	__le32 type;
-@@ -588,6 +598,25 @@ struct piano_mca {
+@@ -590,6 +600,25 @@ struct piano_mca {
  	unsigned long skin_sample_at;
  	u8 skin_flags;
  	bool skin_control;
@@ -194,7 +194,7 @@ index b6306756301874ba0b89d20ce02fb7a31d37f6c5..b1d1c5fe4cab3bbd0b50cd95a3b2d304
  	bool policy_ready;
  	bool policy_stopped;
  	bool policy_suspended;
-@@ -721,6 +750,8 @@ static u32 piano_mca_charge_limit(struct piano_mca *mca)
+@@ -723,6 +752,8 @@ static u32 piano_mca_charge_limit(struct piano_mca *mca)
  {
  	u32 ua = READ_ONCE(mca->charge_limit_ua);
  
@@ -203,7 +203,7 @@ index b6306756301874ba0b89d20ce02fb7a31d37f6c5..b1d1c5fe4cab3bbd0b50cd95a3b2d304
  	if (mca->cooling_count)
  		ua = min(ua, mca->cooling_limits_ua[READ_ONCE(mca->cooling_state)]);
  	if (mca->skin_control)
-@@ -733,23 +764,48 @@ static unsigned int piano_mca_connection_generation(struct piano_mca *mca)
+@@ -735,23 +766,48 @@ static unsigned int piano_mca_connection_generation(struct piano_mca *mca)
  	return atomic_read(&mca->connection_generation);
  }
  
@@ -260,7 +260,7 @@ index b6306756301874ba0b89d20ce02fb7a31d37f6c5..b1d1c5fe4cab3bbd0b50cd95a3b2d304
  	return NOTIFY_OK;
  }
  
-@@ -825,6 +881,8 @@ static void piano_mca_pdr_notify(void *priv, int state)
+@@ -827,6 +883,8 @@ static void piano_mca_pdr_notify(void *priv, int state)
  	mca->mipps_attempted = false;
  	mca->hv = MCA_HV_OFF;
  	mca->hv_renegs = 0;
@@ -269,7 +269,7 @@ index b6306756301874ba0b89d20ce02fb7a31d37f6c5..b1d1c5fe4cab3bbd0b50cd95a3b2d304
  	mod_delayed_work(system_freezable_wq, &mca->poll, 0);
  }
  
-@@ -1075,8 +1133,13 @@ static bool piano_mca_write_allowed(struct piano_mca *mca, u32 prop,
+@@ -1077,8 +1135,13 @@ static bool piano_mca_write_allowed(struct piano_mca *mca, u32 prop,
  		return mca->otg_config_valid && len == sizeof(mca->otg_config) &&
  		       !memcmp(data, mca->otg_config, len);
  	case MCA_PROP_BOOST_ENABLE:
@@ -285,7 +285,7 @@ index b6306756301874ba0b89d20ce02fb7a31d37f6c5..b1d1c5fe4cab3bbd0b50cd95a3b2d304
  	case MCA_PROP_BOOST_VOLTAGE:
  		return len == sizeof(u32) &&
  		       (val == 0x11388 || val == 0x11450 || val == 0x1157c ||
-@@ -1085,6 +1148,8 @@ static bool piano_mca_write_allowed(struct piano_mca *mca, u32 prop,
+@@ -1087,6 +1150,8 @@ static bool piano_mca_write_allowed(struct piano_mca *mca, u32 prop,
  		return len == sizeof(u32) &&
  		       val >= MCA_ICL_MIN_MA && val <= MCA_ICL_HV_MAX_MA;
  	case MCA_PROP_FCC:
@@ -294,7 +294,7 @@ index b6306756301874ba0b89d20ce02fb7a31d37f6c5..b1d1c5fe4cab3bbd0b50cd95a3b2d304
  		return charge_current && len == sizeof(u32) &&
  		       ((cp_charge && val == 0) ||
  			(val >= MCA_FCC_MIN_MA &&
-@@ -1092,6 +1157,9 @@ static bool piano_mca_write_allowed(struct piano_mca *mca, u32 prop,
+@@ -1094,6 +1159,9 @@ static bool piano_mca_write_allowed(struct piano_mca *mca, u32 prop,
  							     MCA_FCC_MAX_MA) &&
  			 val <= piano_mca_charge_limit(mca)));
  	case MCA_PROP_CHARGE_ENABLE:
@@ -923,7 +923,7 @@ index b6306756301874ba0b89d20ce02fb7a31d37f6c5..b1d1c5fe4cab3bbd0b50cd95a3b2d304
  		enable_delayed_work(&mca->poll);
  		mod_delayed_work(system_freezable_wq, &mca->poll, 0);
  	}
-@@ -5268,6 +5867,8 @@ static int piano_mca_probe(struct auxiliary_device *adev,
+@@ -5277,6 +5876,8 @@ static int piano_mca_probe(struct auxiliary_device *adev,
  	mutex_init(&mca->pen_boost_lock);
  	init_completion(&mca->ack);
  	INIT_DELAYED_WORK(&mca->poll, piano_mca_poll);
@@ -932,7 +932,7 @@ index b6306756301874ba0b89d20ce02fb7a31d37f6c5..b1d1c5fe4cab3bbd0b50cd95a3b2d304
  	atomic_set(&mca->connection_generation, 0);
  
  	/* Allocated first so it outlives the poll work on unbind */
-@@ -5291,6 +5892,9 @@ static int piano_mca_probe(struct auxiliary_device *adev,
+@@ -5300,6 +5901,9 @@ static int piano_mca_probe(struct auxiliary_device *adev,
  	ret = piano_mca_register_skin(mca);
  	if (ret)
  		return dev_err_probe(dev, ret, "failed to register skin temperature\n");
@@ -942,7 +942,7 @@ index b6306756301874ba0b89d20ce02fb7a31d37f6c5..b1d1c5fe4cab3bbd0b50cd95a3b2d304
  	/* Stop before devres releases temperatures, cooling and power supply. */
  	ret = devm_add_action_or_reset(dev, piano_mca_stop, mca);
  	if (ret)
-@@ -5330,6 +5934,8 @@ static int piano_mca_probe(struct auxiliary_device *adev,
+@@ -5339,6 +5943,8 @@ static int piano_mca_probe(struct auxiliary_device *adev,
  	mca->policy_ready = true;
  	mutex_unlock(&mca->policy_lock);
  	pmic_glink_client_register(mca->client);

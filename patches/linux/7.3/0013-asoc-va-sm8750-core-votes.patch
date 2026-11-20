@@ -1,4 +1,4 @@
-From 09ba65ecdcd863690a788f1d27f35f43ca8b05d1 Mon Sep 17 00:00:00 2001
+From 9c9445a9b807a558c3a4db4460c48df8ad8c2540 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 22 Oct 2026 04:35:06 +0800
 Subject: [PATCH] ASoC: codecs: lpass-va-macro: retain SM8750 shared core votes

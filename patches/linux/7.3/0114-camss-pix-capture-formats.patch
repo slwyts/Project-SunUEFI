@@ -1,4 +1,4 @@
-From 583d5f28c4ca2d6467063c3e04e4fe856761443b Mon Sep 17 00:00:00 2001
+From 277fa499c67b80f3ea5117640e6d505ec90d598b Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sat, 14 Nov 2026 21:59:54 +0800
 Subject: [PATCH] media: camss: separate TFE980 sink and capture formats

@@ -1,4 +1,4 @@
-From b92dfd09b970a866fa9a72b62a51013b84d979ad Mon Sep 17 00:00:00 2001
+From 0f0ba111e7ce817a07480d50cb8df5f9addb0e45 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 01:57:30 +0800
 Subject: [PATCH] iommu/arm-smmu-qcom: defer GPU and GMU default attachment

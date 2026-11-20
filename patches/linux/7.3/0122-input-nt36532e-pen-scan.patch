@@ -1,4 +1,4 @@
-From 500b66d8fe8b703a5a54dc0ab69f60086f48da4f Mon Sep 17 00:00:00 2001
+From 7ae6f9f9b724e69fb731a3c1d02da1b145835998 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sat, 14 Nov 2026 22:14:19 +0800
 Subject: [PATCH] Input: nt36532e: gate requested pen scanning on dock and
