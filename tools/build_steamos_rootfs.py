@@ -99,6 +99,9 @@ def kde_recipes(output, root):
         prepare_commands = ''.join(
             f'  patch --batch --fuzz=0 -p1 -i "$srcdir/{p.name}"\n'
             for p in patches)
+        # Match Valve's native Wayland compositor package.
+        package_commands = ('  setcap CAP_SYS_NICE=+ep "$pkgdir/usr/bin/kwin_wayland"\n'
+                            if item['name'] == 'kwin' else '')
         license = ' '.join(q(p) for p in item.get(
             'license', ['GPL-2.0-or-later', 'LGPL-2.1-or-later']))
         (folder / 'PKGBUILD').write_text(
@@ -133,6 +136,7 @@ def kde_recipes(output, root):
             '-DBUILD_TESTING=OFF -DBUILD_QCH=OFF\n'
             '  cmake --build build -j4\n}\n'
             'package() {\n  DESTDIR="$pkgdir" cmake --install build\n'
+            + package_commands +
             '  install -d "$pkgdir/usr/share/licenses/$pkgname"\n'
             '  cp -a "$pkgname-$pkgver/LICENSES/." "$pkgdir/usr/share/licenses/$pkgname/"\n}\n')
     return [item['name'] for item in packages]

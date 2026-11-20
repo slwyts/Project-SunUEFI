@@ -27,6 +27,17 @@ class SteamOSBuildRootTests(unittest.TestCase):
 
 
 class SteamOSKDETests(unittest.TestCase):
+    def test_kwin_recipe_keeps_valve_wayland_file_capability(self):
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(builder.subprocess, 'check_output', return_value='qt6-base 6.11.1-1\n'):
+            output = Path(folder)
+            names = builder.kde_recipes(output, Path('/valve'))
+            kwin = (output / 'kwin/PKGBUILD').read_text()
+            self.assertIn('setcap CAP_SYS_NICE=+ep "$pkgdir/usr/bin/kwin_wayland"', kwin)
+            self.assertRegex(kwin, r'makedepends=\([^\n]*\blibcap\b')
+            for name in set(names) - {'kwin'}:
+                self.assertNotIn('setcap', (output / name / 'PKGBUILD').read_text())
+
     def check_kwindowsystem(self, version, order, relocation):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

@@ -68,7 +68,7 @@
     {
       "name": "kwin",
       "version": "6.6.5",
-      "pkgrel": "2.2",
+      "pkgrel": "2.3",
       "url": "https://download.kde.org/stable/plasma/6.6.5/kwin-6.6.5.tar.xz",
       "sha256": "6c187ce7a5506090b438ef900103836fa0537674dde8b31e5b497ef321643cb4",
       "patch_series": "patches/kwin/6.6.5/series.json",
@@ -89,7 +89,7 @@
         "xcb-util-keysyms", "xcb-util-wm"
       ],
       "makedepends": [
-        "plasma-wayland-protocols", "wayland-protocols", "xorg-xwayland"
+        "libcap", "plasma-wayland-protocols", "wayland-protocols", "xorg-xwayland"
       ]
     },
     {
