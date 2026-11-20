@@ -8,13 +8,84 @@ Reject changes to an exact request. When NEAREST permits an adjustment
 within the same media subtype, signal the change and return the accepted
 format so the video adapter can negotiate with the actual buffer layout.
 
+Check explicit DMA-BUF modifiers against the validated or running pixel
+format. Fixate modifier choices only when they contain that exact layout
+and report explicit linear selections as zero. Linear buffers can still
+match clients that do not negotiate a modifier.
+
 diff --git a/spa/plugins/libcamera/libcamera-source.cpp b/spa/plugins/libcamera/libcamera-source.cpp
 --- a/spa/plugins/libcamera/libcamera-source.cpp
 +++ b/spa/plugins/libcamera/libcamera-source.cpp
-@@ -718,6 +718,31 @@
+@@ -525,6 +525,25 @@
+ 	return res;
+ }
+ 
++/* Return 1 when the node needs to fixate the modifier in its reply. */
++int match_video_modifier(const spa_pod_prop *prop, const PixelFormat &pixel)
++{
++	if (!prop)
++		return 0;
++
++	uint32_t count, choice;
++	const auto *values = spa_pod_get_values(&prop->value, &count, &choice);
++	const int64_t modifier = pixel.modifier();
++	if (values->type != SPA_TYPE_Long || values->size != sizeof(modifier) || !count ||
++	    (choice != SPA_CHOICE_None && choice != SPA_CHOICE_Enum) ||
++	    !spa_pod_compare_is_valid_choice(values->type, values->size, &modifier,
++					     SPA_POD_BODY_CONST(values), count, choice))
++		return -EINVAL;
++
++	return choice == SPA_CHOICE_Enum ||
++		SPA_FLAG_IS_SET(prop->flags, SPA_POD_PROP_FLAG_DONT_FIXATE);
++}
++
+ void add_video_framerate(spa_pod_builder *builder, spa_fraction period)
+ {
+ 	if (period.num && period.denom) {
+@@ -559,8 +578,9 @@
+ 			return 0;
+ 		spa_pod *format;
+ 		spa_pod_builder_init(&b, buffer, sizeof(buffer));
+-		if (port_get_format(impl, port, 0, filter, &format, &b) != 1)
+-			return -EIO;
++		const int res = port_get_format(impl, port, 0, filter, &format, &b);
++		if (res <= 0)
++			return res;
+ 		SPA_POD_OBJECT_ID(format) = SPA_PARAM_EnumFormat;
+ 		if (spa_pod_filter(&b, &result.param, format, filter) < 0)
+ 			return 0;
+@@ -570,6 +590,9 @@
+ 		return 0;
+ 	}
+ 
++	const auto *modifier = filter ?
++		spa_pod_find_prop(filter, nullptr, SPA_FORMAT_VIDEO_modifier) : nullptr;
++
+ 	if (result.next == 0) {
+ 		port->fmt_index = 0;
+ 		port->size_index = 0;
+@@ -625,6 +648,10 @@
+ 	}
+ 	port->size_index++;
+ 
++	if (modifier && (info->media_subtype != SPA_MEDIA_SUBTYPE_raw ||
++			 match_video_modifier(modifier, format) < 0))
++		goto next;
++
+ 	spa_pod_builder_init(&b, buffer, sizeof(buffer));
+ 	spa_pod_builder_push_object(&b, &f[0], SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat);
+ 	spa_pod_builder_add(&b,
+@@ -718,6 +745,38 @@
  		lhs.size.width == rhs.size.width && lhs.size.height == rhs.size.height;
  }
  
++void update_video_modifier(spa_video_info_raw &format, const PixelFormat &pixel)
++{
++	format.modifier = pixel.modifier();
++	format.flags |= SPA_VIDEO_FLAG_MODIFIER;
++	format.flags &= ~SPA_VIDEO_FLAG_MODIFIER_FIXATION_REQUIRED;
++}
++
 +bool update_video_mode(spa_video_info &format, const StreamConfiguration &config)
 +{
 +	const auto *info = video_format_to_info(config.pixelFormat);
@@ -43,16 +114,16 @@ diff --git a/spa/plugins/libcamera/libcamera-source.cpp b/spa/plugins/libcamera/
  bool same_framerate(spa_fraction a, spa_fraction b)
  {
  	if (!a.num || !b.num)
-@@ -771,7 +796,7 @@
+@@ -771,7 +830,7 @@
  }
  
  int spa_libcamera_set_format(struct impl *impl, struct port *port,
 -		const spa_video_info &format, bool try_only)
-+		spa_video_info &format, uint32_t flags)
++		spa_video_info &format, const spa_pod_prop *modifier, uint32_t flags)
  {
  	const video_mode mode = get_video_mode(format);
  	const auto *info = find_format_info_by_media_type(format.media_type,
-@@ -787,25 +812,36 @@
+@@ -787,25 +846,43 @@
  	auto config = impl->camera->generateConfiguration({ StreamRole::VideoRecording });
  	if (!config)
  		return -EINVAL;
@@ -70,12 +141,19 @@ diff --git a/spa/plugins/libcamera/libcamera-source.cpp b/spa/plugins/libcamera/
  		return -EINVAL;
  
 +	const auto &validated = config->at(0);
++	const int modifier_result = match_video_modifier(modifier, validated.pixelFormat);
++	if (modifier_result < 0)
++		return modifier_result;
++
 +	spa_video_info accepted = format;
-+	const bool adjusted = validated.pixelFormat != info->pix || validated.size != requestedSize;
++	const bool mode_changed = validated.pixelFormat != info->pix || validated.size != requestedSize;
 +	/* Changes to stride, color space or buffer count do not change the mode. */
-+	if (adjusted && (!SPA_FLAG_IS_SET(flags, SPA_NODE_PARAM_FLAG_NEAREST) ||
-+			 !update_video_mode(accepted, validated)))
++	if (mode_changed && (!SPA_FLAG_IS_SET(flags, SPA_NODE_PARAM_FLAG_NEAREST) ||
++			     !update_video_mode(accepted, validated)))
 +		return -EINVAL;
++	if (modifier)
++		update_video_modifier(accepted.info.raw, validated.pixelFormat);
++	const bool adjusted = mode_changed || modifier_result > 0;
 +
  	std::optional<int64_t> duration;
  	spa_fraction period;
@@ -96,7 +174,7 @@ diff --git a/spa/plugins/libcamera/libcamera-source.cpp b/spa/plugins/libcamera/
  	}
  
  	int res;
-@@ -839,7 +875,8 @@
+@@ -839,7 +916,8 @@
  		SPA_PORT_FLAG_TERMINAL;
  	port->info.rate = period;
  
@@ -106,21 +184,73 @@ diff --git a/spa/plugins/libcamera/libcamera-source.cpp b/spa/plugins/libcamera/
  error:
  	spa_libcamera_close(impl);
  	return res;
-@@ -1987,7 +2024,7 @@
+@@ -1553,6 +1631,13 @@
+ 	if (index > 0)
+ 		return 0;
+ 
++	const auto &pixel = port->streamConfig.pixelFormat;
++	const auto *requested = filter ?
++		spa_pod_find_prop(filter, nullptr, SPA_FORMAT_VIDEO_modifier) : nullptr;
++	if (requested && (port->current_format->media_subtype != SPA_MEDIA_SUBTYPE_raw ||
++			  match_video_modifier(requested, pixel) < 0))
++		return 0;
++
+ 	spa_pod_builder_push_object(builder, &f, SPA_TYPE_OBJECT_Format, SPA_PARAM_Format);
+ 	spa_pod_builder_add(builder,
+ 		SPA_FORMAT_mediaType,    SPA_POD_Id(port->current_format->media_type),
+@@ -1565,9 +1650,13 @@
+ 			SPA_FORMAT_VIDEO_format,    SPA_POD_Id(port->current_format->info.raw.format),
+ 			SPA_FORMAT_VIDEO_size,      SPA_POD_Rectangle(&port->current_format->info.raw.size),
+ 			0);
+-		if (port->streamConfig.pixelFormat.modifier()) {
+-			spa_pod_builder_prop(builder, SPA_FORMAT_VIDEO_modifier, 0);
+-			spa_pod_builder_long(builder, port->streamConfig.pixelFormat.modifier());
++		if (pixel.modifier() || requested ||
++		    (port->current_format->info.raw.flags & SPA_VIDEO_FLAG_MODIFIER)) {
++			/* A linear V4L2 buffer can also be used without an explicit modifier. */
++			const uint32_t flags = pixel.modifier() ?
++				SPA_POD_PROP_FLAG_MANDATORY : SPA_POD_PROP_FLAG_DROP;
++			spa_pod_builder_prop(builder, SPA_FORMAT_VIDEO_modifier, flags);
++			spa_pod_builder_long(builder, pixel.modifier());
+ 		}
+ 		break;
+ 	case SPA_MEDIA_SUBTYPE_mjpg:
+@@ -1986,8 +2075,9 @@
+ 		    uint32_t flags, const struct spa_pod *format)
  {
  	const bool try_only = SPA_FLAG_IS_SET(flags, SPA_NODE_PARAM_FLAG_TEST_ONLY);
++	const spa_pod_prop *modifier = nullptr;
  	spa_video_info info;
 -	int res;
 +	int res = 0;
  
  	if (format != nullptr) {
  		spa_zero(info);
-@@ -2034,13 +2071,13 @@
- 			return !requested.num || same_framerate(requested, current) ? 0 : -EBUSY;
+@@ -2007,6 +2097,7 @@
+ 				return -EINVAL;
+ 			}
+ 
++			modifier = spa_pod_find_prop(format, nullptr, SPA_FORMAT_VIDEO_modifier);
+ 			break;
+ 		case SPA_MEDIA_SUBTYPE_mjpg:
+ 			if (spa_format_video_mjpg_parse(format, &info.info.mjpg) < 0)
+@@ -2031,16 +2122,23 @@
+ 			if (!port->current_format || !same_video_mode(*port->current_format, info))
+ 				return -EBUSY;
+ 			const spa_fraction current = SPA_FRACTION(port->rate.denom, port->rate.num);
+-			return !requested.num || same_framerate(requested, current) ? 0 : -EBUSY;
++			const auto &pixel = port->streamConfig.pixelFormat;
++			const int modifier_result = match_video_modifier(modifier, pixel);
++			if (modifier_result < 0 || (requested.num && !same_framerate(requested, current)))
++				return -EBUSY;
++			if (modifier && !try_only)
++				update_video_modifier(port->current_format->info.raw, pixel);
++			return modifier_result;
  		}
  
 -		res = spa_libcamera_set_format(impl, port, info, true);
-+		res = spa_libcamera_set_format(impl, port, info, flags | SPA_NODE_PARAM_FLAG_TEST_ONLY);
++		res = spa_libcamera_set_format(impl, port, info, modifier,
++					      flags | SPA_NODE_PARAM_FLAG_TEST_ONLY);
  		if (res < 0)
  			return res;
  	}
@@ -131,12 +261,12 @@ diff --git a/spa/plugins/libcamera/libcamera-source.cpp b/spa/plugins/libcamera/
  
  	spa_libcamera_stream_off(impl);
  	spa_libcamera_clear_buffers(port);
-@@ -2054,7 +2091,7 @@
+@@ -2054,7 +2152,7 @@
  	if (format == nullptr) {
  		spa_libcamera_close(impl);
  	} else {
 -		res = spa_libcamera_set_format(impl, port, info, false);
-+		res = spa_libcamera_set_format(impl, port, info, flags);
++		res = spa_libcamera_set_format(impl, port, info, modifier, flags);
  		if (res >= 0)
  			port->current_format = info;
  	}
