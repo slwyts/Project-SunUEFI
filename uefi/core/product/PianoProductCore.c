@@ -28,8 +28,12 @@
 #include "PianoTouchService.h"
 #include "LateHandoff/PianoLateHandoff.h"
 #include "LateHandoff/PianoDeviceTreeFixup.h"
+#include <PiDxe.h>
+#include <Guid/Acpi.h>
 #include <Guid/EventGroup.h>
 #include <Guid/Fdt.h>
+#include <IndustryStandard/Acpi20.h>
+#include <Library/DxeServicesTableLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
 #include <Library/BaseLib.h>
@@ -423,20 +427,67 @@ STATIC BOOLEAN EfiLoadedValid(CONST EFI_LOADED_IMAGE_PROTOCOL *L){
     L->ImageBase && L->ImageSize && L->ImageSize<=MAX_UINTN-(UINTN)L->ImageBase &&
     L->ImageCodeType==EfiLoaderCode && L->ImageDataType==EfiLoaderData;
 }
-STATIC EFI_STATUS ValidateEfiDeviceTree(VOID){
-  if(gST->NumberOfTableEntries>1024 || (gST->NumberOfTableEntries&&!gST->ConfigurationTable))return EFI_COMPROMISED_DATA;
-  CONST VOID *Tree=NULL;
-  for(UINTN I=0;I<gST->NumberOfTableEntries;++I){
-    if(!CompareMem(&gST->ConfigurationTable[I].VendorGuid,&gFdtTableGuid,sizeof(EFI_GUID))){
-      if(Tree)return EFI_COMPROMISED_DATA;Tree=gST->ConfigurationTable[I].VendorTable;
-    }
-  }
-  if(!Tree||((UINTN)Tree&7)||FdtCheckHeader(Tree)||FdtTotalSize(Tree)>0x200000)return EFI_NOT_READY;
-  return PianoProductMemoryValidateDtb(Tree,FdtTotalSize(Tree));
-}
 STATIC EFI_STATUS EfiImageResult(CONST CHAR8 *Stage,EFI_STATUS Status){
   mEfiImageStage=Stage;mEfiImageStatus=Status;
   return Status;
+}
+// The table addresses are physical. Do not follow an invalid XSDT pointer
+// into MMIO, or checksum beyond readable RAM, during ExitBootServices.
+STATIC BOOLEAN AcpiRangeIsRam(UINT64 Base,UINTN Bytes){
+  if(!Base || !Bytes || Base>MAX_UINTN-(Bytes-1) || !gDS || !gDS->GetMemorySpaceDescriptor)
+    return FALSE;
+  while(Bytes){
+    EFI_GCD_MEMORY_SPACE_DESCRIPTOR Region;
+    if(gDS->GetMemorySpaceDescriptor(Base,&Region)!=EFI_SUCCESS ||
+       Region.GcdMemoryType!=EfiGcdMemoryTypeSystemMemory || (Region.Attributes&EFI_MEMORY_RP) ||
+       Base<Region.BaseAddress || Base-Region.BaseAddress>=Region.Length)return FALSE;
+    UINTN Piece=(UINTN)MIN((UINT64)Bytes,Region.Length-(Base-Region.BaseAddress));
+    Bytes-=Piece;
+    if(Bytes)Base+=Piece;
+  }
+  return TRUE;
+}
+STATIC EFI_STATUS ValidateAcpiRoot(CONST EFI_ACPI_2_0_ROOT_SYSTEM_DESCRIPTION_POINTER *Root){
+  if(!AcpiRangeIsRam((UINTN)Root,sizeof(*Root)) ||
+     Root->Signature!=EFI_ACPI_2_0_ROOT_SYSTEM_DESCRIPTION_POINTER_SIGNATURE ||
+     Root->Revision<EFI_ACPI_2_0_ROOT_SYSTEM_DESCRIPTION_POINTER_REVISION ||
+     Root->Length<sizeof(*Root) || !AcpiRangeIsRam((UINTN)Root,Root->Length) ||
+     CalculateSum8((CONST UINT8 *)Root,sizeof(EFI_ACPI_1_0_ROOT_SYSTEM_DESCRIPTION_POINTER)) ||
+     CalculateSum8((CONST UINT8 *)Root,Root->Length))return EFI_COMPROMISED_DATA;
+  UINT64 Base=Root->XsdtAddress;
+  CONST EFI_ACPI_DESCRIPTION_HEADER *Xsdt=(CONST VOID *)(UINTN)Base;
+  if(!AcpiRangeIsRam(Base,sizeof(*Xsdt)) ||
+     Xsdt->Signature!=EFI_ACPI_2_0_EXTENDED_SYSTEM_DESCRIPTION_TABLE_SIGNATURE ||
+     Xsdt->Length<=sizeof(*Xsdt) || (Xsdt->Length-sizeof(*Xsdt))%sizeof(UINT64) ||
+     !AcpiRangeIsRam(Base,Xsdt->Length) || CalculateSum8((CONST UINT8 *)Xsdt,Xsdt->Length))
+    return EFI_COMPROMISED_DATA;
+  return EFI_SUCCESS;
+}
+STATIC EFI_STATUS ValidateEfiHardwareDescription(VOID){
+  CONST EFI_CONFIGURATION_TABLE *Fdt=NULL,*Acpi=NULL;
+  BOOLEAN DuplicateAcpi=FALSE;
+  if(gST->NumberOfTableEntries && !gST->ConfigurationTable)
+    return EfiImageResult("config-tables",EFI_COMPROMISED_DATA);
+  for(UINTN I=0;I<gST->NumberOfTableEntries;++I){
+    CONST EFI_CONFIGURATION_TABLE *Entry=&gST->ConfigurationTable[I];
+    if(!CompareMem(&Entry->VendorGuid,&gFdtTableGuid,sizeof(EFI_GUID))){
+      if(Fdt)return EfiImageResult("device-tree",EFI_COMPROMISED_DATA);
+      Fdt=Entry;
+    }else if(!CompareMem(&Entry->VendorGuid,&gEfiAcpi20TableGuid,sizeof(EFI_GUID))){
+      if(Acpi)DuplicateAcpi=TRUE;
+      Acpi=Entry;
+    }
+  }
+  // Linux's loader installs its board DTB. An invalid tree must not turn
+  // into a successful ACPI boot just because both GUIDs are present.
+  if(Fdt){
+    CONST VOID *Tree=Fdt->VendorTable;
+    if(!Tree || ((UINTN)Tree&7) || FdtCheckHeader(Tree) || FdtTotalSize(Tree)>0x200000)
+      return EfiImageResult("device-tree",EFI_COMPROMISED_DATA);
+    return EfiImageResult("device-tree",PianoProductMemoryValidateDtb(Tree,FdtTotalSize(Tree)));
+  }
+  if(Acpi)return EfiImageResult("acpi",DuplicateAcpi?EFI_COMPROMISED_DATA:ValidateAcpiRoot(Acpi->VendorTable));
+  return EfiImageResult("hardware-description",EFI_NOT_READY);
 }
 STATIC EFI_STATUS ValidateDirectKernel(CONST EFI_LOADED_IMAGE_PROTOCOL *Image){
   // systemd-stub's direct entry reuses its firmware-created handle, retaining
@@ -496,8 +547,10 @@ STATIC EFI_STATUS ValidateInstalledEfiImage(VOID *Context,EFI_HANDLE Image,CONST
     if(!BootLogAlive())return EFI_ABORTED;if(Status!=EFI_SUCCESS)return EfiImageResult("child-protocol",Status);
     if(!EfiLoadedValid(Current) || (!Depth && Current!=Identity))
       return EfiImageResult("child-identity",EFI_ACCESS_DENIED);
-    if(CurrentImage==mLinuxApplication.Image)
-      return EfiImageResult("device-tree",Current==Uki?ValidateEfiDeviceTree():EFI_ACCESS_DENIED);
+    if(CurrentImage==mLinuxApplication.Image){
+      if(Current!=Uki)return EfiImageResult("boot-image",EFI_ACCESS_DENIED);
+      return ValidateEfiHardwareDescription();
+    }
     if(!Current->ParentHandle || Current->ParentHandle==(EFI_HANDLE)Context)return EfiImageResult("parent",EFI_ACCESS_DENIED);
     CurrentImage=Current->ParentHandle;
   }
@@ -588,6 +641,8 @@ STATIC EFI_STATUS StartInstalledLinux(EFI_HANDLE Image){
     PianoSetStandardKeyNavigation(PreviousNavigation);
   }
   DEBUG((DEBUG_WARN,"PIANO_BOOT_MANAGER_RETURN status=%r\n",Status));
+  BOOLEAN FileReturned=Dispatch.Selection==PianoBootFile && Dispatch.StartedSystem &&
+    Status==EFI_SUCCESS && mLinuxApplication.StartReturned;
   EFI_STATUS LinuxStatus=Status==EFI_SUCCESS?EFI_ABORTED:Status;
   mLinuxBootDevice=NULL;
   if(Dispatch.StartedMenu){
@@ -602,15 +657,19 @@ STATIC EFI_STATUS StartInstalledLinux(EFI_HANDLE Image){
       if(LinuxStatus==EFI_NOT_READY)return ReturnToBootMenu(LinuxStatus,L"USB 设备仍在使用",L"请拔下 USB 设备后重试");
       FailStop(LinuxStatus);
     }
+    if(Dispatch.Selection==PianoBootFile){
+      if(FileReturned)return ReturnToBootMenu(EFI_SUCCESS,NULL,NULL);
+      return ReturnToBootMenu(LinuxStatus,L"无法启动所选 EFI 文件",L"已返回菜单，请检查文件或设备");
+    }
     if(Dispatch.Selection==PianoBootAutomatic && !Dispatch.StartedSystem){
       return LinuxStatus==EFI_NOT_FOUND?ReturnToBootMenu(LinuxStatus,NULL,NULL):
         ReturnToBootMenu(LinuxStatus,L"无法按启动顺序启动",L"已返回菜单，请检查启动项");
     }
     if(mEfiImageStatus!=EFI_SUCCESS&&mEfiImageStatus!=EFI_NOT_STARTED)
-      mHandoffFailure=L"Linux 启动身份检查失败，请更新固件和启动镜像";
-    else if(LinuxStatus==EFI_NOT_FOUND)mHandoffFailure=L"未找到 Linux，请更新启动镜像";
-    else if(LinuxStatus==EFI_TIMEOUT)mHandoffFailure=L"读取 Linux 启动镜像超时";
-    else if(LinuxStatus==EFI_UNSUPPORTED||LinuxStatus==EFI_LOAD_ERROR)mHandoffFailure=L"Linux 启动镜像格式不受支持，请更新镜像";
+      mHandoffFailure=L"系统引导程序未能交接，请检查启动镜像和固件";
+    else if(LinuxStatus==EFI_NOT_FOUND)mHandoffFailure=L"未找到系统引导程序，请检查启动项";
+    else if(LinuxStatus==EFI_TIMEOUT)mHandoffFailure=L"读取系统启动文件超时";
+    else if(LinuxStatus==EFI_UNSUPPORTED||LinuxStatus==EFI_LOAD_ERROR)mHandoffFailure=L"无法加载系统启动文件，请检查镜像";
     FailStop(LinuxStatus);
   }
   return Status;

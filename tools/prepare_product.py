@@ -462,6 +462,7 @@ def core_inf():
   gEfiEventBeforeExitBootServicesGuid
   gEfiFileInfoGuid
   gEfiFileSystemInfoGuid
+  gEfiAcpi20TableGuid
   gFdtTableGuid
   gLinuxEfiInitrdMediaGuid
 [Protocols]

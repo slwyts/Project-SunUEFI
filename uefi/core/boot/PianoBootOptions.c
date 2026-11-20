@@ -25,6 +25,7 @@
 STATIC EFI_STATUS mOptionStatus=EFI_NOT_STARTED;
 STATIC UINTN mOptionNumber=LoadOptionNumberUnassigned;
 STATIC EFI_DEVICE_PATH_PROTOCOL *mSimpleInitPath;
+STATIC EFI_BOOT_MANAGER_LOAD_OPTION mSelectedFile;
 // Use the marker from the linked BootManager library rather than copying its
 // GUID or passing its private bookkeeping data to an OS as load options.
 extern EFI_GUID mBmAutoCreateBootOptionGuid;
@@ -42,6 +43,26 @@ BOOLEAN PianoBootOptionIsSimpleInit(CONST EFI_DEVICE_PATH_PROTOCOL *Path) {
   if(!mSimpleInitPath || !Path)return FALSE;
   UINTN Bytes=GetDevicePathSize(mSimpleInitPath);
   return Bytes && GetDevicePathSize(Path)==Bytes && !CompareMem(mSimpleInitPath,Path,Bytes);
+}
+
+VOID PianoBootFileDiscard(VOID) {
+  if(mSelectedFile.FilePath || mSelectedFile.OptionalData || mSelectedFile.Description)
+    EfiBootManagerFreeLoadOption(&mSelectedFile);
+  mSelectedFile=(EFI_BOOT_MANAGER_LOAD_OPTION){0};
+}
+
+EFI_STATUS PianoBootFileSelect(CONST EFI_DEVICE_PATH_PROTOCOL *Path,CONST VOID *Options,UINT32 Bytes) {
+  if(!Path || !IsDevicePathValid(Path,0) || IsDevicePathEnd(Path) ||
+     (Bytes!=0)!=(Options!=NULL))return EFI_INVALID_PARAMETER;
+  if(mSelectedFile.FilePath)return EFI_ALREADY_STARTED;
+
+  // The menu and its buffers are unloaded before the selected file starts.
+  EFI_STATUS Status=EfiBootManagerInitializeLoadOption(&mSelectedFile,LoadOptionNumberUnassigned,
+      LoadOptionTypeBoot,LOAD_OPTION_ACTIVE,L"",(EFI_DEVICE_PATH_PROTOCOL *)Path,(UINT8 *)Options,Bytes);
+  if(Status==EFI_SUCCESS && (!mSelectedFile.Description || !mSelectedFile.FilePath ||
+      (Bytes && !mSelectedFile.OptionalData)))Status=EFI_OUT_OF_RESOURCES;
+  if(Status!=EFI_SUCCESS)PianoBootFileDiscard();
+  return Status;
 }
 
 STATIC BOOLEAN IsFvFile(CONST EFI_DEVICE_PATH_PROTOCOL *Path,CONST EFI_GUID *File) {
@@ -145,7 +166,8 @@ typedef struct {
 
 STATIC BOOLEAN CanTryNext(CONST PIANO_FV_APPLICATION *Application,
                          CONST PIANO_BOOT_DISPATCH *Dispatch,EFI_STATUS Status) {
-  return Dispatch->Selection!=PianoBootSelected && Dispatch->CanTryNextSystem &&
+  return Dispatch->Selection!=PianoBootSelected && Dispatch->Selection!=PianoBootFile &&
+    Dispatch->CanTryNextSystem &&
     Application->StartReturned && EFI_ERROR(Application->Start) &&
     Application->Start==Status && Application->Cleanup==EFI_SUCCESS &&
     !Application->Busy && Dispatch->CanTryNextSystem(Status);
@@ -160,7 +182,8 @@ STATIC EFI_STATUS RunOption(EFI_HANDLE Parent,EFI_BOOT_MANAGER_LOAD_OPTION *Opti
   if(!Explicit && (!(Option->Attributes&LOAD_OPTION_ACTIVE) ||
      (Option->Attributes&LOAD_OPTION_CATEGORY)!=LOAD_OPTION_CATEGORY_BOOT))
     return EFI_NOT_FOUND;
-  if(Option->OptionNumber>MAX_UINT16 || !Option->FilePath ||
+  BOOLEAN Registered=Dispatch->Selection!=PianoBootFile;
+  if((Registered && Option->OptionNumber>MAX_UINT16) || !Option->FilePath ||
      !IsDevicePathValid(Option->FilePath,0))return EFI_COMPROMISED_DATA;
   BOOLEAN Menu=PianoBootOptionIsSimpleInit(Option->FilePath);
   if(Menu && Dispatch->Selection==PianoBootSystems)return EFI_NOT_FOUND;
@@ -196,15 +219,17 @@ STATIC EFI_STATUS RunOption(EFI_HANDLE Parent,EFI_BOOT_MANAGER_LOAD_OPTION *Opti
     *Device=Menu?NULL:Source;
     mOptionNumber=Option->OptionNumber;
     UINT16 Current=(UINT16)Option->OptionNumber;
-    Status=gRT->SetVariable(L"BootCurrent",&gEfiGlobalVariableGuid,
-      EFI_VARIABLE_BOOTSERVICE_ACCESS|EFI_VARIABLE_RUNTIME_ACCESS,sizeof(Current),&Current);
-    if(Status!=EFI_SUCCESS){
-      if(!Menu && Dispatch->FinishSystem)Dispatch->FinishSystem();
-      Attempts->TryNext=FALSE;
-      break;
+    if(Registered){
+      Status=gRT->SetVariable(L"BootCurrent",&gEfiGlobalVariableGuid,
+        EFI_VARIABLE_BOOTSERVICE_ACCESS|EFI_VARIABLE_RUNTIME_ACCESS,sizeof(Current),&Current);
+      if(Status!=EFI_SUCCESS){
+        if(!Menu && Dispatch->FinishSystem)Dispatch->FinishSystem();
+        Attempts->TryNext=FALSE;
+        break;
+      }
     }
     EfiSignalEventReadyToBoot();
-    BOOLEAN Automatic=IsAutomatic(Option);
+    BOOLEAN Automatic=Registered && IsAutomatic(Option);
     Application->StartCalled=FALSE;
     Status=PianoApplicationRunPath(Parent,Source,Path,Automatic?NULL:Option->OptionalData,
       Automatic?0:Option->OptionalDataSize,0x10000000,Menu?NULL:Dispatch->WatchdogExpired,Application);
@@ -217,11 +242,13 @@ STATIC EFI_STATUS RunOption(EFI_HANDLE Parent,EFI_BOOT_MANAGER_LOAD_OPTION *Opti
       return Status;
     }
     if(!Menu && Dispatch->FinishSystem)Dispatch->FinishSystem();
-    EFI_STATUS Clear=gRT->SetVariable(L"BootCurrent",&gEfiGlobalVariableGuid,0,0,NULL);
-    if(Clear!=EFI_SUCCESS && Clear!=EFI_NOT_FOUND){
-      Status=Clear;
-      Attempts->TryNext=FALSE;
-      break;
+    if(Registered){
+      EFI_STATUS Clear=gRT->SetVariable(L"BootCurrent",&gEfiGlobalVariableGuid,0,0,NULL);
+      if(Clear!=EFI_SUCCESS && Clear!=EFI_NOT_FOUND){
+        Status=Clear;
+        Attempts->TryNext=FALSE;
+        break;
+      }
     }
     if(Application->StartCalled){
       // Try another boot option, not another expansion of this device path.
@@ -256,7 +283,7 @@ STATIC EFI_STATUS RunNumber(EFI_HANDLE Parent,UINT16 Number,EFI_HANDLE *Device,
 
 EFI_STATUS PianoStartBootOption(EFI_HANDLE Parent,EFI_HANDLE *Device,
   PIANO_FV_APPLICATION *Application,PIANO_BOOT_DISPATCH *Dispatch) {
-  if(!Parent || !Device || !Application || !Dispatch || (UINTN)Dispatch->Selection>PianoBootSelected)
+  if(!Parent || !Device || !Application || !Dispatch || (UINTN)Dispatch->Selection>PianoBootFile)
     return EFI_INVALID_PARAMETER;
   if(Application->Busy || Application->Retained)return EFI_ALREADY_STARTED;
   Application->StartCalled=FALSE;
@@ -264,6 +291,14 @@ EFI_STATUS PianoStartBootOption(EFI_HANDLE Parent,EFI_HANDLE *Device,
   Dispatch->StartedMenu=Dispatch->StartedSystem=Dispatch->SystemBlocked=FALSE;
   mOptionNumber=LoadOptionNumberUnassigned;
   PIANO_BOOT_ATTEMPTS Attempts={.TryNext=TRUE};
+  if(Dispatch->Selection==PianoBootFile){
+    if(!mSelectedFile.FilePath)return mOptionStatus=EFI_NOT_FOUND;
+    EFI_BOOT_MANAGER_LOAD_OPTION File=mSelectedFile;
+    mSelectedFile=(EFI_BOOT_MANAGER_LOAD_OPTION){0};
+    EFI_STATUS Status=RunOption(Parent,&File,Device,Application,Dispatch,TRUE,&Attempts);
+    if(!Application->EbsObserved && !Application->Retained)EfiBootManagerFreeLoadOption(&File);
+    return mOptionStatus=Status;
+  }
   if(Dispatch->Selection==PianoBootSelected)
     return mOptionStatus=RunNumber(Parent,Dispatch->Number,Device,Application,Dispatch,&Attempts);
 

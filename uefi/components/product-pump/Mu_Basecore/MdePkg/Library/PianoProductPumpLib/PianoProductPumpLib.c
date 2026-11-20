@@ -207,6 +207,14 @@ BOOLEAN EFIAPI PianoProductIsSimpleInitOption(CONST EFI_DEVICE_PATH_PROTOCOL *Pa
   mBusy=FALSE;
   return Match;
 }
+EFI_STATUS EFIAPI PianoProductSelectBootFile(CONST EFI_DEVICE_PATH_PROTOCOL *Path,CONST VOID *Options,UINT32 Bytes) {
+  EFI_STATUS Status=Enter();
+  if(Status!=EFI_SUCCESS)return Status;
+  Status=mRuntime->SelectBootFile?mRuntime->SelectBootFile(mRuntime,Path,Options,Bytes):EFI_UNSUPPORTED;
+  if(!PianoProductPumpBootServicesAlive()){CpuDeadLoop();return EFI_ABORTED;}
+  mBusy=FALSE;
+  return Exact(Status);
+}
 EFI_STATUS EFIAPI PianoProductPumpLibDestructor(EFI_HANDLE Image,EFI_SYSTEM_TABLE *SystemTable) {
   (VOID)Image;(VOID)SystemTable;
   // Never leave a callback pointing into an unloaded GUI/app module. If the

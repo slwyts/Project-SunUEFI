@@ -374,6 +374,66 @@ hook(SI+'src/boot/prober.c', '\tboot_create_config(use,NULL);\n\tconfd_set_strin
 hook(SI+'src/boot/prober.c', '\tif(!(use=malloc(sizeof(struct boot_config))))return false;',
      '\tif(!(use=malloc(sizeof(struct boot_config)))){free(url);return false;}')
 hook(SI+'src/boot/efi_path.c', '"Windows Boot Manager",  ms_dir,  ms_boot', '"启动 Windows",         ms_dir,  ms_boot')
+# A discovered loader is an EFI file, not necessarily a registered Boot####.
+# Queue the exact device path and options before SimpleInit releases its UI.
+efi_file=SI+'src/boot/efi.c'
+include(efi_file,'#include<Library/UefiLib.h>\n')
+hook(efi_file,'\tUINTN size=0,os,len;\n',
+     '\tUINTN size=0,option_bytes=0;\n\tVOID*option_data=NULL;\n\tbool file=false;\n')
+hook(efi_file,'\t\tif((dp=locators[i](boot)))break;',
+     '\t\tif((dp=locators[i](boot))){file=locators[i]==locate_file;break;}')
+hook(efi_file,'''	if(options){
+		os=AsciiStrLen(options);
+		tlog_info("options: '%s'",options);
+		if(wc){
+			len=(os+1)*sizeof(CHAR16);
+			if(!(buf=AllocateZeroPool(len)))
+				EDONE(tlog_error("allocate memory failed"));
+			AsciiStrToUnicodeStrS(options,buf,len);
+			li->LoadOptions=buf;
+			li->LoadOptionsSize=len;
+			free(options);
+			options=NULL;
+		}else{
+			li->LoadOptions=options;
+			li->LoadOptionsSize=os;
+		}
+	}
+''','''	if(option_bytes){
+		li->LoadOptions=option_data;
+		li->LoadOptionsSize=(UINT32)option_bytes;
+	}
+''')
+hook(efi_file,'\tst=gBS->LoadImage(\n','''	if(options){
+		option_bytes=AsciiStrLen(options);
+		if(option_bytes>MAX_UINT32 || (wc&&option_bytes>=MAX_UINT32/sizeof(CHAR16)))
+			EDONE(tlog_error("load options too long"));
+		if(wc){
+			option_bytes=(option_bytes+1)*sizeof(CHAR16);
+			if(!(buf=AllocateZeroPool(option_bytes)))EDONE(tlog_error("allocate memory failed"));
+			AsciiStrToUnicodeStrS(options,buf,option_bytes/sizeof(CHAR16));
+		}
+		option_data=wc?(VOID*)buf:(option_bytes?(VOID*)options:NULL);
+	}
+	if(file&&PianoProductRebootManaged()){
+		st=PianoProductSelectBootFile(dp,option_data,(UINT32)option_bytes);
+		if(EFI_ERROR(st))EDONE(tlog_error("select EFI file failed: %s",efi_status_to_string(st)));
+		confd_save_file(NULL);
+		r=0;
+		goto done;
+	}
+	st=gBS->LoadImage(
+''')
+hook(SI+'src/gui/interface/core/bootmenu.c','\tboot_name(target_boot_name);\n',
+     '\tboot_name(target_boot_name);\n\tif(PianoProductUiReturnRequested())return 0;\n')
+start_file=SI+'src/gui/interface/apps/uefi_start.c'
+include(start_file,'#include<Library/UefiLib.h>\n')
+hook(start_file,'\tif(!p)return;\n\tst=gBS->LoadImage(FALSE,gImageHandle,p,NULL,0,&ih);',
+     '\tif(!p)return;\n\tif(PianoProductRebootManaged()){\n'
+     '\t\tst=PianoProductSelectBootFile(p,NULL,0);\n\t\tFreePool(p);\n'
+     '\t\tif(EFI_ERROR(st))msgbox_alert("无法启动所选文件：%s",efi_status_to_string(st));\n'
+     '\t\telse gui_run_and_exit(NULL);\n\t\treturn;\n\t}\n'
+     '\tst=gBS->LoadImage(FALSE,gImageHandle,p,NULL,0,&ih);')
 hook(SI+'src/gui/interface/apps/uefi_shell.c', '#include<Library/UefiLib.h>\n',
      '#include<Library/UefiLib.h>\n#include<Library/PianoProductPumpLib.h>\n')
 hook(SI+'src/gui/interface/apps/uefi_shell.c', '\tif(id==0){\n\t\tMEDIA_FW_VOL_FILEPATH_DEVICE_PATH fn;',

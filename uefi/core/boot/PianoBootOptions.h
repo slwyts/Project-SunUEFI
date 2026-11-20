@@ -5,7 +5,8 @@
 typedef enum {
   PianoBootSystems,
   PianoBootAutomatic,
-  PianoBootSelected
+  PianoBootSelected,
+  PianoBootFile
 } PIANO_BOOT_SELECTION;
 
 typedef struct {
@@ -20,5 +21,7 @@ typedef struct {
 
 EFI_STATUS PianoRefreshBootOptions(VOID);
 BOOLEAN PianoBootOptionIsSimpleInit(CONST EFI_DEVICE_PATH_PROTOCOL *Path);
+EFI_STATUS PianoBootFileSelect(CONST EFI_DEVICE_PATH_PROTOCOL *Path,CONST VOID *Options,UINT32 Bytes);
+VOID PianoBootFileDiscard(VOID);
 EFI_STATUS PianoStartBootOption(EFI_HANDLE Parent,EFI_HANDLE *Device,
                                 PIANO_FV_APPLICATION *Application,PIANO_BOOT_DISPATCH *Dispatch);

@@ -21,6 +21,7 @@ EFI_STATUS EFIAPI PianoProductRequestReset(UINT32 Target);
 EFI_STATUS EFIAPI PianoProductRequestContinue(VOID);
 EFI_STATUS EFIAPI PianoProductOpenSimpleInit(VOID);
 EFI_STATUS EFIAPI PianoProductSelectBootOption(UINT16 Number);
+EFI_STATUS EFIAPI PianoProductSelectBootFile(CONST EFI_DEVICE_PATH_PROTOCOL *Path,CONST VOID *Options,UINT32 Bytes);
 BOOLEAN EFIAPI PianoProductIsSimpleInitOption(CONST EFI_DEVICE_PATH_PROTOCOL *Path);
 // CPU-only implementation identity; unsupported targets must not bypass owners.
 BOOLEAN EFIAPI PianoProductRebootManaged(VOID);

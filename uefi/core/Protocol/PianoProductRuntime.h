@@ -8,7 +8,7 @@
 
 #define PIANO_PRODUCT_RUNTIME_PROTOCOL_GUID \
   {0x618c4e8d,0x29ab,0x4fdc,{0xa4,0x13,0x60,0x2b,0x46,0x39,0x72,0xa1}}
-#define PIANO_PRODUCT_RUNTIME_REVISION 4ULL
+#define PIANO_PRODUCT_RUNTIME_REVISION 5ULL
 #define PIANO_PRODUCT_PUMP_WAIT_EVENT BIT0
 #define PIANO_PRODUCT_PUMP_GUI        BIT1
 #define PIANO_PRODUCT_PUMP_APP        BIT2
@@ -66,5 +66,8 @@ struct PIANO_PRODUCT_RUNTIME_PROTOCOL {
   EFI_STATUS (EFIAPI *SelectBootOption)(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT16 Number);
   BOOLEAN (EFIAPI *IsSimpleInitOption)(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,
                                       CONST EFI_DEVICE_PATH_PROTOCOL *Path);
+  // Queue a file for this boot only. The caller retains its path and options.
+  EFI_STATUS (EFIAPI *SelectBootFile)(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,
+    CONST EFI_DEVICE_PATH_PROTOCOL *Path,CONST VOID *Options,UINT32 Bytes);
 };
 #endif

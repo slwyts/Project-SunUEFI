@@ -10,6 +10,7 @@
 EFI_BOOT_SERVICES *gBS;
 EFI_SYSTEM_TABLE *gST;
 EFI_RUNTIME_SERVICES *gRT;
+EFI_DXE_SERVICES *gDS;
 EFI_GUID gEfiLoadedImageProtocolGuid={.Data1=1};
 STATIC EFI_BOOT_SERVICES Services;
 STATIC EFI_SYSTEM_TABLE System;
@@ -18,6 +19,13 @@ STATIC EFI_LOADED_IMAGE_PROTOCOL ManagerLoaded,InnerLoaded;
 STATIC UINT32 DeviceTree[10];
 STATIC EFI_CONFIGURATION_TABLE FdtTable;
 EFI_GUID gFdtTableGuid={.Data1=2};
+EFI_GUID gEfiAcpi20TableGuid=EFI_ACPI_20_TABLE_GUID;
+STATIC EFI_ACPI_2_0_ROOT_SYSTEM_DESCRIPTION_POINTER AcpiRoot;
+STATIC struct {
+  EFI_ACPI_DESCRIPTION_HEADER Header;
+  UINT8 Entry[sizeof(UINT64)];
+} Xsdt;
+STATIC EFI_STATUS DtbStatus;
 STATIC PIANO_PRODUCT_RUNTIME_PROTOCOL Runtime;
 STATIC PIANO_BOOT_POLICY_REPORT Policy;
 STATIC jmp_buf Escape;
@@ -65,7 +73,20 @@ VOID *EFIAPI CopyMem(VOID *D,CONST VOID *S,UINTN N){return memmove(D,S,N);}
 VOID *EFIAPI ZeroMem(VOID *D,UINTN N){return memset(D,0,N);}
 UINT32 EFIAPI Fdt32ToCpu(UINT32 V){return __builtin_bswap32(V);}
 INT32 EFIAPI FdtCheckHeader(CONST VOID *Tree){assert(Tree==DeviceTree);return 0;}
-EFI_STATUS PianoProductMemoryValidateDtb(CONST VOID *Tree,UINTN Bytes){assert(Tree==DeviceTree&&Bytes==sizeof(DeviceTree));return EFI_SUCCESS;}
+EFI_STATUS PianoProductMemoryValidateDtb(CONST VOID *Tree,UINTN Bytes){assert(Tree==DeviceTree&&Bytes==sizeof(DeviceTree));return DtbStatus;}
+UINT8 EFIAPI CalculateSum8(CONST UINT8 *Buffer,UINTN Bytes){
+  UINT8 Sum=0;
+  while(Bytes--)Sum+=*Buffer++;
+  return Sum;
+}
+STATIC EFI_STATUS EFIAPI AcpiRegion(EFI_PHYSICAL_ADDRESS Address,EFI_GCD_MEMORY_SPACE_DESCRIPTOR *Region){
+  memset(Region,0,sizeof(*Region));
+  if(Address==(UINTN)&AcpiRoot)Region->Length=sizeof(AcpiRoot);
+  else if(Address==(UINTN)&Xsdt)Region->Length=sizeof(Xsdt);
+  else return EFI_NOT_FOUND;
+  Region->BaseAddress=Address;Region->GcdMemoryType=EfiGcdMemoryTypeSystemMemory;
+  return EFI_SUCCESS;
+}
 EFI_STATUS PianoProductMemoryValidateCode(CONST VOID *Base,UINT64 Bytes){assert((Base==ManagerLoaded.ImageBase&&Bytes==ManagerLoaded.ImageSize)||(Base==mLinuxApplication.BaseIdentity&&Bytes==mLinuxApplication.SizeIdentity));return CodeStatus;}
 BOOLEAN PianoUsbControllerHostFailed(VOID){return FALSE;}
 VOID PianoProductMemoryGetDiagnostic(PIANO_PRODUCT_MEMORY_DIAGNOSTIC *Report){memset(Report,0,sizeof(*Report));Report->CaptureStatus=Report->DtbStatus=EFI_NOT_STARTED;}
@@ -85,6 +106,7 @@ EFI_STATUS PianoStartBootOption(EFI_HANDLE Parent,EFI_HANDLE *Device,PIANO_FV_AP
   if(EspStatus!=EFI_SUCCESS)return EspStatus;
   assert(Dispatch->Selection==Policy.BootSelection && Dispatch->PrepareSystem(&BootPath)==EFI_SUCCESS && mLinuxActive);
   Application->StartCalled=Dispatch->StartedSystem=TRUE;
+  if(Dispatch->Selection==PianoBootFile){Application->StartReturned=TRUE;Application->Start=LoadStatus;}
   if(CheckFallback)assert(!Dispatch->CanTryNextSystem(LoadStatus));
   ++FileLoads;return LoadStatus;
 }
@@ -186,6 +208,7 @@ STATIC VOID Reset(VOID){
   DiagnosticAction=PianoUsbServiceActionReboot;
   DiagnosticResetBlocked=FALSE;
   CodeStatus=EFI_SUCCESS;
+  DtbStatus=EFI_SUCCESS;
   memset(&KernelPath,0,sizeof(KernelPath));
   KernelPath.Memory.Header=(EFI_DEVICE_PATH_PROTOCOL){HARDWARE_DEVICE_PATH,HW_MEMMAP_DP,{sizeof(MEMMAP_DEVICE_PATH),0}};
   KernelPath.Memory.MemoryType=EfiLoaderData;
@@ -241,6 +264,45 @@ STATIC VOID EfiAdmission(VOID){
   BAD_DIRECT(KernelPath.End.Type=HARDWARE_DEVICE_PATH);BAD_DIRECT(CodeStatus=EFI_ACCESS_DENIED);
 #undef BAD_DIRECT
 }
+STATIC VOID AcpiAdmission(VOID){
+  STATIC EFI_DXE_SERVICES Dxe;
+  EFI_CONFIGURATION_TABLE Tables[2];
+  Reset();
+  Dxe.GetMemorySpaceDescriptor=AcpiRegion;gDS=&Dxe;
+  Xsdt.Header.Signature=EFI_ACPI_2_0_EXTENDED_SYSTEM_DESCRIPTION_TABLE_SIGNATURE;
+  Xsdt.Header.Length=sizeof(Xsdt);Xsdt.Header.Revision=1;
+  Xsdt.Entry[0]=1;
+  Xsdt.Header.Checksum=-CalculateSum8((VOID *)&Xsdt,sizeof(Xsdt));
+  AcpiRoot.Signature=EFI_ACPI_2_0_ROOT_SYSTEM_DESCRIPTION_POINTER_SIGNATURE;
+  AcpiRoot.Revision=2;AcpiRoot.Length=sizeof(AcpiRoot);AcpiRoot.XsdtAddress=(UINTN)&Xsdt;
+  AcpiRoot.Checksum=-CalculateSum8((VOID *)&AcpiRoot,sizeof(EFI_ACPI_1_0_ROOT_SYSTEM_DESCRIPTION_POINTER));
+  AcpiRoot.ExtendedChecksum=-CalculateSum8((VOID *)&AcpiRoot,sizeof(AcpiRoot));
+  Tables[0]=(EFI_CONFIGURATION_TABLE){gEfiAcpi20TableGuid,&AcpiRoot};
+  System.ConfigurationTable=Tables;System.NumberOfTableEntries=1;
+  assert(ValidateInstalledEfiImage(CORE,MANAGER,&ManagerLoaded)==EFI_SUCCESS);
+  assert(!strcmp(mEfiImageStage,"acpi"));
+  assert(ValidateInstalledEfiImage(CORE,CHILD,&ChildLoaded)==EFI_SUCCESS);
+  ChildLoaded.ParentHandle=CORE;
+  assert(ValidateInstalledEfiImage(CORE,CHILD,&ChildLoaded)==EFI_ACCESS_DENIED);
+  ChildLoaded.ParentHandle=MANAGER;
+  ++AcpiRoot.ExtendedChecksum;
+  assert(ValidateInstalledEfiImage(CORE,CHILD,&ChildLoaded)==EFI_COMPROMISED_DATA);
+  --AcpiRoot.ExtendedChecksum;
+  ++Xsdt.Header.Length;
+  assert(ValidateInstalledEfiImage(CORE,CHILD,&ChildLoaded)==EFI_COMPROMISED_DATA);
+  --Xsdt.Header.Length;
+  ++Xsdt.Entry[0];
+  assert(ValidateInstalledEfiImage(CORE,CHILD,&ChildLoaded)==EFI_COMPROMISED_DATA);
+  // An unused ACPI description does not gate a working Linux DTB.
+  Tables[1]=FdtTable;System.NumberOfTableEntries=2;
+  assert(ValidateInstalledEfiImage(CORE,CHILD,&ChildLoaded)==EFI_SUCCESS);
+  assert(!strcmp(mEfiImageStage,"device-tree"));
+  --Xsdt.Entry[0];
+  DtbStatus=EFI_NOT_READY;
+  assert(ValidateInstalledEfiImage(CORE,CHILD,&ChildLoaded)==EFI_NOT_READY);
+  Tables[1].VendorTable=NULL;
+  assert(ValidateInstalledEfiImage(CORE,CHILD,&ChildLoaded)==EFI_COMPROMISED_DATA);
+}
 STATIC VOID UkiLoadFailure(VOID){
   CONST EFI_STATUS Errors[]={EFI_NOT_FOUND,EFI_TIMEOUT,EFI_LOAD_ERROR,EFI_SUCCESS};
   for(UINTN I=0;I<ARRAY_SIZE(Errors);++I){
@@ -258,6 +320,8 @@ STATIC VOID UkiLoadFailure(VOID){
   assert(StartInstalledLinux(CORE)==EFI_NOT_READY&&!FileLoads&&!HostLeaves&&!BootCancels);
   Reset();EspStatus=EFI_NOT_FOUND;Policy.BootSelection=PianoBootAutomatic;
   assert(StartInstalledLinux(CORE)==EFI_NOT_READY&&!FileLoads&&!HostLeaves&&BootCancels==1);
+  Reset();Policy.BootSelection=PianoBootFile;LoadStatus=EFI_SUCCESS;
+  assert(StartInstalledLinux(CORE)==EFI_NOT_READY&&FileLoads==1&&BootCancels==1);
 }
 STATIC VOID PrepareFallback(VOID){
   Reset();mLateHandoff.Phase=PianoExitArmed;
@@ -371,6 +435,7 @@ STATIC VOID ErrorDiagnostics(VOID){
 int main(int Argc,char **Argv){
   assert(Argc==2);
   if(!strcmp(Argv[1],"efi-admission"))EfiAdmission();
+  else if(!strcmp(Argv[1],"acpi-admission"))AcpiAdmission();
   else if(!strcmp(Argv[1],"uki-load-failure"))UkiLoadFailure();
   else if(!strcmp(Argv[1],"boot-fallback"))BootFallback();
   else if(!strcmp(Argv[1],"error-diagnostics"))ErrorDiagnostics();

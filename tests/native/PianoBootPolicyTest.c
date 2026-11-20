@@ -74,6 +74,10 @@ static EFI_STATUS EFIAPI set_watchdog(UINTN Timeout,UINT64 Code,UINTN Bytes,CHAR
 static CONST CHAR16 file_name[]=L"\\EFI\\Linux\\sunuefi.efi",file_options[]=L"file-options";
 EFI_STATUS PianoNvFileSave(BOOLEAN Freeze){(void)Freeze;return EFI_NOT_STARTED;}
 BOOLEAN PianoBootOptionIsSimpleInit(CONST EFI_DEVICE_PATH_PROTOCOL *Path){return Path==(VOID *)123;}
+EFI_STATUS PianoBootFileSelect(CONST EFI_DEVICE_PATH_PROTOCOL *Path,CONST VOID *Options,UINT32 Bytes){
+  assert(Path==(VOID *)124&&!Options&&!Bytes);return EFI_SUCCESS;
+}
+VOID PianoBootFileDiscard(VOID){}
 VOID PianoDwc3ServiceReplayStartup(VOID){}
 VOID PianoRawLinuxReplayStable(VOID){}
 VOID PianoPogoPump(VOID){++pogo_pumps;}
@@ -265,7 +269,10 @@ static EFI_STATUS EFIAPI start(EFI_HANDLE Handle,UINTN *Bytes,CHAR16 **Data){
     free(image_base);image_base=NULL;image_live=FALSE;return file_case==6?EFI_DEVICE_ERROR:EFI_SUCCESS;
   }
   assert(runtime->Pump(runtime,PIANO_PRODUCT_PUMP_GUI,1000)==EFI_SUCCESS);
-  if(scenario==156)assert(runtime->OpenSimpleInit(runtime)==EFI_ACCESS_DENIED);
+  if(scenario==156){
+    assert(runtime->OpenSimpleInit(runtime)==EFI_ACCESS_DENIED);
+    assert(runtime->SelectBootFile(runtime,(VOID *)124,NULL,0)==EFI_SUCCESS);
+  }
   if(scenario==157){
     assert(current_action==PIANO_PRODUCT_ACTION_BOOT_PICKER);
     assert(runtime->SelectBootOption(runtime,19)==EFI_SUCCESS);
@@ -417,9 +424,11 @@ int main(int argc,char **argv){
   }
   if(scenario>=156){
     assert(runtime->SelectBootOption(runtime,19)==EFI_ACCESS_DENIED);
+    assert(runtime->SelectBootFile(runtime,(VOID *)124,NULL,0)==EFI_ACCESS_DENIED);
     if(scenario==156){
       assert(runtime->IsSimpleInitOption(runtime,(VOID *)123));
       assert(runtime->OpenSimpleInit(runtime)==EFI_SUCCESS&&simple_runs==1&&releases==1);
+      assert(PianoBootPolicyReport()->BootSelection==PianoBootFile);
     }else{
       assert(PianoBootPolicySetStartupTarget(2)==EFI_SUCCESS);
       assert(runtime->RequestAction(runtime,PIANO_PRODUCT_ACTION_BOOT_PICKER)==EFI_SUCCESS);

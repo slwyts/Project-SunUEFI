@@ -136,6 +136,19 @@ STATIC BOOLEAN EFIAPI IsSimpleInitOption(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,
   CONST EFI_DEVICE_PATH_PROTOCOL *Path) {
   return This==&mRuntime && mAlive && PianoBootOptionIsSimpleInit(Path);
 }
+STATIC EFI_STATUS EFIAPI SelectBootFile(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,
+  CONST EFI_DEVICE_PATH_PROTOCOL *Path,CONST VOID *Options,UINT32 Bytes) {
+  if(This!=&mRuntime || !Path)return EFI_INVALID_PARAMETER;
+  if(mReport.ActiveAction!=PIANO_PRODUCT_ACTION_SIMPLEINIT || !mAlive)return EFI_ACCESS_DENIED;
+  if(UsbBulkInProgress())return EFI_NOT_READY;
+  EFI_STATUS Status=AtApp();
+  if(Status!=EFI_SUCCESS)return Status;
+  Status=PianoBootFileSelect(Path,Options,Bytes);
+  if(Status!=EFI_SUCCESS)return Status;
+  Status=QueueAction(This,PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE,PianoBootFile,0);
+  if(Status!=EFI_SUCCESS)PianoBootFileDiscard();
+  return Status;
+}
 STATIC EFI_STATUS EFIAPI Pending(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 *Action,UINT64 *Sequence) {
   if(This!=&mRuntime || !Action || !Sequence)return EFI_INVALID_PARAMETER;
   UINT64 Mask=Critical();
@@ -337,7 +350,7 @@ STATIC EFI_STATUS EFIAPI Pump(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Reason
   mReport.Pumping=FALSE;return mReport.LastPump=Exact(S);
 }
 STATIC PIANO_PRODUCT_RUNTIME_PROTOCOL mRuntime={PIANO_PRODUCT_RUNTIME_REVISION,Pump,Alive,Request,Pending,Ack,
-  OpenSimpleInit,SelectBootOption,IsSimpleInitOption};
+  OpenSimpleInit,SelectBootOption,IsSimpleInitOption,SelectBootFile};
 STATIC EFI_STATUS RetireEsc(VOID) {
   if(mReport.Retained)return EFI_COMPROMISED_DATA;
   for(UINTN I=0;I<mKeysCount;++I){
@@ -625,6 +638,7 @@ EFI_STATUS PianoBootPolicyCancelStable(VOID) {
   if(mReport.Retained||mReport.Pumping||mReport.Dispatching||mReport.ActiveAction!=PIANO_PRODUCT_ACTION_NONE||
      mReport.RequestedCoreAction!=PianoUsbServiceActionBoot||mReport.PendingAction!=PIANO_PRODUCT_ACTION_NONE)return EFI_ACCESS_DENIED;
   mReport.RequestedCoreAction=PianoUsbServiceActionNone;
+  PianoBootFileDiscard();
   return Request(&mRuntime,PIANO_PRODUCT_ACTION_SIMPLEINIT);
 }
 EFI_STATUS PianoBootPolicyCancelExit(VOID) {
@@ -634,12 +648,14 @@ EFI_STATUS PianoBootPolicyCancelExit(VOID) {
      (A!=PianoUsbServiceActionBoot&&A!=PianoUsbServiceActionReboot&&A!=PianoUsbServiceActionContinue)||
      mReport.PendingAction!=PIANO_PRODUCT_ACTION_NONE)return EFI_ACCESS_DENIED;
   mReport.RequestedCoreAction=PianoUsbServiceActionNone;mReport.RequestedResetTarget=0;
+  PianoBootFileDiscard();
   return Request(&mRuntime,PIANO_PRODUCT_ACTION_SIMPLEINIT);
 }
 EFI_STATUS PianoBootPolicyStop(VOID) {
   if(!mReport.Initialized)return EFI_NOT_STARTED;
   if(mStartupWindow || mReport.Dispatching || mReport.Pumping || mReport.Retained)return EFI_ACCESS_DENIED;
   EFI_STATUS S=AtApp();if(S!=EFI_SUCCESS)return S;
+  PianoBootFileDiscard();
   while(mKeysCount){UINTN I=mKeysCount-1;EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *Fresh=NULL;
     S=gBS->HandleProtocol(mKeys[I].Handle,&gEfiSimpleTextInputExProtocolGuid,(VOID **)&Fresh);RequireAlive();
     if(S==EFI_NOT_FOUND || S==EFI_UNSUPPORTED || S==EFI_INVALID_PARAMETER || (S==EFI_SUCCESS && (Fresh!=mKeys[I].Input || !Fresh || Fresh->UnregisterKeyNotify!=mKeys[I].Unregister))){--mKeysCount;continue;}

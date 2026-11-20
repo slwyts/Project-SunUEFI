@@ -56,8 +56,11 @@ class ProductCoreTests(unittest.TestCase):
                                 env={**os.environ, 'ASAN_OPTIONS': 'detect_leaks=1'})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_standard_efi_requires_actual_active_uki_descendant(self):
+    def test_standard_efi_requires_the_selected_loader_or_its_descendant(self):
         self.run_case('efi-admission')
+
+    def test_acpi_handoff_accepts_a_valid_root_without_masking_a_bad_dtb(self):
+        self.run_case('acpi-admission')
 
     def test_failed_uki_reports_original_error_without_menu_retry(self):
         self.run_case('uki-load-failure')
