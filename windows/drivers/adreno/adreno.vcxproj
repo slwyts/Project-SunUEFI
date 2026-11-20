@@ -31,11 +31,15 @@
   <ItemGroup>
     <ClCompile Include="firmware.c" />
     <ClCompile Include="gmu_firmware.c" />
+    <ClCompile Include="gmu_memory.c" />
+    <ClCompile Include="gmu_memory_layout.c" />
     <ClCompile Include="gmu_resources.c" />
     <ClCompile Include="hfi_queue.c" />
     <ClCompile Include="hfi.c" />
     <ClInclude Include="firmware.h" />
     <ClInclude Include="gmu_firmware.h" />
+    <ClInclude Include="gmu_memory.h" />
+    <ClInclude Include="gmu_memory_layout.h" />
     <ClInclude Include="gmu_resources.h" />
     <ClInclude Include="hfi_queue.h" />
     <ClInclude Include="hfi.h" />
