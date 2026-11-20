@@ -53,6 +53,7 @@ CI_UNIT = (
     'test_build_pipewire_packages.py',
     'test_build_plasma_camera_package.py',
     'test_build_steamos_rootfs.py',
+    'test_build_arch_ffmpeg.py',
     'test_overlay_cache.py',
     'test_piano_camera.py',
     'test_camera.py',

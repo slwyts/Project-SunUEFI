@@ -8,7 +8,7 @@
 | 系统 | FFmpeg | 构建入口 |
 | --- | --- | --- |
 | Debian sid | 9.0.2（Debian 源版本 `7:9.0.2-6`），保留 Debian 打包配置 | `tools/build_ffmpeg_packages.py` |
-| SteamOS | 8.1.1，保持 Valve 8.x 库接口和编译选项 | `tools/build_arch_ffmpeg.py` |
+| SteamOS | 8.1.2，保持 Valve 8.x 库接口和编译选项 | `tools/build_arch_ffmpeg.py` |
 | Nyarch | 9.0.2，保持当前 Arch 库接口 | `tools/build_arch_ffmpeg.py` |
 
 Arch 构建器读取目标系统已安装包的编译选项、依赖和版本信息，保留完整编解码功能，
@@ -32,10 +32,13 @@ python tools/prepare_ffmpeg_source.py \
 ```
 
 源码归档及补丁固定 SHA256，补丁禁止模糊匹配，不修改 `upstream/`。
-FFmpeg 8 和 9 分别使用官方 8.1.1、9.0.2 归档。上游 9.0.2 及 Debian 的补丁系列尚未包含这些 V4L2 修正，因此继续重建标准发行版软件包。
+FFmpeg 8 和 9 分别使用官方 8.1.2、9.0.2 归档。上游 9.0.2 及 Debian 的补丁系列尚未包含这些 V4L2 修正，因此继续重建标准发行版软件包。
 
-SteamOS 和 Nyarch 的包缓存同时核对版本、补丁系列与二进制包哈希。
+SteamOS 和 Nyarch 的包缓存同时核对目标已装包的版本、编译选项、库依赖、
+补丁系列与二进制包哈希。
 修改系列后重新构建完整包；复用缓存时重新安装该包，不保留被基础软件源替换的版本。
+SteamOS 包保留 Valve `libavformat.so.62` 中供 Qt WebEngine 调用的
+`av_stream_get_first_dts`。
 
 Debian 的 `SOURCE.json` 同时绑定签名 sid 源身份、目标已安装运行库 ABI、原始 `debian/rules`／`debian/control`、补丁和二进制哈希。源码或 ABI 改变不能命中旧包；同目录的 `--resume` 校验这些身份后复用完整 `.changes` 或继续未完成对象，不重下已验哈希的归档、不重新配置完整软件包。
 
@@ -89,9 +92,9 @@ FFmpeg 缓冲区补丁与 Iris 的 PSC_LAST 修正均已纳入默认构建；内
 FFmpeg 7 和 9 在实机完成 640×480 → 1280×720 → 640×480 的连续切换，
 36 帧全部解码、零解码错误，两版也各完成 12 帧 H.264 硬件编码。
 
-SteamOS 的完整 FFmpeg 8.1.1 包复用同一份 NV12 行复制、序列头合并和未启动编码器
+SteamOS 的 FFmpeg 8.1.2 包延续 8.1.1 的 NV12 行复制、序列头合并和未启动编码器
 退出修正。输入帧只提供可见高度，驱动的对齐高度仅用于目标缓冲区布局，
-不能按后者读取源图像。实机已完成 1280×720 的 30 帧 H.264 编码和全部 30 帧硬解。
+不能按后者读取源图像。8.1.1 实机完成了 1280×720 的 30 帧 H.264 编码和全部 30 帧硬解。
 裸码流的帧数检查使用 `-fps_mode passthrough`，避免输出同步策略丢弃时间戳相同的画面。
 
 同一内核补丁在取得核心锁之前先等待中断线程结束，

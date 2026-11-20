@@ -484,7 +484,7 @@ def build_overlays(root, output, source, steamos_config):
         build_arch_package.install_cached(root, gamescope)
     outputs['gamescope'] = overlay_packages.pacman_outputs(gamescope)
     ffmpeg = output / 'packages/ffmpeg'
-    if not build_arch_ffmpeg.is_current(ffmpeg):
+    if not build_arch_ffmpeg.is_current(ffmpeg, root):
         if ffmpeg.exists():
             shutil.rmtree(ffmpeg)
         build_arch_ffmpeg.build(root, ffmpeg)

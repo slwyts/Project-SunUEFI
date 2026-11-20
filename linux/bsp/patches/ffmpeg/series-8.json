@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "component": "ffmpeg-v4l2m2m",
-  "upstream_version": "8.1.1",
+  "upstream_version": "8.1.2",
   "local_revision": "sunuefi6",
   "targets": ["steamos"],
   "upstream": {
@@ -10,12 +10,18 @@
     "drop_when": "The selected FFmpeg release implements stateful V4L2 initial metadata, LAST/source-change drain, orphaned capture buffers, P010, visible-row NV12 uploads, encoder header/stop handling, explicit H.264 level, payload bounds and a capture buffer reserve; verify complete frames across resolution changes, matching H.264 bitstream level and a complete encoder drain while recording audio on Iris."
   },
   "source": {
-    "url": "https://ffmpeg.org/releases/ffmpeg-8.1.1.tar.xz",
-    "filename": "ffmpeg-8.1.1.tar.xz",
-    "size": 11709440,
-    "sha256": "b6863adde98898f42602017462871b5f6333e65aec803fdd7a6308639c52edf3"
+    "url": "https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz",
+    "filename": "ffmpeg-8.1.2.tar.xz",
+    "size": 11710924,
+    "sha256": "464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c"
   },
   "series": [
+    {
+      "path": "0001-valve-avformat-first-dts.patch",
+      "sha256": "f865d677f8ad39c79dde69186629cb6468c2b289c4156dbb8dec8e68b0131b40",
+      "source": "https://holo-packages.steamos.cloud/archlinux-deckard/archlinux/main/sources/packages/ffmpeg-2:8.1.2-7.src.tar.gz",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
+    },
     {
       "path": "0004-v4l2m2m-ffmpeg9-stateful.patch",
       "sha256": "ad7b86872378f38fbbdf8a24e31726f62a765869b6f910322be6a8d8695b1a3c",

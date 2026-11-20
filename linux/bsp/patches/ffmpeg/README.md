@@ -6,12 +6,14 @@ stateful V4L2 codec fixes:
 | Target | Source and patch series | Package builder |
 | --- | --- | --- |
 | Debian GNOME / KDE | FFmpeg 9.0.2, `patches/ffmpeg/9.0.2/series.json` | `tools/build_ffmpeg_packages.py` |
-| SteamOS | FFmpeg 8.1.1, `series-8.json` | `tools/build_arch_ffmpeg.py` |
+| SteamOS | FFmpeg 8.1.2, `series-8.json` | `tools/build_arch_ffmpeg.py` |
 | Nyarch | FFmpeg 9.0.2, `patches/ffmpeg/9.0.2/series.json` | `tools/build_arch_ffmpeg.py` |
 
 Arch packages preserve the installed codec configuration, dependencies,
-epoch and library ABI. A different upstream ABI needs its own patch port.
-Source archives and patches are checksum-pinned and applied without fuzz.
+epoch and library ABI. The pinned source version must match the installed
+package. Source archives and patches are checksum-pinned and applied without fuzz.
+The SteamOS series also keeps Valve's `av_stream_get_first_dts` export
+required by Qt WebEngine.
 Stage a copy with `tools/prepare_ffmpeg_source.py --output build/<new-directory>`.
 The default series is FFmpeg 9. For SteamOS, pass
 `--series linux/bsp/patches/ffmpeg/series-8.json`.

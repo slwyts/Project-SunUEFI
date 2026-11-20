@@ -285,7 +285,7 @@ def build_overlays(root, output, inputs, sensor_source, apps, *, refresh, nyarch
         packages['gnome_power'] = overlay_packages.pacman_outputs(gsd_packages)
         records['gnome_power'] = json.loads((gsd_packages / 'manifest.json').read_text())
     ffmpeg = output / 'packages/ffmpeg'
-    if not build_arch_ffmpeg.is_current(ffmpeg):
+    if not build_arch_ffmpeg.is_current(ffmpeg, root):
         if ffmpeg.exists():
             shutil.rmtree(ffmpeg)
         build_arch_ffmpeg.build(root, ffmpeg)
