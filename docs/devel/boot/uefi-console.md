@@ -267,7 +267,8 @@ Services 后不再访问 UFS，NV 写入返回不支持；带认证属性的 Sec
 ext4 驱动用固定的 lwext4 源码读取变量文件、`persist/bluetooth/.bt_nv.bin`
 和 `persist/time/ats_2`。只允许创建项目目录并写入两个变量文件，写入还会更新
 必要的 ext4 元数据。发现卷需要恢复时只读挂载，变量修改留在内存中，日志由
-Android 恢复。标准 Block I/O 和 Fastboot 不提供原厂 `persist` 的原始写入。
+Android 恢复。ext4 驱动在产品核心内部访问 UFS，UEFI 应用只能经文件接口写入
+变量快照。标准 Block I/O 和 Fastboot 不提供原厂 `persist` 的原始写入。
 文件系统先停止日志、卸载并同步，再停止 USB、UFS、SMMU 和时钟。
 存在未关闭文件或无法确认 DMA 已停止时拒绝系统启动交接，不强行释放。
 

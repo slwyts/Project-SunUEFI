@@ -21,7 +21,7 @@ def prepare(root, target):
         cache.write_bytes(data)
     if hashlib.sha256(cache.read_bytes()).hexdigest() != config['sha256']:
         raise ValueError('lwext4 source cache digest mismatch')
-    destination = target / 'Drivers/PianoExt4Dxe'
+    destination = target / 'Library/PianoExt4Lib'
     shutil.copytree(root / 'uefi/components/ext4', destination)
     library = destination / 'lwext4'
     library.mkdir()
@@ -48,12 +48,11 @@ def prepare(root, target):
     new='Finish:\n\t{ int release = ext4_fs_put_inode_ref(&ref); if (r == EOK) r = release; }\n\n\tif (r != EOK)\n\t\text4_trans_abort(file->mp);\n\telse\n\t\tr = ext4_trans_stop(file->mp);'
     if text.count(old)!=1:raise ValueError('lwext4 fwrite error boundary changed')
     api.write_text(text.replace(old,new,1))
-    inf = destination / 'PianoExt4Dxe.inf'
+    inf = destination / 'PianoExt4Lib.inf'
     # BaseTools expands MODULE_DIR to a package-relative path when it emits a
     # compiler response file, unlike the absolute make variable. Use the
     # prepared module's absolute include root in both compilation modes.
     text = inf.read_text().replace('$(MODULE_DIR)', destination.resolve().as_posix())
     inf.write_text(text.replace('  # LWEXT4_SOURCES', ''.join('  ' + name + '\n' for name in sources)))
     (destination / 'SOURCE.json').write_text(json.dumps(config, indent=2) + '\n')
-    return {'module': 'pianoProductPkg/Drivers/PianoExt4Dxe/PianoExt4Dxe.inf',
-            'source': config, 'formatting_included': False}
+    return 'pianoProductPkg/Library/PianoExt4Lib/PianoExt4Lib.inf'

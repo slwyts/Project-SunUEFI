@@ -3,7 +3,8 @@
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/MemoryAllocationLib.h>
-#include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
 typedef struct {UINTN Size;} ALLOCATION;
 void *malloc(size_t N){if(!N||N>MAX_UINTN-sizeof(ALLOCATION))return NULL;ALLOCATION *P=AllocatePool(N+sizeof(*P));if(!P)return NULL;P->Size=N;return P+1;}
 void free(void *P){if(P)FreePool((ALLOCATION *)P-1);}

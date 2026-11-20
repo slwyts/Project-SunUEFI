@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // lwext4-backed persist. Only the boot-service variable store is writable.
 #include "PianoExt4.h"
+#include "PianoStorageIo.h"
+#include <Protocol/BlockIo.h>
 #include <Protocol/PartitionInfo.h>
 #include <Protocol/DevicePath.h>
 #include <Protocol/DiskIo.h>
@@ -9,7 +11,6 @@
 #include <Guid/FileSystemVolumeLabelInfo.h>
 #include <Guid/EventGroup.h>
 #include <Library/UefiBootServicesTableLib.h>
-#include <Library/UefiDriverEntryPoint.h>
 #include <Library/UefiLib.h>
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>
@@ -31,7 +32,7 @@ typedef struct {
   EFI_HANDLE Handle;
   EFI_BLOCK_IO_PROTOCOL *Block;
   EFI_DISK_IO_PROTOCOL *Disk;
-  PIANO_PARTITION_IO_PROTOCOL *Io;
+  PIANO_STORAGE_PARTITION Storage;
   UINT32 MediaId;
   CHAR8 Mount[24],Device[24];
   struct ext4_blockdev Dev;
@@ -50,7 +51,6 @@ typedef struct {
   ext4_dir Dir;
 } FILE_HANDLE;
 STATIC EFI_DRIVER_BINDING_PROTOCOL mBinding;
-STATIC EFI_GUID mIoGuid=PIANO_PARTITION_IO_PROTOCOL_GUID;
 STATIC UINT32 mVolumeId;
 STATIC BOOLEAN mExited;
 STATIC EFI_EVENT mExit;
@@ -75,12 +75,13 @@ STATIC int ReadDevice(struct ext4_blockdev *D,void *Buffer,uint64_t At,uint32_t 
 }
 STATIC int WriteDevice(struct ext4_blockdev *D,const void *Buffer,uint64_t At,uint32_t Count){
   VOLUME *V=D->bdif->p_user;
-  if(!V->Writable||!V->Io)return EROFS;
-  if(mExited||V->Failed||At>D->bdif->ph_bcnt||Count>D->bdif->ph_bcnt-At)return EIO;
-  EFI_STATUS S=V->Io->Write(V->Io,V->Handle,At,(UINTN)Count*4096,Buffer);
+  if(!V->Writable)return EROFS;
+  if(mExited||V->Failed||!V->Block->Media->MediaPresent||V->Block->Media->MediaId!=V->MediaId ||
+     At>D->bdif->ph_bcnt||Count>D->bdif->ph_bcnt-At)return EIO;
+  EFI_STATUS S=PianoStorageWrite(&V->Storage,At,(UINTN)Count*4096,Buffer);
   // lwext4 writes journal commits synchronously. Every physical write is FUA;
   // also complete the owner's cache barrier before returning to its journal.
-  if(S==EFI_SUCCESS)S=V->Io->Flush(V->Io,V->Handle);
+  if(S==EFI_SUCCESS)S=PianoStorageFlush(&V->Storage);
   if(S!=EFI_SUCCESS){V->Failed=TRUE;return EIO;}return 0;
 }
 STATIC EFI_STATUS Enter(VOLUME *V){
@@ -91,7 +92,7 @@ STATIC EFI_STATUS Enter(VOLUME *V){
 }
 STATIC EFI_STATUS Leave(VOLUME *V,int R){V->Busy=FALSE;return V->Failed?EFI_DEVICE_ERROR:Status(R);}
 STATIC EFI_STATUS Barrier(VOLUME *V){
-  EFI_STATUS S=V->Io->Flush(V->Io,V->Handle);if(S!=EFI_SUCCESS)V->Failed=TRUE;return S;
+  EFI_STATUS S=PianoStorageFlush(&V->Storage);if(S!=EFI_SUCCESS)V->Failed=TRUE;return S;
 }
 STATIC EFI_STATUS FlushVolume(VOLUME *V){
   if(!Live(V))return EFI_DEVICE_ERROR;if(!V->Writable)return EFI_SUCCESS;
@@ -257,8 +258,7 @@ STATIC EFI_STATUS EFIAPI Start(EFI_DRIVER_BINDING_PROTOCOL *B,EFI_HANDLE Handle,
     if(S!=EFI_SUCCESS)gBS->CloseProtocol(Handle,&gEfiDiskIoProtocolGuid,B->DriverBindingHandle,Handle);}
   if(S!=EFI_SUCCESS){FreePool(V);return S;}V->Handle=Handle;V->MediaId=V->Block->Media->MediaId;
   V->Signature=VOL_SIG;V->Sfs=(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL){EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_REVISION,OpenVolume};
-  S=gBS->LocateProtocol(&mIoGuid,NULL,(VOID **)&V->Io);V->Writable=S==EFI_SUCCESS&&V->Io&&V->Io->Revision==2&&
-    V->Io->CanWrite(V->Io,Handle)==EFI_SUCCESS;
+  V->Writable=PianoStorageOpenPersist(Handle,&V->Storage)==EFI_SUCCESS && V->Storage.MediaId==V->MediaId;
   UINT32 Id=mVolumeId++;AsciiSPrint(V->Mount,sizeof(V->Mount),"/ext4-%u/",Id);AsciiSPrint(V->Device,sizeof(V->Device),"ext4-%u",Id);
   V->Iface=(struct ext4_blockdev_iface){.open=OpenDevice,.close=CloseDevice,.bread=ReadDevice,.bwrite=WriteDevice,
     .ph_bsize=4096,.ph_bcnt=V->Block->Media->LastBlock+1,.ph_bbuf=V->BlockBuffer,.p_user=V};
@@ -320,8 +320,8 @@ STATIC EFI_STATUS EFIAPI Stop(EFI_DRIVER_BINDING_PROTOCOL *B,EFI_HANDLE Handle,U
 }
 STATIC EFI_DRIVER_BINDING_PROTOCOL mBinding={Supported,Start,Stop,0x10,NULL,NULL};
 STATIC VOID EFIAPI Exit(EFI_EVENT Event,VOID *Context){(VOID)Event;(VOID)Context;mExited=TRUE;}
-EFI_STATUS EFIAPI PianoExt4Entry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Table){
+EFI_STATUS PianoExt4Register(EFI_HANDLE Image, EFI_SYSTEM_TABLE *Table) {
   EFI_STATUS S=gBS->CreateEventEx(EVT_NOTIFY_SIGNAL,TPL_NOTIFY,Exit,NULL,&gEfiEventExitBootServicesGuid,&mExit);if(S!=EFI_SUCCESS)return S;
-  S=EfiLibInstallDriverBindingComponentName2(Image,Table,&mBinding,Image,NULL,NULL);
+  S=EfiLibInstallDriverBindingComponentName2(Image,Table,&mBinding,NULL,NULL,NULL);
   if(S!=EFI_SUCCESS){gBS->CloseEvent(mExit);mExit=NULL;}return S;
 }

@@ -2,21 +2,21 @@
 // Included by the sole UFS owner; no second SMMU domain or DMA allocation.
 #include <Protocol/PianoRawPartitionWrite.h>
 STATIC PIANO_STORAGE_PARTITION mFilePartitions[3];
-STATIC EFI_GUID mPartitionIoGuid=PIANO_PARTITION_IO_PROTOCOL_GUID;
 STATIC EFI_GUID mRawPartitionWriteGuid=PIANO_RAW_PARTITION_WRITE_GUID;
-STATIC EFI_STATUS PartitionFromHandle(EFI_HANDLE Handle,PIANO_STORAGE_PARTITION *P){
-  EFI_PARTITION_INFO_PROTOCOL *Info=NULL;EFI_STATUS S=gBS->HandleProtocol(Handle,&gEfiPartitionInfoProtocolGuid,(VOID **)&Info);
-  if(S!=EFI_SUCCESS||!Info||Info->Type!=PARTITION_TYPE_GPT)return EFI_ACCESS_DENIED;
-  CHAR16 Name[37];CopyMem(Name,Info->Info.Gpt.PartitionName,72);Name[36]=0;
-  if(StrCmp(Name,L"persist"))return EFI_WRITE_PROTECTED;
-  S=PianoStorageOpen(Name,P);if(S!=EFI_SUCCESS)return S;
-  return CompareGuid(&P->PartitionGuid,&Info->Info.Gpt.UniquePartitionGUID)&&P->First==Info->Info.Gpt.StartingLBA&&
-    P->Blocks==Info->Info.Gpt.EndingLBA-Info->Info.Gpt.StartingLBA+1?EFI_SUCCESS:EFI_MEDIA_CHANGED;
+EFI_STATUS PianoStorageOpenPersist(EFI_HANDLE Handle, PIANO_STORAGE_PARTITION *P) {
+  EFI_PARTITION_INFO_PROTOCOL *Info=NULL;
+  EFI_STATUS Status=gBS->HandleProtocol(Handle,&gEfiPartitionInfoProtocolGuid,(VOID **)&Info);
+  if(Status!=EFI_SUCCESS || !Info || Info->Type!=PARTITION_TYPE_GPT)return EFI_ACCESS_DENIED;
+
+  CONST EFI_PARTITION_ENTRY *Gpt=&Info->Info.Gpt;
+  if(StrnCmp(Gpt->PartitionName,L"persist",ARRAY_SIZE(Gpt->PartitionName)))return EFI_WRITE_PROTECTED;
+  Status=PianoStorageOpen(L"persist",P);
+  if(Status!=EFI_SUCCESS)return Status;
+  if(!CompareGuid(&P->PartitionGuid,&Gpt->UniquePartitionGUID) ||
+     P->First!=Gpt->StartingLBA || Gpt->EndingLBA<Gpt->StartingLBA ||
+     P->Blocks-1!=Gpt->EndingLBA-Gpt->StartingLBA)return EFI_MEDIA_CHANGED;
+  return EFI_SUCCESS;
 }
-STATIC EFI_STATUS EFIAPI FileCanWrite(PIANO_PARTITION_IO_PROTOCOL *This,EFI_HANDLE Handle);
-STATIC EFI_STATUS EFIAPI FileWrite(PIANO_PARTITION_IO_PROTOCOL *This,EFI_HANDLE Handle,UINT64 At,UINTN Bytes,CONST VOID *Data);
-STATIC EFI_STATUS EFIAPI FileFlush(PIANO_PARTITION_IO_PROTOCOL *This,EFI_HANDLE Handle);
-STATIC PIANO_PARTITION_IO_PROTOCOL mPartitionIo={2,FileCanWrite,FileWrite,FileFlush};
 STATIC EFI_STATUS FindFilesystem(EFI_HANDLE Partition,EFI_SIMPLE_FILE_SYSTEM_PROTOCOL **Filesystem){
   *Filesystem=NULL;
   if(mExitRetained)return EFI_ABORTED;
@@ -231,16 +231,4 @@ STATIC EFI_STATUS StorageFlush(CONST PIANO_STORAGE_PARTITION *P){
 }
 EFI_STATUS PianoStorageFlush(CONST PIANO_STORAGE_PARTITION *P){
   return FilePartition(P)?StorageFlush(P):EFI_INVALID_PARAMETER;
-}
-STATIC EFI_STATUS EFIAPI FileCanWrite(PIANO_PARTITION_IO_PROTOCOL *This,EFI_HANDLE Handle){
-  PIANO_STORAGE_PARTITION Partition;
-  return This==&mPartitionIo?PartitionFromHandle(Handle,&Partition):EFI_INVALID_PARAMETER;
-}
-STATIC EFI_STATUS EFIAPI FileWrite(PIANO_PARTITION_IO_PROTOCOL *This,EFI_HANDLE Handle,UINT64 At,UINTN Bytes,CONST VOID *Data){
-  if(This!=&mPartitionIo)return EFI_INVALID_PARAMETER;PIANO_STORAGE_PARTITION P;EFI_STATUS S=PartitionFromHandle(Handle,&P);
-  return S==EFI_SUCCESS?PianoStorageWrite(&P,At,Bytes,Data):S;
-}
-STATIC EFI_STATUS EFIAPI FileFlush(PIANO_PARTITION_IO_PROTOCOL *This,EFI_HANDLE Handle){
-  if(This!=&mPartitionIo)return EFI_INVALID_PARAMETER;PIANO_STORAGE_PARTITION P;EFI_STATUS S=PartitionFromHandle(Handle,&P);
-  return S==EFI_SUCCESS?PianoStorageFlush(&P):S;
 }

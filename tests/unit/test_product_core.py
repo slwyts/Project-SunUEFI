@@ -37,7 +37,8 @@ class ProductCoreTests(unittest.TestCase):
                     ROOT / 'uefi/components/nv', ROOT / 'uefi/components/reset',
                      ROOT / 'uefi/handoff/early-memory', ROOT / 'uefi/components/pogo-product',
                      ROOT / 'uefi/components/touch-product', mirror]
-        includes += [ROOT / 'uefi/components/board-identity', ROOT / 'uefi/components/rtc']
+        includes += [ROOT / 'uefi/components/board-identity', ROOT / 'uefi/components/rtc',
+                     ROOT / 'uefi/components/ext4']
         compiled = subprocess.run(
             ['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-Wno-misleading-indentation',
              '-fshort-wchar', '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections',

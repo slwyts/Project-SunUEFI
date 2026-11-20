@@ -526,7 +526,7 @@ def prepare(root=ROOT):
     shutil.copyfile(root/'upstream/Mu-Silicium/Mu_Basecore/MdeModulePkg/Universal/Console/GraphicsConsoleDxe/PianoChineseGlyphs.h',app/'PianoChineseGlyphs.h')
     (app/'ProductCore.inf').write_text(core_inf())
     from firmware.prepare_ext4 import prepare as prepare_ext4
-    ext4=prepare_ext4(root,target)
+    ext4_library=prepare_ext4(root,target)
     verify_os_boot(root,app,os_boot)
     verify_observation_families(root,app,observation)
     verify_provider(root,app,late_provider)
@@ -571,12 +571,12 @@ def prepare(root=ROOT):
       gEfiMdePkgTokenSpaceGuid.PcdUefiVariableDefaultPlatformLang|"en-US"
   }
   MdeModulePkg/Logo/LogoDxe.inf
-  pianoProductPkg/Drivers/PianoExt4Dxe/PianoExt4Dxe.inf
   MdeModulePkg/Bus/Pci/XhciDxe/XhciDxe.inf
   MdeModulePkg/Bus/Usb/UsbMouseDxe/UsbMouseDxe.inf
   pianoProductPkg/Drivers/PianoGopDxe/PianoGopDxe.inf
   pianoProductPkg/Applications/ProductCore/ProductCore.inf {
     <LibraryClasses>
+      NULL|'''+ext4_library+'''
       BaseCryptLib|OpensslPkg/Library/BaseCryptLib/BaseCryptLib.inf
       OpensslLib|OpensslPkg/Library/OpensslLib/OpensslLib.inf
       IntrinsicLib|CryptoPkg/Library/IntrinsicLib/IntrinsicLib.inf
@@ -608,7 +608,7 @@ def prepare(root=ROOT):
     text=text.replace('SiliciumPkg/Drivers/SimpleFbDxe/SimpleFbDxe.inf','pianoProductPkg/Drivers/PianoGopDxe/PianoGopDxe.inf')
     modules=DISK_MODULES+HOST_MODULES+SETUP_FV_MODULES+(
         BOOT_PICKER_MODULE,'pianoProductPkg/'+SIMPLEINIT_BOOT_MODULE,'MdeModulePkg/Logo/LogoDxe.inf',
-        ext4['module'],'ShellPkg/Application/Shell/Shell.inf','pianoProductPkg/Applications/ProductCore/ProductCore.inf')
+        'ShellPkg/Application/Shell/Shell.inf','pianoProductPkg/Applications/ProductCore/ProductCore.inf')
     text=text.replace('!include SiliciumPkg/Common.fdf.inc',''.join('  INF '+module+'\n' for module in modules)+native_fdf+'\n!include SiliciumPkg/Common.fdf.inc')
     fdf.write_text(text)
     early_memory=prepare_early_memory(root,target)

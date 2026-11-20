@@ -1,9 +1,9 @@
 [Defines]
   INF_VERSION = 0x00010005
-  BASE_NAME = PianoExt4Dxe
+  BASE_NAME = PianoExt4Lib
   FILE_GUID = 4127BD76-A19F-45C4-858A-45585434494F
-  MODULE_TYPE = DXE_DRIVER
-  ENTRY_POINT = PianoExt4Entry
+  MODULE_TYPE = UEFI_APPLICATION
+  LIBRARY_CLASS = NULL|UEFI_APPLICATION
 [Sources]
   PianoExt4.c
   PianoExt4Compat.c
@@ -12,7 +12,6 @@
   MdePkg/MdePkg.dec
   MdeModulePkg/MdeModulePkg.dec
 [LibraryClasses]
-  UefiDriverEntryPoint
   UefiBootServicesTableLib
   UefiLib
   BaseLib
@@ -34,5 +33,3 @@
   gEfiDevicePathProtocolGuid
 [BuildOptions]
   GCC:*_CLANGPDB_AARCH64_CC_FLAGS = -I$(MODULE_DIR)/compat -I$(MODULE_DIR)/lwext4/include -DCONFIG_USE_DEFAULT_CFG=1 -DCONFIG_HAVE_OWN_ERRNO=1 -DCONFIG_DEBUG_PRINTF=0 -DCONFIG_DEBUG_ASSERT=0 -DCONFIG_BLOCK_DEV_CACHE_SIZE=16 -DCONFIG_UNALIGNED_ACCESS=1 -Wno-error -Wno-unused-function
-[Depex]
-  TRUE

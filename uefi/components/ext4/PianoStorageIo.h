@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 #pragma once
 #include <Uefi.h>
-// Private file-driver IO; automatic saves stay scoped to project partitions.
+// Internal UFS access for the persist filesystem and Fastboot.
 typedef struct {
   UINT8 Lun;
   UINT32 BlockBytes,MediaId;
@@ -10,6 +10,7 @@ typedef struct {
   VOID *Identity;
 } PIANO_STORAGE_PARTITION;
 EFI_STATUS PianoStorageOpen(CONST CHAR16 *Name,PIANO_STORAGE_PARTITION *Partition);
+EFI_STATUS PianoStorageOpenPersist(EFI_HANDLE Handle, PIANO_STORAGE_PARTITION *Partition);
 EFI_STATUS PianoStorageWrite(CONST PIANO_STORAGE_PARTITION *,UINT64 Block,UINTN Bytes,CONST VOID *Buffer);
 EFI_STATUS PianoStorageFlush(CONST PIANO_STORAGE_PARTITION *);
 typedef struct {

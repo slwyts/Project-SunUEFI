@@ -12,6 +12,7 @@
 #include "PianoUfsProductVolume.h"
 #include "PianoProductSmem.h"
 #include "PianoReset.h"
+#include "PianoExt4.h"
 #include "PianoNvFile.h"
 #include "PianoBluetoothAddress.h"
 #include "PianoRtcOffset.h"
@@ -668,6 +669,9 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   Status=PianoStartKeys(Fdt);mInputStarted=Status==EFI_SUCCESS;BootLogStage("INPUT",Status);
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_INPUT_START status=%r started=%u\n",Status,mInputStarted));
   if(Status!=EFI_SUCCESS)FailStop(Status);
+  // UFS connects its partitions as soon as it publishes the disk handles.
+  Status=PianoExt4Register(Image,SystemTable);
+  DEBUG((DEBUG_WARN,"PIANO_EXT4_DRIVER_BINDING status=%r\n",Status));
   // The actual probe owns the clock/GDSC bring-up before the persistent UFS
   // action. Product never relies on an inherited ABL clock being sufficient.
   BootLogStage("UFS",EFI_NOT_STARTED);

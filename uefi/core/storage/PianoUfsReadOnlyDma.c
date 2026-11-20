@@ -8,7 +8,6 @@
 #include "PianoUfsProductVolume.h"
 #include "PianoStorageIo.h"
 #if defined(PIANO_UFS_PRODUCT_STORAGE) && PIANO_UFS_PRODUCT_STORAGE
-#include "PianoExt4.h"
 #endif
 #ifndef PIANO_UFS_PRODUCT_STORAGE
 #define PIANO_UFS_PRODUCT_STORAGE 0
@@ -1082,11 +1081,8 @@ EFI_STATUS PianoUfsBlockIoShutdownForReset(VOID){
     if(I==7)mProductPublished=FALSE;
 #endif
   }
-  if(mShutdownHandle!=NULL){EFI_GUID Guid=PIANO_UFS_SHUTDOWN_GUID;S=ResetExact(gBS->UninstallMultipleProtocolInterfaces(mShutdownHandle,&Guid,&mShutdown,
-#if PIANO_UFS_PRODUCT_STORAGE
-    &mPartitionIoGuid,&mPartitionIo,
-#endif
-    NULL));if(S!=EFI_SUCCESS){mResetReport.Protocols=S;return ResetFailure(S);}mShutdownHandle=NULL;++mResetReport.ProtocolsRemoved;}
+  if(mShutdownHandle!=NULL){EFI_GUID Guid=PIANO_UFS_SHUTDOWN_GUID;S=ResetExact(gBS->UninstallMultipleProtocolInterfaces(mShutdownHandle,&Guid,&mShutdown,NULL));
+    if(S!=EFI_SUCCESS){mResetReport.Protocols=S;return ResetFailure(S);}mShutdownHandle=NULL;++mResetReport.ProtocolsRemoved;}
   mResetReport.Protocols=EFI_SUCCESS;
   // Cache the final MMIO evidence before releasing the clocks/GDSC. Never
   // probe a potentially unclocked HCI register after this boundary.
@@ -1136,11 +1132,7 @@ VOID PianoUfsBlockIoStop(VOID) {
   }
   if(mShutdownHandle!=NULL) {
     EFI_GUID Guid=PIANO_UFS_SHUTDOWN_GUID;
-    EFI_STATUS Status=gBS->UninstallMultipleProtocolInterfaces(mShutdownHandle,&Guid,&mShutdown,
-#if PIANO_UFS_PRODUCT_STORAGE
-      &mPartitionIoGuid,&mPartitionIo,
-#endif
-      NULL);
+    EFI_STATUS Status=gBS->UninstallMultipleProtocolInterfaces(mShutdownHandle,&Guid,&mShutdown,NULL);
     if(EFI_ERROR(Status)){DmaFaultStop();return;}mShutdownHandle=NULL;
   }
   EFI_STATUS Status=Cleanup();if(EFI_ERROR(Status)){DmaFaultStop();return;}
@@ -1175,11 +1167,7 @@ STATIC EFI_STATUS PublishBlocks(VOID) {
     if(EFI_ERROR(Status) || Signature!=(mGpts[I].Entries!=0))return EFI_DEVICE_ERROR;
   }
   EFI_GUID Guid=PIANO_UFS_SHUTDOWN_GUID;
-  EFI_STATUS Status=gBS->InstallMultipleProtocolInterfaces(&mShutdownHandle,&Guid,&mShutdown,
-#if PIANO_UFS_PRODUCT_STORAGE
-    &mPartitionIoGuid,&mPartitionIo,
-#endif
-    NULL);
+  EFI_STATUS Status=gBS->InstallMultipleProtocolInterfaces(&mShutdownHandle,&Guid,&mShutdown,NULL);
   if(EFI_ERROR(Status))return Status;
   Status=gBS->CreateEventEx(EVT_NOTIFY_SIGNAL,TPL_NOTIFY,PianoUfsExitBoot,NULL,&gEfiEventExitBootServicesGuid,&mExitBootEvent);
   if(EFI_ERROR(Status))return Status;
