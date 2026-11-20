@@ -82,7 +82,7 @@ class OverlayCacheTests(unittest.TestCase):
                       'base': overlay_packages.sha(base), 'kernel': {'source_tree': 'test-tree'},
                       'upstream': {'nyarch': 'test-git'}, 'repositories': {'core.db': 'before'},
                       'installed': 'test-package-state'}
-            names = ('libfprint', 'fprintd', 'ffmpeg', 'libwacom', 'libssc',
+            names = ('libfprint', 'ffmpeg', 'libwacom', 'libssc',
                      'iio-sensor-proxy', 'fastrpc', 'mesa', 'gdm', 'mutter', 'gnome-settings-daemon',
                      'bluez-sunuefi')
             media = {**overlay_packages.PACMAN_CAMERA_DEFAULTS, 'libcamera': libcamera_arch.PACKAGES,
