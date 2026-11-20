@@ -116,6 +116,11 @@ SimpleInit 默认选择“启动 Linux”，无操作五秒后按启动顺序寻
 
 `PianoProductMemoryApplyDtb()` 使用带 CRC 与同次启动标识的早期采集结果，替换 Linux DTB 的 `/memory/reg`、DDR 容量／厂商／类型和 `/ddr-regions`，移除多余的 memory 节点。DTB 在内存中经标准协议修正，不按内存容量制作镜像，也不在安装时改写 ESP。Linux 的硬件节点、CMA 请求与保留区保持原样；交接前的检查会拒绝不兼容的保留区，而不是把 EFI 空闲页误当作物理总内存。
 
+Windows 和 Linux 还可从 SMBIOS 读取板载内存。类型 16、17 描述本次启动识别的容量，
+类型 19 分段描述物理地址，不把中间的空洞算作 RAM。原厂 DDR 地址表不完整时，
+只报告 ABL 确认的地址段，不把可分配页的合计向上取整当作装机容量。
+在 Linux 用 `sudo dmidecode -t 16,17,19` 查看；系统实际可用容量会扣除硬件保留区。
+
 启动镜像由构建器生成，写入 FAT 后读回核对。选择 UKI 时，用 `ukify` 打包
 并核对 `.linux`、`.initrd`、`.dtb` 和 `.cmdline` 各段。内核没有内建命令行或
 后备值。安装后的内核更新由发行版软件包维护，不需要重新刷写整个 ESP。

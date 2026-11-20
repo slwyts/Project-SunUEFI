@@ -26,7 +26,7 @@ BOOT_PICKER_MODULE='MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenuA
 OS_BOOT_SOURCE_BUDGET=128*1024*1024
 SOURCE_NAMES=(
     'PianoProductCore.c','PianoBootOptions.c','PianoProductBootLog.c','PianoProductDisplayObserve.c','PianoDisplaySmmuObserve.c','PianoFrameBufferMappingObserve.c','PianoDisplayClockObserve.c','PianoProductDisplayOwner.c','PianoDisplayClockLease.c','PianoDisplayClockRead.c','PianoBootPolicy.c','PianoFvApplication.c','PianoProductPayload.c','PianoProductOwners.c','PianoRamPartition.c','PianoProductSmem.c','PianoProductMemory.c',
-    'NativeProbe.c','PianoKeys.c','PianoFaultRecovery.c',
+    'PianoSmbiosMemory.c','NativeProbe.c','PianoKeys.c','PianoFaultRecovery.c',
     'PianoSmmu.c','PianoDma.c','PianoOwnedSmmu.c','PianoIoPageTable.c',
     'PianoUfsProbe.c','PianoUfsReadOnlyDma.c','PianoUfsDmaLayout.c','PianoGpt.c','PianoBlockIo.c',
     'PianoUfsProductVolume.c','PianoUfsBoundedLayout.c',
@@ -482,6 +482,7 @@ def core_inf():
   gEfiLoadFileProtocolGuid
   gEfiLoadFile2ProtocolGuid
   gEfiWatchdogTimerArchProtocolGuid
+  gEfiSmbiosProtocolGuid
   gEfiPartitionInfoProtocolGuid
   gEfiPciIoProtocolGuid
   gEfiSimpleFileSystemProtocolGuid
@@ -655,6 +656,7 @@ def prepare(root=ROOT):
     fdf=target/'pianoProduct.fdf';text=fdf.read_text().replace('# Host-only stage-0 diagnostic; NOT hardware validated.','# Single PianoUEFI product integration candidate; INCOMPLETE_NOT_RELEASE.')
     text=text.replace('SiliciumPkg/Drivers/SimpleFbDxe/SimpleFbDxe.inf','pianoProductPkg/Drivers/PianoGopDxe/PianoGopDxe.inf')
     modules=DISK_MODULES+HOST_MODULES+ACPI_MODULES+SETUP_FV_MODULES+(
+        'MdeModulePkg/Universal/SmbiosDxe/SmbiosDxe.inf',
         BOOT_PICKER_MODULE,'pianoProductPkg/'+SIMPLEINIT_BOOT_MODULE,'MdeModulePkg/Logo/LogoDxe.inf',
         'ShellPkg/Application/Shell/Shell.inf','pianoProductPkg/Applications/ProductCore/ProductCore.inf')
     text=text.replace('!include SiliciumPkg/Common.fdf.inc',''.join('  INF '+module+'\n' for module in modules)+

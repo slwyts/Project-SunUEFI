@@ -35,6 +35,7 @@ VOID PianoProductMemoryReemitDiagnostic(VOID);
 
 // Make the verified additional RAM available after the native drivers start.
 EFI_STATUS PianoProductMemoryPublish(VOID);
+EFI_STATUS PianoProductMemoryInstallSmbios(EFI_HANDLE Image);
 // Validation of an installed loader or EBS never allocates or frees pages.
 EFI_STATUS PianoProductMemoryCheck(VOID *Context,PIANO_LINUX_MEMORY_PROOF *Proof);
 EFI_STATUS PianoProductMemoryValidate(VOID *Context,CONST PIANO_LINUX_MEMORY_PROOF *Proof);

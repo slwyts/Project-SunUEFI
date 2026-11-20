@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // SEC identifies installed RAM; an operating system's DT is not a RAM inventory.
 #include "PianoProductMemory.h"
+#include "PianoSmbiosMemory.h"
 #include "PianoColdMemory.h"
 #include "PianoColdBootObjects.h"
 #include <PiDxe.h>
@@ -176,6 +177,15 @@ STATIC EFI_STATUS Capture(VOID){
 
 STATIC BOOLEAN LoaderRam(CONST EFI_MEMORY_REGION_DESCRIPTOR *Row){
  return Row->ResourceType==MEM_RES && Row->MemoryType==EfiConventionalMemory;
+}
+
+EFI_STATUS PianoProductMemoryInstallSmbios(EFI_HANDLE Image){
+ EFI_SMBIOS_PROTOCOL *Smbios;
+ EFI_STATUS Status=Capture();
+ if(EFI_ERROR(Status))return Status;
+ Status=gBS->LocateProtocol(&gEfiSmbiosProtocolGuid,NULL,(VOID **)&Smbios);
+ if(EFI_ERROR(Status))return Status;
+ return PianoSmbiosAddMemory(Smbios,Image,&mCold.Layout);
 }
 
 // PI stages initialized RAM as reserved until memory testing or a platform

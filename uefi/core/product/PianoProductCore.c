@@ -812,6 +812,8 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   // RAM to EFI loaders. The original heaps still work if a bank is unavailable.
   Status=PianoProductMemoryPublish();
   if(EFI_ERROR(Status))DEBUG((DEBUG_WARN,"PIANO_LOADER_MEMORY status=%r\n",Status));
+  Status=PianoProductMemoryInstallSmbios(Image);
+  if(EFI_ERROR(Status))DEBUG((DEBUG_WARN,"PIANO_SMBIOS_MEMORY status=%r\n",Status));
   Status=PianoDeviceTreeFixupInstall(BootLogAlive,PianoProductMemoryReserveDtb);if(Status!=EFI_SUCCESS)FailStop(Status);
   DEBUG((DEBUG_WARN,"PIANO_PRODUCT_LATE_EXIT provider_bound=1 phase=unarmed standard_efi=1\n"));
   CONST UINTN StartupKeysMs=1000;
