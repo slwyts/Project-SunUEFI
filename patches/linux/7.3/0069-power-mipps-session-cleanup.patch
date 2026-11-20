@@ -1,4 +1,4 @@
-From 96fcad90430e0fb9e12e48edcad921c717c15c11 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Sun, 8 Nov 2026 02:49:10 +0800
 Subject: [PATCH] fix(power-supply): bind MiPPS exchanges and cleanup to GLINK

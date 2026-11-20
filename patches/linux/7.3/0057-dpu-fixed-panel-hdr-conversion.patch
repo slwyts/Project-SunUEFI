@@ -1,4 +1,4 @@
-From e69d9e431cec66778b7c833c798d8a63e0da5a50 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Sun, 8 Nov 2026 23:39:32 +0800
 Subject: drm/msm: convert fixed-panel HDR signals through calibrated DSPP

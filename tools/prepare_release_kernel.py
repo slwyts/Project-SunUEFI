@@ -106,8 +106,8 @@ def load_series(root, target):
         data = path.read_bytes()
         if sha(data) != row.get('sha256'):
             raise ValueError('Patch SHA256 mismatch: ' + name)
-        if not data.startswith(('From ' + commit + ' Mon Sep 17 00:00:00 2001\n').encode()):
-            raise ValueError('Patch original commit header mismatch: ' + name)
+        if not data.startswith(b'From ' + b'0' * 40 + b' Mon Sep 17 00:00:00 2001\n'):
+            raise ValueError('Patch must use git format-patch --zero-commit: ' + name)
         patches.append((path, dict(row)))
     if previous != policy['original_target_commit'] or rows[-1]['tree'] != policy.get('patch_tree', policy['target_tree']):
         raise ValueError('Patch series target mismatch')

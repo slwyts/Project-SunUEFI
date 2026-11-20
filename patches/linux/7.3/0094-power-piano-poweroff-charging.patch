@@ -1,4 +1,4 @@
-From 49967fbc57c3cb60fc63569566851d5853ba4f8c Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Tue, 10 Nov 2026 19:47:33 +0800
 Subject: fix(power): preserve Piano power-off charging requests

@@ -1,4 +1,4 @@
-From 74dadb3287b2f4c7a736eedcd5a50a2ff74fb765 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Wed, 28 Oct 2026 14:11:38 +0000
 Subject: [PATCH] power: supply: piano_mca: authenticate Xiaomi chargers before

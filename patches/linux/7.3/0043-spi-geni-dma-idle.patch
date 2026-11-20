@@ -1,4 +1,4 @@
-From 7f648b3f86d5a8bb103f526c6fee62f722714444 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia@gmail.com>
 Date: Fri, 6 Nov 2026 17:55:13 +0800
 Subject: spi: geni-qcom: retain failed DMA transfers and support idle pins
