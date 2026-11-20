@@ -245,8 +245,10 @@ Debian 从 [Denial 签名源](https://github.com/denialwm/denial/blob/main/docs/
 获取匹配的原版 Flutter Engine，系统依赖仍用 sid。Arch 的 `[sunuefi]`
 在同一份索引里提供合成器、可选插件管理器和字节不变的原版 Engine；
 更新这组包时按同一版核对，避免新版 Engine 先于合成器升级。
-SDDM 加载 Denial 原版 Wayland 会话，默认使用触控布局。相机和其他硬件
-继续用 Piano 的标准驱动和发行版软件包。独立的本地 rootfs 构建仍可使用上游包。
+SDDM 加载 Denial 原版 Wayland 会话，默认使用触控布局。Piano 的显示控制器
+和 Adreno GPU 是不同的 DRM 设备；用 Denial 自带的 `DENIAL_RENDER_DEVICE`
+指向 GPU 的稳定 udev 路径，内屏输出仍由显示控制器负责。相机和其他硬件继续
+用 Piano 的标准驱动和发行版软件包。独立的本地 rootfs 构建仍可使用上游包。
 
 开发时可用 `./build.sh denial --test` 测试
 [SensorProxy 补丁](../../patches/denial/0.6.8/series.json)。

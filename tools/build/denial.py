@@ -102,9 +102,13 @@ def configure_session(rootfs, put):
     # Wayland session. Neither needs an extra service or a second login.
     config = 'etc/denial/session.conf'
     settings = guest_resolve(rootfs, '/' + config).read_text().splitlines()
-    profile = 'DENIAL_SHELL_PROFILE=mobile'
-    if profile not in settings:
-        put(rootfs, config, '\n'.join([*settings, '', profile]) + '\n')
+    # The DPU scans out the panel, but the Adreno render node owns the scene GPU.
+    # Use its persistent udev path; card and render-node numbers can change.
+    defaults = ('DENIAL_SHELL_PROFILE=mobile',
+                'DENIAL_RENDER_DEVICE=/dev/dri/by-path/platform-3d00000.gpu-render')
+    missing = [setting for setting in defaults if setting not in settings]
+    if missing:
+        put(rootfs, config, '\n'.join([*settings, '', *missing]) + '\n')
     put(rootfs, 'etc/sddm.conf.d/10-sunuefi.conf',
         '[General]\nDisplayServer=wayland\n\n'
         '[Autologin]\nUser=piano\nSession=denial.desktop\n')
