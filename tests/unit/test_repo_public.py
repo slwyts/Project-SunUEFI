@@ -1,6 +1,9 @@
 """Exercise the signed public URLs using a local HTTP server."""
+import gzip
+import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
+import json
 import os
 from pathlib import Path
 import shutil
@@ -17,6 +20,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/repo'))
 import publish
+import products
 import verify_public as public
 
 
@@ -73,34 +77,95 @@ class PublicRepositoryTests(unittest.TestCase):
         self.addCleanup(thread.join)
         self.addCleanup(server.shutdown)
 
-    def generation(self, repository, version):
+    def make_package(self, repository, version, name='fixture'):
         if repository == 'apt':
-            package = self.root / f'fixture_{version}_all.deb'
+            package = self.root / f'{name}_{version}_all.deb'
             tree = self.root / ('package-' + version)
             control = tree / 'DEBIAN/control'
             control.parent.mkdir(parents=True)
-            control.write_text(f'Package: fixture\nVersion: {version}\nArchitecture: all\n'
+            control.write_text(f'Package: {name}\nVersion: {version}\nArchitecture: all\n'
                                'Maintainer: Fixture <test@example.invalid>\nDescription: Fixture\n')
             subprocess.run(['dpkg-deb', '--build', '--root-owner-group', tree, package],
                            check=True, capture_output=True)
-            prefix = '/apt/'
         else:
-            package = self.root / f'fixture-{version}-1-any.pkg.tar.gz'
+            package = self.root / f'{name}-{version}-1-any.pkg.tar.gz'
             with tarfile.open(package, 'w:gz') as archive:
-                metadata = (f'pkgname = fixture\npkgbase = fixture\npkgver = {version}-1\n'
+                metadata = (f'pkgname = {name}\npkgbase = {name}\npkgver = {version}-1\n'
                             'pkgdesc = Fixture\nurl = https://example.invalid\nbuilddate = 1\n'
                             'packager = Test\nsize = 7\narch = any\nlicense = MIT\n').encode()
-                for name, data in (('.PKGINFO', metadata), ('usr/share/fixture', b'fixture')):
-                    info = tarfile.TarInfo(name)
+                for filename, data in (('.PKGINFO', metadata), ('usr/share/fixture', b'fixture')):
+                    info = tarfile.TarInfo(filename)
                     info.size = len(data)
                     archive.addfile(info, io.BytesIO(data))
-            prefix = f'/pacman/{repository}/os/aarch64/'
+        return package
+
+    def generation(self, repository, version, name='fixture'):
+        package = self.make_package(repository, version, name)
+        prefix = '/apt/' if repository == 'apt' else f'/pacman/{repository}/os/aarch64/'
         output = self.root / (repository + '-' + version)
         publish.publish(SimpleNamespace(repo=repository, key=self.fingerprint, output=output,
                                         packages=[package]))
         self.objects.update({prefix + path.relative_to(output).as_posix(): path.read_bytes()
                              for path in output.rglob('*') if path.is_file()})
         return output
+
+    def apt_kernel_index(self, *versions):
+        prefix = '/apt/dists/sid'
+        index = ''.join(f'Package: linux-image-piano\nVersion: {version}\n'
+                        'Architecture: all\n\n' for version in versions).encode()
+        compressed = gzip.compress(index, mtime=0)
+        digest = hashlib.sha256(index).hexdigest()
+        key = prefix + '/main/binary-arm64/by-hash/SHA256/' + digest
+        self.objects[key] = index
+        release = self.root / 'Release'
+        release.write_text('Acquire-By-Hash: yes\nSHA256:\n'
+                           f' {digest} {len(index)} main/binary-arm64/Packages\n'
+                           f' {hashlib.sha256(compressed).hexdigest()} {len(compressed)}'
+                           ' main/binary-arm64/Packages.gz\n')
+        self.objects[prefix + '/InRelease'] = publish.sign(
+            release, self.fingerprint, clear=True).read_bytes()
+        return key
+
+    def test_published_apt_kernel_versions_take_only_the_signed_by_hash_index(self):
+        expected = ['7.3.3+100.100.0123456789ab-2', '7.3.3+101.101.c0123456789a-2']
+        key = self.apt_kernel_index(*expected)
+        self.assertEqual(public.published_kernel_versions(self.url, 'apt', 'linux-image-piano'),
+                         expected)
+        self.assertEqual(self.requests, ['/apt/dists/sid/InRelease', key])
+
+        self.objects[key] = self.objects[key].replace(b'0123456789ab', b'ffffffffffff')
+        with self.assertRaisesRegex(public.PublicIndexError, 'by-hash/SHA256/.*bytes do not match'):
+            public.published_kernel_versions(self.url, 'apt', 'linux-image-piano')
+
+    @unittest.skipUnless(all(shutil.which(tool) for tool in ('dpkg-deb', 'repo-add', 'bsdtar')),
+                         'Native package tools required')
+    def test_kernel_preflight_rejects_a_signed_conflict_but_defers_when_not_verified(self):
+        built = '7.3.3+101.101.0123456789ab'
+        other = '7.3.3+101.101.c0123456789a'
+        previous = '7.3.3+100.100.c0123456789a'
+        self.apt_kernel_index(previous + '-2', built + '-2')
+        self.generation('sunuefi', previous, 'linux-piano')
+        previous_signature = self.objects['/pacman/sunuefi/os/aarch64/sunuefi.db.sig']
+        self.generation('sunuefi', other, 'linux-piano')
+        kernel = self.root / 'kernel'
+        for package_format, repository in products.KERNEL_REPOSITORIES.items():
+            version = built + ('-2' if package_format == 'debian' else '')
+            archive = self.make_package(repository, version, publish.KERNEL_META_PACKAGES[repository])
+            directory = kernel / package_format
+            directory.mkdir(parents=True)
+            shutil.copy2(archive, directory / archive.name)
+            (directory / 'manifest.json').write_text(json.dumps({
+                'format': directory.name, 'packages': {archive.name: {'sha256': publish.sha(archive)}},
+            }))
+
+        with self.assertRaisesRegex(ValueError, 'linux-piano uses ABI epoch 101'):
+            products.verify_kernel_abi(kernel, self.url)
+        self.objects['/pacman/sunuefi/os/aarch64/sunuefi.db.sig'] = previous_signature
+        products.verify_kernel_abi(kernel, self.url)
+
+        self.apt_kernel_index(other + '-2')
+        with self.assertRaisesRegex(ValueError, 'linux-image-piano uses ABI epoch 101'):
+            products.verify_kernel_abi(kernel, self.url)
 
     @unittest.skipUnless(all(shutil.which(tool) for tool in
                             ('dpkg-deb', 'dpkg-scanpackages', 'apt-ftparchive')),

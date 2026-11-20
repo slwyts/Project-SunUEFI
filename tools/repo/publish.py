@@ -19,6 +19,7 @@ APT_INDEXES = ('main/binary-arm64/Packages', 'main/binary-arm64/Packages.gz')
 APT_INDEX_HASHES = ('SHA512', 'SHA256')
 PACMAN_V4L2_OWNERS = {'sunuefi': 'libpipewire', 'sunuefi-steamos': 'pipewire'}
 PACMAN_V4L2_LEGACY = 'pipewire-v4l2-source'
+KERNEL_META_PACKAGES = {'apt': 'linux-image-piano', 'sunuefi': 'linux-piano'}
 KERNEL_META_VERSION = re.compile(
     r'([0-9]+\.[0-9]+\.[0-9]+(?:~?rc[0-9]+)?)'
     r'\+([0-9]+)\.[0-9]+\.([0-9a-f]{12}(?:\.[0-9a-f]{12})?)-[1-9][0-9]*')
@@ -179,7 +180,7 @@ def apt_index(work, packages, key, store=None, *, digests=None):
                capture_output=True, text=True).stdout
     new = stanzas(data)
     if digests is not None:
-        name = 'linux-image-piano'
+        name = KERNEL_META_PACKAGES['apt']
         previous = [field(row, 'Version') for row in old if field(row, 'Package') == name]
         for row in new:
             if field(row, 'Package') == name:
@@ -372,11 +373,12 @@ def pacman_index(work, packages, name, key, store=None, *, digests=None):
             sign(target, key)
         verify(target, signature, keyring)
         immutable.extend((target, signature))
-    if digests is not None and db.is_file() and 'linux-piano' in expected:
+    kernel_meta = KERNEL_META_PACKAGES['sunuefi']
+    if digests is not None and db.is_file() and kernel_meta in expected:
         previous, _ = pacman_metadata(db)
-        indexed = previous.get('linux-piano')
+        indexed = previous.get(kernel_meta)
         if indexed:
-            check_kernel_epoch('linux-piano', expected['linux-piano'][0], [indexed[0]])
+            check_kernel_epoch(kernel_meta, expected[kernel_meta][0], [indexed[0]])
     run('repo-add', '--prevent-downgrade', '--include-sigs', '--sign', '--key', key, db,
         *[work / package.name for package in packages])
     selected, retired = pacman_metadata(db)

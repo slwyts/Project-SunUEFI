@@ -9,16 +9,17 @@ import sys
 import tempfile
 from types import SimpleNamespace
 
-from publish import (PACMAN_V4L2_LEGACY, REPOSITORIES, ROOT, Store, pacman_metadata,
+from publish import (KERNEL_META_PACKAGES, KERNEL_META_VERSION, PACMAN_V4L2_LEGACY,
+                     REPOSITORIES, ROOT, Store, check_kernel_epoch, pacman_metadata,
                      prepare_pacman_v4l2_withdrawal, prepare_publication, sha, upload_publication)
-from verify_public import verify_public
+from verify_public import PublicIndexError, published_kernel_versions, verify_public
 
 sys.path.insert(0, str(ROOT / 'tools'))
 from build import denial_manifest, sensors
 from build.overlay_packages import (ARCH_REPOSITORIES, PACMAN_CAMERA, bsp_package,
                                     read_debian, read_pacman, topology_package)
 from package import camera
-from package.archive import pacman_identity
+from package.archive import debian_identity, pacman_identity
 from package.boot import PUBLIC_REPOSITORY_URL
 
 
@@ -49,6 +50,34 @@ def packages(directory, **identity):
     if not paths:
         raise ValueError('Package generation has no packages: ' + str(directory))
     return paths
+
+
+def verify_kernel_abi(directory, public_url=PUBLIC_REPOSITORY_URL):
+    """Stop a proven version conflict before building distribution overlays."""
+    for package_format, repository in KERNEL_REPOSITORIES.items():
+        name = KERNEL_META_PACKAGES[repository]
+        archives = packages(directory / package_format, format=package_format)
+        if package_format == 'debian':
+            candidates = [path for filename, (path, _) in archives.items()
+                          if filename.startswith(name + '_')]
+            read_identity = debian_identity
+        else:
+            candidates = [path for filename, (path, _) in archives.items()
+                          if filename.partition('.pkg.tar.')[0].rsplit('-', 3)[0] == name]
+            read_identity = pacman_identity
+        if len(candidates) != 1:
+            raise ValueError(f'Expected one native {name} metapackage in {directory / package_format}')
+        package, version, _ = read_identity(candidates[0])
+        if package != name or not KERNEL_META_VERSION.fullmatch(version):
+            raise ValueError(f'Unexpected kernel metapackage: {package} {version}')
+        try:
+            published = published_kernel_versions(public_url, repository, name)
+        except PublicIndexError as error:
+            print(f'Could not read the signed {repository} index: {error}. '
+                  'The publication job will check the R2 index.', flush=True)
+            continue
+        check_kernel_epoch(name, version, published)
+        print(f'Checked {name} {version} against the signed {repository} index.', flush=True)
 
 
 def overlay_set(directory, target):
@@ -184,11 +213,19 @@ def publish_products(batches, key, output, store):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--kernel', action='store_true')
+    parser.add_argument('--verify-kernel-abi', type=Path, metavar='PACKAGE_DIRECTORY')
     parser.add_argument('--verify-target', choices=OVERLAY_REPOSITORIES)
     parser.add_argument('--verify-bsp', action='store_true')
     parser.add_argument('--overlay-matrix', type=overlay_matrix, default='{"target":[]}')
-    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--output', type=Path)
     args = parser.parse_args()
+    if args.verify_kernel_abi:
+        if args.kernel or args.overlay_matrix or args.verify_target or args.verify_bsp or args.output:
+            parser.error('Use --verify-kernel-abi without other operations')
+        verify_kernel_abi(args.verify_kernel_abi)
+        return
+    if args.output is None:
+        parser.error('--output is required')
     if args.verify_bsp:
         if args.kernel or args.overlay_matrix or args.verify_target:
             parser.error('Use --verify-bsp without other operations')

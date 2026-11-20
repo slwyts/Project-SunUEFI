@@ -1,31 +1,38 @@
 """Check the newly published indexes at the URLs package managers use."""
 from pathlib import Path
 import subprocess
+import tarfile
 import tempfile
 import time
 from urllib.parse import urlsplit
 
-from publish import APT_INDEX_HASHES, REPOSITORIES, ROOT, apt_index_hashes, run, sha
+from publish import (APT_INDEX_HASHES, APT_INDEXES, REPOSITORIES, ROOT, apt_index_hashes,
+                     field, pacman_metadata, run, sha, stanzas)
 
 
 HTTP_TIMEOUT = 15
 RETRY_DELAYS = (2, 4, 8, 16, 32)
+INDEX_SIZE_LIMIT = 16 * 1024 * 1024
 
 
 class PublicIndexError(ValueError):
     """A published index is unavailable or does not match the new generation."""
 
 
-def download(public_url, key, destination, size, digest, *, algorithm='sha256'):
+def fetch(public_url, key, destination, limit):
     try:
         result = run('curl', '--disable', '--silent', '--show-error', '--fail',
-                     '--max-time', HTTP_TIMEOUT, '--max-filesize', size,
+                     '--max-time', HTTP_TIMEOUT, '--max-filesize', limit,
                      '--output', destination, '--write-out', '%{http_code}',
                      public_url + '/' + key, capture_output=True, text=True)
     except subprocess.CalledProcessError as error:
         raise PublicIndexError(f'{key}: {error.stderr.strip()}') from error
     if result.stdout != '200':
         raise PublicIndexError(f'{key}: HTTP {result.stdout}')
+
+
+def download(public_url, key, destination, size, digest, *, algorithm='sha256'):
+    fetch(public_url, key, destination, size)
     if (not destination.is_file() or destination.stat().st_size != size
             or sha(destination, algorithm) != digest):
         raise PublicIndexError(f'{key}: bytes do not match the published generation')
@@ -40,18 +47,63 @@ def check_signature(keyring, key, *args):
         raise PublicIndexError(f'{key}: signature verification failed: {reason}') from error
 
 
-def verify_public(public_url, repository, output):
-    """Raise unless the client-facing signed indexes match this publication."""
-    if repository not in REPOSITORIES:
-        raise ValueError('Unknown package repository: ' + repository)
+def checked_public_url(public_url):
     address = urlsplit(public_url)
     if (address.scheme not in ('https', 'http') or not address.hostname
             or address.username is not None or '?' in public_url or '#' in public_url):
         raise ValueError('Use a public HTTP(S) base URL without credentials, query or fragment')
-    public_url = public_url.rstrip('/')
+    return public_url.rstrip('/')
+
+
+def archive_keyring():
     keyring = ROOT / 'config/keys/sunuefi-archive-keyring.gpg'
     if not keyring.is_file():
         raise ValueError('Project archive keyring is missing: ' + str(keyring))
+    return keyring
+
+
+def published_kernel_versions(public_url, repository, package):
+    """Read versions only from a verified index; an unavailable index is not proof."""
+    if repository not in REPOSITORIES:
+        raise ValueError('Unknown package repository: ' + repository)
+    public_url = checked_public_url(public_url)
+    keyring = archive_keyring()
+    try:
+        with tempfile.TemporaryDirectory(prefix='sunuefi-kernel-index-') as temporary:
+            work = Path(temporary)
+            if repository == 'apt':
+                prefix = 'apt/dists/sid'
+                key = prefix + '/InRelease'
+                signed, release = work / 'InRelease', work / 'Release'
+                fetch(public_url, key, signed, INDEX_SIZE_LIMIT)
+                check_signature(keyring, key, '--output', release, signed)
+                index = work / 'Packages'
+                size, digest = apt_index_hashes(release, 'SHA256')[APT_INDEXES[0]]
+                download(public_url, prefix + '/main/binary-arm64/by-hash/SHA256/' + digest,
+                         index, size, digest)
+                return [field(row, 'Version') for row in stanzas(index.read_text())
+                        if field(row, 'Package') == package]
+
+            key = f'pacman/{repository}/os/aarch64/{repository}.db'
+            database = work / (repository + '.db')
+            signature = work / (repository + '.db.sig')
+            fetch(public_url, key, database, INDEX_SIZE_LIMIT)
+            fetch(public_url, key + '.sig', signature, INDEX_SIZE_LIMIT)
+            check_signature(keyring, key, signature, database)
+            selected, _ = pacman_metadata(database)
+            return [selected[package][0]] if package in selected else []
+    except PublicIndexError:
+        raise
+    except (OSError, ValueError, subprocess.SubprocessError, tarfile.TarError) as error:
+        raise PublicIndexError(f'{repository}: {error}') from error
+
+
+def verify_public(public_url, repository, output):
+    """Raise unless the client-facing signed indexes match this publication."""
+    if repository not in REPOSITORIES:
+        raise ValueError('Unknown package repository: ' + repository)
+    public_url = checked_public_url(public_url)
+    keyring = archive_keyring()
 
     if repository == 'apt':
         prefix = 'apt/dists/sid'
