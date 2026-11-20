@@ -8,6 +8,7 @@ on:
       - 'windows/drivers/packages.config'
       - 'vendor/firmware/piano-qcom/gen80000_gmu.bin'
       - 'tests/unit/test_gmu_firmware.py'
+      - 'tests/unit/test_hfi_queue.py'
       - 'tools/build/windows.py'
       - 'build.sh'
       - '.github/workflows/windows-graphics.yml'
@@ -24,6 +25,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  protocol:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: ./build.sh check --group python-all --no-skips --pattern test_gmu_firmware.py --pattern test_hfi_queue.py
   readback:
     runs-on: windows-11-arm
     steps:

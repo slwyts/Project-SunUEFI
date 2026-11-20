@@ -164,7 +164,8 @@ D3D12 的命令完成与结果读回。CI 中的 `--warp` 用微软软件适配�
 在已装 WDK 的 Visual Studio 开发者终端，用 `./build.sh windows drivers`
 构建 ARM64 内核驱动部件。使用 LLVM 交叉编译时，传入 `--kit-include`
 及 WDK 中包含 `km/`、`shared/` 的版本目录；分开安装的 SDK 和 WDK 可分别
-传入。产物中的 `adreno.lib` 是处理 GPU 固件的内核库，不是可安装的显示驱动包。
+传入。产物 `adreno.lib` 包含 GPU 固件加载和 GMU 命令队列。队列在设备上电、
+取得寄存器资源并映射 DMA 缓冲区后才能使用；它不是可安装的显示驱动包。
 
 GPU 的同芯片驱动与本机原厂基线见[上游项目](upstreams.md)。在另一部
 SM8750 设备上的测试结果只用来选择实现，不计入 Piano 的发布结果。
