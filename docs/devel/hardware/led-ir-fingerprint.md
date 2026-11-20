@@ -211,7 +211,11 @@ Debian 构建依赖留在独立 rootfs，要求 libc／GLib 等开发包匹配�
 依赖由 `dpkg-shlibdeps` 生成；安装前以目标 loader 核对新库和 fprintd 的符号解析。
 Debian 的 `SOURCE.json` 同时校验源码输入、目标 ABI、后端源码归档、二进制摘要、包身份和
 `Depends`；命中时不再创建构建 rootfs 或编译，仍执行目标链接检查与 APT 依赖模拟。
-Arch 系缓存同时核对配方摘要和运行库版本，不把另一套 ABI 的缓存直接安装。
+Arch Linux ARM 沿用[发行版配方](../../../config/fingerprint.json)的依赖和文件布局，
+由 `makepkg` 按实际 ELF 生成 `libfprint-2.so=2-64`，直接使用 `[extra]` 的
+fprintd。共用 `[sunuefi]` 保留旧归档供回退，但不再把旧 fprintd 列进活动索引，
+让 `pacman -Syu` 选到发行版原包。SteamOS 仍从独立覆盖源取得适合其运行库的包。
+两套构建缓存分别核对配方摘要和运行库版本。
 `piano-device-config` 安装 systemd 的 fprintd 配置，沿用现有设备权限和
 `/var/lib/piano-goodix` 目录。包安装与移除不会重启正在认证的 fprintd，
 也不会删除模板。管理员可在 `/etc/systemd/system/fprintd.service.d/` 覆盖配置。

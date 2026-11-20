@@ -175,6 +175,36 @@ class RepoPublishTests(unittest.TestCase):
 
     @unittest.skipUnless(all(shutil.which(tool) for tool in ('repo-add', 'repo-remove', 'bsdtar', 'vercmp')),
                          'pacman tools required')
+    def test_arch_libfprint_returns_fprintd_to_extra_without_touching_steamos(self):
+        shared, valve = 'sunuefi', 'sunuefi-steamos'
+        prefix = f'pacman/{shared}/os/aarch64/'
+        valve_prefix = f'pacman/{valve}/os/aarch64/'
+        daemon = self.pacman('1.94.5', 'fprintd')
+        lib = self.pacman('1.94.100', 'libfprint')
+        kernel = self.pacman('1', 'linux-piano')
+        repo.publish(self.args(shared, [daemon], 'before'), self.store)
+        repo.publish(self.args(valve, [daemon], 'valve'), self.store)
+        original_db = self.store.objects[prefix + shared + '.db']
+        valve_db = self.store.objects[valve_prefix + valve + '.db']
+        signature = self.store.objects[prefix + daemon.name + '.sig']
+        with patch.object(products, 'verify_public'):
+            products.publish_products({shared: {kernel: repo.sha(kernel)}}, self.key,
+                                      self.root / 'kernel', self.store)
+            selected, _ = repo.pacman_metadata(self.root / 'kernel' / shared / (shared + '.db'))
+            self.assertEqual(set(selected), {'fprintd', 'linux-piano'})
+            products.publish_products({shared: {lib: repo.sha(lib)}}, self.key,
+                                      self.root / 'lib', self.store)
+        for suffix in ('.db', '.files'):
+            selected, _ = repo.pacman_metadata(self.root / 'lib' / shared / (shared + suffix))
+            self.assertEqual(set(selected), {'libfprint', 'linux-piano'})
+        self.assertEqual(self.store.objects[prefix + daemon.name], daemon.read_bytes())
+        self.assertEqual(self.store.objects[prefix + daemon.name + '.sig'], signature)
+        self.assertEqual(self.store.objects[valve_prefix + valve + '.db'], valve_db)
+        self.assertEqual(self.store.objects[prefix + 'by-hash/SHA256/' +
+                                           hashlib.sha256(original_db).hexdigest()], original_db)
+
+    @unittest.skipUnless(all(shutil.which(tool) for tool in ('repo-add', 'repo-remove', 'bsdtar', 'vercmp')),
+                         'pacman tools required')
     def test_pacman_only_retires_an_entry_matched_by_the_versioned_replacement(self):
         name = 'pipewire-v4l2-source'
         valve = self.pacman('1:1.6.8', name)

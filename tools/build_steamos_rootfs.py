@@ -362,7 +362,8 @@ done
         if package_output:
             commit = json.loads((kernel / 'manifest.json').read_text())['source_commit']
             packages.update(overlay_packages.fingerprint_pacman_packages(
-                root, output / 'fingerprint-packages', kernel_source, args.kernel_build.resolve(), commit))
+                root, output / 'fingerprint-packages', kernel_source, args.kernel_build.resolve(),
+                commit, steamos=True))
             overlay_cache.check_pacman_inputs(ROOT, root, cache_inputs)
             return overlay_packages.export(package_output, target, overlay_packages.ARCH_REPOSITORIES[target],
                                            overlay_packages.pacman_packages(root, target, packages), records,

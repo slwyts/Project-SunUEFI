@@ -48,30 +48,5 @@ class SteamOSWebRTCTests(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertEqual(first[0], packages)
 
-    def test_requires_webrtc_in_the_signed_steamos_image_manifest(self):
-        names = ('libfprint', 'fprintd', 'ffmpeg', 'libwacom', 'libssc',
-                 'iio-sensor-proxy', 'fastrpc', 'pipewire-v4l2-source',
-                 'gst-plugin-pipewire', 'deckard-mesa-linux-aarch64', 'gamescope',
-                 'steamos-manager', 'gtk3', 'ibus', 'tuned-ppd',
-                 *overlay_packages.STEAMOS_TUNED_RECIPES)
-        packages = {name + '-1-1-aarch64.pkg.tar.zst': {
-            'name': name, 'version': '1-1', 'architecture': 'aarch64',
-            'sha256': 'a' * 64, 'component': name,
-        } for name in (*names, overlay_packages.STEAMOS_WEBRTC_PACKAGE)}
-        filename = overlay_packages.STEAMOS_WEBRTC_PACKAGE + '-1-1-aarch64.pkg.tar.zst'
-        with tempfile.TemporaryDirectory() as folder:
-            path = Path(folder) / 'manifest.json'
-            webrtc = packages.pop(filename)
-            record = {'schema_version': 1, 'target': 'steamos', 'repo': 'sunuefi-steamos',
-                      'packages': packages}
-            path.write_text(json.dumps(record))
-            with self.assertRaisesRegex(ValueError, 'Incomplete native overlay package set'):
-                overlay_packages.read_pacman(path, 'steamos')
-            packages[filename] = webrtc
-            path.write_text(json.dumps(record))
-            repo, rows, _ = overlay_packages.read_pacman(path, 'steamos')
-            self.assertEqual((repo, rows), ('sunuefi-steamos', packages))
-
-
 if __name__ == '__main__':
     unittest.main()

@@ -379,9 +379,13 @@ def pacman_index(work, packages, name, key, store=None, *, digests=None):
             check_kernel_epoch('linux-piano', expected['linux-piano'][0], [indexed[0]])
     run('repo-add', '--prevent-downgrade', '--include-sigs', '--sign', '--key', key, db,
         *[work / package.name for package in packages])
-    _, retired = pacman_metadata(db)
+    selected, retired = pacman_metadata(db)
+    # Arch users upgrade to the distribution's fprintd. Leaving the older
+    # package here would shadow [extra]. SteamOS still ships its own daemon.
+    if (name == 'sunuefi' and 'libfprint' in expected and
+            'fprintd' in selected and 'fprintd' not in expected):
+        retired.add('fprintd')
     if retired:
-        # Older installations must not see an upgrade of the conflicting package.
         # Keep its archive and prior signed indexes available for rollback.
         run('repo-remove', '--sign', '--key', key, db, *sorted(retired))
     if digests is not None:

@@ -489,12 +489,14 @@ def read_pacman(path, target):
                 row['architecture'] not in ('aarch64', 'any')):
             raise ValueError('Invalid pacman overlay package record: ' + filename)
         names.add(name)
-    expected = {'libfprint', 'fprintd', 'ffmpeg', 'libwacom', 'libssc', 'iio-sensor-proxy', 'fastrpc'}
-    expected.update(('deckard-mesa-linux-aarch64', 'gamescope', 'steamos-manager', 'gtk3', 'ibus')
+    expected = {'libfprint', 'ffmpeg', 'libwacom', 'libssc', 'iio-sensor-proxy', 'fastrpc'}
+    expected.update(('deckard-mesa-linux-aarch64', 'gamescope', 'steamos-manager', 'gtk3', 'ibus', 'fprintd')
                     if target == 'steamos' else (
                         'mesa', 'gdm', 'mutter', 'gnome-settings-daemon', ARCH_BLUEZ))
     if target == 'steamos':
         expected.update((*STEAMOS_TUNED_RECIPES, 'tuned-ppd', STEAMOS_WEBRTC_PACKAGE))
+    elif 'fprintd' in names:
+        raise ValueError('Arch Linux ARM uses fprintd from its distribution repository')
     if not expected <= names:
         raise ValueError('Incomplete native overlay package set')
     components = manifest.get('components', {})
@@ -593,8 +595,8 @@ def pacman_build_mode(args, target, project):
     return output, package_output, published
 
 
-def fingerprint_pacman_packages(rootfs, output, kernel_source, kernel_build, commit):
-    from build_piano_fingerprint import install_desktop, prepare_desktop_backend
+def fingerprint_pacman_packages(rootfs, output, kernel_source, kernel_build, commit, *, steamos):
+    from build_piano_fingerprint import install_pacman_desktop, prepare_desktop_backend
     from build_release_helpers import export_uapi
 
     with tempfile.TemporaryDirectory(prefix='sunuefi-fingerprint-', dir=output.parent) as temporary:
@@ -602,8 +604,8 @@ def fingerprint_pacman_packages(rootfs, output, kernel_source, kernel_build, com
         uapi = work / 'uapi'
         export_uapi(kernel_source, kernel_build, commit, uapi)
         prepare_desktop_backend(work, uapi)
-        install_desktop(rootfs, work, output)
-    return {name: pacman_outputs(output / name) for name in ('libfprint', 'fprintd')}
+        names = install_pacman_desktop(rootfs, work, output, steamos=steamos)
+    return {name: pacman_outputs(output / name) for name in names}
 
 
 def install_arch_overlays(rootfs, kernel, target, published):
@@ -637,6 +639,7 @@ def install_arch_overlays(rootfs, kernel, target, published):
             shared = {name: row for name, row in selected.items() if name not in bluez}
             install_pacman(rootfs, work, repository, {**shared, **common}, guest,
                            overwrite=matching_power_files(rootfs))
+            guest(['pacman', '-S', '--needed', '--noconfirm', 'extra/fprintd'])
         else:
             remove_steamos_power_profiles_daemon(rootfs, guest)
             # The common profiles pull in the Valve TuneD packages. Verify

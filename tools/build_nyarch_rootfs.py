@@ -27,7 +27,7 @@ from prepare_steamos_rootfs import download
 ROOT = Path(__file__).resolve().parents[1]
 OVERLAY_TARGET = 'nyarch-gnome'
 SHARED_OVERLAYS = frozenset(('mesa', 'fastrpc', 'libssc', 'iio-sensor-proxy', 'ffmpeg',
-                             *overlay_packages.PACMAN_CAMERA, 'libwacom', 'libfprint', 'fprintd',
+                             *overlay_packages.PACMAN_CAMERA, 'libwacom', 'libfprint',
                              'bluez'))
 
 
@@ -129,7 +129,7 @@ def build(args):
         if package_output:
             commit = json.loads((kernel / 'manifest.json').read_text())['source_commit']
             packages.update(overlay_packages.fingerprint_pacman_packages(
-                root, output / 'fingerprint-packages', source, kernel_build, commit))
+                root, output / 'fingerprint-packages', source, kernel_build, commit, steamos=False))
             overlay_cache.check_pacman_inputs(ROOT, root, cache_inputs)
             return overlay_packages.export(package_output, target, overlay_packages.ARCH_REPOSITORIES[target],
                                            overlay_packages.pacman_packages(root, target, packages), records,

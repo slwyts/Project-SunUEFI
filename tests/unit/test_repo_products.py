@@ -97,7 +97,7 @@ class RepoProductsTests(unittest.TestCase):
     def pacman_set(self, target, files):
         valve = target == 'steamos'
         if valve:
-            names = ('deckard-mesa-linux-aarch64', 'gamescope', 'steamos-manager', 'gtk3', 'ibus',
+            names = ('deckard-mesa-linux-aarch64', 'gamescope', 'steamos-manager', 'gtk3', 'ibus', 'fprintd',
                      'ethtool', 'hdparm', 'python-linux-procfs', 'python-pyinotify', 'tuned',
                      'tuned-ppd', 'webrtc-audio-processing')
         else:
@@ -113,7 +113,7 @@ class RepoProductsTests(unittest.TestCase):
             'plasma_camera': {'plasma-camera'},
         }
         labels = {name: component for component, cohort in media.items() for name in cohort}
-        base = ('libfprint', 'fprintd', 'ffmpeg', 'libwacom', 'libssc', 'iio-sensor-proxy', 'fastrpc', *names)
+        base = ('libfprint', 'ffmpeg', 'libwacom', 'libssc', 'iio-sensor-proxy', 'fastrpc', *names)
         input_names = {filename.split('.pkg.tar.')[0].rsplit('-', 3)[0] for filename in files}
         version = '1-2' if valve else '1-3'
         for name in (*base, *sorted(labels)):
@@ -236,6 +236,21 @@ class RepoProductsTests(unittest.TestCase):
         self.package_set('overlays/steamos', {'mesa.pkg.tar.zst': b'valve'}, repo='sunuefi')
         with self.assertRaisesRegex(ValueError, 'does not match its build target'):
             overlay_set(self.packages / 'overlays/steamos', 'steamos')
+
+    @unittest.skipUnless(shutil.which('bsdtar'), 'libarchive tools required')
+    def test_steamos_requires_its_own_webrtc_and_fprintd(self):
+        directory = self.pacman_set('steamos', {})
+        self.assertTrue(overlay_set(directory, 'steamos'))
+        path = directory / 'manifest.json'
+        original = path.read_text()
+        for name in ('webrtc-audio-processing', 'fprintd'):
+            with self.subTest(name=name):
+                record = json.loads(original)
+                archive, = [path for path, row in record['packages'].items() if row['name'] == name]
+                del record['packages'][archive]
+                path.write_text(json.dumps(record))
+                with self.assertRaisesRegex(ValueError, 'Incomplete native overlay package set'):
+                    overlay_set(directory, 'steamos')
 
     def test_modified_package_is_rejected_before_any_batch_is_returned(self):
         package = 'mesa.pkg.tar.zst'

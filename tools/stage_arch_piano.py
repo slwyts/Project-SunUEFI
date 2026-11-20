@@ -160,8 +160,9 @@ def stage(args):
         install_kernel(root, 'pacman', args.kernel)
     runtime.stage(args.runtime.resolve(), root)
     if published_packages is None:
-        from build_piano_fingerprint import install_desktop
-        install_desktop(root, args.runtime.resolve(), output / 'fingerprint-packages')
+        from build_piano_fingerprint import install_pacman_desktop
+        install_pacman_desktop(root, args.runtime.resolve(), output / 'fingerprint-packages',
+                               steamos=steamos)
     fw = ROOT / cfg['firmware']['components']
     from stage_piano_firmware import stage as stage_firmware, verify_display
     firmware = stage_firmware(fw, root, 'pacman', shared=published_packages is not None)

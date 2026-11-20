@@ -13,6 +13,10 @@
       "version": "1.94.5"
     }
   },
+  "arch": {
+    "recipe": "https://gitlab.archlinux.org/archlinux/packaging/packages/libfprint/-/blob/4754ff229c0e4cb566f33e99e962d702bfc52970/PKGBUILD",
+    "package_release": "2.1"
+  },
   "protocol_reference": {
     "url": "https://github.com/qualcomm/minkipc.git",
     "commit": "ce145804d9e994e0a7913f8d224d52e84bce6608",
