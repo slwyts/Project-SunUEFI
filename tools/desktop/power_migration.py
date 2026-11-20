@@ -40,7 +40,7 @@ IMAGE_FILES = {
 RETIRED_OVERLAY = {*IMAGE_FILES, SERVICE_LINK}
 
 
-def script(package_format):
+def commands(package_format):
     configs = ''.join(f'        /{path}) accepted="{ " ".join(digests)}";;\n'
                       for path, digests in IMAGE_FILES.items())
     owner_query = ('dpkg-query --search' if package_format == 'deb' else 'pacman -Qoq')
@@ -91,7 +91,4 @@ if image_default_or_absent /{HELPER} && image_default_or_absent /{SERVICE}; then
     fi
 fi
 '''
-    if package_format == 'deb':
-        return '#!/bin/sh\nset -eu\n[ "$1" = configure ] || exit 0\n' + body
-    return ('post_install() (\n    set -eu\n' + body +
-            ')\n\npost_upgrade() { post_install; }\n')
+    return body

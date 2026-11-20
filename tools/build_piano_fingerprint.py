@@ -323,14 +323,6 @@ def install_desktop(root, runtime, output):
             if not marker.is_file() or json.loads(marker.read_text()) != inputs:
                 raise ValueError('Fingerprint package sources or target ABI changed; use a fresh output')
             build_arch_package.install_cached(root, packages)
-    desktop_service(root)
-
-
-def desktop_service(root):
-    config = root / 'usr/lib/systemd/system/fprintd.service.d/20-piano.conf'
-    config.parent.mkdir(parents=True, exist_ok=True)
-    config.write_text('[Service]\nStateDirectory=piano-goodix\nStateDirectoryMode=0700\n'
-                      'DeviceAllow=char-uio rw\nDeviceAllow=char-tee rw\nDeviceAllow=char-bsg rw\n')
 
 
 DEBIAN_ABI_PACKAGES = (
@@ -437,7 +429,6 @@ def install_debian_package(root, path, target_abi):
                             '--no-remove', '--no-install-recommends', 'install', guest_deb], check=True)
             subprocess.run(['chroot', root, 'env', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
                             'dpkg', '-i', guest_deb], check=True)
-    desktop_service(root)
 
 
 def install_debian_desktop(root, runtime, output):

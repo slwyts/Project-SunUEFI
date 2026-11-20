@@ -11,6 +11,10 @@
 一起安装。包管理器会安装 BlueZ 和 Python GI；不需要从镜像复制脚本，
 也不绑定某个内核版本。坐标、压感和按键仍由匹配的内核驱动上报。
 
+Goodix 的设备访问和状态目录由 `piano-device-config` 的 fprintd 配置提供。
+升级会移除未经修改的镜像旧默认配置，保留管理员覆盖和已录入的指纹。
+仍需匹配的 libfprint、内核和指纹固件，见[侧指纹](../../docs/devel/hardware/led-ir-fingerprint.md#侧指纹)。
+
 键盘背光走内核 LED 与 UPower 标准接口。`upower.service.d/20-piano-keyboard.conf` 让 UPower 等待键盘初始化，避免初次扫描漏掉背光节点；这份文件也由 Debian release 适配工具安装。服务和程序的具体来源见 [Linux 服务源码地图](../../docs/devel/linux/services.md)。
 
 蓝牙 HID 使用标准 `etc/modules-load.d/piano-bluetooth.conf` 加载 `uhid`，这是 Project SunUEFI 的本地配置。内核对应 `linux/configs/piano-bluetooth.config`，Full / Next 构建只允许新增 `CONFIG_UHID=m`；模块必须匹配目标内核。该配置解决 BlueZ 创建 HID 输入设备的前提，不代表笔尖坐标、压力或倾斜已经支持。
@@ -24,8 +28,8 @@ UCM 打开四路扬声器，PipeWire 的普通立体声流使用标准 `simple` 
 ```sh
 ./build.sh bsp inspect --target debian
 ./build.sh bsp stage --target debian --output /absolute/new-stage
-./build.sh bsp package --target debian --format deb --output /absolute/new-deb --version 0.1.0
-./build.sh bsp package --target arch --format pacman --output /absolute/new-pacman --version 0.1.0
+./build.sh bsp package --target debian --format deb --output /absolute/new-deb
+./build.sh bsp package --target arch --format pacman --output /absolute/new-pacman
 ```
 
 Debian 默认 sid，Ubuntu 默认 noble，Arch Linux ARM 默认 rolling；Deepin 必须显式传 `--suite`。Arch 构建请用装有 `makepkg` 和 `base-devel` 的环境，以普通用户运行；`--format pacman` 直接生成 `.pkg.tar.zst`。包目录的 `manifest.json` 记录目标、文件清单和包的 SHA256。同一配置适用于多个发行版，但原生程序、固件、内核模块和 Mesa 仍需分别匹配目标系统。

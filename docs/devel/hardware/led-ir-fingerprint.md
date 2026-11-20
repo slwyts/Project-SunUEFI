@@ -212,6 +212,9 @@ Debian 构建依赖留在独立 rootfs，要求 libc／GLib 等开发包匹配�
 Debian 的 `SOURCE.json` 同时校验源码输入、目标 ABI、后端源码归档、二进制摘要、包身份和
 `Depends`；命中时不再创建构建 rootfs 或编译，仍执行目标链接检查与 APT 依赖模拟。
 Arch 系缓存同时核对配方摘要和运行库版本，不把另一套 ABI 的缓存直接安装。
+`piano-device-config` 安装 systemd 的 fprintd 配置，沿用现有设备权限和
+`/var/lib/piano-goodix` 目录。包安装与移除不会重启正在认证的 fprintd，
+也不会删除模板。管理员可在 `/etc/systemd/system/fprintd.service.d/` 覆盖配置。
 这仍是本地 libfprint 包；源码补丁进入仓库不等于上游已收录，更不等于发行版原版包
 已经提供此设备后端。传感器控制仍使用 UIO，原厂签名程序的业务命令和 HAT 协议没有改变。
 上游提交还需解决 UIO 控制模型、Gatekeeper／共享 RPMB 的录入策略及固件再分发授权。

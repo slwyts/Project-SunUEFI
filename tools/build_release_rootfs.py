@@ -1127,10 +1127,9 @@ def execute(record):
                      '--kernel-build', record['kernel_build'], '--output', bundle, '--sysroot', sysroot,
                      '--cc', helper_cc])
             runtime.stage(bundle, rootfs)
-        from build_piano_fingerprint import debian_abi, desktop_service
+        from build_piano_fingerprint import debian_abi
         if not published and debian_abi(rootfs) != components['fingerprint']['target_abi']:
             raise ValueError('The image fingerprint ABI differs from the signed package build root')
-        desktop_service(rootfs)
         from stage_piano_firmware import stage as stage_firmware, verify_display
         firmware = stage_firmware(Path(record['firmware_source']), rootfs, 'debian',
                                   shared=bool(published), run=run)

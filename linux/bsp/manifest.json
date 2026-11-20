@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "component": "piano-device-config",
+  "version": "0.1.1",
   "source": {
     "url": "https://github.com/blu-sharky/debian-piano.git",
     "commit": "25babfe3ff5d8ddee98b1e0ea88152d69a0c01b1"
@@ -122,6 +123,20 @@
       "source_git_mode": "100644",
       "license": "MIT",
       "transformation": "Install the system DMA heap rule with the device configuration"
+    },
+    {
+      "group": "common",
+      "path": "usr/lib/systemd/system/fprintd.service.d/10-piano-goodix.conf",
+      "type": "file",
+      "mode": "0644",
+      "uid": 0,
+      "gid": 0,
+      "sha256": "be5b439b5040f08ac2ed132dcf7179e2a2423b2357a11f8ffa3d04ad1190404b",
+      "source": "linux/bsp/common/usr/lib/systemd/system/fprintd.service.d/10-piano-goodix.conf",
+      "source_sha256": "be5b439b5040f08ac2ed132dcf7179e2a2423b2357a11f8ffa3d04ad1190404b",
+      "source_git_mode": "100644",
+      "license": "MIT",
+      "source_component": "Project SunUEFI"
     },
     {
       "group": "camera",

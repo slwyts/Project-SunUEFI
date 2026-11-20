@@ -35,6 +35,8 @@ POWER_PROFILES = BSP / 'power-profiles'
 TOPOLOGY_SOURCES = ('debian-piano-current', 'audioreach-topology')
 FIRMWARE_PACKAGES = (*LOCAL_FIRMWARE, TOPOLOGY_PACKAGE)
 FIRMWARE_ROOT = 'usr/lib/firmware/'
+OLD_FPRINTD_DROP_IN = 'usr/lib/systemd/system/fprintd.service.d/20-piano.conf'
+OLD_FPRINTD_SHA256 = 'be5b439b5040f08ac2ed132dcf7179e2a2423b2357a11f8ffa3d04ad1190404b'
 
 
 def package_description(package):
@@ -260,6 +262,10 @@ def inspect_audio_topology(args, suite):
 
 
 def inspect(args):
+    if args.version is None:
+        separate = (args.touch_firmware is not None or args.display_firmware is not None
+                    or args.audio_topology or args.power_profiles)
+        args.version = '0.1.0' if separate else read_json(BSP / 'manifest.json')['version']
     require(re.fullmatch('[0-9][A-Za-z0-9.+]*', args.version), 'Invalid package version')
     profile = read_json(BSP / 'profiles.json')['profiles'][args.target]
     suite = args.suite or profile['default_suite']
@@ -414,6 +420,30 @@ def preinst(paths, package=NAME, *, adopt=None):
             '  fi\ndone\n')
 
 
+def reload_systemd():
+    return ('if [ -d /run/systemd/system ]; then\n'
+            '    systemctl --system daemon-reload >/dev/null || true\n'
+            'fi\n')
+
+
+def config_install_script(package_format):
+    owner = 'dpkg-query --search' if package_format == 'deb' else 'pacman -Qoq'
+    body = power_migration.commands(package_format) + f'''\
+legacy=/{OLD_FPRINTD_DROP_IN}
+if [ ! -L "$legacy" ] && [ -f "$legacy" ] &&
+   ! {owner} -- "$legacy" >/dev/null 2>&1 &&
+   [ "$(stat -c '%a:%u:%g' -- "$legacy")" = 644:0:0 ] &&
+   printf '%s  %s\\n' {OLD_FPRINTD_SHA256} "$legacy" | sha256sum --status -c -; then
+    rm -- "$legacy"
+fi
+'''
+    if package_format == 'deb':
+        return ('#!/bin/sh\nset -eu\n[ "$1" = configure ] || exit 0\n' + body +
+                reload_systemd())
+    return ('post_install() (\n    set -eu\n' + body +
+            ')\n\npost_upgrade() { post_install; }\n')
+
+
 def debian_package(output, tree, report, configuration):
     package = report['package']
     section, detail = {
@@ -449,9 +479,14 @@ def debian_package(output, tree, report, configuration):
     subprocess.run(['/bin/sh', '-n', control / 'preinst'], check=True)
     if package == NAME:
         migration = control / 'postinst'
-        migration.write_text(power_migration.script('deb'))
+        migration.write_text(config_install_script('deb'))
         migration.chmod(0o755)
         subprocess.run(['/bin/sh', '-n', migration], check=True)
+        remove = control / 'postrm'
+        remove.write_text('#!/bin/sh\nset -eu\n[ "$1" = remove ] || exit 0\n' +
+                          reload_systemd())
+        remove.chmod(0o755)
+        subprocess.run(['/bin/sh', '-n', remove], check=True)
     artifact = output / f"{package}_{report['version']}_all.deb"
     subprocess.run(['dpkg-deb', '--root-owner-group', '--build', tree, artifact],
                    check=True, stdout=sys.stderr, env={**os.environ, 'SOURCE_DATE_EPOCH': '0'})
@@ -473,7 +508,7 @@ def pacman_sources(directory, tree, report, configuration):
     install = ''
     if package == NAME:
         migration = directory / (NAME + '.install')
-        migration.write_text(power_migration.script('pacman'))
+        migration.write_text(config_install_script('pacman'))
         subprocess.run(['/bin/sh', '-n', migration], check=True)
         install = f'install={migration.name}\n'
     (directory / 'PKGBUILD').write_text(
@@ -586,7 +621,7 @@ def parser():
     component.add_argument('--power-profiles', action='store_true',
                            help='Package the board-specific TuneD profiles and desktop mapping')
     ap.add_argument('--output', type=Path)
-    ap.add_argument('--version', default='0.1.0')
+    ap.add_argument('--version', help='Override the package version')
     return ap
 
 

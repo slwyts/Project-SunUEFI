@@ -159,10 +159,7 @@ def stage(args):
         from package.kernel import install as install_kernel
         install_kernel(root, 'pacman', args.kernel)
     runtime.stage(args.runtime.resolve(), root)
-    if published_packages is not None:
-        from build_piano_fingerprint import desktop_service
-        desktop_service(root)
-    else:
+    if published_packages is None:
         from build_piano_fingerprint import install_desktop
         install_desktop(root, args.runtime.resolve(), output / 'fingerprint-packages')
     fw = ROOT / cfg['firmware']['components']
