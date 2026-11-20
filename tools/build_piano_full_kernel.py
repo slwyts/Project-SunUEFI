@@ -61,7 +61,7 @@ GAMEPAD_OVERRIDES={
     'CONFIG_HID_MICROSOFT':'m','CONFIG_HID_NINTENDO':'m','CONFIG_NINTENDO_FF':'y',
     'CONFIG_HID_PLAYSTATION':'m','CONFIG_PLAYSTATION_FF':'y','CONFIG_HID_SONY':'m','CONFIG_SONY_FF':'y',
 }
-PEN_DOCK_OVERRIDES={'CONFIG_CHARGER_SC96231':'m'}
+PEN_CHARGER_OVERRIDES={'CONFIG_CHARGER_SC96231':'m'}
 IR_OVERRIDES={'CONFIG_LIRC':'y','CONFIG_IR_SPI':'m'}
 USERSPACE_SECURITY_OVERRIDES={'CONFIG_SECURITY_LANDLOCK':'y'}
 SLEEP_OVERRIDES={'CONFIG_QCOM_SMP2P_SLEEPSTATE':'y',
@@ -110,7 +110,7 @@ PLATFORM_OVERRIDES.update({key: 'm' for key in (
 PLATFORM_OVERRIDES.update({'CONFIG_FTRACE': 'y', 'CONFIG_ENABLE_DEFAULT_TRACERS': 'y'})
 PLATFORM_OVERRIDES.update({'CONFIG_ANDROID_BINDER_IPC': 'y', 'CONFIG_ANDROID_BINDERFS': 'y',
                            'CONFIG_ANDROID_BINDER_DEVICES': '"binder,hwbinder,vndbinder"'})
-ALLOWED_OVERRIDES={**BLUETOOTH_OVERRIDES,**FILESYSTEM_OVERRIDES,**GAMEPAD_OVERRIDES,**PEN_DOCK_OVERRIDES,**IR_OVERRIDES,**FLASH_OVERRIDES,**EARLY_CPUCP_OVERRIDES,
+ALLOWED_OVERRIDES={**BLUETOOTH_OVERRIDES,**FILESYSTEM_OVERRIDES,**GAMEPAD_OVERRIDES,**PEN_CHARGER_OVERRIDES,**IR_OVERRIDES,**FLASH_OVERRIDES,**EARLY_CPUCP_OVERRIDES,
                    **USERSPACE_SECURITY_OVERRIDES,**SLEEP_OVERRIDES,**PM_DEBUG_OVERRIDES,**PLATFORM_OVERRIDES}
 
 
@@ -208,7 +208,7 @@ def command_line(root_policy):
 
 def module_overrides(fragment,kind='bluetooth'):
     lines=[line.strip()for line in fragment.splitlines()if line.strip()and not line.lstrip().startswith('#')]
-    expected=BLUETOOTH_OVERRIDES if kind=='bluetooth'else FILESYSTEM_OVERRIDES if kind=='filesystem'else PEN_DOCK_OVERRIDES if kind=='pen-dock'else IR_OVERRIDES if kind=='ir'else FLASH_OVERRIDES if kind=='flash'else EARLY_CPUCP_OVERRIDES if kind=='early-cpucp'else USERSPACE_SECURITY_OVERRIDES if kind=='userspace-security'else SLEEP_OVERRIDES if kind=='sleep'else PLATFORM_OVERRIDES if kind=='platform'else None
+    expected=BLUETOOTH_OVERRIDES if kind=='bluetooth'else FILESYSTEM_OVERRIDES if kind=='filesystem'else PEN_CHARGER_OVERRIDES if kind=='pen-charger'else IR_OVERRIDES if kind=='ir'else FLASH_OVERRIDES if kind=='flash'else EARLY_CPUCP_OVERRIDES if kind=='early-cpucp'else USERSPACE_SECURITY_OVERRIDES if kind=='userspace-security'else SLEEP_OVERRIDES if kind=='sleep'else PLATFORM_OVERRIDES if kind=='platform'else None
     if kind=='gamepad':expected=GAMEPAD_OVERRIDES
     if expected is None or len(lines)!=len(expected) or set(lines)!={key+'='+value for key,value in expected.items()}:raise ValueError('Unexpected '+kind+' configuration fragment')
     return dict(expected)
@@ -368,7 +368,7 @@ def main():
     verify_source(work,commit);public=work/'arch/arm64/configs/piano_rootfs.config'
     root_command=command_line(args.root)
     bluetooth=ROOT/'linux/configs/piano-bluetooth.config';flash=ROOT/'linux/configs/piano-flash.config'
-    pen_dock=ROOT/'linux/configs/piano-pen-dock.config';ir=ROOT/'linux/configs/piano-ir.config'
+    pen_charger=ROOT/'linux/configs/piano-pen-charger.config';ir=ROOT/'linux/configs/piano-ir.config'
     early_cpucp=ROOT/'linux/configs/piano-cpucp-early.config'
     userspace_security=ROOT/'linux/configs/piano-userspace-security.config'
     sleep=ROOT/'linux/configs/piano-sleep.config'
@@ -376,7 +376,7 @@ def main():
     gamepad=ROOT/'linux/configs/piano-gamepad.config'
     modules={**module_overrides(bluetooth.read_text()),**module_overrides(filesystem.read_text(),'filesystem'),
              **module_overrides(gamepad.read_text(),'gamepad'),
-             **module_overrides(pen_dock.read_text(),'pen-dock'),
+             **module_overrides(pen_charger.read_text(),'pen-charger'),
              **module_overrides(ir.read_text(),'ir'),
              **module_overrides(flash.read_text(),'flash'),
              **module_overrides(early_cpucp.read_text(),'early-cpucp'),
@@ -401,7 +401,7 @@ def main():
     source_base=verify_source(work,commit)
     tree=text(['git','rev-parse','HEAD^{tree}'],work)
     compiler_checkout(work,compiler,commit,tree)
-    hashes={str(path.relative_to(ROOT)):sha(path)for path in (bluetooth,filesystem,gamepad,pen_dock,ir,flash,early_cpucp,userspace_security,sleep,ROOT/'linux/configs/piano-platform.config',Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py',ROOT/'tools/desktop/prepare_kernel_llvm.py',ROOT/'tools/desktop/package_build.py',ROOT/'config/kernel-llvm.json')}
+    hashes={str(path.relative_to(ROOT)):sha(path)for path in (bluetooth,filesystem,gamepad,pen_charger,ir,flash,early_cpucp,userspace_security,sleep,ROOT/'linux/configs/piano-platform.config',Path(__file__),ROOT/'tools/build_kernel.py',ROOT/'tools/prepare_linux_modules.py',ROOT/'tools/desktop/prepare_kernel_llvm.py',ROOT/'tools/desktop/package_build.py',ROOT/'config/kernel-llvm.json')}
     if marker.exists():
         previous=json.loads(marker.read_text())
         if (not args.configure_only and matching_build(
