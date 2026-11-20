@@ -20,7 +20,11 @@ struct device { void *data; };
 struct v4l2_subdev { struct device *dev; };
 struct mutex { bool locked; };
 struct v4l2_ctrl_handler { int unused; };
-struct v4l2_ctrl { int id, val; struct v4l2_ctrl_handler *handler; };
+struct v4l2_ctrl {
+	int id, val;
+	struct { int val; } cur;
+	struct v4l2_ctrl_handler *handler;
+};
 struct regulator_bulk_data { const char *supply; };
 
 static struct i2c_client client;
@@ -93,7 +97,7 @@ static void fresh(unsigned int position)
 	memset(&lens, 0, sizeof(lens));
 	memset(registers, 0, sizeof(registers));
 	focus = (struct v4l2_ctrl){ .id = V4L2_CID_FOCUS_ABSOLUTE,
-		.val = 512, .handler = &lens.ctrls };
+		.val = 512, .cur.val = 512, .handler = &lens.ctrls };
 	dev.data = &lens.sd;
 	lens.sd.dev = &dev;
 	lens.focus = &focus;
@@ -144,7 +148,8 @@ int main(void)
 
 	fresh(512);
 	lens.powered = false;
-	focus.val = 900;
+	focus.cur.val = 900;
+	focus.val = 700; /* A trial or failed write can leave a pending value. */
 	assert(!gt9764_resume(&dev) && lens.powered && enables == 1);
 	assert(registers[2] == 2 && registers[6] == 0x40 && registers[7] == 0x73);
 	const unsigned int expected_init[][2] = { {2, 0}, {2, 2}, {6, 0x40}, {7, 0x73} };
@@ -153,19 +158,19 @@ int main(void)
 	assert(!memcmp(register_writes, expected_init, sizeof(expected_init)));
 	assert(positions[0] == 512 && lens.position == 900);
 	assert(!gt9764_suspend(&dev) && !lens.powered && lens.position == 512);
-	assert(focus.val == 900 && !gt9764_resume(&dev) && lens.position == 900);
+	assert(focus.cur.val == 900 && !gt9764_resume(&dev) && lens.position == 900);
 
 	for (unsigned int failed = 1; failed <= 13; failed++) {
 		fresh(512);
 		lens.powered = false;
-		focus.val = 900;
+		focus.cur.val = 900;
 		fail_at = failed;
 		assert(gt9764_resume(&dev) == -EIO && !lens.powered && disables == 1);
 		assert(lens.position == 512);
 	}
 	fresh(512);
 	lens.powered = false;
-	focus.val = 900;
+	focus.cur.val = 900;
 	fail_from = 7;
 	assert(gt9764_resume(&dev) == -EIO && lens.powered && !disables);
 	assert(lens.position == 562 && enables == 1);

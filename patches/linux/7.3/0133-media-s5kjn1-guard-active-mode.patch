@@ -1,4 +1,4 @@
-From b8413312441f2fda9e42fe84f47ece0a4a379a1c Mon Sep 17 00:00:00 2001
+From 57825b14a42b4f36812563066ddea131dbb5e2fd Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@tuta.io>
 Date: Wed, 18 Nov 2026 18:49:00 +0800
 Subject: [PATCH] media: i2c: s5kjn1: Reject mode changes while streaming

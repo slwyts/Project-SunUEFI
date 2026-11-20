@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "aa3e249b8058bddbec12a64a0edacd47f491ca7a",
-  "original_target_commit": "de277e9bdfda5a9ba910fa26d78ab58bce01f06c",
+  "target_tree": "12085731767550495df307b70f6f49f7a2983f51",
+  "original_target_commit": "40739b6b8bf3cc50cd283cb0393f2599fab51c81",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -1646,11 +1646,11 @@
     },
     {
       "file": "0126-media-gt9764ba-lens.patch",
-      "sha256": "8a808c2aa123504e5bad7010e6662487c3e6c91afb907402a48a3ac42ccc23bb",
-      "original_commit": "7c2cf2927b9e58aa799fb13ccd008f832b8d278b",
+      "sha256": "b0863b153730aed4c49ff7e1fc00e1c049e64fd0c0e8959ca73e90ea50059717",
+      "original_commit": "57d21b70f3e608dbd5dea160dec12841c63113f9",
       "original_parent": "e85abf4089659e931d33b21e334dfaebd0477f57",
       "committer_date": "2026-11-16T11:16:46+08:00",
-      "tree": "25ba5d8779bbd909eefa6f36523ef99ca3b06ede",
+      "tree": "4c37d63e90f4b86c3daa2e87244b82669a86d9d8",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1659,11 +1659,11 @@
     },
     {
       "file": "0127-power-charging-state-feedback.patch",
-      "sha256": "8d13d183f9cba9c0595acd6596b4686e70477db5891e34d33487ca08bac2597f",
-      "original_commit": "fe256d364b507fff484304b50f9ee65797483412",
-      "original_parent": "7c2cf2927b9e58aa799fb13ccd008f832b8d278b",
+      "sha256": "c3c09eff4719d6621f12d1c95e4c7e6f17ef779c42855fbc331125fedebf68ef",
+      "original_commit": "5c4a33372d713fd9091975e28314c98321527507",
+      "original_parent": "57d21b70f3e608dbd5dea160dec12841c63113f9",
       "committer_date": "2026-11-18T02:42:00+08:00",
-      "tree": "85f0c4ef3ffa0e2bab5a08cc4d574f303af79af2",
+      "tree": "c9d6ff8ef95bd544e696457eb5fdf15c8b3f60f6",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1672,11 +1672,11 @@
     },
     {
       "file": "0128-power-mca-response-identity.patch",
-      "sha256": "c6af7cc5d8f4d1b139519278b28aeeffc236b8ec447b80ca5787e0934c83db3e",
-      "original_commit": "cd232a62b43b3c4f7e7f874db5a1b24ef301397d",
-      "original_parent": "fe256d364b507fff484304b50f9ee65797483412",
+      "sha256": "84a870c9d3797817324e78027517f4644e2352ad84124da37466ced33632f6d2",
+      "original_commit": "df19a432c7ec9eb2ac874ac6d2c19cb15c96298f",
+      "original_parent": "5c4a33372d713fd9091975e28314c98321527507",
       "committer_date": "2026-11-18T03:10:00+08:00",
-      "tree": "e8791e9020dd8d7bcde455deeb51774e7c1db198",
+      "tree": "e7cb7d9e874825ba2995eddeac49a19397334b43",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1685,11 +1685,11 @@
     },
     {
       "file": "0130-power-mca-warm-pmic-compensation.patch",
-      "sha256": "984218a4a46b0da6723797093eed411ff98646e3fe0a5a6f163d64a4af723c52",
-      "original_commit": "24a130b4c3b4dedd5995bda6eeff4b5c420c7345",
-      "original_parent": "cd232a62b43b3c4f7e7f874db5a1b24ef301397d",
+      "sha256": "004ec43faf92df8c4c548f69d4e33218bd2ce0c50e6189c6345ae68e6c61c204",
+      "original_commit": "0c0675778540e91e12951dc260ea3ed30251a90e",
+      "original_parent": "df19a432c7ec9eb2ac874ac6d2c19cb15c96298f",
       "committer_date": "2026-11-18T04:18:12+08:00",
-      "tree": "43c62e870741b7bc2e1e7abaf06d975395aef6c5",
+      "tree": "d290d5a2e6048f60f2df471be1e8a90a74e7a004",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1698,11 +1698,11 @@
     },
     {
       "file": "0131-power-bq27z561-average-power.patch",
-      "sha256": "f4ae5f8b9fa298857ff32060aa52c9b9259eb084f1fdaf52e88959690f9a642e",
-      "original_commit": "123f366345ddc7c426d1f4a334f46ef1602e4c27",
-      "original_parent": "24a130b4c3b4dedd5995bda6eeff4b5c420c7345",
+      "sha256": "e6fb8489cb56e39071eb7d023c4d582cfdb5065a9195a3794c3a418465ec4bae",
+      "original_commit": "38c0c2568f60d8f740621b23966c854d147050c4",
+      "original_parent": "0c0675778540e91e12951dc260ea3ed30251a90e",
       "committer_date": "2026-11-18T04:18:12+08:00",
-      "tree": "18fb3f32d26f3dff80e3d26da9d91cf6416015c6",
+      "tree": "d6ab05bd02a105b519f1520a6d4d31c0d0946b13",
       "upstream": {
         "status": "downstream",
         "url": "https://www.ti.com/lit/ug/sluuc54c/sluuc54c.pdf",
@@ -1711,11 +1711,11 @@
     },
     {
       "file": "0132-power-mca-connector-overtemperature.patch",
-      "sha256": "87e4b69baac3f8c3772facd5c585199f41446934ca6e7a38253a08df81ec766a",
-      "original_commit": "d2dd204e558467fd9b64605860f1598f0ba7d152",
-      "original_parent": "123f366345ddc7c426d1f4a334f46ef1602e4c27",
+      "sha256": "ace2e34419430606d1c9fb50789138a53d115bcce0cd319c3408f390e1726733",
+      "original_commit": "1735cf1fa278dc553f6af7bbd630a2d3d83aa8be",
+      "original_parent": "38c0c2568f60d8f740621b23966c854d147050c4",
       "committer_date": "2026-11-18T05:03:00+08:00",
-      "tree": "f992e69e2d43f16113642aee9902e1c904b8709f",
+      "tree": "47506e1f1b87dd329d473ade94c797c37e0958ee",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1724,11 +1724,11 @@
     },
     {
       "file": "0133-media-s5kjn1-guard-active-mode.patch",
-      "sha256": "5f849eb910ca49f03ca4d61cb0a3a59aa8cac0011de18aae0211b71909a0e6cd",
-      "original_commit": "b8413312441f2fda9e42fe84f47ece0a4a379a1c",
-      "original_parent": "d2dd204e558467fd9b64605860f1598f0ba7d152",
+      "sha256": "7434996bc3d2264f5f190718abbcc82bdeb7e04d838c1c14acbcdf2dc002df38",
+      "original_commit": "57825b14a42b4f36812563066ddea131dbb5e2fd",
+      "original_parent": "1735cf1fa278dc553f6af7bbd630a2d3d83aa8be",
       "committer_date": "2026-11-18T18:49:00+08:00",
-      "tree": "75293bec4441da66e119dd43c069f0d4c2b42180",
+      "tree": "13e0de31aac3ab2a9ee246a432b68678609ea950",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1737,11 +1737,11 @@
     },
     {
       "file": "0134-media-s5kjn1-program-mode-before-controls.patch",
-      "sha256": "2bdf2de95e215fdae487fd32a6ae11addb72e3c96a6c5ce5450d0fd27608198f",
-      "original_commit": "f21daae6009cfb382ca4400bda267484a13c14c7",
-      "original_parent": "b8413312441f2fda9e42fe84f47ece0a4a379a1c",
+      "sha256": "099c289d54cc9998788c67883656d155d100bff6f7fa1387d7f9359b93c89f8d",
+      "original_commit": "6150e21c1480679364a383c1f45927cd2df5caf1",
+      "original_parent": "57825b14a42b4f36812563066ddea131dbb5e2fd",
       "committer_date": "2026-11-18T18:49:00+08:00",
-      "tree": "89508df245a811bac88f8508eae148b1ef8543a6",
+      "tree": "72c36f428e22c89584f0bea007d7eee005de3bae",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1750,11 +1750,11 @@
     },
     {
       "file": "0135-media-camss-validate-capture-dma-ranges.patch",
-      "sha256": "b10f9b940285c2e03fb8215210775284ff74292f4d2ee8dd28d386de06b8e62e",
-      "original_commit": "36031eeb3405431c740944c72dc2d010af08af98",
-      "original_parent": "f21daae6009cfb382ca4400bda267484a13c14c7",
+      "sha256": "06d624426ecf2d4bd9dcc874e5bb789cf88cd4a747dff5ee4bed0c94b3e57df7",
+      "original_commit": "23f4a40a57a9e2f872f7f9ce4ac0f872f29b97b7",
+      "original_parent": "6150e21c1480679364a383c1f45927cd2df5caf1",
       "committer_date": "2026-11-18T19:39:38+08:00",
-      "tree": "28558c6cb9b65fe5c0fb3c7c290021d2309da956",
+      "tree": "003d4690bc06a31b93faaf23f8f2a95fabd52a81",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1763,11 +1763,11 @@
     },
     {
       "file": "0136-media-iris-encoder-frame-interval.patch",
-      "sha256": "655e76f3332954258306406e8919fe7707784b92125351ff56201cc7669f6670",
-      "original_commit": "b8c30ea49257562f56bf95fe4281ceda60bd621b",
-      "original_parent": "36031eeb3405431c740944c72dc2d010af08af98",
+      "sha256": "61f0742845cde59acc876962187dc9e613dfc92744825c448d14857ab46b673c",
+      "original_commit": "4d3098b68f4d844b27dda939f621fdc446756f12",
+      "original_parent": "23f4a40a57a9e2f872f7f9ce4ac0f872f29b97b7",
       "committer_date": "2026-11-18T20:30:45+08:00",
-      "tree": "0624bdf895a809bb6ba0b2cdca87d388e6c61c39",
+      "tree": "de36198c1880392319c501ff6a19f52a9a05eeb5",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1776,11 +1776,11 @@
     },
     {
       "file": "0137-LOCAL-leds-qcom-flash-fix-safety-timer.patch",
-      "sha256": "d2ba4f1f39ead6b30a3316efb5725e3d3d2e8029e2549bcbd69ffeffc3567476",
-      "original_commit": "3f2716ed33a5278acccddbaf85d01b84f51aab33",
-      "original_parent": "b8c30ea49257562f56bf95fe4281ceda60bd621b",
+      "sha256": "133e8884556fea9fb274a7be0d21ff8f83e25be14440d893bd24115072b804ec",
+      "original_commit": "e0b45eba1747d5c5156e2c928696708718725547",
+      "original_parent": "4d3098b68f4d844b27dda939f621fdc446756f12",
       "committer_date": "2026-11-19T09:13:34+08:00",
-      "tree": "d13515146a8e548986c2cebf350954bd4f337c3c",
+      "tree": "3c224a4ed6e56303c3416a317401072ca4a73ca1",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1789,24 +1789,24 @@
     },
     {
       "file": "0138-LOCAL-spi-geni-qcom-map-large-gpi-transfers.patch",
-      "original_commit": "c8ef9b661020584af29ccd13da64a78f174b6cc6",
-      "original_parent": "3f2716ed33a5278acccddbaf85d01b84f51aab33",
+      "original_commit": "476b8a4189ae3ed5d3cc344fcaffc17cafaa673f",
+      "original_parent": "e0b45eba1747d5c5156e2c928696708718725547",
       "committer_date": "2026-11-19T21:10:21+08:00",
-      "tree": "42d20d248b5ea2560048821be46b61e105f368a8",
+      "tree": "f06cf0b217b8905fb4ff5e54ea4b58a4154eaa89",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
         "drop_when": "The accepted GENI/GPI path must send an entire standard LIRC waveform in one SPI transfer without segment rejection or extra gaps; verify on the Piano transmitter."
       },
-      "sha256": "206531d268997092ad4f330d9abb49bcf8b7090c79204cebc04df3eb08c0164b"
+      "sha256": "431af533627cd7a71ee7e6ed32cd40d3d4ed8bde76b07ea5fdff108136a3b8ec"
     },
     {
       "file": "0139-LOCAL-dmaengine-qcom-gpi-clear-config-on-release.patch",
-      "sha256": "8c4c90105394e68f9180b26c0a4f586ddbbe954f83c8691b05ad47f3ad227440",
-      "original_commit": "798194ae958c3137b56619eb97ae392e7e0c552d",
-      "original_parent": "c8ef9b661020584af29ccd13da64a78f174b6cc6",
+      "sha256": "32b1ce4257de20c9dd4e2c87a16e125d24fb6143faca0b7d781283b41b40c17e",
+      "original_commit": "e627b81d562e6b8191b70cf14d01e0791c16374a",
+      "original_parent": "476b8a4189ae3ed5d3cc344fcaffc17cafaa673f",
       "committer_date": "2026-11-19T22:01:44+08:00",
-      "tree": "d2630eb66fab09e229206de60d3c3eda704fc8d7",
+      "tree": "05ed265667804b977d25b0f5f91eb25e1b25a441",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1815,11 +1815,11 @@
     },
     {
       "file": "0140-LOCAL-power-bq27xxx-stop-gauge-io-on-shutdown.patch",
-      "sha256": "066bdffcfd7ad6c354181a04c8ba551f3fba0ae473d675732b2a66d9904c5606",
-      "original_commit": "fa0b6e6932eb8deff0146c984d8491b75c6bfa03",
-      "original_parent": "798194ae958c3137b56619eb97ae392e7e0c552d",
+      "sha256": "b9005725aa66c7d40dd1f4769fc19b8aed78095c0593f470e5c92b3c73d54cae",
+      "original_commit": "b72bc954939893f7151364f2e72ee522244896b3",
+      "original_parent": "e627b81d562e6b8191b70cf14d01e0791c16374a",
       "committer_date": "2026-11-20T00:49:21+08:00",
-      "tree": "120b8714a9a67b2b1917912db2693bbb0dba4f24",
+      "tree": "9cba57b588e475420028134e9f0fb03547a3287f",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1828,11 +1828,11 @@
     },
     {
       "file": "0141-LOCAL-media-camss-serialize-buffer-completion.patch",
-      "sha256": "8eea494558316ef78b698ec5bcdc1d0bb4e34c56a5d6b7eae94815a4a645a398",
-      "original_commit": "8f9f8d4c9a2c4102fc82b3ec3577de3cd563c5ee",
-      "original_parent": "fa0b6e6932eb8deff0146c984d8491b75c6bfa03",
+      "sha256": "4c4471768627b592d57e26a815fb161dbaa1c8c85c69e187a9e0ef422bd82d92",
+      "original_commit": "b8c802d8c815c3d9b4f421ee05c660dafc6e32ef",
+      "original_parent": "b72bc954939893f7151364f2e72ee522244896b3",
       "committer_date": "2026-11-20T04:10:27+08:00",
-      "tree": "7a558c67fc0b513bcfa7af01dc3aa9455376c211",
+      "tree": "3c79902071e6d9f44047fc9c9cf7914317770336",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1841,11 +1841,11 @@
     },
     {
       "file": "0142-LOCAL-media-s5kjn1-group-exposure-and-gain.patch",
-      "sha256": "cfee0944a1380be25096bfdcc2fb334a276683951ac4143418106b62fdd38ba3",
-      "original_commit": "7b5bb45154e4f2a3939d26fedbca0be857453c9b",
-      "original_parent": "8f9f8d4c9a2c4102fc82b3ec3577de3cd563c5ee",
+      "sha256": "034bc5d35b58bef91ab7893f10f244d854cf386aa0c144ac92495d2c75344e26",
+      "original_commit": "9e2ce74bf155b433e8b387c501f34a33b2d79bb8",
+      "original_parent": "b8c802d8c815c3d9b4f421ee05c660dafc6e32ef",
       "committer_date": "2026-11-20T13:20:29+08:00",
-      "tree": "fe7f299b72c2f7fbc7389b437f6e70b73aa33688",
+      "tree": "490b663909a0d7c6b947b00ec574e0a1f1324fae",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -1854,11 +1854,11 @@
     },
     {
       "file": "0143-LOCAL-media-camss-release-csid-parent-on-power-error.patch",
-      "sha256": "9e6c53f118564e23b7ce1c00b3a6ce679d766568674f42afe900a8ebf75eb213",
-      "original_commit": "57a85007f2e64ec371de195576982bda0be64ef1",
-      "original_parent": "7b5bb45154e4f2a3939d26fedbca0be857453c9b",
+      "sha256": "c030d87844605afcb19f8a4b18a38b07d4ad309724698c71bb5b24f8416ce80f",
+      "original_commit": "9d3ac434a8aa2b7a7e1064558c373262be3e7499",
+      "original_parent": "9e2ce74bf155b433e8b387c501f34a33b2d79bb8",
       "committer_date": "2026-11-20T13:42:29+08:00",
-      "tree": "a8f3a94c3b872d6e3f1ba0cb87240ca9f28406dd",
+      "tree": "1063b28aaf50a52f210b0658c8a40fc92cdf03fd",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/torvalds/linux/commit/c5af8db84c01585e077019d5fd384c57a9fcad2f",
@@ -1867,11 +1867,11 @@
     },
     {
       "file": "0144-LOCAL-media-v4l2-flash-preserve-torch-intensity.patch",
-      "sha256": "8d2c648cd0dd54e89fca3136f0d41f682d24488d26178a42b770c540325c527f",
-      "original_commit": "de277e9bdfda5a9ba910fa26d78ab58bce01f06c",
-      "original_parent": "57a85007f2e64ec371de195576982bda0be64ef1",
+      "sha256": "ee5006645e8e12256eaea1237f31f72c0425fccf909171b29b473bb20ac572d9",
+      "original_commit": "40739b6b8bf3cc50cd283cb0393f2599fab51c81",
+      "original_parent": "9d3ac434a8aa2b7a7e1064558c373262be3e7499",
       "committer_date": "2026-11-20T14:30:34+08:00",
-      "tree": "aa3e249b8058bddbec12a64a0edacd47f491ca7a",
+      "tree": "12085731767550495df307b70f6f49f7a2983f51",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/torvalds/linux/commit/42bd6f59ae90244484746696aabcafc0003f59c7",

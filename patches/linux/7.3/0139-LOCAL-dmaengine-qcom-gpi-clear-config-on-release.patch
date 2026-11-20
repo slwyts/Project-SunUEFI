@@ -1,4 +1,4 @@
-From 798194ae958c3137b56619eb97ae392e7e0c552d Mon Sep 17 00:00:00 2001
+From e627b81d562e6b8191b70cf14d01e0791c16374a Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Thu, 19 Nov 2026 22:01:44 +0800
 Subject: [PATCH] dmaengine: qcom: gpi: Clear the peripheral configuration on
