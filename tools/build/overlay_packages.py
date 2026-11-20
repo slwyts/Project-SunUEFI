@@ -44,10 +44,10 @@ def sha(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
-def pacman_keyboard_aliases(archive, rows):
+def pacman_firmware_aliases(archive, rows):
     raw = [row['path'] for row, _ in rows]
     if pacman_info(archive).get('backup') != raw:
-        raise ValueError('Keyboard firmware package must preserve the original file with pacman backup')
+        raise ValueError('Firmware package must preserve the original files with pacman backup')
     expected = {row['path'] + suffix: (suffix, data) for row, data in rows
                 for suffix in ('', *package_bsp.FIRMWARE_COMPRESSION_SUFFIXES)}
     aliases = {}
@@ -59,7 +59,7 @@ def pacman_keyboard_aliases(archive, rows):
                 if member.isdir() or not name.startswith(package_bsp.FIRMWARE_ROOT):
                     continue
                 if name not in expected or not member.isfile() or member.mode != 0o644:
-                    raise ValueError('Unexpected file in keyboard firmware package: ' + name)
+                    raise ValueError('Unexpected file in firmware package: ' + name)
                 suffix, original = expected.pop(name)
                 data = contents.extractfile(member).read()
                 try:
@@ -73,16 +73,16 @@ def pacman_keyboard_aliases(archive, rows):
                     else:
                         decoded = data
                 except (lzma.LZMAError, subprocess.CalledProcessError) as error:
-                    raise ValueError('Invalid compressed keyboard firmware: ' + name) from error
+                    raise ValueError('Invalid compressed firmware: ' + name) from error
                 if decoded != original:
-                    raise ValueError('Keyboard firmware differs from the pinned source: ' + name)
+                    raise ValueError('Firmware differs from the pinned source: ' + name)
                 if suffix:
                     aliases[name] = {'path': name, 'type': 'file', 'mode': '0644',
                                      'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
     if process.returncode:
         raise subprocess.CalledProcessError(process.returncode, command)
     if expected:
-        raise ValueError('Keyboard firmware package is missing: ' + ', '.join(expected))
+        raise ValueError('Firmware package is missing: ' + ', '.join(expected))
     return aliases
 
 
@@ -133,8 +133,8 @@ def bsp_package(directory, package_format, *, component='config'):
         if record.get('payload_files') != payload or record.get('public_distribution') is not published:
             raise ValueError(description.capitalize() + ' package differs from the fixed source or publication policy')
         metadata['firmware'] = payload
-        if package_format == 'pacman' and name == package_bsp.KEYBOARD_PACKAGE:
-            metadata['compressed_firmware'] = pacman_keyboard_aliases(archive, rows)
+        if package_format == 'pacman' and published:
+            metadata['compressed_firmware'] = pacman_firmware_aliases(archive, rows)
     if component == 'power-profiles':
         payload = {row['path']: {**row, 'bytes': len(data)}
                    for row, data in package_bsp.power_profiles_payload()}
@@ -617,6 +617,7 @@ def install_arch_overlays(rootfs, kernel, target, published):
     topology_archive, topology = shared_topology('pacman')
     power_archive, power = shared_bsp('pacman', component='power-profiles')
     keyboard_archive, keyboard = shared_bsp('pacman', component='keyboard-firmware')
+    touch_archive, touch = shared_bsp('pacman', component='touch-firmware')
     check_topology_conflicts(rootfs, topology)
     install(rootfs, 'pacman', kernel, published=True)
     install_repository(rootfs, target == 'steamos')
@@ -630,7 +631,7 @@ def install_arch_overlays(rootfs, kernel, target, published):
         installed = set(guest(['pacman', '-Qq'], text=True, capture_output=True).stdout.splitlines())
         selected = pacman_image_packages(target, packages, installed)
         common = {archive.name: bsp, topology_archive.name: topology,
-                  power_archive.name: power, keyboard_archive.name: keyboard}
+                  power_archive.name: power, keyboard_archive.name: keyboard, touch_archive.name: touch}
         if repository == 'sunuefi':
             bluez = {name: row for name, row in selected.items() if row['name'] == ARCH_BLUEZ}
             if bluez:

@@ -235,20 +235,19 @@ class BspPackageTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('dpkg-deb'), 'dpkg-deb unavailable; no fake deb test')
     def test_real_touch_deb_contains_verified_firmware_only(self):
         out = self.base / 'deb'
-        target = self.base / 'target'
-        target.mkdir()
-        source = bsp.TOUCH_MANIFEST.parent
-        args = self.args('package', '--format', 'deb', '--touch-firmware', str(source),
-                         '--output', str(out))
-        with self.assertRaisesRegex(ValueError, 'Specify --against'):
-            bsp.build(args)
-        args.against = target
-        self.assertFalse(out.exists())
-        report = bsp.build(args)
-        self.assertFalse(report['public_distribution'])
-        artifact = out / next(iter(report['files']))
-        self.assertEqual(artifact.name, 'piano-firmware-touch_0.1.0_all.deb')
+        manifest = bsp.TOUCH_MANIFEST
+        source = json.loads(manifest.read_text())
+        with patch.dict(os.environ, {bsp.overlay_release.ENVIRONMENT: '10.1'}):
+            report = bsp.build(self.args('package', '--format', 'deb', '--touch-firmware',
+                                         str(manifest.parent), '--output', str(out)))
+        self.assertTrue(report['public_distribution'])
+        artifact, metadata = overlay_packages.bsp_package(out, 'debian', component='touch-firmware')
+        version = source['rom'].removeprefix('OS')
+        self.assertEqual(artifact.name, f'piano-firmware-touch_{version}+sunuefi.10.1_all.deb')
+        self.assertEqual(metadata['firmware'], report['payload_files'])
         self.assertEqual(report['depends'], [])
+        self.assertEqual(packaged_components([(PurePosixPath('novatek'), manifest, source)]),
+                         {'piano-touch': 'touch-firmware'})
         kib = subprocess.check_output(['dpkg-deb', '--field', artifact, 'Installed-Size'], text=True)
         with tarfile.open(fileobj=io.BytesIO(subprocess.check_output(
                 ['dpkg-deb', '--fsys-tarfile', artifact]))) as archive:
@@ -267,7 +266,7 @@ class BspPackageTests(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(installed).hexdigest(), record['sha256'])
             installed_report = archive.extractfile(
                 './usr/share/doc/piano-firmware-touch/bsp-manifest.json').read().decode()
-            self.assertNotIn(str(source), installed_report)
+            self.assertNotIn('conflict_check', json.loads(installed_report))
 
     @unittest.skipUnless(shutil.which('dpkg-deb'), 'dpkg-deb unavailable; no fake deb test')
     def test_real_display_deb_contains_both_panel_calibrations(self):
@@ -364,12 +363,17 @@ class BspPackageTests(unittest.TestCase):
                          {'piano-keyboard': 'keyboard-firmware'})
 
     @unittest.skipUnless(shutil.which('dpkg-query'), 'dpkg-query unavailable')
-    def test_keyboard_preinst_checks_merged_usr_ownership(self):
-        manifest = bsp.KEYBOARD_MANIFEST
-        _, rows = bsp.local_firmware_payload(manifest.parent, manifest, 'keyboard firmware')
-        (row, data), = rows
+    def test_firmware_preinst_checks_merged_usr_ownership(self):
+        for package in (bsp.KEYBOARD_PACKAGE, bsp.TOUCH_PACKAGE):
+            with self.subTest(package=package):
+                self.check_firmware_preinst(package)
+
+    def check_firmware_preinst(self, package):
+        component, manifest = bsp.STOCK_FIRMWARE[package]
+        _, rows = bsp.local_firmware_payload(manifest.parent, manifest, component)
+        row, data = rows[-1]
         relative = row['path']
-        root = self.base / 'guest'
+        root = self.base / package
         firmware = root / relative
         firmware.parent.mkdir(parents=True)
         firmware.write_bytes(data)
@@ -380,7 +384,7 @@ class BspPackageTests(unittest.TestCase):
         info.mkdir(parents=True)
         status = database / 'status'
         status.touch()
-        script = bsp.preinst([relative], bsp.KEYBOARD_PACKAGE, adopt={relative: row})
+        script = bsp.preinst([relative], package, adopt={relative: row})
         environment = {**os.environ, 'DPKG_ROOT': str(root), 'DPKG_ADMINDIR': str(database)}
 
         def preinst():
@@ -398,26 +402,35 @@ class BspPackageTests(unittest.TestCase):
 
         result = preinst()
         self.assertEqual(result.returncode, 0, result.stderr)
-        foreign = record_alias_owner('other-keyboard-firmware')
+        foreign = record_alias_owner('other-firmware')
         result = preinst()
         self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertIn('other-keyboard-firmware', result.stderr)
+        self.assertIn('other-firmware', result.stderr)
         foreign.unlink()
-        record_alias_owner(bsp.KEYBOARD_PACKAGE)
+        record_alias_owner(package)
         firmware.write_bytes(b'updated bytes from the installed package')
         result = preinst()
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    @unittest.skipUnless(all(shutil.which(tool) for tool in ('makepkg', 'bsdtar')),
-                         'pacman packaging tools required')
-    def test_keyboard_pacman_uses_native_backup_metadata_for_legacy_files(self):
-        out = self.base / 'pacman'
-        bsp.build(self.args('package', '--target', 'arch', '--format', 'pacman', '--keyboard-firmware',
-                            str(bsp.KEYBOARD_MANIFEST.parent), '--output', str(out)))
-        archive, metadata = overlay_packages.bsp_package(out, 'pacman', component='keyboard-firmware')
-        relative = 'usr/lib/firmware/nanosic/MCU_Upgrade.bin'
-        self.assertEqual(pacman_info(archive).get('backup'), [relative])
-        self.assertEqual(set(metadata['firmware']), {relative})
+    @unittest.skipUnless(all(shutil.which(tool) for tool in ('makepkg', 'bsdtar', 'xz', 'zstd')),
+                         'pacman packaging and firmware compression tools required')
+    def test_published_firmware_pacman_preserves_legacy_files(self):
+        for package in (bsp.KEYBOARD_PACKAGE, bsp.TOUCH_PACKAGE):
+            with self.subTest(package=package), patch.dict(
+                    os.environ, {bsp.overlay_release.ENVIRONMENT: '10.1'}):
+                component, manifest = bsp.STOCK_FIRMWARE[package]
+                out = self.base / component
+                bsp.build(self.args('package', '--target', 'arch', '--format', 'pacman',
+                                    '--' + component, str(manifest.parent), '--output', str(out)))
+                archive, metadata = overlay_packages.bsp_package(out, 'pacman', component=component)
+                source = json.loads(manifest.read_text())
+                expected = {f"usr/lib/firmware/{source['directory']}/{name}" for name in source['files']}
+                self.assertTrue(bsp.overlay_release.uses_pacman_generation(metadata['version']))
+                self.assertEqual(set(pacman_info(archive)['backup']), expected)
+                self.assertEqual(set(metadata['firmware']), expected)
+                self.assertEqual(set(metadata['compressed_firmware']),
+                                 {path + suffix for path in expected
+                                  for suffix in bsp.FIRMWARE_COMPRESSION_SUFFIXES})
 
     @unittest.skipUnless(all(shutil.which(tool) for tool in ('makepkg', 'bsdtar', 'pacman', 'fakeroot',
                                                             'xz', 'zstd')),
@@ -572,9 +585,10 @@ class BspPackageTests(unittest.TestCase):
                 shutil.copytree(manifest.parent, source)
                 args = self.args('stage', f'--{component}-firmware', str(source),
                                  '--output', str(self.base / 'stage'))
-                with patch.dict(os.environ, {bsp.overlay_release.ENVIRONMENT: '10.1'}):
-                    with self.assertRaisesRegex(ValueError, 'cannot be built as a publication generation'):
-                        bsp.build(args)
+                if component != 'touch':
+                    with patch.dict(os.environ, {bsp.overlay_release.ENVIRONMENT: '10.1'}):
+                        with self.assertRaisesRegex(ValueError, 'cannot be built as a publication generation'):
+                            bsp.build(args)
                 panel = source / next(iter(json.loads(manifest.read_text())['files']))
                 raw = panel.read_bytes()
                 panel.write_bytes(bytes([raw[0] ^ 1]) + raw[1:])

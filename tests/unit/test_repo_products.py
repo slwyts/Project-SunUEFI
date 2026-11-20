@@ -34,6 +34,8 @@ class RepoProductsTests(unittest.TestCase):
         self.power_pacman = self.packages / 'bsp/power-profiles/pacman/piano-power-profiles-1-1-any.pkg.tar.zst'
         self.keyboard_deb = self.packages / 'bsp/keyboard-firmware/debian/piano-firmware-keyboard_1_all.deb'
         self.keyboard_pacman = self.packages / 'bsp/keyboard-firmware/pacman/piano-firmware-keyboard-1-1-any.pkg.tar.zst'
+        self.touch_deb = self.packages / 'bsp/touch-firmware/debian/piano-firmware-touch_1_all.deb'
+        self.touch_pacman = self.packages / 'bsp/touch-firmware/pacman/piano-firmware-touch-1-1-any.pkg.tar.zst'
         self.sensor = self.packages / 'bsp/sensors/piano-sensors-5-1-any.pkg.tar.zst'
 
     def shared_camera(self):
@@ -175,9 +177,10 @@ class RepoProductsTests(unittest.TestCase):
         targets = ('debian-gnome', 'debian-kde', 'nyarch-gnome', 'steamos')
         with patch('products.bsp_package', side_effect=(
                 (device_deb, {'sha256': 'debian'}), (self.power_deb, {'sha256': 'debian-power'}),
-                (self.keyboard_deb, {'sha256': 'debian-keyboard'}),
+                (self.keyboard_deb, {'sha256': 'debian-keyboard'}), (self.touch_deb, {'sha256': 'debian-touch'}),
                 (device_pacman, {'sha256': 'pacman'}), (self.power_pacman, {'sha256': 'pacman-power'}),
-                (self.keyboard_pacman, {'sha256': 'pacman-keyboard'}))) as bsp, \
+                (self.keyboard_pacman, {'sha256': 'pacman-keyboard'}),
+                (self.touch_pacman, {'sha256': 'pacman-touch'}))) as bsp, \
                 self.shared_camera() as camera, self.shared_topology() as topology, \
                 patch('products.sensors.pacman_package',
                       return_value=(self.sensor, {'sha256': 'sensors'})) as sensors, \
@@ -187,9 +190,11 @@ class RepoProductsTests(unittest.TestCase):
                          [(self.packages / 'bsp/debian', 'debian'),
                           (self.power_deb.parent, 'debian'),
                           (self.keyboard_deb.parent, 'debian'),
+                          (self.touch_deb.parent, 'debian'),
                           (self.packages / 'bsp/pacman', 'pacman'),
                           (self.power_pacman.parent, 'pacman'),
-                          (self.keyboard_pacman.parent, 'pacman')])
+                          (self.keyboard_pacman.parent, 'pacman'),
+                          (self.touch_pacman.parent, 'pacman')])
         self.assertEqual([call.args for call in camera.call_args_list],
                          [('debian', self.camera_deb.parent),
                           ('pacman', self.camera_pacman.parent)])
@@ -203,11 +208,11 @@ class RepoProductsTests(unittest.TestCase):
                          {'apt': sorted({path.name for path in debian.glob('*.deb')} | {
                              deb_kernel, deb_shared, self.topology_deb.name,
                              self.camera_deb.name, device_deb.name, self.power_deb.name,
-                             self.keyboard_deb.name}),
+                             self.keyboard_deb.name, self.touch_deb.name}),
                           'sunuefi': sorted({path.name for path in arch_dir.glob('*.pkg.tar.*')} | {
                               kernel, self.topology_pacman.name, self.camera_pacman.name,
                               device_pacman.name, self.power_pacman.name, self.sensor.name,
-                              self.keyboard_pacman.name}),
+                              self.keyboard_pacman.name, self.touch_pacman.name}),
                           'sunuefi-steamos': sorted(path.name for path in valve_dir.glob('*.pkg.tar.*'))})
         arch = self.packages / 'overlays/nyarch-gnome' / graphics
         valve = self.packages / 'overlays/steamos' / graphics
@@ -225,9 +230,10 @@ class RepoProductsTests(unittest.TestCase):
         self.pacman_set('steamos', {**proxy, device_pacman.name: b'valve'})
         with patch('products.bsp_package', side_effect=(
                 (device_deb, {'sha256': 'debian'}), (self.power_deb, {'sha256': 'debian-power'}),
-                (self.keyboard_deb, {'sha256': 'debian-keyboard'}),
+                (self.keyboard_deb, {'sha256': 'debian-keyboard'}), (self.touch_deb, {'sha256': 'debian-touch'}),
                 (device_pacman, {'sha256': 'pacman'}), (self.power_pacman, {'sha256': 'pacman-power'}),
-                (self.keyboard_pacman, {'sha256': 'pacman-keyboard'}))), \
+                (self.keyboard_pacman, {'sha256': 'pacman-keyboard'}),
+                (self.touch_pacman, {'sha256': 'pacman-touch'}))), \
                 self.shared_camera(), self.shared_topology(), \
                 patch('products.sensors.pacman_package',
                       return_value=(self.sensor, {'sha256': 'sensors'})), \

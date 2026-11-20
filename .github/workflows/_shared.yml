@@ -133,10 +133,12 @@ jobs:
               ./build.sh bsp package --audio-topology --target arch --format pacman --output artifacts/packages/bsp/audio-topology/pacman
               ./build.sh bsp package --power-profiles --target debian --format deb --output artifacts/packages/bsp/power-profiles/debian
               ./build.sh bsp package --power-profiles --target arch --format pacman --output artifacts/packages/bsp/power-profiles/pacman
-              ./build.sh bsp package --keyboard-firmware vendor/firmware/piano-keyboard --target debian --format deb \
-                --output artifacts/packages/bsp/keyboard-firmware/debian
-              ./build.sh bsp package --keyboard-firmware vendor/firmware/piano-keyboard --target arch --format pacman \
-                --output artifacts/packages/bsp/keyboard-firmware/pacman
+              for firmware in keyboard touch; do
+                ./build.sh bsp package "--${firmware}-firmware" "vendor/firmware/piano-${firmware}" \
+                  --target debian --format deb --output "artifacts/packages/bsp/${firmware}-firmware/debian"
+                ./build.sh bsp package "--${firmware}-firmware" "vendor/firmware/piano-${firmware}" \
+                  --target arch --format pacman --output "artifacts/packages/bsp/${firmware}-firmware/pacman"
+              done
               env -u SUNUEFI_OVERLAY_RELEASE ./build.sh bsp package \
                 --display-firmware vendor/firmware/piano-display --target debian --format deb \
                 --output artifacts/packages/bsp/display-firmware/debian

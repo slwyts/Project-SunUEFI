@@ -38,9 +38,10 @@ STOCK_FIRMWARE = {
     FINGERPRINT_PACKAGE: ('fingerprint-firmware', FINGERPRINT_MANIFEST),
 }
 IMAGE_FIRMWARE = {component: (package, manifest)
-                  for package, (component, manifest) in STOCK_FIRMWARE.items()
-                  if package in (DISPLAY_PACKAGE, KEYBOARD_PACKAGE, FINGERPRINT_PACKAGE)}
-PUBLISHED_STOCK_FIRMWARE = {KEYBOARD_PACKAGE}
+                  for package, (component, manifest) in STOCK_FIRMWARE.items()}
+# These packages can take ownership of stock files previously copied by the
+# image builder. On pacman, ship compression aliases to detect collisions.
+PUBLISHED_STOCK_FIRMWARE = {KEYBOARD_PACKAGE, TOUCH_PACKAGE}
 TOPOLOGY_PACKAGE = 'piano-audio-topology'
 POWER_PROFILES_PACKAGE = 'piano-power-profiles'
 POWER_PROFILES = BSP / 'power-profiles'
@@ -240,16 +241,14 @@ def inspect_stock_firmware(args, suite, package, source):
     require(args.target in ('debian', 'arch'), 'Use --target debian or arch for ' + description)
     require(published or overlay_release.ENVIRONMENT not in os.environ,
             f'Local {description} cannot be built as a publication generation')
-    require(args.command != 'package' or args.against or component in IMAGE_FIRMWARE,
-            f'Specify --against with the target root to check {description} ownership')
     manifest, rows = local_firmware_payload(source, manifest_path, description)
     provenance = {'rom': manifest['rom']}
     if 'source' in manifest:
         provenance['origin'] = manifest['source']
     version = overlay_release.debian_version(args.version) if published and args.format == 'deb' else args.version
     conflicts = (conflict_check(args.against, rows, package,
-                                adopt_identical=package == KEYBOARD_PACKAGE,
-                                packaged_compressed_aliases=args.target == 'arch' and package == KEYBOARD_PACKAGE)
+                                adopt_identical=published,
+                                packaged_compressed_aliases=args.target == 'arch' and published)
                  if args.against else {'performed': False, 'required_before_install': True})
     report = {
         'schema_version': 1,
@@ -295,7 +294,7 @@ def inspect(args):
                   for package, (component, _) in STOCK_FIRMWARE.items()
                   if (source := getattr(args, component.replace('-', '_'))) is not None), None)
     if args.version is None:
-        if firmware and firmware[0] in (KEYBOARD_PACKAGE, FINGERPRINT_PACKAGE):
+        if firmware and (firmware[0] in PUBLISHED_STOCK_FIRMWARE or firmware[0] == FINGERPRINT_PACKAGE):
             _, manifest = STOCK_FIRMWARE[firmware[0]]
             args.version = read_json(manifest)['rom'].removeprefix('OS')
         else:
@@ -386,8 +385,7 @@ def stage(args, inspected=None):
         docs.mkdir(parents=True)
         if report['package'] == TOUCH_PACKAGE:
             copyright = ('Novatek / Xiaomi proprietary firmware from the stock device ROM.\n'
-                         'The SunUEFI source license does not cover these binaries.\n'
-                         'No permission for public redistribution is documented.\n')
+                         'The SunUEFI source license does not cover these binaries.\n')
         elif report['package'] == DISPLAY_PACKAGE:
             copyright = ('Panel calibration derived from Qualcomm / Xiaomi stock QDCM data.\n'
                          'The SunUEFI source license does not cover the calibration data.\n')
@@ -510,7 +508,8 @@ def debian_package(output, tree, report, configuration):
     package = report['package']
     architecture = report['package_architecture']
     section, detail = {
-        TOUCH_PACKAGE: ('non-free-firmware/kernel', ' Built from locally supplied stock ROM files.\n'),
+        TOUCH_PACKAGE: ('non-free-firmware/kernel',
+                        ' Installs stock Novatek touchscreen firmware for BOE and CSOT panels.\n'),
         DISPLAY_PACKAGE: ('non-free-firmware/kernel', ' Installs locally supplied panel calibration data.\n'),
         KEYBOARD_PACKAGE: ('non-free-firmware/kernel',
                            ' Installs the stock Nanosic keyboard and touchpad controller firmware.\n'),
@@ -542,7 +541,8 @@ def debian_package(output, tree, report, configuration):
     paths = [*report['payload_files'], docs + 'bsp-manifest.json']
     if package in FIRMWARE_PACKAGES or package == POWER_PROFILES_PACKAGE:
         paths.append(docs + 'copyright')
-    adopt = report['payload_files'] if package in (POWER_PROFILES_PACKAGE, KEYBOARD_PACKAGE) else None
+    adopt = (report['payload_files']
+             if package in PUBLISHED_STOCK_FIRMWARE or package == POWER_PROFILES_PACKAGE else None)
     (control / 'preinst').write_text(preinst(paths, package, architecture=architecture, adopt=adopt))
     (control / 'preinst').chmod(0o755)
     subprocess.run(['/bin/sh', '-n', control / 'preinst'], check=True)
@@ -586,7 +586,7 @@ def pacman_sources(directory, tree, report, configuration):
         subprocess.run(['/bin/sh', '-n', migration], check=True)
         install = f'install={migration.name}\n'
     compress = ''
-    if package == KEYBOARD_PACKAGE:
+    if package in PUBLISHED_STOCK_FIRMWARE:
         firmware = ' '.join(map(shlex.quote, report['payload_files']))
         # The raw file takes precedence over either compression format.
         # Including both variants lets ALPM detect those conflicts before extraction.
@@ -688,7 +688,7 @@ def build(args):
     if args.command == 'package':
         configuration = [row['path'] for row, _ in rows if row['path'].startswith('etc/')]
         if args.format == 'pacman':
-            if report['package'] == KEYBOARD_PACKAGE:
+            if report['package'] in PUBLISHED_STOCK_FIRMWARE:
                 # Let ALPM adopt the previously unpackaged file and keep local replacements.
                 configuration.extend(row['path'] for row, _ in rows)
             artifact, version = pacman_package(output, tree, report, configuration)

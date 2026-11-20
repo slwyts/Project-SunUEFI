@@ -279,11 +279,11 @@ sudo ./build.sh mesa build/mesa-steamos --format pacman --rootfs build/distros/s
 
 两种产品构建都会检查 Mesa 源码、完整驱动选项和 ARM64 包。CI 分别缓存原生包；复用前核对来源、配方与包摘要，安装后重新检查 ELF 和目标系统的依赖，避免把不匹配的滚动发行版缓存带入镜像。
 
-各产品由 APT 或 pacman 安装键盘套、显示校准和指纹固件包，组装时核对包归属、
-文件大小和 SHA256。`piano-firmware-keyboard` 随共用设备包发布到 APT 和
-`sunuefi`，SteamOS 也从共用仓安装。显示包随 CI 共用设备产物提供，指纹包在组装时
-从固定固件清单构建；这两个包不上传软件源。其余设备固件仍按 `vendor/firmware/`
-下的组件清单校验后安装。
+各产品由 APT 或 pacman 安装键盘套、显示校准、触屏和指纹固件包，组装时核对包归属、
+文件大小和 SHA256。`piano-firmware-keyboard` 和 `piano-firmware-touch` 随共用
+设备包发布到 APT 和 `sunuefi`，SteamOS 也从共用仓安装。显示包随 CI 共用设备
+产物提供，指纹包在组装时从固定固件清单构建；这两个包不上传软件源。其余设备
+固件仍按 `vendor/firmware/` 下的组件清单校验后安装。
 
 ### 单独构建的软件包
 
@@ -320,7 +320,7 @@ CPU 型号由 `linux/dts/piano-cpu-model.dtso` 给八个 CPU 节点加标准 `mo
 | --- | --- | --- |
 | Linux 内核与模块 | Debian 的 `bindeb-pkg` 和 Arch 的 `pacman-pkg` 原生包 | 随包安装并维护匹配的模块，由元包选择最新版本 |
 | 设备树 | 组合板级 DTB、overlay 和绑定转换，按内核版本打包 | 生成启动文件时选取同版文件，逐步收敛到内核源码中的板级设备树 |
-| Linux 设备固件 | 显示校准和指纹固件通过原生包安装；触控固件可单独[构建本地软件包](../../linux/bsp/README.md#本地固件包)，其他固件仍由组装脚本安装 | 发行版提供通用固件，设备包补齐板级固件 |
+| Linux 设备固件 | 键盘套、显示校准、触屏和指纹通过[原生包](../../linux/bsp/README.md#设备固件包)安装，其他固件仍由组装脚本安装 | 发行版提供通用固件，设备包补齐板级固件 |
 | ALSA UCM、udev、笔校准及音频拓扑 | 成品安装 `piano-device-config` 和 `piano-audio-topology` | 开源拓扑随独立包更新，剩余硬件运行文件继续按组件打包 |
 | Mesa、FFmpeg | 已有 Debian 和 pacman 原生包 | 保留目标发行版完整配方、功能和 ABI，按软件源正常更新 |
 | 传感器 | Debian 提供六个原生包；Nyarch 与 SteamOS 共用 `piano-sensors`，FastRPC、libssc 和 SensorProxy 按各自的库接口打包 | 继续通过标准 SensorProxy 接口提供照度和姿态 |

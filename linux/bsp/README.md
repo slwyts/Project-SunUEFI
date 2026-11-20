@@ -63,26 +63,25 @@ Debian 默认 sid，Ubuntu 默认 noble，Arch Linux ARM 默认 rolling；Deepin
 ## 设备固件包
 
 `piano-firmware-keyboard` 提供键盘套和触控板共用的固件
-`/usr/lib/firmware/nanosic/MCU_Upgrade.bin`。成品从签名 APT 和 `sunuefi`
-安装它；手动构建用 `--keyboard-firmware vendor/firmware/piano-keyboard`。
-旧镜像里的原装文件可以直接接管。如果曾替换过原文件，Debian 不会覆盖它。
-将替换版移到 `/usr/lib/firmware/updates/nanosic/` 后重新安装即可。pacman
-保留原文件，并将包内版本另存为 `.pacnew`。如果 `/usr/lib/firmware/nanosic/`
-已有同名的 `.xz` 或 `.zst` 文件，安装会报告冲突。自定义固件可以解压为 `MCU_Upgrade.bin`，
-放在 `/usr/lib/firmware/updates/nanosic/`，让内核优先加载。
+`/usr/lib/firmware/nanosic/MCU_Upgrade.bin`。手动构建用
+`--keyboard-firmware vendor/firmware/piano-keyboard`。
+
+`piano-firmware-touch` 提供 Xiaomi Pad 8 Pro 的 BOE、CSOT 两份触控固件。
+内核按面板型号从 `/usr/lib/firmware/novatek/` 加载。包版本取自
+[固件清单](../../vendor/firmware/piano-touch/manifest.json)的原厂 ROM 号。
+手动构建用 `--touch-firmware vendor/firmware/piano-touch`。
+
+两个包都从签名 APT 或共用 `sunuefi` 仓安装。旧镜像里和包内字节相同的原装文件
+可以直接接管。第一次安装时，如果有人换过原文件，Debian 会提示冲突并保留原文件；
+pacman 保留原文件，并将包内版本另存为 `.pacnew`。长期使用自定义固件时，把替换件
+放到 `/usr/lib/firmware/updates/nanosic/` 或 `/usr/lib/firmware/updates/novatek/`，
+文件名不变，内核优先读取那里。不要直接修改包管理的文件。
+触屏在启动和唤醒时重新读取固件；如果没有可用固件，触屏将无法使用。
+
+两个软件包都会拒绝覆盖旧系统里另有归属或未经登记的同名 `.xz`、`.zst` 固件。
+要继续使用自定义固件，可以先解压，再移到上面的 `updates/` 目录。
 
 ### 本地安装的固件包
-
-`piano-firmware-touch` 只包含 Xiaomi Pad 8 Pro 的 BOE、CSOT 两份触控固件。
-从与[固件清单](../../vendor/firmware/piano-touch/manifest.json)所列版本一致的原厂
-ROM 提取 `odm/firmware` 中的这两个文件，再指定该目录和要安装到的系统根目录：
-
-```sh
-./build.sh bsp package --touch-firmware /absolute/odm/firmware \
-  --against /absolute/target-root --target debian --format deb --output build/touch-deb
-./build.sh bsp package --touch-firmware /absolute/odm/firmware \
-  --against /absolute/target-root --target arch --format pacman --output build/touch-pacman
-```
 
 `piano-firmware-display` 包含 BOE、CSOT 两份显示校准；内核按面板型号加载
 `qcom/sm8750/piano-{boe,csot}-display.bin`，不需要额外服务。`--display-firmware`
@@ -103,12 +102,10 @@ ROM 提取 `odm/firmware` 中的这两个文件，再指定该目录和要安装
 需要单独安装时，在上面的构建命令中换用
 `--fingerprint-firmware vendor/firmware/hyperos4-fingerprint`。指纹固件包不在公网软件源中。
 
-SteamOS 与 Nyarch 使用同一份 `any` 格式的 pacman 包。三个固件包都显式读取
-本地输入。单独构建显示和指纹包可不指定目标；安装前用 `--against` 检查目标系统的
-包归属和同名的 `.xz`、`.zst` 固件。
+SteamOS 与 Nyarch 使用相同的 `any` 格式 pacman 软件包。这两个包不在公网软件源中。
 旧镜像若有未登记的文件，先按上面的迁移方法备份再构建；其他包拥有的文件不覆盖。
-若构建后目标系统发生变化，先用 `./build.sh bsp inspect` 加原组件参数及
-`--against <目标根>` 重新核对。pacman 安装时只检查完全相同的路径，不检查压缩别名。
+安装前用 `./build.sh bsp inspect` 加组件参数及 `--against <目标根>` 检查
+文件归属和同名的 `.xz`、`.zst`；这两个本地 pacman 包只检查完全相同的路径。
 
 把包复制到目标系统，用 `apt install ./<包名>.deb` 或 `pacman -U ./<包名>.pkg.tar.zst`
 安装。换用保留的旧包可以回退，显式卸载用 `apt remove <包名>` 或 `pacman -R <包名>`。

@@ -3,7 +3,8 @@
 
 Every file comes from vendor/firmware: each component directory carries its
 files, a manifest of their sizes and SHA256, and a source note. Native
-packages own the display calibration, keyboard cover and fingerprint firmware.
+packages own the display calibration, touchscreen, keyboard cover and
+fingerprint firmware.
 """
 import hashlib
 import json
@@ -49,7 +50,7 @@ def verify_firmware_package(rootfs, package_format, metadata):
     rows = metadata['firmware']
     package_bsp.conflict_check(
         rootfs, [(row, None) for row in rows.values()], name,
-        packaged_compressed_aliases=package_format == 'pacman' and name == package_bsp.KEYBOARD_PACKAGE)
+        packaged_compressed_aliases='compressed_firmware' in metadata)
     # Reject missing files as well as conflicts with another package.
     for relative, row in {**rows, **metadata.get('compressed_firmware', {})}.items():
         relative = PurePosixPath(relative)
@@ -75,7 +76,7 @@ def install_firmware_package(source, rootfs, package_format, component, *, share
         return metadata
     migration = package_bsp.conflict_check(
         rootfs, rows, name, adopt_identical=True,
-        packaged_compressed_aliases=package_format == 'pacman' and name == package_bsp.KEYBOARD_PACKAGE)
+        packaged_compressed_aliases=package_format == 'pacman' and name in package_bsp.PUBLISHED_STOCK_FIRMWARE)
     tmp = guest_resolve(rootfs, '/var/tmp')
     tmp.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=f'sunuefi-{component}-', dir=tmp) as temporary:
