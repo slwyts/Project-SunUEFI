@@ -1,0 +1,40 @@
+name: Windows graphics checks
+
+on:
+  push:
+    branches: [woa]
+    paths: &graphics_paths
+      - 'windows/drivers/adreno/**'
+      - 'tools/build/windows.py'
+      - 'build.sh'
+      - '.github/workflows/windows-graphics.yml'
+  pull_request:
+    branches: [woa, main]
+    paths: *graphics_paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-graphics-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  readback:
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build the ARM64 graphics test
+        shell: bash
+        run: ./build.sh windows graphics-test
+      - name: Check Direct3D readback using the software adapter
+        run: .\artifacts\windows\tests\graphics-readback.exe --warp
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: Windows-ARM64-graphics-readback
+          path: artifacts/windows/tests/graphics-readback.exe
+          if-no-files-found: error
+          retention-days: 7

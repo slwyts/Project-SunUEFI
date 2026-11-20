@@ -155,6 +155,12 @@ SMMU 中断和设备映射：UFS 的 StreamID 为 `0x60`，USB 为 `0x40`。
 | 驱动维护 | 从原版 Windows 安装驱动，检查睡眠唤醒、图形设备重置、驱动升级、回退和卸载。正式安装使用 Driver Store，不替换 Windows 自带的图形 DLL。 |
 | 其他硬件 | 用普通应用检查触摸、键盘和笔、联网和配对、音频、旋转、相机和指纹。确认插电熄屏继续充电，拔线睡眠可唤醒；记录睡眠前后的设备状态和电量。 |
 
+用 `./build.sh windows graphics-test` 构建 ARM64 测试程序，在 Windows 运行
+`graphics-readback.exe --list` 列出图形适配器。选定本机 Adreno 的
+LUID 后运行 `graphics-readback.exe --luid 高位:低位`，分别检查 D3D11 和
+D3D12 的命令完成与结果读回。CI 中的 `--warp` 用微软软件适配器校验测试
+程序本身，不能计作平板的硬件结果。
+
 GPU 的同芯片驱动与本机原厂基线见[上游项目](upstreams.md)。在另一部
 SM8750 设备上的测试结果只用来选择实现，不计入 Piano 的发布结果。
 

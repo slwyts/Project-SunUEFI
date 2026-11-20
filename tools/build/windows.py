@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import struct
@@ -188,6 +189,25 @@ def run_media(args):
         print(f'Windows: {output}/ntfs/{result["install"]["path"]}')
 
 
+def graphics_test(_args):
+    cmake = required_tool('cmake')
+    output = ROOT / 'artifacts/windows/tests'
+    build = ROOT / 'build/windows/graphics-readback'
+    if os.name == 'nt':
+        options = ['-A', 'ARM64']
+    else:
+        options = ['-G', 'Ninja', '-DCMAKE_SYSTEM_NAME=Windows',
+                   '-DCMAKE_SYSTEM_PROCESSOR=ARM64',
+                   '-DCMAKE_CXX_COMPILER=' + required_tool('aarch64-w64-mingw32-clang++'),
+                   '-DCMAKE_RC_COMPILER=' + required_tool('aarch64-w64-mingw32-windres')]
+    subprocess.run([cmake, '-S', ROOT / 'windows/drivers/adreno/tests', '-B', build,
+                    '-DCMAKE_BUILD_TYPE=Release',
+                    f'-DCMAKE_RUNTIME_OUTPUT_DIRECTORY={output}',
+                    f'-DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE={output}', *options], check=True)
+    subprocess.run([cmake, '--build', build, '--config', 'Release'], check=True)
+    print(output / 'graphics-readback.exe')
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
@@ -196,6 +216,8 @@ def main(argv=None):
     build.add_argument('--output', type=Path, help='Generated files (default: artifacts/windows/media or winpe)')
     build.add_argument('--probe', action='store_true', help='Boot a diagnostic WinPE, collect local logs and reboot')
     build.set_defaults(run=run_media)
+    graphics = commands.add_parser('graphics-test', help='Build the ARM64 Direct3D hardware readback test')
+    graphics.set_defaults(run=graphics_test)
     args = parser.parse_args(argv)
     try:
         args.run(args)
