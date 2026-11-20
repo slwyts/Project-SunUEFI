@@ -11,6 +11,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 NATIVE = ROOT / 'linux/userspace/fingerprint'
 ARCH_LIBFPRINT_RECIPE = ROOT / 'linux/bsp/arch/libfprint/PKGBUILD.in'
+STEAMOS_FPRINTD_RECIPE = ROOT / 'linux/bsp/steamos/fprintd/PKGBUILD.in'
 CORE_SOURCES = (
     'piano-goodix-storage.c', 'piano-goodix-events.c',
     'piano-goodix-gatekeeper.c', 'piano-goodix-operations.c',
@@ -23,10 +24,10 @@ HEADERS = (
 )
 CLI_SOURCE = NATIVE / 'piano-goodix-cli.c'
 LICENSES = ('BSD-3-Clause.txt', 'BSD-3-Clause-Clear.txt')
-STEAMOS_DESKTOP_DEPENDENCIES = {
-    'libfprint': ('glib2', 'libgusb', 'libgudev', 'pixman', 'openssl'),
-    'fprintd': ('libfprint', 'dbus', 'dbus-glib', 'polkit', 'pam'),
-}
+PACMAN_LIBFPRINT_RUNTIME = ('libgcc', 'glib2', 'glibc', 'libgudev', 'libgusb', 'openssl', 'pixman')
+STEAMOS_FPRINTD_RUNTIME = ('dbus', 'glib2', 'glibc', 'libgcc', 'libfprint',
+                         'pam', 'polkit', 'systemd', 'systemd-libs')
+LIBFPRINT_SONAME = 'libfprint-2.so=2-64'
 RUNTIME_PATHS = {
     'usr/local/sbin/piano-fingerprint-ctl',
     'usr/share/piano-provenance/fingerprint.json',
@@ -228,12 +229,13 @@ def backend_sources(runtime):
 
 
 def pacman_desktop_recipes(output, runtime, *, steamos):
-    """Build only the packages the target distribution does not provide."""
+    """Build libfprint with Goodix support and, on SteamOS, upstream fprintd."""
     config = json.loads((ROOT / 'config/fingerprint.json').read_text())
     cfg = config['desktop']
-    required = ({name: ('glibc', *dependencies)
-                 for name, dependencies in STEAMOS_DESKTOP_DEPENDENCIES.items()} if steamos else
-                {'libfprint': ('glibc', 'libgcc', *STEAMOS_DESKTOP_DEPENDENCIES['libfprint'])})
+    required = {'libfprint': PACMAN_LIBFPRINT_RUNTIME}
+    crypto = f'libcrypto.so={config["steamos"]["openssl_abi"]}-64'
+    if steamos:
+        required['fprintd'] = STEAMOS_FPRINTD_RUNTIME
     backend = backend_sources(runtime)
     output.mkdir(parents=True, exist_ok=True)
     for name in required:
@@ -256,46 +258,22 @@ def pacman_desktop_recipes(output, runtime, *, steamos):
             shutil.copy2(backend, recipe / filename)
         files = [archive.name, *patch_names, *local]
         hashes = [digest(recipe / file) for file in files]
-        if not steamos:
-            text = ARCH_LIBFPRINT_RECIPE.read_text()
-            values = {'VERSION': record['version'], 'RELEASE': config['arch']['package_release'],
-                      'SOURCES': shlex.join(files), 'CHECKSUMS': shlex.join(hashes),
-                      'PATCHES': shlex.join(patch_names)}
-            for key, value in values.items():
-                text = text.replace('@' + key + '@', value)
-            (recipe / 'PKGBUILD').write_text(text)
-            continue
-        dependencies = STEAMOS_DESKTOP_DEPENDENCIES[name]
-        prepare = ''.join('  patch -d "$srcdir/' + name + '" -p1 < "$srcdir/' + p + '"\n'
-                          for p in patch_names)
-        options = ('-Ddoc=false -Dgtk-examples=false -Dinstalled-tests=false '
-                   '-Dudev_rules_dir=/usr/lib/udev/rules.d -Dudev_hwdb=disabled'
-                   if name == 'libfprint' else '-Dgtk_doc=false -Dman=false')
+        values = {'VERSION': record['version'], 'SOURCES': shlex.join(files),
+                  'CHECKSUMS': shlex.join(hashes)}
         if name == 'libfprint':
-            prepare += '''  mkdir -p "$srcdir/libfprint/libfprint/drivers/piano-goodix"
-  tar -xf "$srcdir/piano-goodix-sources.tar" -C "$srcdir/libfprint/libfprint/drivers/piano-goodix"
-'''
-        notices = ''
-        if name == 'libfprint':
-            notices = '''  install -Dm644 "$srcdir/libfprint/libfprint/drivers/piano-goodix/BSD-3-Clause.txt" "$pkgdir/usr/share/licenses/libfprint/piano-goodix-BSD-3-Clause.txt"
-  install -Dm644 "$srcdir/libfprint/libfprint/drivers/piano-goodix/BSD-3-Clause-Clear.txt" "$pkgdir/usr/share/licenses/libfprint/piano-goodix-BSD-3-Clause-Clear.txt"
-  install -Dm644 "$srcdir/libfprint/libfprint/drivers/piano-goodix/qcbor/LICENSE" "$pkgdir/usr/share/licenses/libfprint/piano-goodix-QCBOR.txt"
-  install -Dm644 "$srcdir/libfprint/libfprint/drivers/piano-goodix/uapi/linux/tee.h" "$pkgdir/usr/share/licenses/libfprint/piano-goodix-linux-tee.h"
-'''
-        recipe_text = (
-            f'pkgname={name}\npkgver={record["version"]}\npkgrel=1.1\n'
-            'arch=(aarch64)\nlicense=(LGPL-2.1-or-later)\n'
-            f'pkgdesc="{name} with Piano fingerprint support"\n'
-            f'url={record["url"]}\ndepends=({shlex.join(dependencies)})\n'
-            'makedepends=(base-devel meson ninja gobject-introspection python-docutils perl)\n'
-            'options=(!lto !debug)\n'
-            + ('noextract=(piano-goodix-sources.tar)\n' if name == 'libfprint' else '') +
-            f'source=({shlex.join(files)})\nsha256sums=({shlex.join(hashes)})\n'
-            'prepare() {\n' + (prepare or '  :\n') + '}\n'
-            'build() {\n' + f'  meson setup build {name} --prefix=/usr --libdir=lib '
-            f'--buildtype=release {options}\n  meson compile -C build -j4\n}}\n'
-            'package() {\n  DESTDIR="$pkgdir" meson install -C build\n' + notices + '}\n')
-        (recipe / 'PKGBUILD').write_text(recipe_text)
+            template = ARCH_LIBFPRINT_RECIPE
+            depends = (*required[name], crypto) if steamos else required[name]
+            values.update(RELEASE=config['arch']['package_release'], PATCHES=shlex.join(patch_names),
+                          OPTIONS='options=(!debug !lto)\n' if steamos else '')
+        else:
+            template = STEAMOS_FPRINTD_RECIPE
+            depends = (*required[name], LIBFPRINT_SONAME)
+            values['RELEASE'] = config['steamos']['fprintd_package_release']
+        values['DEPENDENCIES'] = shlex.join(depends)
+        text = template.read_text()
+        for key, value in values.items():
+            text = text.replace('@' + key + '@', value)
+        (recipe / 'PKGBUILD').write_text(text)
     return required
 
 
@@ -335,9 +313,9 @@ def install_pacman_desktop(root, runtime, output, *, steamos):
             if not marker.is_file() or json.loads(marker.read_text()) != inputs:
                 raise ValueError('Fingerprint package sources or target ABI changed; use a fresh output')
             build_arch_package.install_cached(root, packages)
-    if not steamos:
-        with build_resolver(root), guest_environment(root) as guest:
-            guest(['pacman', '-T', 'libfprint-2.so=2-64'])
+    with build_resolver(root), guest_environment(root) as guest:
+        guest(['pacman', '-T', LIBFPRINT_SONAME])
+        if not steamos:
             guest(['pacman', '-S', '--needed', '--noconfirm', 'extra/fprintd'])
     return dependencies.keys()
 

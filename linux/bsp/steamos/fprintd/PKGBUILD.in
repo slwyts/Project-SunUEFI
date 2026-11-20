@@ -1,0 +1,30 @@
+# Valve's ARM64 repository does not currently package upstream fprintd.
+
+pkgname=fprintd
+pkgver=@VERSION@
+pkgrel=@RELEASE@
+pkgdesc='D-Bus service to access fingerprint readers'
+url='https://fprint.freedesktop.org/'
+arch=(aarch64)
+license=(GPL-2.0-or-later)
+options=(!debug !lto)
+depends=(@DEPENDENCIES@)
+makedepends=(glib2-devel gtk-doc libxslt meson perl)
+groups=(fprint)
+backup=(etc/fprintd.conf)
+source=(@SOURCES@)
+sha256sums=(@CHECKSUMS@)
+
+build() {
+  export PATH="$PATH:/usr/bin/core_perl"
+  arch-meson "$pkgname" build --libexecdir=libexec -D gtk_doc=true
+  meson compile -C build -j4
+}
+
+check() {
+  meson test -C build --print-errorlogs
+}
+
+package() {
+  meson install -C build --no-rebuild --destdir "$pkgdir"
+}

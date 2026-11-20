@@ -214,7 +214,10 @@ Debian 的 `SOURCE.json` 同时校验源码输入、目标 ABI、后端源码归
 Arch Linux ARM 沿用[发行版配方](../../../config/fingerprint.json)的依赖和文件布局，
 由 `makepkg` 按实际 ELF 生成 `libfprint-2.so=2-64`，直接使用 `[extra]` 的
 fprintd。共用 `[sunuefi]` 保留旧归档供回退，但不再把旧 fprintd 列进活动索引，
-让 `pacman -Syu` 选到发行版原包。SteamOS 仍从独立覆盖源取得适合其运行库的包。
+让 `pacman -Syu` 选到发行版原包。Valve 的 ARM64 源未提供这两个包，
+SteamOS 从 `[sunuefi-steamos]` 安装匹配 Valve OpenSSL ABI 的 libfprint 和未改源码的
+fprintd。两系都保留标准 udev、PAM 和 D-Bus 接口；SteamOS 的 `/etc/fprintd.conf`
+由 pacman 保留管理员修改。
 两套构建缓存分别核对配方摘要和运行库版本。
 `piano-device-config` 安装 systemd 的 fprintd 配置，沿用现有设备权限和
 `/var/lib/piano-goodix` 目录。包安装与移除不会重启正在认证的 fprintd，
