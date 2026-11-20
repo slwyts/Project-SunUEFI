@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "fb505bfc01f81c4bec2857e85e6a133a6af13184",
-  "original_target_commit": "a0ff4f7302c0d446755030887d2e19aadd958d07",
+  "target_tree": "ab5959d1857097972fa7883d74db08d2b01afaa0",
+  "original_target_commit": "d981d952e952d447206c7ea486e34940fc21a71a",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -3270,6 +3270,58 @@
         "status": "downstream",
         "url": "https://github.com/MiCode/vendor_qcom_opensource_camera-kernel/blob/piano-w-oss/drivers/cam_isp/isp_hw_mgr/isp_hw/vfe_hw/vfe17x/cam_tfe980.h",
         "drop_when": "The SM8750 CAMSS driver verifies DMA completion or confirmed hardware isolation before teardown."
+      }
+    },
+    {
+      "file": "0249-LOCAL-ufs-samsung-health-critical.patch",
+      "sha256": "4bede077b60e52cef6c90729edce85d5b54c0f4789910f7e0d30882f8a4d470b",
+      "original_commit": "cc792dcee95192710c69c22f49dd4fa6828d102b",
+      "original_parent": "a0ff4f7302c0d446755030887d2e19aadd958d07",
+      "committer_date": "2026-11-21T00:14:56+08:00",
+      "tree": "672d74541b7fbb48a8b0b4c2864046a439424df9",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/torvalds/linux/commit/edfaf868f3ae65099b41ec28724cb5241eeb9edf",
+        "drop_when": "The selected kernel handles unsupported critical-health notifications on Samsung KLUGG8NHHB-F0G1 firmware 1500."
+      }
+    },
+    {
+      "file": "0250-LOCAL-pinctrl-spmi-gpio-high-impedance-only.patch",
+      "sha256": "4c7583136cab1bf53db80d42f28f908ad0ec71646f594de3e5b055f7c2751d8e",
+      "original_commit": "26f19043850f0fd9ba3f1f7b5aed7601a5c0cc28",
+      "original_parent": "cc792dcee95192710c69c22f49dd4fa6828d102b",
+      "committer_date": "2026-11-21T00:17:34+08:00",
+      "tree": "e811d54c723f3771ce84329b3c5ad946056dedeb",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/drivers/pinctrl/qcom/pinctrl-spmi-gpio.c",
+        "drop_when": "The selected Qualcomm SPMI GPIO driver can apply standalone high impedance without rewriting unrelated pad settings."
+      }
+    },
+    {
+      "file": "0251-LOCAL-bluetooth-qca-startup-wake-ack.patch",
+      "sha256": "5e63a3de88906bb8de7d556e61efd2159ec170df6da6a19a4c6f1459376850e8",
+      "original_commit": "b722295ec97b943c4518d795827b1b9b84d3591a",
+      "original_parent": "26f19043850f0fd9ba3f1f7b5aed7601a5c0cc28",
+      "committer_date": "2026-11-21T00:18:15+08:00",
+      "tree": "2b34661582a070247ab4c3b7d5bbbba915205e1c",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/drivers/bluetooth/hci_qca.c",
+        "drop_when": "The applicable QCA startup path no longer produces a runtime IBS error for the expected controller wake acknowledgement."
+      }
+    },
+    {
+      "file": "0252-LOCAL-drm-msm-kms-open-without-gpu.patch",
+      "sha256": "b9e592fa772a3da3a3b46835d1c1f0d3405688cd083716fe36e75f4a9e061a26",
+      "original_commit": "d981d952e952d447206c7ea486e34940fc21a71a",
+      "original_parent": "b722295ec97b943c4518d795827b1b9b84d3591a",
+      "committer_date": "2026-11-21T00:18:16+08:00",
+      "tree": "ab5959d1857097972fa7883d74db08d2b01afaa0",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/drivers/gpu/drm/msm/msm_drv.c",
+        "drop_when": "Opening a display-only MSM DRM node no longer attempts to initialize a missing GPU."
       }
     }
   ],
