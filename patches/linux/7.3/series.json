@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "7a558c67fc0b513bcfa7af01dc3aa9455376c211",
-  "original_target_commit": "8f9f8d4c9a2c4102fc82b3ec3577de3cd563c5ee",
+  "target_tree": "fe7f299b72c2f7fbc7389b437f6e70b73aa33688",
+  "original_target_commit": "7b5bb45154e4f2a3939d26fedbca0be857453c9b",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -1837,6 +1837,19 @@
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
         "drop_when": "The selected CAMSS driver stops refilling capture slots when stream-off begins, synchronizes each applicable completion IRQ before returning buffers, and clears the returned slots."
+      }
+    },
+    {
+      "file": "0142-LOCAL-media-s5kjn1-group-exposure-and-gain.patch",
+      "sha256": "cfee0944a1380be25096bfdcc2fb334a276683951ac4143418106b62fdd38ba3",
+      "original_commit": "7b5bb45154e4f2a3939d26fedbca0be857453c9b",
+      "original_parent": "8f9f8d4c9a2c4102fc82b3ec3577de3cd563c5ee",
+      "committer_date": "2026-11-20T13:20:29+08:00",
+      "tree": "fe7f299b72c2f7fbc7389b437f6e70b73aa33688",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "The selected S5KJN1 driver applies exposure and analogue gain under one group hold, attempts release on error, and preserves usable exposure limits after a failed frame-length update."
       }
     }
   ],
