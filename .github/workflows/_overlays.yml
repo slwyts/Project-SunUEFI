@@ -102,8 +102,9 @@ jobs:
             ' 2>&1 | tee build/logs/overlay-packages.log
       - name: Verify the package set and hashes
         run: |
-          ./build.sh repo products --verify-target "$SUNUEFI_BUILD_TARGET" \
-            --output "artifacts/packages/overlays/$SUNUEFI_BUILD_TARGET"
+          docker run --rm --network none -v "$PWD:/workspace:ro" -w /workspace \
+            sunuefi-builder ./build.sh repo products --verify-target "$SUNUEFI_BUILD_TARGET" \
+              --output "artifacts/packages/overlays/$SUNUEFI_BUILD_TARGET"
       - id: completed
         name: Stage the verified overlay set for reuse across runs
         if: ${{ !endsWith(matrix.target, '-denial') }}
