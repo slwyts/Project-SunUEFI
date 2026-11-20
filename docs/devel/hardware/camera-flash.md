@@ -34,10 +34,10 @@ V4L2 wrapper 提供对应的标准控件；节点编号随探测顺序变化，�
 V4L2 关灯时读回已设置的档位，下次点亮仍使用该档。开灯时读回由 LED 驱动提供；
 PM8550 没有实际电流的读回回调，不能把亮度控件的数值当作电流量测。
 
-[平台补丁](../../../patches/linux/7.3/0100-LOCAL-leds-qcom-flash-piano.patch)修正释放循环的索引，
+[平台补丁](../../../patches/linux/7.3/0101-LOCAL-leds-qcom-flash-piano.patch)修正释放循环的索引，
 并让合法 5 mA 电流档位经过 LED 亮度转换后保持一致：转换到 0..255 编码时
 向上取整，硬件 setter 继续向下取整并保留原电流上限、温控与故障处理。
-零亮度关闭灯组。[定时器修复](../../../patches/linux/7.3/0242-LOCAL-leds-qcom-flash-fix-safety-timer.patch)
+零亮度关闭灯组。[定时器修复](../../../patches/linux/7.3/0243-LOCAL-leds-qcom-flash-fix-safety-timer.patch)
 让硬件按请求的时长截止：最低 10 ms 对应 `0x80`，而 `0x00` 表示关闭定时器，
 供持续手电筒使用。
 

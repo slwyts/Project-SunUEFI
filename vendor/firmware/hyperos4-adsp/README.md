@@ -18,7 +18,7 @@ ADSP，不改其他设备固件，也不写入 Android 固件分区。
 1.59 A。这是普通 PD 充电修复，不代表已测得小米高压快充。
 
 默认内核的 MiPPS 认证位于
-[`0145-LOCAL-power-piano-mipps-authentication.patch`](../../../patches/linux/7.3/0145-LOCAL-power-piano-mipps-authentication.patch)。
+[`0146-LOCAL-power-piano-mipps-authentication.patch`](../../../patches/linux/7.3/0146-LOCAL-power-piano-mipps-authentication.patch)。
 它在现有充电工作队列内完成 HMAC-SHA256 挑战应答，使用标准
 `power_supply` 的 `authentic` 属性报告结果，不另装认证服务。固件漏报身份时，
 仅用真实挑战的应答恢复并校验 ID；无法认证就继续普通 PD/PPS。
