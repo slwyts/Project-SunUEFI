@@ -229,9 +229,9 @@ def drivers(args):
     output = ROOT / 'artifacts/windows/drivers/adreno/Release'
     work.mkdir(parents=True, exist_ok=True)
     output.mkdir(parents=True, exist_ok=True)
-    # The WDK and SDK may be separate NuGet packages or a single local kit.
-    includes = [f'/imsvc{path}' for root in args.kit_include
-                for name in ('km', 'km/crt', 'shared', 'ucrt')
+    # Kernel CRT headers must win over the user CRT, including with split kits.
+    includes = [f'/imsvc{path}' for name in ('km', 'km/crt', 'shared', 'ucrt')
+                for root in args.kit_include
                 if (path := root.resolve() / name).is_dir()]
     units = ET.parse(project).findall('.//{*}ClCompile[@Include]')
     objects = []
