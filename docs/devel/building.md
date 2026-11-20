@@ -182,6 +182,16 @@ Debian 核对已签名的 sid `Packages` 与 `Sources`，子构建器共用已�
 
 CI 实际重编覆盖包时，使用该次运行和重试编号增加原生包修订号：Debian 在配方版本后加 `+sunuefi.<运行编号>.<重试编号>`，Arch 使用 `pkgrel` 的数字子修订。属于同一源包的多个二进制包保持同一版本。命中缓存或直接使用 Debian 官方签名的 FastRPC 包时，保留原版本和原文件；本地构建默认仍使用配方版本。
 
+pacman 的发布清单可包含完整的应用和媒体拆包。组镜像时只装桌面默认包、
+它们的依赖，以及系统已安装的对应拆包；例如不会同时安装两种 JACK 实现。
+镜像完成后回读这一批实际装入的版本。Arch Linux ARM 与 SteamOS 的
+相机包共同提交发布，先更新并从公网验签 SteamOS 索引，再更新共用索引。
+SteamOS 为共用源中的媒体运行包提供同名 Valve 构建，只有不依赖运行库的
+`libcamera-docs` 共用。
+
+只改软件源发布逻辑时，编译输入不变的覆盖包可继续使用缓存；
+发布前仍用新的检查代码验包。
+
 `./build.sh camera-package` 在构建容器中生成 `piano-camera` 的两种 ARM64 原生包。
 相机包使用发行版的用户空间接口头文件和静态库，不依赖某一次内核编译。
 缓存按相机源码、依赖补丁、配方、版本和构建器区分；只更新内核时复用原包。
@@ -292,7 +302,7 @@ CPU 型号由 `linux/dts/piano-cpu-model.dtso` 给八个 CPU 节点加标准 `mo
 | ALSA UCM、udev、笔校准及音频拓扑 | 成品安装 `piano-device-config` 和 `piano-audio-topology` | 开源拓扑随独立包更新，剩余硬件运行文件继续按组件打包 |
 | Mesa、FFmpeg | 已有 Debian 和 pacman 原生包 | 保留目标发行版完整配方、功能和 ABI，按软件源正常更新 |
 | 传感器 | Debian 提供六个原生包；Nyarch 与 SteamOS 共用 `piano-sensors`，FastRPC、libssc 和 SensorProxy 按各自的库接口打包 | 继续通过标准 SensorProxy 接口提供照度和姿态 |
-| PipeWire | Debian 重建原生同版包组；Nyarch 和 SteamOS 重建采集插件 | 保留发行版的依赖关系，升级到包含修复的上游版本后删除回移 |
+| PipeWire | Debian、Arch Linux ARM 和 SteamOS 分别重建原生同版包组 | 保留发行版的依赖关系，升级到包含修复的上游版本后删除回移 |
 | 指纹 | libfprint／fprintd 使用目标发行版包；CLI 和服务配置另行安装 | 正常包拥有全部必要文件，标准认证结果仍取自 libfprint／fprintd |
 | 相机 | 两种包管理器安装 `piano-camera`；`v4l2loopback` 随匹配内核安装 | 标准 libcamera 路径接管后移除过渡服务 |
 | 笔及诊断工具 | `piano-device-config` 安装笔的 BlueZ 服务和依赖；诊断工具仍由构建脚本复制 | 开发工具独立打包，不成为笔输入的依赖 |
@@ -450,8 +460,9 @@ APT 先上传 SHA512 和 SHA256 的 `by-hash` 索引，再更新 `InRelease`。
 下次发布从这份签名索引继续。
 产品构建先核对 pacman 新索引选中的包名、版本和 SHA-256，再上传索引。
 如果索引已选中更新的版本，发布会停止；用高于已发布版本的包重新构建。
-原生 `libpipewire` 接替独立的 `pipewire-v4l2-source` 时，旧插件从同一仓库的
-当前索引移除。旧归档和已签名的索引仍可用于回退。
+Arch 的 `libpipewire` 和 SteamOS 的 `pipewire` 负责替换各自的旧
+`pipewire-v4l2-source`。旧插件从相应仓库的当前索引移除；
+旧归档和已签名的索引仍可用于回退。
 同一上游内核版本的新 ABI 必须推进 `abi_epoch`；APT 和 pacman 发布都检查这一点，
 避免摘要的字母顺序决定升级方向。
 pacman 数据库和分离签名是不同对象，发布期间可能短暂验签失败，应重试，

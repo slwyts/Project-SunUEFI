@@ -106,7 +106,10 @@ def verify_dependencies(fields, name, version, abi, *, target='arch'):
             raise ValueError('libcamera must install with the IPA from the same build')
         if target == 'steamos' and any(item.startswith('libpisp') for item in depends):
             raise ValueError('SteamOS libcamera must not require the ALARM libpisp package')
-    elif name != 'libcamera-docs':
+    elif name == 'libcamera-docs':
+        if any(fields.get(key) for key in ('depend', 'optdepend', 'provides', 'conflict', 'replaces')):
+            raise ValueError('libcamera-docs must be installable without switching any runtime packages')
+    else:
         if not {f'libcamera={version}', *sonames(abi)} <= depends:
             raise ValueError('The package does not require its matching libcamera ABI: ' + name)
         if (target == 'steamos' and name == 'libcamera-tools' and
@@ -195,7 +198,7 @@ def build(root, output, jobs, *, data, patches, proof, version, abi):
         try:
             subprocess.run(
                 [sys.executable, build_arch_package.__file__, '--rootfs', root, '--recipe', recipe,
-                 '--output', runtime, '--jobs', str(jobs),
+                 '--output', runtime, '--jobs', str(jobs), '--build-only',
                  *(['--resume'] if work.is_dir() else [])],
                 check=True, stdout=log, stderr=subprocess.STDOUT)
         except subprocess.CalledProcessError as exc:
@@ -203,6 +206,12 @@ def build(root, output, jobs, *, data, patches, proof, version, abi):
         manifest = json.loads((runtime / 'manifest.json').read_text())
         pkgver = version + '-' + overlay_release.pacman_release(settings['package_release'])
         packages = verify_arch_packages(runtime, manifest['packages'], pkgver, abi, target=target)
+        installed = set(subprocess.check_output(['chroot', root, 'pacman', '-Qq'], text=True).splitlines())
+        selected = overlay_packages.PACMAN_CAMERA_DEFAULTS['libcamera'] | (packages.keys() & installed)
+        build_arch_package.install_cached(
+            root, runtime,
+            selected_archives={packages[name]['file']: {'sha256': packages[name]['sha256']}
+                               for name in sorted(selected)})
         record = {'packages_built': True, 'package_version': pkgver, 'package_format': 'pacman',
                   'packages': packages, 'source': data['source'], 'target': target, 'arch_recipe': settings,
                   'patches': proof, 'recipe_sha256': manifest['recipe_sha256']}

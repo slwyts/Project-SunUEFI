@@ -271,7 +271,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--sysroot', type=Path, help='Debian ARM64 target, cloned before building')
-    mode.add_argument('--rootfs', type=Path, help='Isolated Arch Linux ARM or SteamOS root; installs the packages')
+    mode.add_argument('--rootfs', type=Path, help='Isolated Arch Linux ARM or SteamOS root; installs the runtime')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--jobs', type=int, default=package_build.default_jobs())
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)

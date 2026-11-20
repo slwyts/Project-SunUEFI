@@ -353,8 +353,9 @@ done
             ROOT, root, kernel / 'manifest.json', base_record['base']['rootfs_sha256'])
         if reused := overlay_cache.restore_pacman(ROOT, package_output, target, cache_inputs):
             return reused
+    installed_overlays = None
     if published:
-        records = overlay_packages.install_arch_overlays(root, kernel, target, published)
+        records, installed_overlays = overlay_packages.install_arch_overlays(root, kernel, target, published)
     else:
         source, _ = sensors.source_workspace(output / 'sensor-source', cfg['sensors'])
         records, packages = build_overlays(root, output, source, steamos_config)
@@ -364,12 +365,12 @@ done
                 root, output / 'fingerprint-packages', kernel_source, args.kernel_build.resolve(), commit))
             overlay_cache.check_pacman_inputs(ROOT, root, cache_inputs)
             return overlay_packages.export(package_output, target, overlay_packages.ARCH_REPOSITORIES[target],
-                                           overlay_packages.pacman_packages(root, packages), records,
+                                           overlay_packages.pacman_packages(root, target, packages), records,
                                            build_inputs=cache_inputs)
         bsp, topology, _ = overlay_packages.install_local_arch_bsp(
             root, power=records['power_profiles_package'])
         records.update(device_configuration=bsp, audio_topology_package=topology)
-    finish_product(args, root, output, kernel, kernel_source, base_record, records, published)
+    finish_product(args, root, output, kernel, kernel_source, base_record, records, installed_overlays)
 
 
 def build_overlays(root, output, source, steamos_config):
@@ -463,19 +464,18 @@ def build_overlays(root, output, source, steamos_config):
     outputs['ffmpeg'] = overlay_packages.pacman_outputs(ffmpeg)
     outputs[overlay_packages.STEAMOS_WEBRTC_PACKAGE] = build_webrtc(
         root, output, steamos_config['webrtc_audio_processing'])
-    pipewire = output / 'packages/pipewire'
-    run(ROOT / 'build.sh', 'pipewire', '--rootfs', root, '--output', pipewire)
+    records, camera_packages = overlay_packages.build_pacman_camera(root, output / 'packages', plasma=True)
+    outputs.update(camera_packages)
     libwacom = output / 'packages/libwacom'
     run(ROOT / 'build.sh', 'libwacom', '--rootfs', root, '--output', libwacom)
-    outputs['pipewire'] = overlay_packages.pacman_outputs(pipewire / 'runtime')
     outputs['libwacom'] = overlay_packages.pacman_outputs(libwacom / 'runtime')
-    records = {name: json.loads((directory / 'SOURCE.json').read_text())
-               for name, directory in (('ffmpeg', ffmpeg), ('pipewire', pipewire), ('libwacom', libwacom))}
+    records.update({name: json.loads((directory / 'SOURCE.json').read_text())
+                    for name, directory in (('ffmpeg', ffmpeg), ('libwacom', libwacom))})
     records['power_profiles_package'] = power
     return records, outputs
 
 
-def finish_product(args, root, output, kernel, kernel_source, base_record, records, published):
+def finish_product(args, root, output, kernel, kernel_source, base_record, records, installed_overlays):
     client = output / 'steam-client'
     if (not (client / 'SOURCE.json').is_file() or
             json.loads((client / 'SOURCE.json').read_text()) != prepare_steam_client.source_record()):
@@ -511,7 +511,7 @@ def finish_product(args, root, output, kernel, kernel_source, base_record, recor
     stage_arch_piano.stage(argparse.Namespace(
         rootfs=root, kernel=kernel, runtime=runtime,
         bootstrap_sysroot=args.bootstrap_sysroot, desktop='steamos',
-        published_packages=published[1] if published else None,
+        published_packages=installed_overlays,
         device_configuration=records['device_configuration'],
         audio_topology_package=records['audio_topology_package'],
         power_profiles_package=records['power_profiles_package']))
@@ -520,7 +520,7 @@ def finish_product(args, root, output, kernel, kernel_source, base_record, recor
     record.update(base_source=base_record, **records,
                   steam_client=json.loads((client / 'SOURCE.json').read_text()),
                   steam_runtime=runtime_record)
-    if published:
+    if installed_overlays is not None:
         record['overlay_manifest_sha256'] = digest(args.published_packages)
     manifest.write_text(json.dumps(record, indent=2) + '\n')
 

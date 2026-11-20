@@ -173,6 +173,24 @@ class RepoPublishTests(unittest.TestCase):
         self.assertEqual(self.store.objects[overlay_prefix + plugin.name], plugin.read_bytes())
         self.assertEqual(self.store.objects[prefix + base + '.db'], scoped_base)
 
+    @unittest.skipUnless(all(shutil.which(tool) for tool in ('repo-add', 'repo-remove', 'bsdtar', 'vercmp')),
+                         'pacman tools required')
+    def test_pacman_only_retires_an_entry_matched_by_the_versioned_replacement(self):
+        name = 'pipewire-v4l2-source'
+        valve = self.pacman('1:1.6.8', name)
+        arch = self.pacman('1:1.6.11', name)
+        native = self.pacman('1:1.6.11', 'libpipewire', replaces=(name + '>=1:1.6.11-1',),
+                             conflicts=(name,))
+        repo.publish(self.args('sunuefi', [valve, native], 'before'), self.store)
+        selected, retired = repo.pacman_metadata(self.root / 'before/sunuefi.db')
+        self.assertEqual(selected[name][0], '1:1.6.8-1')
+        self.assertFalse(retired)
+        repo.publish(self.args('sunuefi', [arch], 'after'), self.store)
+        selected, retired = repo.pacman_metadata(self.root / 'after/sunuefi.db')
+        self.assertNotIn(name, selected)
+        self.assertFalse(retired)
+        self.assertIn('pacman/sunuefi/os/aarch64/' + arch.name, self.store.objects)
+
     @unittest.skipUnless(shutil.which('repo-add') and shutil.which('bsdtar'), 'pacman tools required')
     def test_product_rejects_older_pacman_version_before_updating_any_index(self):
         base, overlay = 'sunuefi', 'sunuefi-steamos'

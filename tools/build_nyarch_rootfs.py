@@ -27,7 +27,8 @@ from prepare_steamos_rootfs import download
 ROOT = Path(__file__).resolve().parents[1]
 OVERLAY_TARGET = 'nyarch-gnome'
 SHARED_OVERLAYS = frozenset(('mesa', 'fastrpc', 'libssc', 'iio-sensor-proxy', 'ffmpeg',
-                             'pipewire', 'libwacom', 'libfprint', 'fprintd', 'bluez'))
+                             *overlay_packages.PACMAN_CAMERA, 'libwacom', 'libfprint', 'fprintd',
+                             'bluez'))
 
 
 def run(*args, **kwargs):
@@ -112,24 +113,26 @@ def build(args):
             json.loads((applications / 'SOURCE.json').read_text()))
         if reused := overlay_cache.restore_pacman(ROOT, package_output, target, cache_inputs):
             return reused
+    installed_overlays = None
     if published:
         # These are also product runtime dependencies, including user-facing
         # packages normally installed while building the four Nyarch apps.
         if not denial:
             with release.build_resolver(root), build_nyarch_apps.guest_environment(root) as guest:
                 guest(['pacman', '-Syu', '--needed', '--noconfirm', *build_nyarch_apps.PACKAGES])
-        records = overlay_packages.install_arch_overlays(root, kernel, target, published)
+        records, installed_overlays = overlay_packages.install_arch_overlays(root, kernel, target, published)
     else:
         sensor_source, _ = sensors.source_workspace(inputs / 'sensors', policy['sensors'])
         records, packages = build_overlays(root, output, inputs, sensor_source, applications,
-                                           refresh=not package_output, nyarch_desktop=not denial)
+                                           refresh=not package_output, nyarch_desktop=not denial,
+                                           plasma=package_output is not None)
         if package_output:
             commit = json.loads((kernel / 'manifest.json').read_text())['source_commit']
             packages.update(overlay_packages.fingerprint_pacman_packages(
                 root, output / 'fingerprint-packages', source, kernel_build, commit))
             overlay_cache.check_pacman_inputs(ROOT, root, cache_inputs)
             return overlay_packages.export(package_output, target, overlay_packages.ARCH_REPOSITORIES[target],
-                                           overlay_packages.pacman_packages(root, packages), records,
+                                           overlay_packages.pacman_packages(root, target, packages), records,
                                            build_inputs=cache_inputs)
         records['device_configuration'], records['audio_topology_package'], \
             records['power_profiles_package'] = overlay_packages.install_local_arch_bsp(root)
@@ -149,7 +152,7 @@ def build(args):
         rootfs=root, kernel=kernel, runtime=runtime,
         bootstrap_sysroot=args.bootstrap_sysroot, desktop='denial' if denial else 'nyarch',
         desktop_source=desktop, extensions=extensions,
-        published_packages=published[1] if published else None,
+        published_packages=installed_overlays,
         denial_packages=denial_packages,
         device_configuration=records['device_configuration'],
         audio_topology_package=records['audio_topology_package'],
@@ -246,7 +249,7 @@ def build_bluez(root, recipe, output):
     return overlay_packages.pacman_outputs(output)
 
 
-def build_overlays(root, output, inputs, sensor_source, apps, *, refresh, nyarch_desktop=True):
+def build_overlays(root, output, inputs, sensor_source, apps, *, refresh, nyarch_desktop, plasma):
     records, packages = {}, {}
     recipes = inputs / 'recipes'
     if nyarch_desktop:
@@ -289,16 +292,16 @@ def build_overlays(root, output, inputs, sensor_source, apps, *, refresh, nyarch
     else:
         build_arch_package.install_cached(root, ffmpeg)
     packages['ffmpeg'] = overlay_packages.pacman_outputs(ffmpeg)
-    pipewire = output / 'packages/pipewire'
-    run(ROOT / 'build.sh', 'pipewire', '--rootfs', root, '--output', pipewire)
+    camera_records, camera_packages = overlay_packages.build_pacman_camera(
+        root, output / 'packages', plasma=plasma)
+    records.update(camera_records)
+    packages.update(camera_packages)
     libwacom = output / 'packages/libwacom'
     run(ROOT / 'build.sh', 'libwacom', '--rootfs', root, '--output', libwacom)
-    for name, directory in (('pipewire', pipewire), ('libwacom', libwacom)):
-        packages[name] = overlay_packages.pacman_outputs(directory / 'runtime')
+    packages['libwacom'] = overlay_packages.pacman_outputs(libwacom / 'runtime')
     packages['bluez'] = build_bluez(root, recipes / 'bluez', output / 'packages/bluez')
     records.update({name: json.loads((directory / 'SOURCE.json').read_text())
-                    for name, directory in (('ffmpeg', ffmpeg), ('pipewire', pipewire),
-                                            ('libwacom', libwacom))})
+                    for name, directory in (('ffmpeg', ffmpeg), ('libwacom', libwacom))})
     if nyarch_desktop:
         gdm = output / 'packages/gdm'
         run(ROOT / 'build.sh', 'gdm', '--rootfs', root, '--output', gdm)

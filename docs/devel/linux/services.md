@@ -88,8 +88,9 @@ Debian 基础镜像从签名 APT 源安装 `piano-device-config`，SteamOS 和 N
 桌面包由 rootfs 构建自动安装，源码与二进制摘要写入发行版 manifest，构建日志
 并入 CI 的 `logs.zip`。单独构建使用 `./build.sh gsd --sysroot <Debian root>`、
 `./build.sh gdm --sysroot <Debian root>` 和
-`./build.sh pipewire --rootfs <发行版 root> --output <build 下的包目录>`；
-这些命令需要 root，输入均为本地构建目录，不访问平板。
+`./build.sh pipewire --rootfs <发行版 root> --output <build 下的包目录>`。
+构建相机插件时用 `--libcamera-packages` 指定同一发行版的 libcamera 包目录，
+Nyarch 和 SteamOS 必须指定。这些命令需要 root，不访问平板。
 
 Debian 从签名 sid 源码重建 PipeWire 的同版包组，保留 Debian 原有拆包和依赖。
 相机没有可列出的控件时，WirePlumber 仍能连接视频节点；修正后的 V4L2 采集则由
@@ -99,12 +100,14 @@ Debian 从签名 sid 源码重建 PipeWire 的同版包组，保留 Debian 原�
 从原先只替换插件的版本升级前，可用 APT 下载现装的整组软件包保留回退副本；
 Debian sid 更新后，官方源可能不再提供对应的旧版服务端和库。
 
-Nyarch 和 SteamOS 仍独立重建 GStreamer 插件和 `pipewire-v4l2-source`，
-使用目标系统同版本的服务端和库，不替换 PipeWire 的音频拆包。补丁处理格式枚举与首选格式、
-运行中 caps、缓冲池锁顺序、借用 MemPtr 的复制，以及录像持有的 V4L2 复制帧；
+Nyarch 和 SteamOS 各自重建完整的 PipeWire 拆包，使用对应发行版的音频依赖，
+并用同一批 libcamera 归档构建相机插件。标准 V4L2 模块由 Arch 的
+`libpipewire` 或 SteamOS 的 `pipewire` 提供，pacman 升级时移除旧
+`pipewire-v4l2-source` 及加载配置。补丁处理格式枚举与首选格式、运行中 caps、
+缓冲池锁顺序、借用 MemPtr 的复制，以及录像持有的 V4L2 复制帧；
 模块选择与缓冲管理见[相机接口](../hardware/camera-controls.md#帧时间戳与错误)。
-`patches/pipewire/<版本>/series.json` 记录来源和补丁摘要，源码完整准备后才进入缓存，构建器
-变化使旧包缓存失效。19 项格式测试串行运行，使用隔离的 GStreamer registry，
+`patches/pipewire/<版本>/series.json` 记录来源和补丁摘要，构建输入变化会使旧包缓存失效。
+19 项格式测试串行运行，使用隔离的 GStreamer registry，
 不扫描系统插件；它们不替代平板上的相机、录屏和屏幕共享验证。
 
 SteamOS 从 `[sunuefi-steamos]` 安装匹配 Valve Abseil 的 `webrtc-audio-processing`。

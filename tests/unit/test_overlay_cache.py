@@ -16,14 +16,16 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 import build_nyarch_rootfs as nyarch
 from build import overlay_cache, overlay_packages
+from desktop import libcamera_arch
 
 
 class OverlayCacheTests(unittest.TestCase):
-    def test_recipe_keys_ignore_host_checks_and_denial_only_inputs(self):
+    def test_recipe_keys_ignore_host_checks_publication_and_denial_only_inputs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             subprocess.run(['git', '-C', root, 'init', '-q'], check=True)
             not_inputs = ('tools/check_host.py', 'tools/prepare_nv_runtime_guard.py',
+                          'tools/repo/products.py', 'tools/repo/publish.py',
                           'tools/build/denial_overlay.py', 'tools/desktop/denial_packages.py',
                           'config/denial.json', 'containers/denial.Dockerfile',
                           'patches/denial/0.6.8/series.json')
@@ -81,11 +83,18 @@ class OverlayCacheTests(unittest.TestCase):
                       'upstream': {'nyarch': 'test-git'}, 'repositories': {'core.db': 'before'},
                       'installed': 'test-package-state'}
             names = ('libfprint', 'fprintd', 'ffmpeg', 'libwacom', 'libssc',
-                     'iio-sensor-proxy', 'fastrpc', 'pipewire-v4l2-source',
-                     'gst-plugin-pipewire', 'mesa', 'gdm', 'mutter', 'gnome-settings-daemon',
+                     'iio-sensor-proxy', 'fastrpc', 'mesa', 'gdm', 'mutter', 'gnome-settings-daemon',
                      'bluez-sunuefi')
+            media = {**overlay_packages.PACMAN_CAMERA_DEFAULTS, 'libcamera': libcamera_arch.PACKAGES,
+                     'plasma_camera': {'plasma-camera'}}
+            labels = {name: component for component, cohort in media.items() for name in cohort}
+            components = {
+                component: {'packages_built': True, 'package_version': '1-1', 'package_format': 'pacman',
+                            'target': 'arch', 'packages': {}}
+                for component in media
+            }
             packages = {}
-            for name in names:
+            for name in (*names, *sorted(labels)):
                 archive = root / (name + '-1-1-aarch64.pkg.tar.gz')
                 info = f'pkgname = {name}\npkgver = 1-1\narch = aarch64\n'.encode()
                 with tarfile.open(archive, 'w:gz') as stream:
@@ -93,13 +102,20 @@ class OverlayCacheTests(unittest.TestCase):
                     member.size = len(info)
                     stream.addfile(member, io.BytesIO(info))
                 self.assertEqual(overlay_packages.pacman_identity(archive), (name, '1-1', 'aarch64'))
+                info = {'version': '1-1', 'architecture': 'aarch64',
+                        'sha256': overlay_packages.sha(archive)}
+                component = labels.get(name, 'bluez' if name == 'bluez-sunuefi' else name)
                 packages[archive.name] = (archive, {
-                    'name': name, 'version': '1-1', 'architecture': 'aarch64',
-                    'sha256': overlay_packages.sha(archive),
-                    'component': 'bluez' if name == 'bluez-sunuefi' else name,
+                    **info, 'name': name, 'component': component,
                 })
+                if component in components:
+                    components[component]['packages'][name] = {**info, 'file': archive.name}
+            library = components['libcamera']['packages']
+            for name in ('pipewire', 'plasma_camera'):
+                components[name]['build_dependencies'] = {key: library[key] for key in libcamera_arch.RUNTIME_INPUTS}
             prior = root / 'build/overlay-cache' / target
-            expected = overlay_packages.export(prior, target, 'sunuefi', packages, {}, build_inputs=inputs)
+            expected = overlay_packages.export(prior, target, 'sunuefi', packages, components,
+                                               build_inputs=inputs)
             out = root / 'output'
             for field in inputs:
                 with self.subTest(field=field):

@@ -18,6 +18,14 @@ DEBIAN_SHARED = ('mesa', 'sensors', 'ffmpeg', 'libcamera', 'pipewire', 'qt_multi
                  'libwacom', 'bluez')
 DEBIAN_GNOME = ('gnome_power', 'mutter', 'gdm')
 ARCH_REPOSITORIES = {'nyarch-gnome': 'sunuefi', 'steamos': 'sunuefi-steamos'}
+PACMAN_CAMERA = ('libcamera', 'pipewire', 'plasma_camera')
+PACMAN_CAMERA_DEFAULTS = {
+    'libcamera': {'libcamera', 'libcamera-ipa', 'gst-plugin-libcamera'},
+    'pipewire': {'pipewire', 'libpipewire', 'pipewire-audio', 'alsa-card-profiles',
+                 'pipewire-libcamera', 'gst-plugin-pipewire'},
+}
+# Keep netJACK2 installed alongside Valve's audio split.
+STEAMOS_PIPEWIRE_RUNTIME = {'pipewire-netjack2'}
 STEAMOS_TUNED_RECIPES = ('ethtool', 'hdparm', 'python-linux-procfs', 'python-pyinotify', 'tuned')
 STEAMOS_WEBRTC_PACKAGE = 'webrtc-audio-processing'
 ARCH_BLUEZ = 'bluez-sunuefi'
@@ -384,10 +392,8 @@ def pacman_identity(archive):
     return tuple(fields[name][0] for name in names)
 
 
-def pacman_packages(rootfs, sources):
+def pacman_packages(rootfs, target, sources):
     """Collect exact package files from checked makepkg records, not cache globs."""
-    installed = dict(line.split(maxsplit=1) for line in subprocess.check_output(
-        ['chroot', rootfs, 'pacman', '-Q'], text=True).splitlines())
     result, names = {}, set()
     for component, (folder, rows) in sources.items():
         for filename, record in rows.items():
@@ -396,7 +402,7 @@ def pacman_packages(rootfs, sources):
                     path.is_symlink() or not path.is_file() or sha(path) != record['sha256']):
                 raise ValueError('Invalid completed pacman package: ' + filename)
             name, version, architecture = pacman_identity(path)
-            if installed.get(name) != version or architecture not in ('aarch64', 'any'):
+            if architecture not in ('aarch64', 'any'):
                 raise ValueError('Completed pacman package does not match the builder: ' + filename)
             if not overlay_release.uses_pacman_generation(version):
                 raise ValueError('Rebuilt pacman package has no current publication revision: ' + filename)
@@ -405,6 +411,11 @@ def pacman_packages(rootfs, sources):
             result[filename] = (path, {'name': name, 'version': version, 'architecture': architecture,
                                       'sha256': record['sha256'], 'component': component})
             names.add(name)
+    listing = subprocess.check_output(['chroot', rootfs, 'pacman', '-Q'], text=True)
+    installed = {line.split(maxsplit=1)[0] for line in listing.splitlines()}
+    selected = pacman_image_packages(
+        target, {filename: row for filename, (_, row) in result.items()}, installed)
+    verify_pacman_versions(selected, listing)
     return result
 
 
@@ -413,6 +424,53 @@ def pacman_outputs(directory):
     if not record.get('packages') or (directory / '.incomplete').exists():
         raise ValueError('Use a completed pacman package directory: ' + str(directory))
     return directory, record['packages']
+
+
+def build_pacman_camera(rootfs, output, *, plasma):
+    """Build the camera clients against one set of native libcamera archives."""
+    records, packages = {}, {}
+    for component in PACMAN_CAMERA:
+        if component == 'plasma_camera' and not plasma:
+            continue
+        directory = output / component.replace('_', '-')
+        inputs = ['--libcamera-packages', output / 'libcamera'] if component != 'libcamera' else []
+        subprocess.run([package_bsp.ROOT / 'build.sh', directory.name, '--rootfs', rootfs,
+                        '--output', directory, *inputs], check=True)
+        records[component] = json.loads((directory / 'SOURCE.json').read_text())
+        packages[component] = pacman_outputs(directory / 'runtime')
+    return records, packages
+
+
+def verify_pacman_camera_packages(target, packages, components):
+    from desktop import libcamera_arch, pipewire_arch
+
+    distro = 'steamos' if target == 'steamos' else 'arch'
+    expected = {
+        'libcamera': libcamera_arch.STEAMOS_PACKAGES if distro == 'steamos' else libcamera_arch.PACKAGES,
+        'pipewire': PACMAN_CAMERA_DEFAULTS['pipewire'] | (STEAMOS_PIPEWIRE_RUNTIME if distro == 'steamos' else set()),
+        'plasma_camera': {'plasma-camera'},
+    }
+    for component, names in expected.items():
+        record = components.get(component, {})
+        version = record.get('package_version')
+        entries = {
+            row['name']: {'file': filename, 'version': row['version'],
+                          'architecture': row['architecture'], 'sha256': row['sha256']}
+            for filename, row in packages.items() if row['component'] == component
+        }
+        if (record.get('packages_built') is not True or record.get('package_format') != 'pacman' or
+                record.get('target') != distro or not version or entries != record.get('packages') or
+                not names <= entries.keys() or (component != 'pipewire' and set(entries) != names) or
+                any(row['version'] != version or row['architecture'] != 'aarch64'
+                    for row in entries.values())):
+            raise ValueError(f'{target}: incomplete or inconsistent native {component} packages')
+    if any(row['name'] == pipewire_arch.V4L2_PACKAGE for row in packages.values()):
+        raise ValueError(f'{target}: standalone V4L2 plugin conflicts with native PipeWire')
+    library = components['libcamera']['packages']
+    inputs = {name: library[name] for name in libcamera_arch.RUNTIME_INPUTS}
+    for component in ('pipewire', 'plasma_camera'):
+        if components[component].get('build_dependencies') != inputs:
+            raise ValueError(f'{target}: {component} was not built with this libcamera package set')
 
 
 def read_pacman(path, target):
@@ -431,8 +489,7 @@ def read_pacman(path, target):
                 row['architecture'] not in ('aarch64', 'any')):
             raise ValueError('Invalid pacman overlay package record: ' + filename)
         names.add(name)
-    expected = {'libfprint', 'fprintd', 'ffmpeg', 'libwacom', 'libssc',
-                'iio-sensor-proxy', 'fastrpc', 'pipewire-v4l2-source', 'gst-plugin-pipewire'}
+    expected = {'libfprint', 'fprintd', 'ffmpeg', 'libwacom', 'libssc', 'iio-sensor-proxy', 'fastrpc'}
     expected.update(('deckard-mesa-linux-aarch64', 'gamescope', 'steamos-manager', 'gtk3', 'ibus')
                     if target == 'steamos' else (
                         'mesa', 'gdm', 'mutter', 'gnome-settings-daemon', ARCH_BLUEZ))
@@ -440,7 +497,20 @@ def read_pacman(path, target):
         expected.update((*STEAMOS_TUNED_RECIPES, 'tuned-ppd', STEAMOS_WEBRTC_PACKAGE))
     if not expected <= names:
         raise ValueError('Incomplete native overlay package set')
-    return repo, manifest['packages'], manifest.get('components', {})
+    components = manifest.get('components', {})
+    verify_pacman_camera_packages(target, manifest['packages'], components)
+    return repo, manifest['packages'], components
+
+
+def pacman_image_packages(target, packages, installed):
+    """Install defaults and upgrade already installed splits; publish the rest."""
+    defaults = {**PACMAN_CAMERA_DEFAULTS,
+                'plasma_camera': {'plasma-camera'} if target == 'steamos' else set()}
+    if target == 'steamos':
+        defaults['pipewire'] = defaults['pipewire'] | STEAMOS_PIPEWIRE_RUNTIME
+    return {archive: row for archive, row in packages.items()
+            if row['component'] not in defaults or row['name'] in installed
+            or row['name'] in defaults[row['component']]}
 
 
 def download_pacman(rootfs, folder, repository, packages, guest, *, install_options=()):
@@ -556,25 +626,27 @@ def install_arch_overlays(rootfs, kernel, target, published):
         work = Path(temporary)
         work.chmod(0o755)
         guest(['pacman', '-Sy', '--noconfirm'])
+        installed = set(guest(['pacman', '-Qq'], text=True, capture_output=True).stdout.splitlines())
+        selected = pacman_image_packages(target, packages, installed)
         common = {archive.name: bsp, topology_archive.name: topology, power_archive.name: power}
         if repository == 'sunuefi':
-            bluez = {name: row for name, row in packages.items() if row['name'] == ARCH_BLUEZ}
+            bluez = {name: row for name, row in selected.items() if row['name'] == ARCH_BLUEZ}
             if bluez:
                 install_pacman(rootfs, work, repository, bluez, guest,
                                install_options=ARCH_BLUEZ_INSTALL_OPTIONS)
-            shared = {name: row for name, row in packages.items() if name not in bluez}
+            shared = {name: row for name, row in selected.items() if name not in bluez}
             install_pacman(rootfs, work, repository, {**shared, **common}, guest,
                            overwrite=matching_power_files(rootfs))
         else:
             remove_steamos_power_profiles_daemon(rootfs, guest)
             # The common profiles pull in the Valve TuneD packages. Verify
             # those archives before the common package transaction uses them.
-            options = download_pacman(rootfs, work, repository, packages, guest)
+            options = download_pacman(rootfs, work, repository, selected, guest)
             install_pacman(rootfs, work, 'sunuefi', common, guest,
                            overwrite=matching_power_files(rootfs))
             guest(['pacman', '-S', *options])
-    return {**components, 'device_configuration': bsp, 'audio_topology_package': topology,
-            'power_profiles_package': power}
+    return ({**components, 'device_configuration': bsp, 'audio_topology_package': topology,
+             'power_profiles_package': power}, selected)
 
 
 def install_local_arch_power_profiles(rootfs):

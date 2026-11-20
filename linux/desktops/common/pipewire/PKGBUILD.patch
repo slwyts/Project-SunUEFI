@@ -83,3 +83,13 @@
  }
 
  check() {
+@@ -299,6 +303,9 @@
+     systemd-libs libsystemd.so libudev.so
+   )
+   provides=(lib$_pwname.so)
++  conflicts=(pipewire-v4l2-source)
++  # Do not offer an Arch replacement for the older Valve plugin.
++  replaces=('@V4L2_REPLACES@')
+ 
+   mv lib/* "$pkgdir"
+ 

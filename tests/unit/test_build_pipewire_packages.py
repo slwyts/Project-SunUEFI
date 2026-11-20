@@ -22,15 +22,19 @@ class ArchPipeWirePackagesTests(unittest.TestCase):
         self.runtime.mkdir()
         self.archives = {}
 
-    def archive(self, name, version, *, depends=()):
+    def archive(self, name, version, *, depends=(), conflicts=(), replaces=(), files=()):
         filename = f'{name}-{version}-aarch64.pkg.tar.gz'
         records = [f'pkgname = {name}', f'pkgver = {version}', 'arch = aarch64']
         records.extend(f'depend = {value}' for value in depends)
+        records.extend(f'conflict = {value}' for value in conflicts)
+        records.extend(f'replaces = {value}' for value in replaces)
         payload = ('\n'.join(records) + '\n').encode()
         with tarfile.open(self.runtime / filename, 'w:gz') as archive:
             entry = tarfile.TarInfo('.PKGINFO')
             entry.size = len(payload)
             archive.addfile(entry, io.BytesIO(payload))
+            for file in files:
+                archive.addfile(tarfile.TarInfo(file))
         digest = builder.package_build.sha(self.runtime / filename)
         self.archives[filename] = {'sha256': digest}
 
@@ -41,8 +45,10 @@ class ArchPipeWirePackagesTests(unittest.TestCase):
         camera_abi = build_libcamera_packages.abi_version(build_libcamera_packages.policy())
         sonames = libcamera_arch.sonames(camera_abi)
         expected = pipewire_arch.REQUIRED | {'pipewire-audio'}
-        for name in expected - {'pipewire-libcamera', 'pipewire-audio'}:
+        for name in expected - {'pipewire-libcamera', 'pipewire-audio', 'libpipewire'}:
             self.archive(name, version)
+        self.archive('libpipewire', version, conflicts=['pipewire-v4l2-source'],
+                     replaces=[pipewire_arch.v4l2_replacement(arch)], files=[pipewire_arch.V4L2_MODULE])
         self.archive('pipewire-audio', version, depends=[audio])
         self.archive('pipewire-libcamera', version, depends=[f'pipewire={version}', *sonames])
         self.assertEqual(set(pipewire_arch.verify_packages(self.runtime, self.archives, expected,
@@ -57,6 +63,49 @@ class ArchPipeWirePackagesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'requires a different PipeWire version'):
             pipewire_arch.verify_packages(self.runtime, self.archives, expected, version, audio, camera_abi)
 
+    def test_native_v4l2_requires_a_pacman_replacement(self):
+        version, plugin = '1:1.6.11-2.4', 'pipewire-v4l2-source'
+        self.archive('libpipewire', version, conflicts=[plugin])
+        with self.assertRaisesRegex(ValueError, 'must replace the standalone plugin'):
+            pipewire_arch.verify_packages(self.runtime, self.archives, {'libpipewire'},
+                                         version, '', '0.8')
+        self.archive('libpipewire', version, conflicts=[plugin],
+                     replaces=[pipewire_arch.v4l2_replacement(pipewire_arch.policy())])
+        with self.assertRaisesRegex(ValueError, 'must contain the standard V4L2 SPA module'):
+            pipewire_arch.verify_packages(self.runtime, self.archives, {'libpipewire'},
+                                         version, '', '0.8')
+
+    def test_steamos_keeps_the_valve_v4l2_owner_and_audio_dependencies(self):
+        policy = pipewire_arch.policy('steamos')
+        audio, webrtc = policy['spandsp']['soname'], policy['webrtc_soname']
+        version, abi = '1:1.6.8-5.4', '0.8'
+        expected = pipewire_arch.REQUIRED | {'pipewire-audio', 'pipewire-netjack2'}
+        plugin = 'pipewire-v4l2-source'
+        self.archive('pipewire', version, conflicts=[plugin], replaces=[plugin],
+                     files=[pipewire_arch.V4L2_MODULE])
+        self.archive('libpipewire', version, files=[pipewire_arch.VALVE_SPA_LIBRARY])
+        self.archive('gst-plugin-pipewire', version)
+        self.archive('pipewire-netjack2', version)
+        self.archive('pipewire-libcamera', version,
+                     depends=[f'pipewire={version}', *libcamera_arch.sonames(abi)])
+
+        def verify():
+            return pipewire_arch.verify_packages(
+                self.runtime, self.archives, expected, version, audio, abi,
+                target='steamos', webrtc_soname=webrtc)
+
+        self.archive('pipewire-audio', version, depends=['libspandsp.so=4-64', webrtc])
+        with self.assertRaisesRegex(ValueError, 'target spandsp ABI'):
+            verify()
+        self.archive('pipewire-audio', version, depends=[audio])
+        with self.assertRaisesRegex(ValueError, 'target WebRTC ABI'):
+            verify()
+        self.archive('pipewire-audio', version, depends=[audio, webrtc])
+        with self.assertRaisesRegex(ValueError, 'matching netJACK2 modules'):
+            verify()
+        self.archive('pipewire-audio', version, depends=[audio, webrtc, f'pipewire-netjack2={version}'])
+        self.assertEqual(set(verify()), expected)
+
 
 class ArchPipeWirePolicyTests(unittest.TestCase):
     def test_output_cannot_overwrite_libcamera_input(self):
@@ -68,7 +117,7 @@ class ArchPipeWirePolicyTests(unittest.TestCase):
             receipt.write_text('input receipt')
             for output in (root, library, library / 'pipewire'):
                 with self.assertRaisesRegex(ValueError, 'separate outputs'):
-                    pipewire_arch.build(root / 'chroot', output, 1, library, {}, {}, [])
+                    pipewire_arch.build(root / 'chroot', output, 1, library)
             self.assertEqual(receipt.read_text(), 'input receipt')
 
     def test_arch_recipe_reuses_the_versioned_patch_lists(self):
@@ -87,6 +136,11 @@ class ArchPipeWirePolicyTests(unittest.TestCase):
             installed = {installed_jack, 'pipewire', 'pipewire-pulse'}
             self.assertEqual(set(pipewire_arch.install_names(splits, installed)),
                              pipewire_arch.REQUIRED | installed)
+
+    def test_valve_keeps_netjack_without_installing_the_optional_jack_client(self):
+        splits = pipewire_arch.REQUIRED | {'pipewire-netjack2', 'pipewire-jack', 'pipewire-jack-client'}
+        self.assertEqual(set(pipewire_arch.install_names(splits, {'pipewire-jack'}, target='steamos')),
+                         pipewire_arch.REQUIRED | {'pipewire-netjack2', 'pipewire-jack'})
 
 
 if __name__ == '__main__':

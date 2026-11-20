@@ -53,13 +53,15 @@ sudo ./build.sh plasma-camera --rootfs "$ARCH_ARM64_ROOT" \
 库和 IPA 要来自同一次构建，工具、GStreamer 和 Python 包也要求匹配的库。
 PipeWire 保留 Arch 的拆包和音频依赖；Plasma Camera 使用构建根自带的 Qt
 和标准 FFmpeg 后端。从官方版本切换时，libcamera、PipeWire 和相机应用
-应由 pacman 一起升级或回退。这三个命令只用于构建，不改变成品预装或
-公网软件源。同一 `libcamera --rootfs` 入口也接受 SteamOS ARM64 构建根，
+应由 pacman 一起升级或回退。成品构建从签名源安装同一批包；Plasma Camera
+默认加入 SteamOS 镜像，Arch 用户可以按需安装。同一 `libcamera --rootfs`
+入口也接受 SteamOS ARM64 构建根，
 生成匹配 Valve Qt 和 GStreamer 的五个包，并保留 CAMSS、UVC 和软件 ISP；
 它不安装 Arch 的 `libpisp` 或文档包。
 用该组 libcamera 和 IPA 在同一个 Valve 构建根运行
 `plasma-camera --rootfs`，可构建使用原有 Qt Multimedia／FFmpeg 后端的
 SteamOS 应用包。这个包不替换系统的 Qt 或 FFmpeg。
+成品仍保留现有相机服务及 WirePlumber 规则；安装原生包不会自动切换到真实摄像头。
 
 | 功能 | 现有服务（旧路径） | 标准硬件路径（替代状态） |
 | --- | --- | --- |

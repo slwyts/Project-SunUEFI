@@ -223,6 +223,33 @@ class OverlayPackageTests(unittest.TestCase):
                          packages[archive.name]['sha256'])
 
 
+class PacmanImagePackageTests(unittest.TestCase):
+    def test_image_keeps_installed_splits_without_pulling_in_other_providers(self):
+        archives = {
+            name: {'name': name, 'component': component}
+            for component, names in {
+                'libcamera': ('libcamera', 'libcamera-ipa', 'gst-plugin-libcamera', 'libcamera-docs'),
+                'pipewire': ('pipewire', 'libpipewire', 'pipewire-audio', 'alsa-card-profiles',
+                             'pipewire-libcamera', 'gst-plugin-pipewire', 'pipewire-docs',
+                             'pipewire-jack', 'pipewire-jack-client', 'pipewire-netjack2'),
+                'plasma_camera': ('plasma-camera',),
+                'mesa': ('mesa', 'vulkan-freedreno'),
+            }.items() for name in names
+        }
+        all_jack = {'pipewire-jack', 'pipewire-jack-client'}
+        omitted = all_jack | {'libcamera-docs', 'pipewire-docs'}
+        for target in ('nyarch-gnome', 'arch-denial', 'steamos'):
+            defaults = set(archives) - omitted
+            if target != 'steamos':
+                defaults -= {'plasma-camera', 'pipewire-netjack2'}
+            with self.subTest(target=target):
+                self.assertEqual(set(overlays.pacman_image_packages(target, archives, set())), defaults)
+                for jack in all_jack:
+                    selected = overlays.pacman_image_packages(target, archives, {jack, 'plasma-camera'})
+                    self.assertEqual(set(selected), defaults | {jack, 'plasma-camera'})
+        self.assertEqual(set(archives) & all_jack, all_jack)
+
+
 @unittest.skipUnless(os.geteuid() == 0 and all(shutil.which(name) for name in
                                              ('pacman', 'repo-add', 'bsdtar', 'gpg')),
                      'Isolated pacman installation requires root and package tools')

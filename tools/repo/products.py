@@ -14,7 +14,8 @@ from verify_public import verify_public
 
 sys.path.insert(0, str(ROOT / 'tools'))
 from build import denial_manifest, sensors
-from build.overlay_packages import ARCH_REPOSITORIES, bsp_package, read_debian, topology_package
+from build.overlay_packages import (ARCH_REPOSITORIES, PACMAN_CAMERA, bsp_package, pacman_identity,
+                                    read_debian, read_pacman, topology_package)
 from package import camera
 from package.boot import PUBLIC_REPOSITORY_URL
 
@@ -56,7 +57,23 @@ def overlay_set(directory, target):
         _, entries = read_debian(directory / 'manifest.json', target.removeprefix('debian-'))
         if set(archives) != set(entries):
             raise ValueError('Debian overlay files differ from the package set')
+    else:
+        _, entries, _ = read_pacman(directory / 'manifest.json', target)
+        for name, (path, _) in archives.items():
+            row = entries[name]
+            if pacman_identity(path) != (row['name'], row['version'], row['architecture']):
+                raise ValueError('Pacman overlay archive differs from the package set: ' + name)
     return archives
+
+
+def check_pacman_camera_coverage(arch, valve):
+    """Do not let a SteamOS lookup fall through to an Arch media runtime."""
+    def names(record):
+        return {row['name'] for row in record['packages'].values() if row['component'] in PACMAN_CAMERA}
+
+    missing = names(arch) - names(valve) - {'libcamera-docs'}
+    if missing:
+        raise ValueError('SteamOS must supply its own media packages: ' + ', '.join(sorted(missing)))
 
 
 def overlay_matrix(value):
@@ -77,8 +94,8 @@ def publication_batches(root, *, kernel, overlays):
     groups = {name: {} for name in REPOSITORIES}
     shared = set()
     arch_targets = set(overlays) & ARCH_REPOSITORIES.keys()
-    if kernel and arch_targets and arch_targets != ARCH_REPOSITORIES.keys():
-        raise ValueError('Publish both Arch overlay sets with the shared sensor package')
+    if arch_targets and arch_targets != ARCH_REPOSITORIES.keys():
+        raise ValueError('Publish both Arch overlay sets so SteamOS has matching packages')
     if kernel:
         for package_format, repository in KERNEL_REPOSITORIES.items():
             groups[repository].update(packages(root / 'kernel' / package_format, format=package_format))
@@ -95,10 +112,13 @@ def publication_batches(root, *, kernel, overlays):
             path, metadata = sensors.pacman_package(root / 'bsp/sensors')
             groups['sunuefi'][path.name] = (path, metadata['sha256'])
             shared.add(path.name)
+    arch_records = {}
     for target in overlays:
         repository = OVERLAY_REPOSITORIES[target]
-        archives = overlay_set(root / 'overlays' / target, target)
+        directory = root / 'overlays' / target
+        archives = overlay_set(directory, target)
         if target in arch_targets:
+            arch_records[target] = json.loads((directory / 'manifest.json').read_text())
             provider = [path for name, (path, _) in archives.items()
                         if name.startswith('iio-sensor-proxy-')]
             if len(provider) != 1:
@@ -112,8 +132,10 @@ def publication_batches(root, *, kernel, overlays):
             if old is not None and old[1] != digest:
                 raise ValueError('Different builds share a package filename: ' + name)
             groups[repository][name] = (path, digest)
-    # Expose the SteamOS provider before the common package that requires it.
-    order = ('apt', 'sunuefi-steamos', 'sunuefi') if kernel and arch_targets else REPOSITORIES
+    if arch_targets:
+        check_pacman_camera_coverage(arch_records['nyarch-gnome'], arch_records['steamos'])
+    # Expose the Valve builds before their Arch counterparts.
+    order = ('apt', 'sunuefi-steamos', 'sunuefi') if arch_targets else REPOSITORIES
     return {repository: dict(groups[repository][name] for name in sorted(groups[repository]))
             for repository in order if groups[repository]}
 

@@ -1,17 +1,20 @@
 """Verify the mapping from completed product package sets to native repositories."""
+import io
 from pathlib import Path
 import json
+import shutil
 import sys
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/repo'))
-from products import overlay_matrix, overlay_set, publication_batches, sha
+from products import check_pacman_camera_coverage, overlay_matrix, overlay_set, publication_batches, sha
 import build_ffmpeg_packages as ffmpeg
-from build.overlay_packages import DEBIAN_GNOME, DEBIAN_SHARED
-from desktop import build_libcamera_packages as libcamera
+from build.overlay_packages import DEBIAN_GNOME, DEBIAN_SHARED, PACMAN_CAMERA_DEFAULTS
+from desktop import build_libcamera_packages as libcamera, libcamera_arch
 from desktop.build_pipewire_packages import DEBIAN_PACKAGES
 from desktop.build_plasma_camera_package import RUNTIME as PLASMA_PACKAGES
 from desktop.build_qt_multimedia_packages import DEBIAN_PACKAGES as QT_PACKAGES
@@ -91,12 +94,63 @@ class RepoProductsTests(unittest.TestCase):
         (directory / 'manifest.json').write_text(json.dumps(record))
         return directory
 
+    def pacman_set(self, target, files):
+        valve = target == 'steamos'
+        if valve:
+            names = ('deckard-mesa-linux-aarch64', 'gamescope', 'steamos-manager', 'gtk3', 'ibus',
+                     'ethtool', 'hdparm', 'python-linux-procfs', 'python-pyinotify', 'tuned',
+                     'tuned-ppd', 'webrtc-audio-processing')
+        else:
+            names = ('mesa', 'gdm', 'mutter', 'gnome-settings-daemon', 'bluez-sunuefi')
+        directory = self.packages / 'overlays' / target
+        directory.mkdir(parents=True)
+        record = {'schema_version': 1, 'target': target,
+                  'repo': 'sunuefi-steamos' if valve else 'sunuefi', 'packages': {}, 'components': {}}
+        media = {
+            **PACMAN_CAMERA_DEFAULTS,
+            'libcamera': libcamera_arch.STEAMOS_PACKAGES if valve else libcamera_arch.PACKAGES,
+            'pipewire': PACMAN_CAMERA_DEFAULTS['pipewire'] | {'pipewire-netjack2'},
+            'plasma_camera': {'plasma-camera'},
+        }
+        labels = {name: component for component, cohort in media.items() for name in cohort}
+        base = ('libfprint', 'fprintd', 'ffmpeg', 'libwacom', 'libssc', 'iio-sensor-proxy', 'fastrpc', *names)
+        input_names = {filename.split('.pkg.tar.')[0].rsplit('-', 3)[0] for filename in files}
+        version = '1-2' if valve else '1-3'
+        for name in (*base, *sorted(labels)):
+            if name not in input_names:
+                files[f'{name}-{version}-aarch64.pkg.tar.gz'] = name.encode()
+        for filename, content in files.items():
+            package = directory / filename
+            name, pkgver, release, architecture = filename.split('.pkg.tar.')[0].rsplit('-', 3)
+            metadata = f'pkgname = {name}\npkgver = {pkgver}-{release}\narch = {architecture}\n'.encode()
+            with tarfile.open(package, 'w:gz') as archive:
+                for path, data in (('.PKGINFO', metadata), ('usr/share/test', content)):
+                    member = tarfile.TarInfo(path)
+                    member.size = len(data)
+                    archive.addfile(member, io.BytesIO(data))
+            info = {'version': f'{pkgver}-{release}', 'architecture': architecture, 'sha256': sha(package)}
+            component = labels.get(name, name)
+            record['packages'][filename] = {**info, 'name': name, 'component': component}
+            if component in media:
+                receipt = record['components'].setdefault(component, {
+                    'packages_built': True, 'package_format': 'pacman', 'package_version': version,
+                    'target': 'steamos' if valve else 'arch', 'packages': {},
+                })
+                receipt['packages'][name] = {**info, 'file': filename}
+        library = record['components']['libcamera']['packages']
+        for component in ('pipewire', 'plasma_camera'):
+            record['components'][component]['build_dependencies'] = {
+                name: library[name] for name in libcamera_arch.RUNTIME_INPUTS}
+        (directory / 'manifest.json').write_text(json.dumps(record))
+        return directory
+
+    @unittest.skipUnless(shutil.which('bsdtar'), 'libarchive tools required')
     def test_maps_kernel_and_arch_packages_to_the_same_index(self):
         kernel = 'linux-piano-1-1-aarch64.pkg.tar.zst'
-        graphics = 'mesa-27-1-aarch64.pkg.tar.zst'
-        webrtc = 'webrtc-audio-processing-2.1-8.1-aarch64.pkg.tar.zst'
-        firmware = 'piano-firmware-1-1-any.pkg.tar.zst'
-        proxy = 'iio-sensor-proxy-3.9-1-aarch64.pkg.tar.zst'
+        graphics = 'mesa-27-1-aarch64.pkg.tar.gz'
+        webrtc = 'webrtc-audio-processing-2.1-8.1-aarch64.pkg.tar.gz'
+        firmware = 'piano-firmware-1-1-any.pkg.tar.gz'
+        proxy = 'iio-sensor-proxy-3.9-1-aarch64.pkg.tar.gz'
         deb_kernel = 'linux-piano_1_arm64.deb'
         deb_shared = 'mesa_27_arm64.deb'
         device_deb = self.packages / 'piano-device-config_1_all.deb'
@@ -110,11 +164,8 @@ class RepoProductsTests(unittest.TestCase):
             'piano-firmware-display-0.1.0-1-any.pkg.tar.zst': b'local calibration'})
         debian = self.debian_set('debian-gnome', b'same build')
         self.debian_set('debian-kde', b'same build')
-        self.package_set('overlays/nyarch-gnome', {firmware: b'device', graphics: b'arch', proxy: b'arch-proxy'},
-                         repo='sunuefi')
-        self.package_set('overlays/steamos', {graphics: b'valve', proxy: b'valve-proxy',
-                                             webrtc: b'valve-webrtc'},
-                         repo='sunuefi-steamos')
+        arch_dir = self.pacman_set('nyarch-gnome', {firmware: b'device', graphics: b'arch', proxy: b'arch-proxy'})
+        valve_dir = self.pacman_set('steamos', {graphics: b'valve', proxy: b'valve-proxy', webrtc: b'valve-webrtc'})
 
         targets = ('debian-gnome', 'debian-kde', 'nyarch-gnome', 'steamos')
         with patch('products.bsp_package', side_effect=(
@@ -143,24 +194,24 @@ class RepoProductsTests(unittest.TestCase):
                          {'apt': sorted({path.name for path in debian.glob('*.deb')} | {
                              deb_kernel, deb_shared, self.topology_deb.name,
                              self.camera_deb.name, device_deb.name, self.power_deb.name}),
-                          'sunuefi': [proxy, kernel, graphics, self.topology_pacman.name,
-                                      self.camera_pacman.name, device_pacman.name, firmware,
-                                      self.power_pacman.name, self.sensor.name],
-                          'sunuefi-steamos': [proxy, graphics, webrtc]})
+                          'sunuefi': sorted({path.name for path in arch_dir.glob('*.pkg.tar.*')} | {
+                              kernel, self.topology_pacman.name, self.camera_pacman.name,
+                              device_pacman.name, self.power_pacman.name, self.sensor.name}),
+                          'sunuefi-steamos': sorted(path.name for path in valve_dir.glob('*.pkg.tar.*'))})
         arch = self.packages / 'overlays/nyarch-gnome' / graphics
         valve = self.packages / 'overlays/steamos' / graphics
         self.assertEqual(batches['sunuefi'][arch], sha(arch))
         self.assertEqual(batches['sunuefi-steamos'][valve], sha(valve))
 
+    @unittest.skipUnless(shutil.which('bsdtar'), 'libarchive tools required')
     def test_does_not_publish_common_bsp_from_steamos_overlays(self):
         self.package_set('kernel/debian', {'linux.deb': b'kernel'}, format='debian')
         self.package_set('kernel/pacman', {'linux.pkg.tar.zst': b'kernel'}, format='pacman')
         device_deb = self.packages / 'piano-device-config_1_all.deb'
-        device_pacman = self.packages / 'piano-device-config-1-1-any.pkg.tar.zst'
-        proxy = {'iio-sensor-proxy-3.9-1-aarch64.pkg.tar.zst': b'proxy'}
-        self.package_set('overlays/nyarch-gnome', proxy, repo='sunuefi')
-        self.package_set('overlays/steamos', {**proxy, device_pacman.name: b'valve'},
-                         repo='sunuefi-steamos')
+        device_pacman = self.packages / 'piano-device-config-1-1-any.pkg.tar.gz'
+        proxy = {'iio-sensor-proxy-3.9-1-aarch64.pkg.tar.gz': b'proxy'}
+        self.pacman_set('nyarch-gnome', dict(proxy))
+        self.pacman_set('steamos', {**proxy, device_pacman.name: b'valve'})
         with patch('products.bsp_package', side_effect=(
                 (device_deb, {'sha256': 'debian'}), (self.power_deb, {'sha256': 'debian-power'}),
                 (device_pacman, {'sha256': 'pacman'}), (self.power_pacman, {'sha256': 'pacman-power'}))), \
@@ -184,14 +235,35 @@ class RepoProductsTests(unittest.TestCase):
     def test_cache_cannot_redirect_a_package_set_to_another_repo(self):
         self.package_set('overlays/steamos', {'mesa.pkg.tar.zst': b'valve'}, repo='sunuefi')
         with self.assertRaisesRegex(ValueError, 'does not match its build target'):
-            publication_batches(self.packages, kernel=False, overlays=('steamos',))
+            overlay_set(self.packages / 'overlays/steamos', 'steamos')
 
     def test_modified_package_is_rejected_before_any_batch_is_returned(self):
         package = 'mesa.pkg.tar.zst'
         self.package_set('overlays/steamos', {package: b'valve'}, repo='sunuefi-steamos')
         (self.packages / 'overlays/steamos' / package).write_bytes(b'changed')
         with self.assertRaisesRegex(ValueError, 'Package manifest differs'):
-            publication_batches(self.packages, kernel=False, overlays=('steamos',))
+            overlay_set(self.packages / 'overlays/steamos', 'steamos')
+
+    @unittest.skipUnless(shutil.which('bsdtar'), 'libarchive tools required')
+    def test_pacman_build_clients_must_match_the_published_library(self):
+        directory = self.pacman_set('steamos', {})
+        manifest = directory / 'manifest.json'
+        record = json.loads(manifest.read_text())
+        record['components']['pipewire']['build_dependencies']['libcamera']['sha256'] = '0' * 64
+        manifest.write_text(json.dumps(record))
+        with self.assertRaisesRegex(ValueError, 'pipewire was not built with this libcamera package set'):
+            overlay_set(directory, 'steamos')
+
+    def test_valve_indices_must_cover_arch_optional_media_packages(self):
+        arch = {'packages': {
+            'docs': {'name': 'libcamera-docs', 'component': 'libcamera'},
+            'jack': {'name': 'pipewire-jack-client', 'component': 'pipewire'},
+        }}
+        valve = {'packages': {}}
+        with self.assertRaisesRegex(ValueError, 'SteamOS must supply its own media packages: pipewire-jack-client'):
+            check_pacman_camera_coverage(arch, valve)
+        valve['packages']['jack'] = arch['packages']['jack']
+        check_pacman_camera_coverage(arch, valve)
 
     def test_only_requested_overlay_generations_are_published(self):
         self.debian_set('debian-gnome', b'archive')

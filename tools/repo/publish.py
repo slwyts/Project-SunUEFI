@@ -225,9 +225,18 @@ def apt_index(work, packages, key, store=None, *, digests=None):
     return prefix, immutable, mutable
 
 
-def pacman_has_relation(record, field, name):
+def pacman_has_relation(record, field, name, version):
     section = re.search(rf'^%{field}%\n(.+?)(?:\n\n|\Z)', record, re.M | re.S)
-    return section is not None and name in section[1].splitlines()
+    if section is None:
+        return False
+    for entry in section[1].splitlines():
+        if entry == name:
+            return True
+        if match := re.fullmatch(re.escape(name) + r'(>=|<=|=|<|>)(\S+)', entry):
+            result, = run('vercmp', version, match[2], capture_output=True, text=True).stdout.split()
+            if int(result) in {'>=': (0, 1), '<=': (-1, 0), '=': (0,), '<': (-1,), '>': (1,)}[match[1]]:
+                return True
+    return False
 
 
 def pacman_metadata(database):
@@ -235,7 +244,7 @@ def pacman_metadata(database):
     data = run('bsdtar', '-cf', '-', '@' + str(database), capture_output=True).stdout
     owner = PACMAN_V4L2_OWNERS.get(database.name.split('.', 1)[0])
     legacy = 'pipewire-v4l2-source'
-    selected, retired = {}, set()
+    selected, replacement = {}, None
     with tarfile.open(fileobj=io.BytesIO(data), mode='r:') as archive:
         for member in archive:
             if not member.name.endswith('/desc'):
@@ -253,10 +262,15 @@ def pacman_metadata(database):
             if name in selected:
                 raise ValueError(f'{database.name}: multiple entries for {name}')
             selected[name] = (version, filename, digest)
-            if name == owner and all(pacman_has_relation(record, field, legacy)
-                                     for field in ('REPLACES', 'CONFLICTS')):
-                retired.add(legacy)
-    return selected, retired & selected.keys()
+            if name == owner:
+                replacement = record
+    retired = set()
+    if replacement is not None and legacy in selected:
+        version = selected[legacy][0]
+        if all(pacman_has_relation(replacement, field, legacy, version)
+               for field in ('REPLACES', 'CONFLICTS')):
+            retired.add(legacy)
+    return selected, retired
 
 
 def check_pacman_selection(database, expected):
