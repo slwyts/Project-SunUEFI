@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "version": "2.1",
+  "targets": [
+    "steamos"
+  ],
+  "source": {
+    "url": "https://gitlab.freedesktop.org/pulseaudio/webrtc-audio-processing/-/archive/v2.1/webrtc-audio-processing-v2.1.tar.gz",
+    "sha256": "2358883a8551711f3b6169f6799c003dc1a6efd37bdb24a135a015cc9e3d7713"
+  },
+  "patches": [
+    {
+      "file": "0001-Fix-compilation-with-gcc-15.patch",
+      "sha256": "2774f8bf7fb9682bbd23ab9640dac45ce6f57dd22f36f8c52c399e34d10bd8d8",
+      "upstream": {
+        "status": "merged",
+        "url": "https://gitlab.freedesktop.org/pulseaudio/webrtc-audio-processing/-/commit/e9c78dc4712fa6362b0c839ad57b6b46dce1ba83",
+        "commit": "e9c78dc4712fa6362b0c839ad57b6b46dce1ba83",
+        "drop_when": "The selected release builds with GCC 15 or later without the backport."
+      }
+    },
+    {
+      "file": "0002-Fix-build-with-abseil-cpp-202508.patch",
+      "sha256": "cb17ceca24ab633b060162de1663fa8f65a1c8646f9ad41226a4518b7b573c74",
+      "upstream": {
+        "status": "merged",
+        "url": "https://gitlab.freedesktop.org/pulseaudio/webrtc-audio-processing/-/commit/c8896801dfbfe03b56f85c1533abc077ff74a533",
+        "commit": "c8896801dfbfe03b56f85c1533abc077ff74a533",
+        "drop_when": "The selected release builds against the Abseil LTS provided by Valve without the backport."
+      }
+    }
+  ]
+}

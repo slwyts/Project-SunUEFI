@@ -100,12 +100,16 @@ Debian 从签名 sid 源码重建 PipeWire 的同版包组，保留 Debian 原�
 Debian sid 更新后，官方源可能不再提供对应的旧版服务端和库。
 
 Nyarch 和 SteamOS 仍独立重建 GStreamer 插件和 `pipewire-v4l2-source`，
-使用目标系统同版本的服务端和库，不替换音频组件。补丁处理格式枚举与首选格式、
+使用目标系统同版本的服务端和库，不替换 PipeWire 的音频拆包。补丁处理格式枚举与首选格式、
 运行中 caps、缓冲池锁顺序、借用 MemPtr 的复制，以及录像持有的 V4L2 复制帧；
 模块选择与缓冲管理见[相机接口](../hardware/camera-controls.md#帧时间戳与错误)。
 `patches/pipewire/<版本>/series.json` 记录来源和补丁摘要，源码完整准备后才进入缓存，构建器
 变化使旧包缓存失效。19 项格式测试串行运行，使用隔离的 GStreamer registry，
 不扫描系统插件；它们不替代平板上的相机、录屏和屏幕共享验证。
+
+SteamOS 从 `[sunuefi-steamos]` 安装匹配 Valve Abseil 的 `webrtc-audio-processing`。
+它保留原有 AEC3 库和开发接口，使原版 PipeWire 能加载回声消除插件；
+构建检查生成库实际链接的 Abseil 版本。
 
 GDM 在真实 KMS 设备提供显示接口后启动会话。设备树的临时帧缓冲按平台驱动识别，
 不只检查 `ID_PATH` 前缀；纯渲染 GPU 不作为显示就绪的依据。补丁位于

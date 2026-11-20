@@ -94,6 +94,7 @@ class RepoProductsTests(unittest.TestCase):
     def test_maps_kernel_and_arch_packages_to_the_same_index(self):
         kernel = 'linux-piano-1-1-aarch64.pkg.tar.zst'
         graphics = 'mesa-27-1-aarch64.pkg.tar.zst'
+        webrtc = 'webrtc-audio-processing-2.1-8.1-aarch64.pkg.tar.zst'
         firmware = 'piano-firmware-1-1-any.pkg.tar.zst'
         proxy = 'iio-sensor-proxy-3.9-1-aarch64.pkg.tar.zst'
         deb_kernel = 'linux-piano_1_arm64.deb'
@@ -111,7 +112,8 @@ class RepoProductsTests(unittest.TestCase):
         self.debian_set('debian-kde', b'same build')
         self.package_set('overlays/nyarch-gnome', {firmware: b'device', graphics: b'arch', proxy: b'arch-proxy'},
                          repo='sunuefi')
-        self.package_set('overlays/steamos', {graphics: b'valve', proxy: b'valve-proxy'},
+        self.package_set('overlays/steamos', {graphics: b'valve', proxy: b'valve-proxy',
+                                             webrtc: b'valve-webrtc'},
                          repo='sunuefi-steamos')
 
         targets = ('debian-gnome', 'debian-kde', 'nyarch-gnome', 'steamos')
@@ -144,7 +146,7 @@ class RepoProductsTests(unittest.TestCase):
                           'sunuefi': [proxy, kernel, graphics, self.topology_pacman.name,
                                       self.camera_pacman.name, device_pacman.name, firmware,
                                       self.power_pacman.name, self.sensor.name],
-                          'sunuefi-steamos': [proxy, graphics]})
+                          'sunuefi-steamos': [proxy, graphics, webrtc]})
         arch = self.packages / 'overlays/nyarch-gnome' / graphics
         valve = self.packages / 'overlays/steamos' / graphics
         self.assertEqual(batches['sunuefi'][arch], sha(arch))

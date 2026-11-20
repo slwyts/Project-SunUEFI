@@ -19,6 +19,7 @@ DEBIAN_SHARED = ('mesa', 'sensors', 'ffmpeg', 'libcamera', 'pipewire', 'qt_multi
 DEBIAN_GNOME = ('gnome_power', 'mutter', 'gdm')
 ARCH_REPOSITORIES = {'nyarch-gnome': 'sunuefi', 'steamos': 'sunuefi-steamos'}
 STEAMOS_TUNED_RECIPES = ('ethtool', 'hdparm', 'python-linux-procfs', 'python-pyinotify', 'tuned')
+STEAMOS_WEBRTC_PACKAGE = 'webrtc-audio-processing'
 ARCH_BLUEZ = 'bluez-sunuefi'
 # Scope the pacman conflict approval to replacing the single BlueZ daemon.
 ARCH_BLUEZ_INSTALL_OPTIONS = ('--ask=4',)
@@ -436,7 +437,7 @@ def read_pacman(path, target):
                     if target == 'steamos' else (
                         'mesa', 'gdm', 'mutter', 'gnome-settings-daemon', ARCH_BLUEZ))
     if target == 'steamos':
-        expected.update((*STEAMOS_TUNED_RECIPES, 'tuned-ppd'))
+        expected.update((*STEAMOS_TUNED_RECIPES, 'tuned-ppd', STEAMOS_WEBRTC_PACKAGE))
     if not expected <= names:
         raise ValueError('Incomplete native overlay package set')
     return repo, manifest['packages'], manifest.get('components', {})

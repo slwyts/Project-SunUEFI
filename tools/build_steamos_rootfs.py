@@ -153,6 +153,34 @@ def kde_package_is_current(package_dir, recipe):
             bool(record.get('packages')))
 
 
+def build_webrtc(root, output, config):
+    name = overlay_packages.STEAMOS_WEBRTC_PACKAGE
+    series = ROOT / config['patch_series']
+    policy = json.loads(series.read_text())
+    patches = runtime_helpers.source_patches(series)
+    recipe = output / (name + '-recipe')
+    recipe.mkdir(parents=True, exist_ok=True)
+    for patch in patches:
+        shutil.copy2(patch, recipe / patch.name)
+    template = (ROOT / 'linux/bsp/steamos' / name / 'PKGBUILD').read_text()
+    for key, value in {
+        'VERSION': shlex.quote(policy['version']),
+        'SOURCE_URL': shlex.quote(policy['source']['url']),
+        'SOURCE_SHA256': policy['source']['sha256'],
+        'PATCHES': shlex.join(patch.name for patch in patches),
+        'PATCH_SHA256S': ' '.join(digest(patch) for patch in patches),
+    }.items():
+        template = template.replace('@' + key + '@', value)
+    (recipe / 'PKGBUILD').write_text(template)
+
+    packages = output / 'packages' / name
+    if kde_package_is_current(packages, recipe):
+        build_arch_package.install_cached(root, packages)
+    else:
+        build_arch_package.build(root, recipe, packages, check=True)
+    return overlay_packages.pacman_outputs(packages)
+
+
 def gtk3_recipe(output):
     config = json.loads((ROOT / 'config/steamos.json').read_text())['gtk3']
     patch, = runtime_helpers.source_patches(ROOT / config['patch_series'])
@@ -433,6 +461,8 @@ def build_overlays(root, output, source, steamos_config):
     else:
         build_arch_package.install_cached(root, ffmpeg)
     outputs['ffmpeg'] = overlay_packages.pacman_outputs(ffmpeg)
+    outputs[overlay_packages.STEAMOS_WEBRTC_PACKAGE] = build_webrtc(
+        root, output, steamos_config['webrtc_audio_processing'])
     pipewire = output / 'packages/pipewire'
     run(ROOT / 'build.sh', 'pipewire', '--rootfs', root, '--output', pipewire)
     libwacom = output / 'packages/libwacom'

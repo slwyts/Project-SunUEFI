@@ -1,0 +1,71 @@
+# Based on Valve's Deckard package, maintained upstream by Jan Alexander
+# Steffens (heftig).
+
+pkgname=webrtc-audio-processing
+pkgver=@VERSION@
+pkgrel=8.1
+pkgdesc="AudioProcessing library based on Google's implementation of WebRTC"
+url="https://freedesktop.org/software/pulseaudio/webrtc-audio-processing/"
+arch=(aarch64)
+license=(BSD-3-Clause)
+# Valve's Abseil package does not provide the SONAME in its metadata.
+depends=('abseil-cpp>=20260107' 'abseil-cpp<20260108' gcc-libs glibc)
+makedepends=(meson)
+provides=(libwebrtc-audio-processing-2.so)
+options=(!debug !lto)
+source=(@SOURCE_URL@ @PATCHES@)
+sha256sums=(@SOURCE_SHA256@ @PATCH_SHA256S@)
+
+prepare() {
+  local patch
+  cd "$pkgname-v$pkgver"
+  for patch in @PATCHES@; do
+    patch --batch --fuzz=0 -Np1 -i "$srcdir/$patch"
+  done
+}
+
+build() {
+  arch-meson "$pkgname-v$pkgver" build -Dcpp_std=c++17 -Dneon=enabled
+  meson compile -C build -j4
+}
+
+check() {
+  local library=build/webrtc/modules/audio_processing/libwebrtc-audio-processing-2.so.1
+  local abseil
+  abseil=$(readelf -d "$library" | awk '/\(NEEDED\).*libabsl_strings\.so/ {gsub(/[][]/, "", $NF); print $NF}')
+  if [[ $abseil != libabsl_strings.so.2601.0.0 ]]; then
+    printf 'Unexpected Abseil ABI in %s: %s\n' "$library" "$abseil" >&2
+    return 1
+  fi
+  meson test -C build --print-errorlogs
+}
+
+package() {
+  local header directory="$pkgname-v$pkgver/webrtc"
+  # Keep the AEC3 headers shipped by Valve's Deckard package.
+  local headers=(
+    api/audio/{audio_view,channel_layout}.h
+    common_audio/channel_buffer.h
+    common_audio/include/audio_util.h
+    modules/audio_processing/aec3/{aec3_common,api_call_jitter_metrics,block}.h
+    modules/audio_processing/aec3/{block_buffer,block_delay_buffer,block_framer,block_processor}.h
+    modules/audio_processing/aec3/{config_selector,delay_estimate,downsampled_render_buffer}.h
+    modules/audio_processing/aec3/{echo_canceller3,echo_path_variability,echo_remover}.h
+    modules/audio_processing/aec3/{fft_buffer,fft_data,frame_blocker,multi_channel_content_detector}.h
+    modules/audio_processing/aec3/{render_buffer,render_delay_buffer,render_delay_controller,spectrum_buffer}.h
+    modules/audio_processing/audio_buffer.h
+    modules/audio_processing/logging/apm_data_dumper.h
+    rtc_base/{gtest_prod_util,platform_thread_types,race_checker,swap_queue}.h
+    rtc_base/system/arch.h
+  )
+
+  meson install -C build --destdir "$pkgdir"
+  for header in "${headers[@]}"; do
+    install -Dm644 "$directory/$header" "$pkgdir/usr/include/$pkgname-2/$header"
+  done
+  # AEC3 headers require the same debug-dump setting as the built library.
+  sed -i '/^Cflags:/s/-DWEBRTC_LIBRARY_IMPL/-DWEBRTC_LIBRARY_IMPL -DWEBRTC_APM_DEBUG_DUMP=0/' \
+    "$pkgdir/usr/lib/pkgconfig/$pkgname-2.pc"
+  install -Dm644 "$pkgname-v$pkgver/COPYING" \
+    -t "$pkgdir/usr/share/licenses/$pkgname"
+}
