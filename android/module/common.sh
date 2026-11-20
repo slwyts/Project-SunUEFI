@@ -52,6 +52,7 @@ piano_android_grow_ready() (
 )
 piano_esp_arm64_application() (
   # Identify PE32+ ARM64 EFI applications; firmware validates the full image.
+  kind=${3:-loader}
   file=$(readlink -f "$2") || exit 2
   case "$file" in "$1"/*) ;; *) exit 1 ;; esac
   size=$(stat -c %s "$file") || exit 2
@@ -65,13 +66,39 @@ piano_esp_arm64_application() (
   bytes=$(od -An -v -tx1 -j "$pe" -N94 "$file") || exit 2
   set -- $bytes
   [ "$#" -eq 94 ] && [ "$1$2$3$4$5$6" = 5045000064aa ] || exit 1
-  shift 24
+  sections=$((0x$7 | (0x$8 << 8)))
+  shift 20
+  optional=$((0x$1 | (0x$2 << 8)))
+  shift 4
   [ "$1$2" = 0b02 ] || exit 1
   shift 68
-  [ "$1$2" = 0a00 ]
+  [ "$1$2" = 0a00 ] || exit 1
+  [ "$kind" = uki ] || exit 0
+
+  # A UKI contains a Linux payload section. An EFI tool can share its suffix.
+  section=$((pe + 24 + optional))
+  [ "$optional" -ge 70 ] && [ "$sections" -le 96 ] &&
+    [ "$((section + 40 * sections))" -le "$size" ] || exit 1
+  while [ "$sections" -gt 0 ]; do
+    bytes=$(od -An -v -tx1 -j "$section" -N24 "$file") || exit 2
+    set -- $bytes
+    [ "$#" -eq 24 ] || exit 1
+    if [ "$1$2$3$4$5$6$7$8" = 2e6c696e75780000 ]; then
+      shift 16
+      length=$((0x$1 | (0x$2 << 8) | (0x$3 << 16) | (0x$4 << 24)))
+      shift 4
+      offset=$((0x$1 | (0x$2 << 8) | (0x$3 << 16) | (0x$4 << 24)))
+      [ "$length" -gt 0 ] && [ "$offset" -ge "$((section + 40 * sections))" ] &&
+        [ "$offset" -le "$size" ] && [ "$length" -le "$((size - offset))" ]
+      exit "$?"
+    fi
+    section=$((section + 40))
+    sections=$((sections - 1))
+  done
+  exit 1
 )
 
-# The ESP can use the architecture fallback or an installed EFI application.
+# Check the ARM64 fallback, conventional Linux loaders and versioned UKIs.
 # Boot order and loader configuration belong to firmware and the boot manager.
 # Return 1 for no candidate and 2 if inspection could not be completed.
 piano_esp_linux_present() (
@@ -89,7 +116,15 @@ piano_esp_linux_present() (
     fi
     for entry in "$directory"/*.[Ee][Ff][Ii]; do
       [ -f "$entry" ] || continue
-      if piano_esp_arm64_application "$root" "$entry"; then
+      kind=loader
+      case "${directory##*/}/${entry##*/}" in
+        [Ll][Ii][Nn][Uu][Xx]/*) kind=uki ;;
+        [Bb][Oo][Oo][Tt]/[Bb][Oo][Oo][Tt][Aa][Aa]64.[Ee][Ff][Ii] | \
+        [Ss][Yy][Ss][Tt][Ee][Mm][Dd]/[Ss][Yy][Ss][Tt][Ee][Mm][Dd]-[Bb][Oo][Oo][Tt][Aa][Aa]64.[Ee][Ff][Ii] | \
+        */[Gg][Rr][Uu][Bb][Aa][Aa]64.[Ee][Ff][Ii] | */[Ss][Hh][Ii][Mm][Aa][Aa]64.[Ee][Ff][Ii]) ;;
+        *) continue ;;
+      esac
+      if piano_esp_arm64_application "$root" "$entry" "$kind"; then
         exit 0
       elif [ "$?" -eq 2 ]; then
         result=2

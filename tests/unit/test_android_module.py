@@ -85,15 +85,19 @@ class AndroidModuleTests(unittest.TestCase):
                                'fixture', str(common)], text=True, capture_output=True)
 
     @staticmethod
-    def efi_application(path, *, machine=0xaa64, subsystem=10):
+    def efi_application(path, *, machine=0xaa64, subsystem=10, uki=False):
         path.parent.mkdir(parents=True, exist_ok=True)
-        data = bytearray(256)
+        data = bytearray(1024)
         data[:2] = b'MZ'
         struct.pack_into('<I', data, 60, 64)
         data[64:68] = b'PE\0\0'
         struct.pack_into('<H', data, 68, machine)
         struct.pack_into('<H', data, 88, 0x20b)
         struct.pack_into('<H', data, 156, subsystem)
+        if uki:
+            struct.pack_into('<H', data, 70, 1)
+            struct.pack_into('<H', data, 84, 240)
+            struct.pack_into('<8sIIII', data, 328, b'.linux', 512, 4096, 512, 512)
         path.write_bytes(data)
 
     def test_esp_accepts_arm64_fallback_distro_loader_or_versioned_uki(self):
@@ -101,8 +105,19 @@ class AndroidModuleTests(unittest.TestCase):
                      'debian/shimaa64.efi', 'Linux/linux-7.4-custom.efi'):
             with self.subTest(path=name):
                 esp = self.base / name.split('/')[0]
-                self.efi_application(esp / 'EFI' / name)
+                self.efi_application(esp / 'EFI' / name, uki=name.startswith('Linux/'))
                 self.assertEqual(self.shell(f'piano_esp_linux_present "{esp}"').returncode, 0)
+
+    def test_esp_ignores_efi_tools_with_no_linux_boot_path(self):
+        esp = self.base / 'esp'
+        self.efi_application(esp / 'EFI/vendor/Shell.efi')
+        self.efi_application(esp / 'EFI/Linux/Shell.efi')
+        check = f'piano_esp_linux_present "{esp}"'
+        self.assertEqual(self.shell(check).returncode, 1)
+        uki = esp / 'EFI/Linux/piano.efi'
+        self.efi_application(uki, uki=True)
+        uki.write_bytes(uki.read_bytes()[:-1])
+        self.assertEqual(self.shell(check).returncode, 1)
 
     def test_efi_application_stays_inside_esp_and_entries_are_not_executed(self):
         esp = self.base / 'esp'
@@ -127,11 +142,12 @@ class AndroidModuleTests(unittest.TestCase):
         boot = esp / 'EFI/Piano/stable/boot.img'
         boot.parent.mkdir(parents=True)
         boot.write_bytes(b'legacy boot image fixture')
-        self.efi_application(esp / 'EFI/debian/bootx64.efi', machine=0x8664)
-        self.efi_application(esp / 'EFI/debian/driveraa64.efi', subsystem=11)
-        (esp / 'EFI/debian/empty.efi').touch()
-        (esp / 'EFI/debian/text.efi').write_bytes(b'not an EFI application' * 6)
-        malformed = esp / 'EFI/debian/bad-header.efi'
+        self.efi_application(esp / 'EFI/BOOT/BOOTAA64.EFI', machine=0x8664)
+        self.efi_application(esp / 'EFI/debian/grubaa64.efi', subsystem=11)
+        (esp / 'EFI/Linux').mkdir()
+        (esp / 'EFI/Linux/empty.efi').touch()
+        (esp / 'EFI/Linux/text.efi').write_bytes(b'not an EFI application' * 6)
+        malformed = esp / 'EFI/systemd/systemd-bootaa64.efi'
         self.efi_application(malformed)
         with malformed.open('r+b') as stream:
             stream.seek(60)
