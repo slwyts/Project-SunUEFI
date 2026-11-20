@@ -15,6 +15,7 @@
 #include "PianoExt4.h"
 #include "PianoNvFile.h"
 #include "PianoBluetoothAddress.h"
+#include "PianoSmbiosPlatform.h"
 #include "PianoRtcOffset.h"
 #include "PianoProductBootObjects.h"
 #include "PianoProductMemory.h"
@@ -824,6 +825,8 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   // RAM to EFI loaders. The original heaps still work if a bank is unavailable.
   Status=PianoProductMemoryPublish();
   if(EFI_ERROR(Status))DEBUG((DEBUG_WARN,"PIANO_LOADER_MEMORY status=%r\n",Status));
+  Status=PianoSmbiosInstallPlatform(Image,Fdt);
+  if(EFI_ERROR(Status))DEBUG((DEBUG_WARN,"PIANO_SMBIOS_PLATFORM status=%r\n",Status));
   Status=PianoProductMemoryInstallSmbios(Image);
   if(EFI_ERROR(Status))DEBUG((DEBUG_WARN,"PIANO_SMBIOS_MEMORY status=%r\n",Status));
   Status=PianoDeviceTreeFixupInstall(BootLogAlive,PianoProductMemoryReserveDtb);if(Status!=EFI_SUCCESS)FailStop(Status);

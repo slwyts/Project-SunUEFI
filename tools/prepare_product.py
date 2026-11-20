@@ -35,7 +35,7 @@ SOURCE_NAMES=(
     'PianoPogoReport.c','PianoPogoInput.c','PianoPogoI2c.c','PianoGeniI2cPio.c','PianoUsbHostPci.c',
 )
 PRODUCT_COMPONENTS={
-    'board-identity':('PianoBluetoothAddress.c','PianoBluetoothAddress.h'),
+    'board-identity':('PianoBluetoothAddress.c','PianoBluetoothAddress.h','PianoSmbiosPlatform.c','PianoSmbiosPlatform.h'),
     'rtc':('PianoRtcOffset.c','PianoRtcOffset.h'),
     'nv':('PianoNvFile.c','PianoNvFile.h'),
     'reset':('PianoReset.c','PianoReset.h'),
@@ -426,6 +426,8 @@ def core_inf():
 '''+''.join('  '+name+'\n' for name in (*SOURCE_NAMES,*COMPONENT_C_SOURCES,*OS_BOOT_INF_SOURCES,*OBSERVATION_INF_SOURCES,*LATE_HANDOFF_INF_SOURCES))+'''[Packages]
   MdePkg/MdePkg.dec
   MdeModulePkg/MdeModulePkg.dec
+  ArmPkg/ArmPkg.dec
+  DynamicTablesPkg/DynamicTablesPkg.dec
   QcomPkg/QcomPkg.dec
   CryptoPkg/CryptoPkg.dec
   SiliciumPkg/SiliciumPkg.dec
@@ -440,6 +442,7 @@ def core_inf():
   BaseLib
   BaseCryptLib
   FdtLib
+  SmbiosStringTableLib
   DebugLib
   PrintLib
   IoLib
@@ -495,6 +498,13 @@ def core_inf():
   gEdkiiFormDisplayEngineProtocolGuid
   gEfiVariableArchProtocolGuid
   gEfiVariableWriteArchProtocolGuid
+[FixedPcd]
+  gArmTokenSpaceGuid.PcdFdSize
+  gEfiMdeModulePkgTokenSpaceGuid.PcdFirmwareVendor
+  gEfiMdeModulePkgTokenSpaceGuid.PcdFirmwareVersionString
+  gSiliciumPkgTokenSpaceGuid.PcdSmbiosSystemManufacturer
+  gSiliciumPkgTokenSpaceGuid.PcdSmbiosSystemModel
+  gSiliciumPkgTokenSpaceGuid.PcdSmbiosSystemBoardModel
 '''
 
 
@@ -624,6 +634,7 @@ def prepare(root=ROOT):
   pianoProductPkg/Drivers/PianoGopDxe/PianoGopDxe.inf
   pianoProductPkg/Applications/ProductCore/ProductCore.inf {
     <LibraryClasses>
+      SmbiosStringTableLib|DynamicTablesPkg/Library/Common/SmbiosStringTableLib/SmbiosStringTableLib.inf
       NULL|'''+ext4_library+'''
       BaseCryptLib|OpensslPkg/Library/BaseCryptLib/BaseCryptLib.inf
       OpensslLib|OpensslPkg/Library/OpensslLib/OpensslLib.inf
