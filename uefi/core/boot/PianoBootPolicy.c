@@ -285,6 +285,13 @@ STATIC EFI_STATUS StartupUsbAbsent(VOID) {
     return EFI_COMPROMISED_DATA;
   mReport.Usb=Actual;return EFI_SUCCESS;
 }
+STATIC EFI_STATUS EndPump(UINT32 Reason,EFI_STATUS Status) {
+  mReport.Pumping=FALSE;
+  if((Reason&PIANO_PRODUCT_PUMP_WAIT_EVENT) &&
+     (Status==EFI_SUCCESS || Status==EFI_NOT_READY) && PianoApplicationTimedOut())
+    Status=EFI_ABORTED;
+  return mReport.LastPump=Exact(Status);
+}
 STATIC EFI_STATUS EFIAPI Pump(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Reason,UINTN BudgetUs) {
   if(This!=&mRuntime || !Reason || (Reason&~(PIANO_PRODUCT_PUMP_WAIT_EVENT|PIANO_PRODUCT_PUMP_GUI|PIANO_PRODUCT_PUMP_APP)) || !BudgetUs || BudgetUs>10000)return EFI_INVALID_PARAMETER;
   if(!mAlive)return EFI_ABORTED;
@@ -308,7 +315,7 @@ STATIC EFI_STATUS EFIAPI Pump(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Reason
          UiAction(mReport.PendingAction) &&
          mReport.PendingAction!=mReport.ActiveAction)S=EFI_ABORTED;
     }
-    mReport.Pumping=FALSE;return mReport.LastPump=Exact(S);
+    return EndPump(Reason,S);
   }
   S=PianoUsbControllerServicePumpApp(Reason,BudgetUs);RequireAlive();
   PIANO_DWC3_SERVICE_STATUS Actual;ZeroMem(&Actual,sizeof(Actual));
@@ -347,7 +354,7 @@ STATIC EFI_STATUS EFIAPI Pump(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Reason
       if(NvSave!=EFI_SUCCESS&&NvSave!=EFI_NOT_STARTED)DEBUG((DEBUG_WARN,"PIANO_NV_BACKGROUND_SAVE status=%r\n",NvSave));
     }
   }
-  mReport.Pumping=FALSE;return mReport.LastPump=Exact(S);
+  return EndPump(Reason,S);
 }
 STATIC PIANO_PRODUCT_RUNTIME_PROTOCOL mRuntime={PIANO_PRODUCT_RUNTIME_REVISION,Pump,Alive,Request,Pending,Ack,
   OpenSimpleInit,SelectBootOption,IsSimpleInitOption,SelectBootFile};

@@ -18,6 +18,10 @@ typedef struct {
   BOOLEAN OptionsInstalled;
   VOID *SourceOwned,*PathOwned,*HandlesOwned;
 } PIANO_FV_APPLICATION;
+// The architectural watchdog is global. Its notification may only set this
+// flag; the current application's normal return disarms it and clears the flag.
+VOID PianoApplicationMarkTimeout(VOID);
+BOOLEAN PianoApplicationTimedOut(VOID);
 // Context is zeroed driver-lifetime storage, never a returned stack frame.
 // UI app launch preserves shared USB/UFS/input owners. This is not OS handoff.
 EFI_STATUS PianoFvApplicationRun(EFI_HANDLE Parent,CONST EFI_GUID *File,

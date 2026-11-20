@@ -60,6 +60,9 @@ STATIC UINT32 Retires,ResetArms;
 STATIC PIANO_USB_SERVICE_ACTION DiagnosticAction;
 STATIC BOOLEAN DiagnosticResetBlocked;
 STATIC CONST CHAR16 *FailureDetail;
+STATIC BOOLEAN WatchdogTimedOut;
+BOOLEAN PianoApplicationTimedOut(VOID){return WatchdogTimedOut;}
+VOID PianoApplicationMarkTimeout(VOID){WatchdogTimedOut=TRUE;}
 
 STATIC EFI_STATUS EFIAPI Handle(EFI_HANDLE Image,EFI_GUID *Guid,VOID **Interface){
   assert(Guid==&gEfiLoadedImageProtocolGuid);++Handles;
@@ -175,6 +178,7 @@ EFI_STATUS PianoProductBootLogMessage(CONST CHAR16 *Title,CONST CHAR16 *Detail,E
 VOID EFIAPI CpuDeadLoop(VOID){longjmp(Escape,1);}
 
 STATIC VOID Reset(VOID){
+  WatchdogTimedOut=FALSE;
   memset(&Services,0,sizeof(Services));memset(&System,0,sizeof(System));
   memset(&mOwners,0,sizeof(mOwners));memset(&mLateHandoff,0,sizeof(mLateHandoff));
   memset(&mLinuxApplication,0,sizeof(mLinuxApplication));memset(&Policy,0,sizeof(Policy));
@@ -362,8 +366,12 @@ STATIC VOID PrepareErrorDiagnostics(VOID){
 }
 STATIC VOID ErrorDiagnostics(VOID){
   PrepareErrorDiagnostics();
+  InstalledSystemWatchdogExpired(3000000000ULL);
+  assert(WatchdogTimedOut && FailureStatus==EFI_TIMEOUT && !Restricts && !Retires && !ResetReached);
+  assert(ValidateInstalledEfiImage(CORE,CHILD,&ChildLoaded)==EFI_TIMEOUT && !Handles);
+  PrepareErrorDiagnostics();mLateHandoff.Busy=TRUE;
   if(!setjmp(Escape)){InstalledSystemWatchdogExpired(3000000000ULL);assert(FALSE);}
-  assert(FailureStatus==EFI_TIMEOUT&&!Restricts&&!Retires&&!ResetReached);
+  assert(!WatchdogTimedOut && FailureStatus==EFI_TIMEOUT && !Restricts && !Retires && !ResetReached);
   PrepareErrorDiagnostics();
   if(!setjmp(Escape)){FailStop(EFI_LOAD_ERROR);assert(!"error screen ends at the CPU halt");}
   assert(Restricts==1&&DiagnosticPumps==3&&DiagnosticStalls==2&&!mFailureDiagnostics);

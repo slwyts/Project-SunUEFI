@@ -44,7 +44,10 @@ static EFI_DEVICE_PATH_PROTOCOL boot_path;
 static EFI_WATCHDOG_TIMER_NOTIFY watchdog_handler;
 static BOOLEAN watchdog_armed;
 static UINTN watchdog_registrations,watchdog_disarms;
-static VOID EFIAPI watchdog_expired(UINT64 Time){(VOID)Time;assert(FALSE);}
+static VOID EFIAPI watchdog_expired(UINT64 Time){
+  assert(scenario==168 && Time==3000000000ULL && tpl==TPL_NOTIFY);
+  PianoApplicationMarkTimeout();
+}
 static EFI_STATUS EFIAPI watchdog_register(EFI_WATCHDOG_TIMER_ARCH_PROTOCOL *This,EFI_WATCHDOG_TIMER_NOTIFY Notify){
   assert(This&&tpl==TPL_APPLICATION&&alive&&!watchdog_armed);
   if(Notify){
@@ -255,6 +258,14 @@ static EFI_STATUS EFIAPI start(EFI_HANDLE Handle,UINTN *Bytes,CHAR16 **Data){
   assert(Handle==(VOID *)400 && image_live && runtime && tpl==TPL_APPLICATION);++starts;*Bytes=0;*Data=NULL;
   if(scenario>=163){
     assert(watchdog_armed&&watchdog_handler==watchdog_expired&&watchdog_registrations==1);
+    if(scenario==168){
+      UINTN Before=pumps;
+      tpl=TPL_NOTIFY;watchdog_handler(3000000000ULL);tpl=TPL_APPLICATION;
+      assert(PianoApplicationTimedOut());
+      assert(runtime->Pump(runtime,PIANO_PRODUCT_PUMP_WAIT_EVENT,1000)==EFI_ABORTED);
+      assert(pumps==Before+1);
+      return EFI_ABORTED;
+    }
     if(scenario==166){
       for(UINTN I=0;I<16;++I)if(events[I].Live&&events[I].Group)events[I].Notify(&events[I],events[I].Context);
       alive=FALSE;assert(mprotect(gBS,4096,PROT_NONE)==0);
@@ -377,7 +388,7 @@ EFI_STATUS PianoUsbControllerServiceGetStatus(PIANO_DWC3_SERVICE_STATUS *S){
 }
 EFI_STATUS PianoUsbControllerServiceStop(EFI_STATUS Reason,PIANO_USB_SERVICE_RETIRE_REPORT *Report){(void)Reason;(void)Report;++stops;assert(!"UI return must not stop shared USB");return EFI_DEVICE_ERROR;}
 int main(int argc,char **argv){
-  assert(argc==2);scenario=(UINT32)strtoul(argv[1],NULL,10);assert(scenario<=167);
+  assert(argc==2);scenario=(UINT32)strtoul(argv[1],NULL,10);assert(scenario<=168);
   gST=&system_table;if(scenario==151)gST->ConsoleInHandle=(VOID *)201;
   gBS=mmap(NULL,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);assert(gBS!=MAP_FAILED);
   *gBS=(EFI_BOOT_SERVICES){.RaiseTPL=raise,.RestoreTPL=restore,.CreateEventEx=create_ex,.CreateEvent=create,.CloseEvent=close_event,
@@ -408,6 +419,8 @@ int main(int argc,char **argv){
     if(scenario==164)assert(S==EFI_DEVICE_ERROR&&!starts);
     if(scenario==165)assert(S==EFI_DEVICE_ERROR&&starts==1&&Context.Retained&&watchdog_armed&&watchdog_handler&&!unloads);
     if(scenario==167)assert(S==EFI_ALREADY_STARTED&&!starts&&!watchdog_disarms&&!watchdog_registrations);
+    if(scenario==168)assert(S==EFI_TIMEOUT && Context.Start==EFI_TIMEOUT && starts==1 && !PianoApplicationTimedOut() &&
+                            watchdog_disarms==1 && watchdog_registrations==2);
     if(scenario==163||scenario==164)assert(watchdog_disarms==1&&watchdog_registrations==2);
     if(scenario!=165)assert(!watchdog_armed&&!watchdog_handler&&!Context.Busy&&Context.Cleanup==EFI_SUCCESS&&unloads==1);
     assert(PianoBootPolicyStop()==EFI_SUCCESS);goto Done;

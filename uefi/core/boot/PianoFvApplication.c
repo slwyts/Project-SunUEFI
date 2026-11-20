@@ -9,6 +9,11 @@
 #include <Library/BaseLib.h>
 
 #define SIGNATURE SIGNATURE_32('P','F','V','1')
+STATIC volatile BOOLEAN mWatchdogTimedOut;
+
+VOID PianoApplicationMarkTimeout(VOID){mWatchdogTimedOut=TRUE;}
+BOOLEAN PianoApplicationTimedOut(VOID){return mWatchdogTimedOut;}
+
 STATIC EFI_STATUS Exact(EFI_STATUS S){return S==EFI_SUCCESS?S:EFI_ERROR(S)?S:EFI_DEVICE_ERROR;}
 STATIC VOID Alive(PIANO_FV_APPLICATION *C) {
   if(C->EbsObserved){C->Retained=TRUE;C->Result=EFI_ABORTED;
@@ -105,6 +110,10 @@ STATIC EFI_STATUS StartData(PIANO_FV_APPLICATION *C,CONST VOID *Options,UINT32 O
   if(Watchdog){
     EFI_STATUS Stop=StopWatchdog(C,Watchdog);
     if(Stop!=EFI_SUCCESS)return Stop;
+    if(mWatchdogTimedOut){
+      mWatchdogTimedOut=FALSE;
+      return C->Start=EFI_TIMEOUT;
+    }
   }
   return Exact(S);
 }

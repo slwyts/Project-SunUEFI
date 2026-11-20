@@ -524,6 +524,7 @@ STATIC EFI_STATUS ValidateInstalledEfiImage(VOID *Context,EFI_HANDLE Image,CONST
      !mLinuxBootDevice || !mLinuxApplication.Image || !mLinuxApplication.Busy || !mLinuxApplication.StartCalled ||
      mLinuxApplication.StartReturned || mLinuxApplication.EbsObserved || mLinuxApplication.Retained)
     return EfiImageResult("uki-state",EFI_ACCESS_DENIED);
+  if(PianoApplicationTimedOut())return EfiImageResult("boot-timeout",EFI_TIMEOUT);
   CONST PIANO_BOOT_POLICY_REPORT *Policy=PianoBootPolicyReport();
   if(!Policy || Policy->RequestedCoreAction!=PianoUsbServiceActionBoot || Policy->Retained || Policy->ServicesLost ||
      Policy->Dispatching || Policy->Pumping || Policy->ActiveAction!=PIANO_PRODUCT_ACTION_NONE)return EfiImageResult("policy",EFI_NOT_READY);
@@ -558,13 +559,24 @@ STATIC EFI_STATUS ValidateInstalledEfiImage(VOID *Context,EFI_HANDLE Image,CONST
 }
 STATIC VOID EFIAPI InstalledSystemWatchdogExpired(UINT64 Time) {
   (VOID)Time;
-  // The architectural watchdog runs at TPL_NOTIFY. It cannot safely retire
-  // disk or USB here, and returning lets the driver reset with live DMA.
-  DEBUG((DEBUG_ERROR,"PIANO_BOOT_WATCHDOG timeout=300 recovery=hold-power-reboot-volume-up-Android\n"));
-  if(BootLogAlive() && !PianoProductDisplayRetained() && !PianoDisplaySmmuRetained() &&
-     !PianoFrameBufferMappingRetained() && !PianoDisplayClockRetained() &&
-     !PianoProductDisplayOwnerRetained())
+  BOOLEAN Live=BootLogAlive() && !PianoProductDisplayRetained() && !PianoDisplaySmmuRetained() &&
+    !PianoFrameBufferMappingRetained() && !PianoDisplayClockRetained() && !PianoProductDisplayOwnerRetained();
+  BOOLEAN Resume=Live && mLinuxActive && mLinuxApplication.Busy &&
+    mLinuxApplication.StartCalled &&
+    !mLinuxApplication.Retained && !mLinuxApplication.EbsObserved &&
+    mOwners.Report.Initialized && mOwners.Report.Phase==PianoProductOwnersRunning &&
+    !mOwners.Report.Busy && !mOwners.Report.Clean && !mOwners.Report.Retained &&
+    !mOwners.Report.OuterTplHeld && !mOwners.Report.RetiredMask &&
+    !mLateHandoff.Busy && !mLateHandoff.Retained && !mLateHandoff.RetireCalls &&
+    mLateHandoff.Phase==PianoExitUnarmed;
+  // The product ResetSystem driver rejects the timer driver's raw reset
+  // before EBS. Let the interrupted child unwind from WaitForEvent at APP;
+  // never close hardware or unload the child from this notification.
+  if(Resume)PianoApplicationMarkTimeout();
+  DEBUG((DEBUG_ERROR,"PIANO_BOOT_WATCHDOG elapsed_100ns=%Lu resume_wait=%u\n",Time,Resume));
+  if(Live)
     (VOID)PianoProductBootLogMessage(L"启动超时",L"系统引导程序未响应",EFI_TIMEOUT,TRUE);
+  if(Resume)return;
 #ifdef __aarch64__
   __asm__ volatile("msr daifset, #15" ::: "memory");
 #endif
