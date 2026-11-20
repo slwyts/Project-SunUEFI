@@ -1,4 +1,4 @@
-From ac3b0fb55d429e1872a3214df6e0fd42cac43d09 Mon Sep 17 00:00:00 2001
+From 7262c994584b34a3e87cbe1062cbc2cb3af76140 Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
 Date: Fri, 20 Nov 2026 16:38:28 +0800
 Subject: [PATCH] media: qcom: camss: Confirm Piano DMA stopped before

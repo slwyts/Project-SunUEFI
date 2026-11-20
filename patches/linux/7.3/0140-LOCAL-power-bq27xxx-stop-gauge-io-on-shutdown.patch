@@ -1,4 +1,4 @@
-From 5de91b740523b7c62259df526c79fe965af8de12 Mon Sep 17 00:00:00 2001
+From 3fd4b4a4a867f9d80105368c901ba3ca1f938dd2 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Fri, 20 Nov 2026 00:49:21 +0800
 Subject: power: supply: bq27xxx: stop gauge I/O on shutdown

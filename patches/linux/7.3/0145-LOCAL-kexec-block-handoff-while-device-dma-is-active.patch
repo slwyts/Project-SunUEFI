@@ -1,4 +1,4 @@
-From 23b3b84a027ee86555d8ca35c576eb6fc7cf4060 Mon Sep 17 00:00:00 2001
+From d28997440266bffaf19d73f11cff1868741342bf Mon Sep 17 00:00:00 2001
 From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
 Date: Fri, 20 Nov 2026 16:38:28 +0800
 Subject: [PATCH] kexec: Let drivers block handoff while DMA is active

@@ -29,10 +29,13 @@ class Gt9764Tests(unittest.TestCase):
             # by the normal ARM64 module build, not duplicated in host stubs.
             begin = source.index('#define GT9764_CONTROL')
             end = source.index('static const struct v4l2_ctrl_ops gt9764_ctrl_ops')
-            (work / 'gt9764-driver.h').write_text(source[begin:end])
+            open_begin = source.index('static int gt9764_open')
+            open_end = source.index('static int gt9764_close', open_begin)
+            (work / 'gt9764-driver.h').write_text(source[begin:end] + source[open_begin:open_end])
             executable = work / 'gt9764'
             subprocess.run([
                 'cc', '-std=gnu17', '-O1', '-g', '-Wall', '-Wextra', '-Werror',
+                '-Wno-unused-parameter',
                 '-fsanitize=address,undefined', '-fno-pie', '-no-pie',
                 '-I' + str(work), ROOT / 'tests/native/GT9764Test.c', '-o', executable,
             ], check=True)

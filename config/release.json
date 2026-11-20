@@ -44,8 +44,8 @@
   },
   "kernel": {
     "target": "release",
-    "abi_epoch": 1795165595,
-    "package_epoch": 1795165595,
+    "abi_epoch": 1795167094,
+    "package_epoch": 1795167094,
     "public_baseline": "352508459733d3e6d349ea5581a8dd2fd8bb4180",
     "patch_series": "patches/linux/7.3/series.json",
     "stable_source_mirrors": [

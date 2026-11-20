@@ -1,4 +1,4 @@
-From 03536e49c4d00954bbe667995c4a5f5f2ae84d46 Mon Sep 17 00:00:00 2001
+From a3cd2306a7433c645814ec37e646dad2a6047f51 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@tuta.io>
 Date: Fri, 20 Nov 2026 13:42:29 +0800
 Subject: [PATCH] media: qcom: camss: Release the parent on CSID power-up

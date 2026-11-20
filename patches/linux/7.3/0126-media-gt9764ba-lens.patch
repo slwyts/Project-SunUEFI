@@ -1,4 +1,4 @@
-From d3f4ff738d4e86f8879ff03446680294b36dd77f Mon Sep 17 00:00:00 2001
+From 322763dc969f6b7d798d30ae67e17f61fa9a1568 Mon Sep 17 00:00:00 2001
 From: slwyts <slwyts@foxmail.com>
 Date: Mon, 16 Nov 2026 11:16:46 +0800
 Subject: media: i2c: add Giantec GT9764BA bidirectional lens actuator
@@ -18,15 +18,21 @@ DW9768 timing formula. The 10 ms ramp delay is a parking sequence delay,
 not a claim about optical settling after a focus change. Keep the lens
 powered if parking fails.
 
+Read back the DAC before retrying movement after an I2C write
+failure. Retain power if the position cannot be confirmed, and
+retry without writing neutral directly while power stays on.
+Keep a failed runtime suspend retryable and restore the accepted
+focus when reopening an actuator that stayed active.
+
 Signed-off-by: slwyts <slwyts@foxmail.com>
 
 Balance regulator references when unbinding after a park failure. Keep runtime PM available with CONFIG_PM alone.
 ---
  MAINTAINERS                |   1 +
- drivers/media/i2c/Kconfig  |  10 ++
+ drivers/media/i2c/Kconfig  |  10 +
  drivers/media/i2c/Makefile |   1 +
- drivers/media/i2c/gt9764.c | 327 +++++++++++++++++++++++++++++++++++++
- 4 files changed, 339 insertions(+)
+ drivers/media/i2c/gt9764.c | 395 +++++++++++++++++++++++++++++++++++++
+ 4 files changed, 407 insertions(+)
  create mode 100644 drivers/media/i2c/gt9764.c
 
 diff --git a/MAINTAINERS b/MAINTAINERS
@@ -76,10 +82,10 @@ index 8fc3a015112a2fe4a8bf11aae2bf632d4562c150..a46935fa25e0906b924b57c7d556cb9a
  obj-$(CONFIG_VIDEO_HI847) += hi847.o
 diff --git a/drivers/media/i2c/gt9764.c b/drivers/media/i2c/gt9764.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..1cf63ca8a396402bd987700630bee11505b5d9e1
+index 0000000000000000000000000000000000000000..d41f1649d07e051a2246ab2e9a2fb3fab34e9ee2
 --- /dev/null
 +++ b/drivers/media/i2c/gt9764.c
-@@ -0,0 +1,327 @@
+@@ -0,0 +1,395 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Giantec GT9764BA bidirectional voice-coil lens actuator.
@@ -122,6 +128,8 @@ index 0000000000000000000000000000000000000000..1cf63ca8a396402bd987700630bee115
 +	/* Serializes controls with power transitions and position tracking. */
 +	struct mutex lock;
 +	u16 position;
++	bool position_valid;
++	bool configured;
 +	bool powered;
 +};
 +
@@ -136,6 +144,7 @@ index 0000000000000000000000000000000000000000..1cf63ca8a396402bd987700630bee115
 +	int ret;
 +
 +	ret = i2c_smbus_write_word_swapped(client, GT9764_POSITION, position);
++	lens->position_valid = !ret;
 +	if (ret)
 +		return ret;
 +
@@ -146,6 +155,20 @@ index 0000000000000000000000000000000000000000..1cf63ca8a396402bd987700630bee115
 +static int gt9764_move_gradually(struct gt9764 *lens, unsigned int target)
 +{
 +	int ret, position;
++
++	/* A failed transfer may have reached either byte of the DAC register. */
++	if (!lens->position_valid) {
++		struct i2c_client *client = v4l2_get_subdevdata(&lens->sd);
++
++		usleep_range(GT9764_PARK_DELAY_US, GT9764_PARK_DELAY_US + 1000);
++		ret = i2c_smbus_read_word_swapped(client, GT9764_POSITION);
++		if (ret < 0)
++			return ret;
++		if (ret > GT9764_MAX_POSITION)
++			return -EIO;
++		lens->position = ret;
++		lens->position_valid = true;
++	}
 +
 +	while (lens->position != target) {
 +		position = lens->position;
@@ -165,6 +188,9 @@ index 0000000000000000000000000000000000000000..1cf63ca8a396402bd987700630bee115
 +{
 +	struct i2c_client *client = v4l2_get_subdevdata(&lens->sd);
 +	int ret;
++
++	if (lens->configured)
++		return 0;
 +
 +	ret = i2c_smbus_write_byte_data(client, GT9764_CONTROL, 0);
 +	if (ret)
@@ -186,12 +212,40 @@ index 0000000000000000000000000000000000000000..1cf63ca8a396402bd987700630bee115
 +		return ret;
 +
 +	usleep_range(100, 200);
-+	ret = gt9764_set_position(lens, GT9764_NEUTRAL_POSITION);
++	lens->configured = true;
++	return 0;
++}
++
++static int gt9764_restore_focus(struct gt9764 *lens, bool cold)
++{
++	int ret = gt9764_init(lens);
++
 +	if (ret)
 +		return ret;
 +
-+	usleep_range(GT9764_PARK_DELAY_US, GT9764_PARK_DELAY_US + 1000);
++	/* The factory power-on sequence starts at neutral once per power-up. */
++	if (cold) {
++		ret = gt9764_set_position(lens, GT9764_NEUTRAL_POSITION);
++		if (ret)
++			return ret;
++		usleep_range(GT9764_PARK_DELAY_US, GT9764_PARK_DELAY_US + 1000);
++	}
++
 +	return gt9764_move_gradually(lens, lens->focus->cur.val);
++}
++
++static int gt9764_power_down(struct gt9764 *lens)
++{
++	int ret;
++
++	usleep_range(GT9764_PARK_DELAY_US, GT9764_PARK_DELAY_US + 1000);
++	ret = regulator_bulk_disable(ARRAY_SIZE(lens->supplies), lens->supplies);
++	/* A failed bulk disable can still have cycled one of the rails. */
++	lens->configured = false;
++	lens->position_valid = false;
++	if (!ret)
++		lens->powered = false;
++	return ret;
 +}
 +
 +static int gt9764_suspend(struct device *dev)
@@ -205,18 +259,20 @@ index 0000000000000000000000000000000000000000..1cf63ca8a396402bd987700630bee115
 +		goto unlock;
 +	}
 +
-+	ret = gt9764_move_gradually(lens, GT9764_NEUTRAL_POSITION);
-+	if (ret) {
-+		dev_err(dev, "Failed to park lens; power remains enabled: %d\n", ret);
-+		goto unlock;
++	if (lens->configured) {
++		ret = gt9764_move_gradually(lens, GT9764_NEUTRAL_POSITION);
++		if (ret) {
++			dev_err(dev, "Failed to park lens; power remains enabled: %d\n", ret);
++			ret = -EBUSY;
++			goto unlock;
++		}
 +	}
 +
-+	usleep_range(GT9764_PARK_DELAY_US, GT9764_PARK_DELAY_US + 1000);
-+	ret = regulator_bulk_disable(ARRAY_SIZE(lens->supplies), lens->supplies);
-+	if (ret)
++	ret = gt9764_power_down(lens);
++	if (ret) {
 +		dev_err(dev, "Failed to disable regulators: %d\n", ret);
-+	else
-+		lens->powered = false;
++		ret = -EBUSY;
++	}
 +unlock:
 +	mutex_unlock(&lens->lock);
 +	return ret;
@@ -225,33 +281,35 @@ index 0000000000000000000000000000000000000000..1cf63ca8a396402bd987700630bee115
 +static int gt9764_resume(struct device *dev)
 +{
 +	struct gt9764 *lens = to_gt9764(dev_get_drvdata(dev));
++	bool cold;
 +	int ret;
 +
 +	mutex_lock(&lens->lock);
-+	if (!lens->powered) {
++	cold = !lens->powered;
++	if (cold) {
 +		ret = regulator_bulk_enable(ARRAY_SIZE(lens->supplies), lens->supplies);
 +		if (ret)
 +			goto unlock;
 +		lens->powered = true;
++		usleep_range(5000, 6000);
 +	}
 +
-+	usleep_range(5000, 6000);
-+	ret = gt9764_init(lens);
++	ret = gt9764_restore_focus(lens, cold);
 +	if (ret) {
-+		int park, disable;
++		int disable;
 +
-+		park = gt9764_move_gradually(lens, GT9764_NEUTRAL_POSITION);
-+		if (park) {
-+			dev_err(dev, "Failed to park lens; power remains enabled: %d\n", park);
-+			goto unlock;
++		if (lens->configured) {
++			int park = gt9764_move_gradually(lens, GT9764_NEUTRAL_POSITION);
++
++			if (park) {
++				dev_err(dev, "Failed to park lens; power remains enabled: %d\n", park);
++				goto unlock;
++			}
 +		}
 +
-+		usleep_range(GT9764_PARK_DELAY_US, GT9764_PARK_DELAY_US + 1000);
-+		disable = regulator_bulk_disable(ARRAY_SIZE(lens->supplies), lens->supplies);
++		disable = gt9764_power_down(lens);
 +		if (disable)
 +			dev_err(dev, "Failed to disable regulators: %d\n", disable);
-+		else
-+			lens->powered = false;
 +	}
 +unlock:
 +	mutex_unlock(&lens->lock);
@@ -271,7 +329,9 @@ index 0000000000000000000000000000000000000000..1cf63ca8a396402bd987700630bee115
 +	if (ret <= 0)
 +		return ret;
 +
-+	ret = gt9764_set_position(lens, ctrl->val);
++	ret = gt9764_init(lens);
++	if (!ret)
++		ret = gt9764_set_position(lens, ctrl->val);
 +	pm_runtime_put_autosuspend(dev);
 +	return ret;
 +}
@@ -282,7 +342,21 @@ index 0000000000000000000000000000000000000000..1cf63ca8a396402bd987700630bee115
 +
 +static int gt9764_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 +{
-+	return pm_runtime_resume_and_get(sd->dev);
++	struct gt9764 *lens = to_gt9764(sd);
++	int ret;
++
++	ret = pm_runtime_resume_and_get(sd->dev);
++	if (ret < 0)
++		return ret;
++
++	/* A busy suspend leaves runtime PM active without a resume callback. */
++	mutex_lock(&lens->lock);
++	if (!lens->configured || !lens->position_valid)
++		ret = gt9764_restore_focus(lens, false);
++	mutex_unlock(&lens->lock);
++	if (ret)
++		pm_runtime_put_autosuspend(sd->dev);
++	return ret;
 +}
 +
 +static int gt9764_close(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
