@@ -69,7 +69,7 @@ ESP（EFI 系统分区）内已有官方 `ukify` 和 ARM64 systemd-stub 生成�
 | 固件启动顺序 | 实机确认 `BootNext` 在运行前删除；一次性 EFI 程序返回错误后按 `BootOrder` 进入 systemd-boot，重启没有重复执行 | 核对从固件设置重新排序、取消选择后仍按用户顺序启动 |
 | SimpleInit 与一次性选择 | 平板已注册置顶的 SimpleInit `Boot####`，菜单可继续启动现有 SteamOS | 用实体键盘和侧键核对 Esc 选择、取消与顺序恢复 |
 | 系统发现与直接启动 | 固件复用 UEFI 库解析启动路径。ARM64 虚拟机上的两块 GPT ESP 有同名后备文件，完整路径和短分区路径均只启动指定分区 | 在平板用内置 ESP 和 USB ESP 复测一次性启动与回退；检查直接 UKI 和其他加载器的资源退出 |
-| 引导程序 | 官方 systemd-boot 已在现有 SteamOS 实机启动分离文件与旧 UKI，已设置三秒菜单 | 检查用户排序、首次安装及两种布局升级 |
+| 引导程序 | 官方 systemd-boot 已在现有 SteamOS 实机启动分离文件与旧 UKI，已设置三秒菜单。ARM64 虚拟机通过 Debian 签名 APT 升级引导程序；Valve 原装 `bootctl` 在双 ESP 测试中只更新目标分区 | 在平板检查 Debian 和 SteamOS 升级后的冷启动、用户排序与另一启动器；用两代 Valve 包验证 pacman 升级 |
 | 标准存储写入和 Fastboot 刷写 | 扫描不改 GPT，刷写只卸载目标。平板上已完成 512 MiB sparse 写入、全量读回与取消读取后的自动恢复 | 对照同机原厂继续优化传输和连续写入速度；实测长操作中的触屏、键盘和触控板 |
 | 系统运行时 EFI 变量 | 固件在 Boot Services 阶段把变量保存到 `persist/sunuefi/`；Linux 的 `efivarfs` 可读，固件运行时不支持写和删除 | 为固件 `SetVariable()` 接入与系统 UFS 有明确仲裁的持久化服务；用标准 `efibootmgr` 核对创建、排序、一次启动、删除和断电保存 |
 | EFI 层分区管理 | 未实现 | 先完成标准块读写和 GPT 安全检查；“伪动态分区”只有需求方向，未实现，不改变现有分区布局 |

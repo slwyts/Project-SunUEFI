@@ -412,6 +412,9 @@ Piano 的 mkinitcpio 配置只跳过这些钩子，保留系统及用户配置�
 systemd-boot 本身由发行版提供。成品启用 systemd 的 `systemd-boot-update.service`，
 用软件包里的 EFI 文件更新启动分区上的副本，不需要写固件变量。`piano-boot-config`
 让该服务等已安排的启动分区挂载完成；未配置启动分区挂载时，不额外启动挂载任务。
+SteamOS 用这个服务在下次开机同步 EFI 文件。Debian 的 `systemd-boot` 包还会在
+APT 配置软件包时执行更新，可能补录固件启动项；目标 ESP 没有 systemd-boot 时，
+Debian 包脚本可执行首次安装并接管默认 EFI 文件。
 
 Nyarch、Arch Denial 和 SteamOS 把 ESP 直接挂在 `/boot`，内核、initramfs 和启动菜单在同一个分区。
 Debian 把 ESP 挂在 `/boot/efi`，APT 管理的内核文件仍留在根文件系统的 `/boot`。
