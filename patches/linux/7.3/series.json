@@ -11,8 +11,8 @@
   "kernel_version": "7.3.3",
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
-  "target_tree": "ab5959d1857097972fa7883d74db08d2b01afaa0",
-  "original_target_commit": "d981d952e952d447206c7ea486e34940fc21a71a",
+  "target_tree": "840c46abcdca3f21d0cd66c54b4bdfff393c5b5e",
+  "original_target_commit": "40d5287b1dfc59bc0821b88655a80404149dc5fb",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -3322,6 +3322,19 @@
         "status": "downstream",
         "url": "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/drivers/gpu/drm/msm/msm_drv.c",
         "drop_when": "Opening a display-only MSM DRM node no longer attempts to initialize a missing GPU."
+      }
+    },
+    {
+      "file": "0253-LOCAL-drm-msm-adreno-legacy-regulators.patch",
+      "sha256": "871ea17617f866000bad074ab4e4d061d0021c460dad73f223007a45f5927aaa",
+      "original_commit": "40d5287b1dfc59bc0821b88655a80404149dc5fb",
+      "original_parent": "d981d952e952d447206c7ea486e34940fc21a71a",
+      "committer_date": "2026-11-21T00:25:32+08:00",
+      "tree": "840c46abcdca3f21d0cd66c54b4bdfff393c5b5e",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/drivers/gpu/drm/msm/msm_gpu.c",
+        "drop_when": "The upstream MSM driver only requests legacy supply handles for GPUs whose runtime power callbacks use those handles."
       }
     }
   ],
