@@ -61,12 +61,16 @@ jobs:
         with:
           path: build/toolchains/*.tar.zst
           key: llvm-arm64-${{ hashFiles('config/kernel-llvm.json', 'tools/desktop/prepare_kernel_llvm.py') }}
-      - if: ${{ !endsWith(matrix.target, '-denial') }}
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+      - name: Restore the overlay compiler cache
+        id: overlay-ccache
+        if: ${{ !endsWith(matrix.target, '-denial') }}
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: build/ccache
-          key: ccache-${{ runner.arch }}-overlays-${{ matrix.target }}-${{ github.sha }}
-          restore-keys: ccache-${{ runner.arch }}-overlays-${{ matrix.target }}-
+          key: ccache-${{ runner.arch }}-overlays-${{ matrix.target }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ccache-${{ runner.arch }}-overlays-${{ matrix.target }}-${{ github.sha }}-
+            ccache-${{ runner.arch }}-overlays-${{ matrix.target }}-
       - name: Restore the last completed overlay package set
         if: ${{ !endsWith(matrix.target, '-denial') }}
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
@@ -75,9 +79,11 @@ jobs:
           key: overlay-inputs-v1-${{ matrix.target }}-${{ inputs.image_id }}-run-${{ github.run_id }}
           restore-keys: overlay-inputs-v1-${{ matrix.target }}-${{ inputs.image_id }}-
       - name: Build and seal the native overlay packages
+        id: build
         run: |
           set -o pipefail
           mkdir -p build/logs build/ccache
+          touch build/ccache-start
           docker run --rm --privileged -v "$PWD:/workspace" -w /workspace \
             -e SUNUEFI_BUILD_ENVIRONMENT_ID -e SUNUEFI_BUILD_TARGET \
             -e SUNUEFI_OVERLAY_RELEASE \
@@ -144,3 +150,20 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
           compression-level: 0
+      - name: Check for an updated overlay compiler cache
+        id: ccache-update
+        if: >-
+          ${{ !cancelled() && steps.overlay-ccache.outputs.cache-primary-key != '' &&
+              steps.overlay-ccache.outputs.cache-hit != 'true' &&
+              (steps.build.outcome == 'success' || steps.build.outcome == 'failure') }}
+        run: |
+          if [[ -f build/ccache-start ]] &&
+             [[ -n "$(find build/ccache -type f -newer build/ccache-start -print -quit)" ]]; then
+            printf 'changed=true\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Save the updated overlay compiler cache
+        if: ${{ !cancelled() && steps.ccache-update.outputs.changed == 'true' }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: build/ccache
+          key: ${{ steps.overlay-ccache.outputs.cache-primary-key }}
