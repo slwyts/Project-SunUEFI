@@ -15,6 +15,7 @@ DefinitionBlock ("", "DSDT", 2, "SUNUEF", "PIANO   ", 1)
         Device (UFS0)
         {
             Name (_HID, "QCOM24A5")
+            Name (_CID, "PCI\\CC_010901")
             Name (_CLS, Package () { 0x01, 0x09, 0x01 }) // Mass storage, UFS, UFSHCI
             Name (_UID, Zero)
             Name (_CCA, One)
