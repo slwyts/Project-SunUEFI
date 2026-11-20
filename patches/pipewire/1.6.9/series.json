@@ -109,7 +109,7 @@
     },
     {
       "file": "0011-libcamera-0.8-camera-location.patch",
-      "sha256": "710c09ac8fe9e08fd6f9651d5bbc94dae49d31227ca085a4830be2701cb07b77",
+      "sha256": "a35b4e9d829f974126e197395507dbaf10945bbd8cf0b17c80673202e330ebe2",
       "upstream": {
         "status": "merged",
         "url": "https://github.com/PipeWire/pipewire/commit/54f2f51f5233026e608f8235f5377b9b473918e3",

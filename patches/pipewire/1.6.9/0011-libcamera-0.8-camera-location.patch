@@ -6,7 +6,7 @@ Subject: [PATCH] spa: libcamera: device: 0.8 compatibility
 Version 0.8 of libcamera has incompatible changes, so adjust the code,
 while keeping compatibility with older versions as well.
 
-Include the version header explicitly for the 1.6.9 backport.
+Include the version header explicitly for the 1.6 backport.
 ---
  spa/plugins/libcamera/libcamera-device.cpp | 10 ++++++++++
  1 file changed, 10 insertions(+)
@@ -14,9 +14,7 @@ Include the version header explicitly for the 1.6.9 backport.
 diff --git a/spa/plugins/libcamera/libcamera-device.cpp b/spa/plugins/libcamera/libcamera-device.cpp
 --- a/spa/plugins/libcamera/libcamera-device.cpp
 +++ b/spa/plugins/libcamera/libcamera-device.cpp
-@@ -27,8 +27,9 @@
- #include <libcamera/base/span.h>
- 
+@@ -29,6 +29,7 @@
  #include <libcamera/camera.h>
  #include <libcamera/property_ids.h>
 +#include <libcamera/version.h>

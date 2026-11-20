@@ -1,0 +1,32 @@
+From f34daae3b69fa90d11cd19966696754fb9cd4ab7 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Barnab=C3=A1s=20P=C5=91cze?= <pobrn@protonmail.com>
+Date: Wed, 2 Sep 2026 13:59:07 +0200
+Subject: [PATCH] spa: libcamera: source: use `std::span`
+
+This was missed in 84e7b744a6c6 ("spa: libcamera: use `std::span`"),
+so fix it now.
+---
+ spa/plugins/libcamera/libcamera-source.cpp | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/spa/plugins/libcamera/libcamera-source.cpp b/spa/plugins/libcamera/libcamera-source.cpp
+index fba3d8b0bc..a9095d40e9 100644
+--- a/spa/plugins/libcamera/libcamera-source.cpp
++++ b/spa/plugins/libcamera/libcamera-source.cpp
+@@ -8,6 +8,7 @@
+ #include <cstddef>
+ #include <limits>
+ #include <optional>
++#include <span>
+ #include <type_traits>
+ #include <utility>
+ 
+@@ -303,7 +304,7 @@ void freeBuffers(struct impl *impl, struct port *port)
+ }
+ 
+ [[nodiscard]]
+-std::size_t count_unique_fds(libcamera::Span<const libcamera::FrameBuffer::Plane> planes)
++std::size_t count_unique_fds(std::span<const libcamera::FrameBuffer::Plane> planes)
+ {
+ 	std::size_t c = 0;
+ 	int fd = -1;
