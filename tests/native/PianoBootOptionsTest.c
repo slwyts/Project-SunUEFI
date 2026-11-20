@@ -33,6 +33,7 @@ STATIC EFI_STATUS FilesystemStatus;
 STATIC CONST EFI_DEVICE_PATH_PROTOCOL *BootPath;
 STATIC UINTN RetryChecks,AlternatePaths;
 STATIC BOOLEAN HasNext,NextMissing,OrphanMenu,AllowRetry,RetainApplication,ExitOnStart,ExitServices,HasAlternatePath;
+STATIC BOOLEAN DeferredNext;
 STATIC EFI_STATUS NextReadStatus,SaveStatus,PrepareStatus,SetStatus,ClearStatus,ImageStatus[4];
 STATIC UINT16 Current;
 STATIC UINT8 Optional[]={0,0xff,0,7,8};
@@ -123,7 +124,8 @@ EFI_STATUS EFIAPI EfiBootManagerVariableToLoadOption(CHAR16 *Name,EFI_BOOT_MANAG
     *Option=(EFI_BOOT_MANAGER_LOAD_OPTION){.OptionNumber=0xf0,.FilePath=&MenuPath.Volume.Header};return EFI_SUCCESS;
   }
   if(Same(Name,L"Boot0002")){*Option=Options[1];return EFI_SUCCESS;}
-  assert(Same(Name,L"Boot0017")&&!HasNext&&NextDeletes&&NextSaves);
+  assert(Same(Name,L"Boot0017"));
+  assert((!HasNext&&NextDeletes&&NextSaves)||(HasNext&&DeferredNext&&!NextDeletes&&!NextSaves));
   if(NextMissing)return EFI_NOT_FOUND;
   *Option=NextOption;return EFI_SUCCESS;
 }
@@ -155,6 +157,10 @@ EFI_STATUS EFIAPI GetFileDevicePathFromAnyFv(CONST EFI_GUID *Name,EFI_SECTION_TY
 EFI_STATUS PianoNvFileSave(BOOLEAN Freeze) {
   assert(!Freeze&&NextDeletes&&!Loads);
   ++NextSaves;return SaveStatus;
+}
+BOOLEAN PianoNvFileCanConsumeBootNext(UINT16 Number){
+  assert(Number==NextNumber);
+  return !DeferredNext;
 }
 STATIC EFI_STATUS Prepare(CONST EFI_DEVICE_PATH_PROTOCOL *Path){
   assert(Path&&!BootPath);++PrepareCalls;
@@ -230,6 +236,7 @@ STATIC VOID Reset(VOID){
   Bs.LocateDevicePath=Locate;Rt.GetVariable=Get;Rt.SetVariable=Set;
   Rt.GetNextVariableName=NextVariable;gBS=&Bs;gRT=&Rt;
   Count=2;HasNext=NextMissing=OrphanMenu=FALSE;NextNumber=23;NextSize=sizeof(UINT16);
+  DeferredNext=FALSE;
   Loads=ReadySignals=NextDeletes=CurrentSets=CurrentDeletes=NextSaves=0;
   Adds=Deletes=Refreshes=PrepareCalls=FinishCalls=LoadFileLookups=0;
   BootPath=NULL;Position=MAX_UINTN;SaveStatus=PrepareStatus=FilesystemStatus=EFI_SUCCESS;
@@ -321,6 +328,25 @@ STATIC VOID TestBootNextSize(VOID){
   assert(PianoStartBootOption((VOID *)1,&Device,&App,&Dispatch)==EFI_DEVICE_ERROR);
   assert(!Loads&&!PrepareCalls&&!NextDeletes&&!NextSaves);
 }
+STATIC VOID TestBootNextPersistence(VOID){
+  PIANO_FV_APPLICATION App={0};
+  EFI_HANDLE Device;
+  PIANO_BOOT_DISPATCH Dispatch={.Selection=PianoBootAutomatic,.PrepareSystem=Prepare,
+    .FinishSystem=FinishSystem,.WatchdogExpired=Expired};
+
+  Reset();HasNext=DeferredNext=TRUE;ImageStatus[2]=EFI_SUCCESS;
+  assert(PianoStartBootOption((VOID *)1,&Device,&App,&Dispatch)==EFI_SUCCESS);
+  assert(HasNext&&!NextDeletes&&!NextSaves&&Loads==2&&Order[0]==1&&Order[1]==2);
+  memset(&App,0,sizeof(App));Loads=CurrentSets=0;
+  Dispatch.Selection=PianoBootSelected;Dispatch.Number=23;ImageStatus[3]=EFI_SUCCESS;
+  assert(PianoStartBootOption((VOID *)1,&Device,&App,&Dispatch)==EFI_SUCCESS);
+  assert(HasNext&&!NextDeletes&&!NextSaves&&Loads==1&&Order[0]==3);
+
+  Reset();memset(&App,0,sizeof(App));HasNext=TRUE;SaveStatus=EFI_NOT_STARTED;
+  Dispatch.Selection=PianoBootAutomatic;
+  assert(PianoStartBootOption((VOID *)1,&Device,&App,&Dispatch)==EFI_LOAD_ERROR);
+  assert(!HasNext&&NextDeletes==1&&NextSaves==1&&Loads==1&&Order[0]==3);
+}
 int main(void){
   PIANO_FV_APPLICATION App;EFI_HANDLE Device;
   PIANO_BOOT_DISPATCH Dispatch={.Selection=PianoBootAutomatic,.PrepareSystem=Prepare,
@@ -372,6 +398,7 @@ int main(void){
   assert(!LoadFileLookups&&!Loads&&!PrepareCalls&&!FinishCalls);
   TestFallback();
   TestBootNextSize();
+  TestBootNextPersistence();
   Reset();
   puts("BootOrder, one-time choices, NV save, firmware entry and binary load options passed");
   return 0;

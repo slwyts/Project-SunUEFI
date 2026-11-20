@@ -3,4 +3,4 @@
 #include <Uefi.h>
 EFI_STATUS PianoNvFileStart(VOID);
 EFI_STATUS PianoNvFileSave(BOOLEAN Freeze);
-// Save and freeze only if this is the partition backing the current store.
+BOOLEAN PianoNvFileCanConsumeBootNext(UINT16 Number);

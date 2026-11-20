@@ -9,6 +9,7 @@
 #include <Guid/FileInfo.h>
 #include <Guid/FileSystemInfo.h>
 #include <Guid/EventGroup.h>
+#include <Guid/GlobalVariable.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
 #include <Library/BaseMemoryLib.h>
@@ -26,6 +27,7 @@ STATIC UINT64 mSequence,mSavedChanges;
 STATIC UINT32 mActive;
 STATIC BOOLEAN mStarted,mBusy;
 STATIC BOOLEAN mUnavailable,mExited;
+STATIC UINTN mRestoredBootNext=MAX_UINTN;
 STATIC EFI_EVENT mExit;
 STATIC CHAR16 *mNames[]={L"\\sunuefi\\nvram-a.bin",L"\\sunuefi\\nvram-b.bin"};
 STATIC UINT32 U32(CONST UINT8 *P){UINT32 V;CopyMem(&V,P,4);return V;}
@@ -75,7 +77,14 @@ STATIC EFI_STATUS ReadSlot(UINT32 Slot,UINT8 **Data,UINTN *Bytes){
 STATIC EFI_STATUS Restore(UINT8 *Data,UINTN Bytes){
   CHAR16 Name[NAME_BYTES/2];
   for(UINTN At=HEADER;At<Bytes;){EFI_GUID Guid;CopyMem(&Guid,Data+At,16);UINT32 N=U32(Data+At+16),Size=U32(Data+At+20),Attr=U32(Data+At+24);
-    CopyMem(Name,Data+At+28,N);EFI_STATUS S=gRT->SetVariable(Name,&Guid,Attr,Size,Data+At+28+N);
+    CopyMem(Name,Data+At+28,N);
+    EFI_STATUS S=gRT->SetVariable(Name,&Guid,Attr,Size,Data+At+28+N);
+    if(S==EFI_SUCCESS && Size==sizeof(UINT16) &&
+       CompareGuid(&Guid,&gEfiGlobalVariableGuid) && !StrCmp(Name,L"BootNext")){
+      UINT16 Next;
+      CopyMem(&Next,Data+At+28+N,sizeof(Next));
+      mRestoredBootNext=Next;
+    }
     if(S!=EFI_SUCCESS&&S!=EFI_WRITE_PROTECTED)return S;At+=28+N+Size;
   }return EFI_SUCCESS;
 }
@@ -109,6 +118,12 @@ EFI_STATUS PianoNvFileStart(VOID){
   mStarted=TRUE;mSavedChanges=mProtocol.Changes;
   DEBUG((DEBUG_WARN,"PIANO_NV_FILE_START status=%r sequence=%lu backend=persist boot_services_only=1\n",S,mSequence));return S;
 }
+
+BOOLEAN PianoNvFileCanConsumeBootNext(UINT16 Number) {
+  // A request restored from an unwritable snapshot would run again next boot.
+  return mStarted || mRestoredBootNext!=Number;
+}
+
 STATIC EFI_STATUS Collect(UINT8 *Data,UINTN *Bytes){
   CHAR16 Name[NAME_BYTES/2]={0};EFI_GUID Guid={0};UINTN At=HEADER;
   for(UINTN Count=0;Count<4096;++Count){UINTN N=sizeof(Name);EFI_STATUS S=gRT->GetNextVariableName(&N,Name,&Guid);

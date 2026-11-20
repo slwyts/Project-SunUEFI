@@ -278,6 +278,10 @@ EFI_STATUS PianoStartBootOption(EFI_HANDLE Parent,EFI_HANDLE *Device,
       Status=EFI_NOT_FOUND;
     else if(Status!=EFI_SUCCESS && Status!=EFI_NOT_FOUND)
       return mOptionStatus=Status;
+    if(Status==EFI_SUCCESS && !PianoNvFileCanConsumeBootNext(Next)) {
+      DEBUG((DEBUG_WARN,"PIANO_BOOT_NEXT_DEFERRED number=%04x reason=nv_file_not_writable\n",Next));
+      Status=EFI_NOT_FOUND;
+    }
   }
   if(Status==EFI_SUCCESS) {
     // Persist deletion before loading the once-only target, even if it hangs.
