@@ -250,6 +250,11 @@ SDDM 加载 Denial 原版 Wayland 会话，默认使用触控布局。Piano 的�
 指向 GPU 的稳定 udev 路径，内屏输出仍由显示控制器负责。相机和其他硬件继续
 用 Piano 的标准驱动和发行版软件包。独立的本地 rootfs 构建仍可使用上游包。
 
+两版默认使用 Thunar、foot 和 Chromium，随发行版安装文件传输、拼音、
+剪贴板、mpv 和 imv。文件关联用标准 XDG 设置，Thunar 通过 GVfs 访问
+U 盘、手机与 SMB。权限确认、网络、蓝牙及音量继续由 Denial 提供；
+文件选择和屏幕共享使用随 Denial 配置的 GTK 与 wlr 门户。
+
 开发时可用 `./build.sh denial --test` 测试
 [SensorProxy 补丁](../../patches/denial/0.6.8/series.json)。
 在 ARM64 构建环境运行 `./build.sh denial --release`，或在 x86-64 上用

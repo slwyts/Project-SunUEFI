@@ -1,4 +1,5 @@
 """Install Denial's signed native packages and configure the tablet session."""
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -16,8 +17,24 @@ APTORIGIN = ('trixie', 'trixie', 'Denial')
 ENGINE = 'denial-flutter-engine'
 PLUGINS = 'denial-plugin-manager'
 PACKAGES = ('denial', ENGINE)
-DESKTOP_PACKAGES = ('fcitx5', 'fcitx5-chinese-addons', 'foot', 'sddm', 'thunar', 'upower',
-                    'weston', 'wireplumber')
+DESKTOP_PACKAGES = (
+    'brightnessctl', 'ddcutil', 'fcitx5', 'fcitx5-chinese-addons', 'foot', 'gvfs',
+    'imv', 'mpv', 'pipewire-pulse', 'sddm', 'thunar', 'thunar-volman', 'tumbler',
+    'upower', 'weston', 'wireplumber', 'wl-clipboard', 'xdg-terminal-exec', 'xdg-utils',
+)
+DEBIAN_DESKTOP_PACKAGES = (
+    *DESKTOP_PACKAGES, 'brightness-udev', 'fcitx5-config-qt', 'fcitx5-frontend-gtk3',
+    'fcitx5-frontend-gtk4', 'fcitx5-frontend-qt6', 'fonts-nerd-symbols',
+    'fonts-noto-cjk', 'fonts-noto-color-emoji',
+    'gvfs-backends', 'gvfs-fuse', 'libddcutil5', 'qt6-virtualkeyboard-plugin',
+    'qt6-wayland', 'xdg-desktop-portal', 'xdg-desktop-portal-gtk', 'xdg-desktop-portal-wlr',
+    'zenity',
+)
+ARCH_DESKTOP_PACKAGES = (
+    *DESKTOP_PACKAGES, 'fcitx5-configtool', 'fcitx5-gtk', 'fcitx5-qt', 'gvfs-mtp',
+    'gvfs-smb', 'noto-fonts-emoji', 'qt6-virtualkeyboard', 'qt6-wayland',
+    'ttf-nerd-fonts-symbols-mono', 'vulkan-freedreno',
+)
 APT_SOURCE = 'sources.list.d/denial.sources'
 APT_KEY = '/etc/apt/keyrings/denial.asc'
 PACMAN_INCLUDE = 'Include = /etc/pacman.d/denial.conf'
@@ -94,6 +111,77 @@ def configure_pacman(rootfs, put):
         put(rootfs, 'etc/pacman.conf', config.rstrip() + '\n\n' + PACMAN_INCLUDE + '\n')
 
 
+def configure_thunar_terminal(rootfs, put):
+    # Seed Thunar's user defaults without changing the package's conffile.
+    stock = guest_resolve(rootfs, '/etc/xdg/Thunar/uca.xml')
+    if not stock.is_file():
+        return
+    original = stock.read_text()
+    settings = original
+    for opener in ('exo-open', 'xfce-open'):
+        settings = settings.replace(
+            f'{opener} --working-directory %f --launch TerminalEmulator',
+            'xdg-terminal-exec --dir=%f')
+    if settings == original:
+        return
+
+    relative = '.config/Thunar/uca.xml'
+    put(rootfs, 'etc/skel/' + relative, settings)
+    name = 'home/piano/' + relative
+    home = guest_resolve(rootfs, '/home/piano')
+    path = guest_resolve(rootfs, '/' + name)
+    if home.is_dir() and not path.exists() and not path.is_symlink():
+        directories = [directory for directory in (path.parent, path.parent.parent)
+                       if not directory.exists()]
+        put(rootfs, name, settings)
+        owner = home.stat()
+        for entry in (*directories, path):
+            os.chown(entry, owner.st_uid, owner.st_gid)
+
+
+def configure_applications(rootfs, put):
+    put(rootfs, 'etc/xdg/denial-mimeapps.list',
+        '[Default Applications]\n'
+        'inode/directory=thunar.desktop;\n'
+        'text/html=chromium.desktop;\n'
+        'x-scheme-handler/http=chromium.desktop;\n'
+        'x-scheme-handler/https=chromium.desktop;\n'
+        'image/jpeg=imv.desktop;\n'
+        'image/png=imv.desktop;\n'
+        'image/webp=imv.desktop;\n'
+        'video/mp4=mpv.desktop;\n'
+        'video/webm=mpv.desktop;\n'
+        'video/x-matroska=mpv.desktop;\n')
+    put(rootfs, 'etc/xdg/denial-xdg-terminals.list', 'foot.desktop\n')
+    for entry, command in (('foot-server.desktop', 'foot --server'),
+                           ('footclient.desktop', 'footclient')):
+        put(rootfs, 'usr/local/share/applications/' + entry,
+            f'[Desktop Entry]\nType=Application\nName=Foot\nExec={command}\nHidden=true\n')
+    configure_thunar_terminal(rootfs, put)
+    put(rootfs, 'etc/xdg/fcitx5/profile',
+        '[Groups/0]\nName=Default\nDefault Layout=us\nDefaultIM=pinyin\n\n'
+        '[Groups/0/Items/0]\nName=keyboard-us\nLayout=\n\n'
+        '[Groups/0/Items/1]\nName=pinyin\nLayout=\n\n'
+        '[GroupOrder]\n0=Default\n')
+    # Denial owns physical keyboard layouts. Keep its native text-input path.
+    put(rootfs, 'etc/xdg/fcitx5/conf/wayland.conf',
+        'Allow Overriding System XKB Settings=False\n')
+    # Let the stock volume manager mount new drives without opening a window.
+    put(rootfs, 'etc/xdg/xfce4/xfconf/xfce-perchannel-xml/thunar-volman.xml',
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<channel name="thunar-volman" version="1.0">\n'
+        '  <property name="automount-drives" type="empty">\n'
+        '    <property name="enabled" type="bool" value="true"/>\n'
+        '  </property>\n'
+        '</channel>\n')
+    for entry, name, command in (
+            ('org.fcitx.Fcitx5.desktop', 'Fcitx 5', '/usr/bin/fcitx5'),
+            ('thunar.desktop', 'Thunar', '/usr/bin/thunar --daemon')):
+        put(rootfs, 'etc/xdg/autostart/' + entry,
+            f'[Desktop Entry]\nName={name}\nType=Application\n'
+            f'Exec={command}\nOnlyShowIn=Denial;\nNoDisplay=true\n')
+
+
 def configure_session(rootfs, put):
     session = guest_resolve(rootfs, '/' + SESSION)
     if not session.is_file() or 'Exec=/usr/bin/denial-session' not in session.read_text().splitlines():
@@ -112,9 +200,7 @@ def configure_session(rootfs, put):
     put(rootfs, 'etc/sddm.conf.d/10-sunuefi.conf',
         '[General]\nDisplayServer=wayland\n\n'
         '[Autologin]\nUser=piano\nSession=denial.desktop\n')
-    put(rootfs, 'etc/xdg/autostart/org.fcitx.Fcitx5.desktop',
-        '[Desktop Entry]\nName=Fcitx 5\nType=Application\n'
-        'Exec=/usr/bin/fcitx5\nOnlyShowIn=Denial;\n')
+    configure_applications(rootfs, put)
     # Start the greeter after the native KMS device is available.
     name = 'sddm.service.d/20-native-kms.conf'
     put(rootfs, 'etc/systemd/system/' + name,
@@ -150,19 +236,16 @@ def install_debian(rootfs, run, *, manifest=None):
     configure_apt(rootfs, put)
     apt = ['chroot', rootfs, 'env', 'DEBIAN_FRONTEND=noninteractive', 'apt-get']
     install = ('install', '-y', '--no-remove', '--no-install-recommends')
-    extras = (*DESKTOP_PACKAGES, 'fcitx5-frontend-gtk3', 'fcitx5-frontend-gtk4',
-              'fcitx5-frontend-qt6', 'pipewire-pulse', 'qt6-virtualkeyboard-plugin',
-              'xdg-desktop-portal', 'xdg-desktop-portal-gtk', 'xdg-desktop-portal-wlr')
     expected = None
     with build_devices(rootfs), build_resolver(rootfs):
         run([*apt, '-o', 'APT::Update::Error-Mode=any',
              '-o', 'Dir::Etc::sourcelist=' + APT_SOURCE, '-o', 'Dir::Etc::sourceparts=-',
              '-o', 'APT::Get::List-Cleanup=false', 'update'])
         if manifest is None:
-            run([*apt, *install, *PACKAGES, *extras])
+            run([*apt, *install, *PACKAGES, *DEBIAN_DESKTOP_PACKAGES])
         else:
             expected = install_published_debian(rootfs, run, apt, manifest, install)
-            run([*apt, *install, '--no-upgrade', *extras])
+            run([*apt, *install, '--no-upgrade', *DEBIAN_DESKTOP_PACKAGES])
     versions = debian_versions(rootfs)
     versions = (verified_versions(expected, versions) if expected else
                 {name: versions[name] for name in PACKAGES})
@@ -188,11 +271,9 @@ def install_published_arch(rootfs, guest, manifest):
 
 def install_arch(rootfs, *, manifest=None):
     from build_nyarch_apps import guest_environment
-    from build_release_rootfs import build_resolver, put
+    from build_release_rootfs import build_resolver, put, target
 
     configure_pacman(rootfs, put)
-    extras = (*DESKTOP_PACKAGES, 'fcitx5-gtk', 'fcitx5-qt', 'pipewire-pulse',
-              'qt6-virtualkeyboard', 'vulkan-freedreno')
     expected = None
     with build_resolver(rootfs), guest_environment(rootfs) as guest:
         guest(['pacman-key', '--add', '/etc/pacman.d/denial.asc'])
@@ -208,11 +289,17 @@ def install_arch(rootfs, *, manifest=None):
         else:
             expected = install_published_arch(rootfs, guest, manifest)
             targets = []
-        guest(['pacman', '-S', '--needed', '--noconfirm', *targets, *extras])
+        guest(['pacman', '-S', '--needed', '--noconfirm', *targets, *ARCH_DESKTOP_PACKAGES])
         result = guest(['pacman', '-Q', *(expected or PACKAGES)], text=True, stdout=subprocess.PIPE)
         versions = dict(line.split() for line in result.stdout.splitlines())
         if expected:
             versions = verified_versions(expected, versions)
+        fonts = target(rootfs, 'etc/fonts/conf.d/10-nerd-font-symbols.conf')
+        if not fonts.exists() and not fonts.is_symlink():
+            fonts.symlink_to('/usr/share/fontconfig/conf.avail/10-nerd-font-symbols.conf')
+        put(rootfs, 'etc/locale.gen', 'en_US.UTF-8 UTF-8\nzh_CN.UTF-8 UTF-8\n')
+        put(rootfs, 'etc/locale.conf', 'LANG=zh_CN.UTF-8\nLANGUAGE=zh_CN:zh\n')
+        guest(['locale-gen'])
         configure_session(rootfs, put)
         guest(['systemctl', 'enable', 'sddm.service'])
     return versions
