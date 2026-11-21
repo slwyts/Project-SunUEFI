@@ -255,6 +255,19 @@ def graphics_test(_args):
     print(output / 'graphics-readback.exe')
 
 
+def kmdf_headers(config, kits):
+    major = config.findtext('{*}KMDF_VERSION_MAJOR')
+    minor = config.findtext('{*}KMDF_VERSION_MINOR')
+    if not major or not minor:
+        raise ValueError('Specify the KMDF major and minor versions in the WDK project')
+    version = f'{major}.{minor}'
+    for kit in kits:
+        directory = kit.parent / 'wdf/kmdf' / version
+        if (directory / 'wdf.h').is_file():
+            return directory
+    raise ValueError(f'Missing KMDF {version} headers in the supplied Windows kits')
+
+
 def wdk_driver_options(config, description, kits):
     def locate(options, purpose):
         match = next((path for path in options if path.exists()), None)
@@ -267,13 +280,8 @@ def wdk_driver_options(config, description, kits):
     headers, libraries = [], []
     dependencies = ['bufferoverflowfastfailk.lib', 'ntoskrnl.lib']
     if framework == 'KMDF':
-        major = config.findtext('{*}KMDF_VERSION_MAJOR')
-        minor = config.findtext('{*}KMDF_VERSION_MINOR')
-        if not major or not minor:
-            raise ValueError('Specify the KMDF major and minor versions in the WDK project')
-        version = f'{major}.{minor}'
-        headers.append(locate((kit.parent / 'wdf/kmdf' / version for kit in kits), f'KMDF {version} headers'))
-        wdf_dirs = [kit.parent.parent / 'Lib/wdf/kmdf/ARM64' / version for kit in kits]
+        headers.append(kmdf_headers(config, kits))
+        wdf_dirs = [kit.parent.parent / 'Lib/wdf/kmdf/ARM64' / headers[0].name for kit in kits]
         libraries.extend(locate((path / name for path in wdf_dirs), name)
                          for name in ('wdfdriverentry.lib', 'wdfldr.lib'))
         dependencies.extend(('hal.lib', 'wmilib.lib'))
@@ -352,6 +360,8 @@ def llvm_driver(project, kits):
     directories, libraries = [], []
     if kind == 'Driver':
         directories, libraries, entry = wdk_driver_options(config, description, kits)
+    elif kind == 'StaticLibrary' and config.findtext('{*}DriverType') == 'KMDF':
+        directories.append(kmdf_headers(config, kits))
     elif kind != 'StaticLibrary':
         raise ValueError(f'{project.name}: build this driver type with the full MSBuild/WDK toolset')
     # Kernel CRT headers must win over the user CRT, including with split kits.

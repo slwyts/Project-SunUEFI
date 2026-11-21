@@ -35,6 +35,8 @@ on:
       - 'tests/unit/test_rpmh_provider.py'
       - 'tests/native/ScmiPerfTest.c'
       - 'tests/unit/test_scmi_perf.py'
+      - 'tests/native/SpmiArbiterTest.c'
+      - 'tests/unit/test_spmi_arbiter.py'
       - 'tests/native/UfsControllerTest.c'
       - 'tests/unit/test_ufs_controller.py'
       - 'tools/build/windows.py'
@@ -72,6 +74,7 @@ jobs:
           --pattern test_ufs_transfer.py --pattern test_ufs_link.py --pattern test_ufs_platform.py
           --pattern test_piano_ufs_clock.py --pattern test_piano_ufs_power.py --pattern test_ufs_controller.py
           --pattern test_piano_qup_power.py --pattern test_rpmh_provider.py --pattern test_scmi_perf.py
+          --pattern test_spmi_arbiter.py
   readback:
     runs-on: windows-11-arm
     steps:
