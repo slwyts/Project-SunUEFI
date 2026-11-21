@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 #pragma once
 #include "fabric.h"
+#include "vrm.h"
 
 enum rpmh_rail { RPMH_XO, RPMH_CX, RPMH_MX, RPMH_RAIL_COUNT };
 
@@ -24,6 +25,7 @@ struct rpmh_client {
     struct rpmh_client *next;
     uint32_t corner[RPMH_RAIL_COUNT];
     uint32_t avg[RPMH_FABRIC_PATH_COUNT], peak[RPMH_FABRIC_PATH_COUNT];
+    enum rpmh_supply_load ufs[RPMH_UFS_SUPPLY_COUNT];
 };
 
 struct rpmh_provider {
@@ -31,6 +33,7 @@ struct rpmh_provider {
     struct rpmh_client *clients;
     struct rpmh_db_entry rail[RPMH_RAIL_COUNT];
     struct rpmh_fabric fabric;
+    struct rpmh_vrm vrm;
     struct rpmh_boot_votes floor, applied;
     unsigned slots, adopted, touched_paths, restore_rails, restore_bcms;
 };
@@ -49,6 +52,10 @@ int rpmh_client_close(struct rpmh_provider *, struct rpmh_client *);
 int rpmh_set_level(struct rpmh_provider *, struct rpmh_client *, enum rpmh_rail, uint32_t level);
 int rpmh_set_bandwidth(struct rpmh_provider *, struct rpmh_client *, enum rpmh_fabric_path,
                        uint32_t avg_kBps, uint32_t peak_kBps);
+/* Active AP votes only. The caller has quiesced the storage device before
+ * requesting either rail off; a stopped HBA alone does not prove that. */
+int rpmh_set_ufs_supplies(struct rpmh_provider *, struct rpmh_client *,
+                          enum rpmh_supply_load vcc, enum rpmh_supply_load vccq);
 /* Restore the last accepted client demands after an unknown completion. */
 int rpmh_provider_can_reconcile(const struct rpmh_provider *);
 int rpmh_provider_reconcile(struct rpmh_provider *);

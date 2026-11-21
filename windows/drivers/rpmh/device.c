@@ -95,7 +95,7 @@ static NTSTATUS hold_idle(RPMH_DEVICE *d)
 
 static int can_restore(const struct rpmh_provider *p)
 {
-    return (p->restore_rails || p->restore_bcms) && rpmh_provider_can_reconcile(p);
+    return (p->restore_rails || p->restore_bcms || p->vrm.restore) && rpmh_provider_can_reconcile(p);
 }
 
 static void retry_later(RPMH_DEVICE *d)
@@ -440,6 +440,29 @@ static NTSTATUS set_bandwidth(PVOID context, struct rpmh_client *client, enum rp
     return s;
 }
 
+static NTSTATUS set_ufs_supplies(PVOID context, struct rpmh_client *client,
+                                 enum rpmh_supply_load vcc, enum rpmh_supply_load vccq)
+{
+    RPMH_DEVICE *d = rpmh_device((WDFDEVICE)context);
+    lock_device(d);
+    NTSTATUS s = gone(d) ? STATUS_DEVICE_REMOVED : !d->online ? STATUS_DEVICE_NOT_READY :
+                 rpmh_set_ufs_supplies(&d->provider, client, vcc, vccq) ? STATUS_SUCCESS : STATUS_IO_DEVICE_ERROR;
+    update_retry(d);
+    unlock_device(d);
+    return s;
+}
+
+static NTSTATUS adopt_regulators(PVOID context, const struct rpmh_vrm_votes *votes)
+{
+    RPMH_DEVICE *d = rpmh_device((WDFDEVICE)context);
+    lock_device(d);
+    NTSTATUS s = gone(d) ? STATUS_DEVICE_REMOVED : !d->online ? STATUS_DEVICE_NOT_READY :
+                 rpmh_vrm_adopt(&d->provider.vrm, votes) ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
+    update_retry(d);
+    unlock_device(d);
+    return s;
+}
+
 static NTSTATUS adopt(PVOID context, const struct rpmh_boot_votes *votes)
 {
     RPMH_DEVICE *d = rpmh_device((WDFDEVICE)context);
@@ -511,7 +534,7 @@ static NTSTATUS add_device(WDFDRIVER driver, PWDFDEVICE_INIT init)
     if (!NT_SUCCESS(s)) return s;
     PIANO_RPMH_INTERFACE api = {0};
     api.Header.Size = sizeof(api);
-    api.Header.Version = 1;
+    api.Header.Version = PIANO_RPMH_INTERFACE_VERSION;
     api.Header.Context = device;
     api.Header.InterfaceReference = interface_reference;
     api.Header.InterfaceDereference = interface_dereference;
@@ -520,6 +543,8 @@ static NTSTATUS add_device(WDFDRIVER driver, PWDFDEVICE_INIT init)
     api.SetLevel = set_level;
     api.SetBandwidth = set_bandwidth;
     api.Adopt = adopt;
+    api.SetUfsSupplies = set_ufs_supplies;
+    api.AdoptRegulators = adopt_regulators;
     WDF_QUERY_INTERFACE_CONFIG query;
     WDF_QUERY_INTERFACE_CONFIG_INIT(&query, &api.Header, &GUID_PIANO_RPMH_INTERFACE, NULL);
     return WdfDeviceAddQueryInterface(device, &query);

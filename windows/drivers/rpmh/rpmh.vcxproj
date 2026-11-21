@@ -32,9 +32,9 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="device.c" /><ClCompile Include="provider.c" /><ClCompile Include="rsc.c" />
-    <ClCompile Include="fabric.c" /><ClCompile Include="cmd_db.c" />
+    <ClCompile Include="fabric.c" /><ClCompile Include="cmd_db.c" /><ClCompile Include="vrm.c" />
     <ClInclude Include="interface.h" /><ClInclude Include="provider.h" /><ClInclude Include="rsc.h" />
-    <ClInclude Include="fabric.h" /><ClInclude Include="cmd_db.h" />
+    <ClInclude Include="fabric.h" /><ClInclude Include="cmd_db.h" /><ClInclude Include="vrm.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

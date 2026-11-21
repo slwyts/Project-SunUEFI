@@ -15,7 +15,8 @@ class RpmhProviderTest(unittest.TestCase):
     def test_command_db_and_shared_clients(self):
         src = ROOT / 'windows/drivers/rpmh'
         cases = {
-            'Provider': ['cmd_db', 'fabric', 'provider'],
+            'Provider': ['cmd_db', 'fabric', 'provider', 'vrm'],
+            'Vrm': ['cmd_db', 'fabric', 'provider', 'vrm'],
             'Fabric': ['cmd_db', 'fabric'],
             'Rsc': ['rsc'],
         }
@@ -51,6 +52,19 @@ class RpmhProviderTest(unittest.TestCase):
                             ('/soc/qcom,qupv3_1_geni_se@ac0000/i2c@a98000',
                              ('qup-core', 'qup-config', 'qup-memory'))):
             self.assertEqual(tree[path]['interconnect-names'].rstrip(b'\0').decode().split('\0'), list(names))
+
+        hba = tree['/soc/ufshc@1d84000']
+        self.assertEqual(hba['vccq-supply'], hba['qcom,vccq-proxy-vote-supply'])
+        for pin, name, voltage, load, threshold in (('vcc','ldob17',2504000,1300000,10000),
+                                                    ('vccq','ldod1',1200000,1200000,30000)):
+            node, = (p for p, n in tree.items() if n.get('phandle') == hba[pin+'-supply'])
+            rail, pmic = tree[node], tree[node.rsplit('/', 1)[0]]
+            self.assertEqual(pmic['qcom,resource-name'].rstrip(b'\0').decode(), name)
+            self.assertEqual(pmic['qcom,regulator-type'], b'pmic5-ldo\0')
+            self.assertEqual(struct.unpack('>II', pmic['qcom,mode-threshold-currents']), (0, threshold))
+            for prop in ('regulator-min-microvolt', 'regulator-max-microvolt', 'qcom,init-voltage'):
+                self.assertEqual(int.from_bytes(rail[prop], 'big'), voltage)
+            self.assertEqual(int.from_bytes(hba[pin+'-max-microamp'], 'big'), load)
 
 
 if __name__ == '__main__':
