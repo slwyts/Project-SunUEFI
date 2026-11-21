@@ -1,0 +1,40 @@
+/** @file
+  GTDT for Piano (SM8750).
+
+  The device tree has an arm,armv8-timer node without a register window, so
+  the counter is accessed through system registers and both counter bases are
+  zero. The four PPIs come from the same node: 13, 14, 11, 10. The node marks
+  them level-low, but Qualcomm's own ACPI tables declare the generic timer
+  interrupts edge/high; the GSIVs are identical, so follow the reference.
+
+  SPDX-License-Identifier: BSD-2-Clause-Patent
+**/
+
+#include <IndustryStandard/Acpi60.h>
+
+EFI_ACPI_6_0_GENERIC_TIMER_DESCRIPTION_TABLE Gtdt = {
+  {
+    EFI_ACPI_6_0_GENERIC_TIMER_DESCRIPTION_TABLE_SIGNATURE,
+    sizeof (EFI_ACPI_6_0_GENERIC_TIMER_DESCRIPTION_TABLE),
+    EFI_ACPI_6_0_GENERIC_TIMER_DESCRIPTION_TABLE_REVISION,
+    0,
+    "SUNUEF",
+    "PIANO   ",
+    1,
+    "SUNU",
+    0x00010000
+  },
+  0,                            // CntControlBasePhysicalAddress
+  0,                            // Reserved
+  29,                           // Secure PL1 Timer GSIV
+  0,                            // Secure PL1 Timer Flags (edge, active high)
+  30,                           // Non-Secure PL1 Timer GSIV
+  0,                            // Non-Secure PL1 Timer Flags (edge, active high)
+  27,                           // Virtual Timer GSIV
+  0,                            // Virtual Timer Flags (edge, active high)
+  26,                           // Non-Secure PL2 Timer GSIV
+  0,                            // Non-Secure PL2 Timer Flags (edge, active high)
+  0,                            // CntReadBasePhysicalAddress
+  0,                            // Platform Timer Count
+  0                             // Platform Timer Offset
+};

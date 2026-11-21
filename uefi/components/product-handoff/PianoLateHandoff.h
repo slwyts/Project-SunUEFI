@@ -33,6 +33,7 @@ typedef struct {
  PIANO_PRODUCT_EXIT_PHASE Phase;EFI_STATUS Status;
  UINT32 ExitCalls,RetireCalls;UINTN CallerMapKey;
  BOOLEAN Busy,Installed,Retained;
+ BOOLEAN KeepDevices;
   BOOLEAN RawMode,ResetMode;CONST PIANO_RAW_LINUX_REPORT *Raw;PIANO_RAW_LINUX_REPORT RawSnapshot;
  PIANO_LATE_HANDOFF_DIAGNOSTIC Diagnostic;
 } PIANO_LATE_HANDOFF;

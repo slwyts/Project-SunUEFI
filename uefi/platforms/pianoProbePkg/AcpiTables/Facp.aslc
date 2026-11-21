@@ -1,0 +1,80 @@
+/** @file
+  FACP for Piano (SM8750).
+
+  The DSDT and XDSDT pointers are filled in by AcpiTableDxe when the DSDT is
+  installed. All PM, GPE and reset registers are zero: this platform has no
+  ACPI-controlled power management, and reset goes through PSCI.
+
+  SPDX-License-Identifier: BSD-2-Clause-Patent
+**/
+
+#include <IndustryStandard/Acpi60.h>
+
+EFI_ACPI_6_0_FIXED_ACPI_DESCRIPTION_TABLE Facp = {
+  {
+    EFI_ACPI_6_0_FIXED_ACPI_DESCRIPTION_TABLE_SIGNATURE,
+    sizeof (EFI_ACPI_6_0_FIXED_ACPI_DESCRIPTION_TABLE),
+    EFI_ACPI_6_0_FIXED_ACPI_DESCRIPTION_TABLE_REVISION,
+    0,
+    "SUNUEF",
+    "PIANO   ",
+    1,
+    "SUNU",
+    0x00010000
+  },
+  0,                            // FirmwareCtrl
+  0,                            // Dsdt
+  0,                            // Reserved0
+  0,                            // PreferredPmProfile
+  0,                            // SciInt
+  0,                            // SmiCmd
+  0,                            // AcpiEnable
+  0,                            // AcpiDisable
+  0,                            // S4BiosReq
+  0,                            // PstateCnt
+  0,                            // Pm1aEvtBlk
+  0,                            // Pm1bEvtBlk
+  0,                            // Pm1aCntBlk
+  0,                            // Pm1bCntBlk
+  0,                            // Pm2CntBlk
+  0,                            // PmTmrBlk
+  0,                            // Gpe0Blk
+  0,                            // Gpe1Blk
+  0,                            // Pm1EvtLen
+  0,                            // Pm1CntLen
+  0,                            // Pm2CntLen
+  0,                            // PmTmrLen
+  0,                            // Gpe0BlkLen
+  0,                            // Gpe1BlkLen
+  0,                            // Gpe1Base
+  0,                            // CstCnt
+  0,                            // PLvl2Lat
+  0,                            // PLvl3Lat
+  0,                            // FlushSize
+  0,                            // FlushStride
+  0,                            // DutyOffset
+  0,                            // DutyWidth
+  0,                            // DayAlrm
+  0,                            // MonAlrm
+  0,                            // Century
+  0,                            // IaPcBootArch
+  0,                            // Reserved1
+  EFI_ACPI_6_0_HW_REDUCED_ACPI, // Flags
+  { 0 },                        // ResetReg
+  0,                            // ResetValue
+  EFI_ACPI_6_0_ARM_PSCI_COMPLIANT, // ArmBootArch
+  0,                            // MinorRevision
+  0,                            // XFirmwareCtrl
+  0,                            // XDsdt
+  { 0 },                        // XPm1aEvtBlk
+  { 0 },                        // XPm1bEvtBlk
+  { 0 },                        // XPm1aCntBlk
+  { 0 },                        // XPm1bCntBlk
+  { 0 },                        // XPm2CntBlk
+  { 0 },                        // XPmTmrBlk
+  { 0 },                        // XGpe0Blk
+  { 0 },                        // XGpe1Blk
+  { 0 },                        // SleepControlReg
+  { 0 },                        // SleepStatusReg
+  0                             // HypervisorVendorIdentity
+};
