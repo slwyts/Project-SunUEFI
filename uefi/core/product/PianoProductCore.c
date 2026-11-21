@@ -819,7 +819,11 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   Status=PianoNvFileStart();
   DEBUG((DEBUG_WARN,"PIANO_NV_FILE_BACKEND status=%r\n",Status));
   (VOID)PianoBluetoothAddressInitialize();
-  (VOID)PianoRtcOffsetInitialize();
+  UINT32 RtcOffset;
+  if(PianoRtcOffsetInitialize(&RtcOffset)==EFI_SUCCESS){
+    EFI_STATUS RtcStatus=PianoRtcConfigureClock(Fdt,RtcOffset);
+    DEBUG((DEBUG_INFO,"PMK8550 RTC clock configuration: %r\n",RtcStatus));
+  }
   Status=PianoFastbootBlockReadInit();if(Status!=EFI_SUCCESS)FailStop(Status);
   CONST PIANO_FB_STORAGE *Storage=PianoFastbootBlockReadStorage();
   if(Storage==NULL || Storage->Ready(Storage->Context)!=EFI_SUCCESS)FailStop(EFI_NOT_READY);

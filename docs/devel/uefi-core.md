@@ -168,7 +168,10 @@ UKI 失败后的后备。它与产品 UKI 共用资源退出检查；UEFI Fastbo
 系统引导程序可通过标准 `EFI_RNG_PROTOCOL` 取得启动所需的随机数据。固件使用
 EDK2 的 RNG 驱动：默认取自 CPU 的 RNDR，也支持显式请求 Arm 固件的原始随机源。
 
-固件的四个 EFI 时间调用返回 `EFI_UNSUPPORTED`，并通过 `EFI_RT_PROPERTIES_TABLE` 报告；不发布占位 EFI RTC。Linux 使用 PMIC RTC，UEFI 只读原厂 `persist/time/ats_2`，通过保留内存中的标准 NVMEM 单元传入日历偏移，见 [RTC 与原厂时间](hardware/sleep.md#rtc-与原厂时间)。
+在操作系统接管前，标准 `GetTime()` 读取 PMK8550 的秒计数，加上原厂 `persist/time/ats_2`
+的偏移，返回 UTC。它不写时钟或闹钟；退出启动服务后，SPMI 由操作系统管理，固件不再
+提供时间服务，并在 `EFI_RT_PROPERTIES_TABLE` 中如实声明。Linux 继续通过 PMIC RTC 和
+NVMEM 读取相同的时间，见 [RTC 与原厂时间](hardware/sleep.md#rtc-与原厂时间)。
 
 ## UEFI 核心代码结构
 

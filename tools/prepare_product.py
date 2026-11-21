@@ -36,7 +36,7 @@ SOURCE_NAMES=(
 )
 PRODUCT_COMPONENTS={
     'board-identity':('PianoBluetoothAddress.c','PianoBluetoothAddress.h','PianoSmbiosPlatform.c','PianoSmbiosPlatform.h'),
-    'rtc':('PianoRtcOffset.c','PianoRtcOffset.h'),
+    'rtc':('PianoRtcOffset.c','PianoRtcClock.c','PianoRtcOffset.h'),
     'nv':('PianoNvFile.c','PianoNvFile.h'),
     'reset':('PianoReset.c','PianoReset.h'),
     'ext4':('PianoStorageIo.h','PianoStorageIo.inc','PianoExt4.h'),
@@ -456,6 +456,7 @@ def core_inf():
   QcomPkg/QcomPkg.dec
   CryptoPkg/CryptoPkg.dec
   SiliciumPkg/SiliciumPkg.dec
+  pianoProductPkg/pianoProduct.dec
 [LibraryClasses]
   UefiApplicationEntryPoint
   UefiLib
@@ -523,6 +524,9 @@ def core_inf():
   gEdkiiFormDisplayEngineProtocolGuid
   gEfiVariableArchProtocolGuid
   gEfiVariableWriteArchProtocolGuid
+[Pcd]
+  gPianoProductTokenSpaceGuid.PcdPianoRtcOffsetSeconds
+  gPianoProductTokenSpaceGuid.PcdPianoRtcObserverBase
 [FixedPcd]
   gArmTokenSpaceGuid.PcdFdSize
   gEfiMdeModulePkgTokenSpaceGuid.PcdFirmwareVendor
@@ -640,8 +644,12 @@ def prepare(root=ROOT):
   PianoProductPumpLib|MdePkg/Library/PianoProductPumpLib/PianoProductPumpLib.inf
 [LibraryClasses.common.DXE_CORE]
   PianoProductExitLib|MdePkg/Library/PianoProductExitLib/PianoProductExitLib.inf
+[PcdsDynamicDefault]
+  gPianoProductTokenSpaceGuid.PcdPianoRtcOffsetSeconds|0
+  gPianoProductTokenSpaceGuid.PcdPianoRtcObserverBase|0
+[LibraryClasses.common.DXE_RUNTIME_DRIVER]
+  RealTimeClockLib|pianoProductPkg/Library/PianoRealTimeClockLib/PianoRealTimeClockLib.inf
 [LibraryClasses]
-  RealTimeClockLib|pianoProductPkg/Library/UnsupportedRealTimeClockLib/UnsupportedRealTimeClockLib.inf
   BootLogoLib|MdeModulePkg/Library/BootLogoLib/BootLogoLib.inf
   ShellLib|ShellPkg/Library/UefiShellLib/UefiShellLib.inf
   ShellCommandLib|ShellPkg/Library/UefiShellCommandLib/UefiShellCommandLib.inf

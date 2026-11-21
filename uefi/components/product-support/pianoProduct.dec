@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+[Defines]
+  DEC_SPECIFICATION = 0x00010005
+  PACKAGE_NAME      = pianoProductPkg
+  PACKAGE_GUID      = 7c8820e6-c283-47b7-9432-55a792b4a501
+  PACKAGE_VERSION   = 1.0
+
+[Guids]
+  gPianoProductTokenSpaceGuid = { 0x1ab053ab, 0x8750, 0x43a8, { 0xaa, 0xdb, 0x27, 0x2d, 0x5a, 0x5a, 0x5e, 0x7d } }
+
+[PcdsDynamic]
+  # Boot-only SPMI read channel. Publish it after the UTC offset is available.
+  gPianoProductTokenSpaceGuid.PcdPianoRtcObserverBase|0|UINT32|0x00000001
+  gPianoProductTokenSpaceGuid.PcdPianoRtcOffsetSeconds|0|UINT32|0x00000002

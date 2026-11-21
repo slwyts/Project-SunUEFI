@@ -96,8 +96,9 @@ int main(int Argc,char **Argv){
   if(Case==3)Milliseconds=MAX_UINT64;
   if(Case==4)OpenStatus=EFI_NOT_FOUND;
   if(Case==5)Media.ReadOnly=FALSE;
-  EFI_STATUS Status=PianoRtcOffsetInitialize();
-  assert(PianoRtcOffsetInitialize()==Status);
+  UINT32 Offset=0;
+  EFI_STATUS Status=PianoRtcOffsetInitialize(&Offset);
+  assert(PianoRtcOffsetInitialize(&Offset)==Status);
   if(Case>=1&&Case<=4){
     assert(Status!=EFI_SUCCESS&&!Allocations);
     assert(RootClosed==1&&FileClosed==(Case==4?0:1));
@@ -106,7 +107,7 @@ int main(int Argc,char **Argv){
     return 0;
   }
   assert(Status==EFI_SUCCESS&&Reads==1&&RootClosed==1&&FileClosed==1&&Allocations==1);
-  assert(mOffset==1774688487&&Page[0]==0xe7);
+  assert(Offset==1774688487&&Page[0]==0xe7);
   for(UINTN I=4;I<sizeof(Page);++I)assert(!Page[I]);
   int Rtc=fdt_path_offset(Tree,"/rtc");
   if(Case==6)assert(!fdt_setprop(Tree,Rtc,"allow-set-time",NULL,0));

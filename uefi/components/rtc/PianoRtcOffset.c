@@ -67,7 +67,7 @@ STATIC EFI_STATUS ReadFactoryOffset(UINT64 *Milliseconds) {
   return Status==EFI_SUCCESS?Closed:Status;
 }
 
-EFI_STATUS PianoRtcOffsetInitialize(VOID) {
+STATIC EFI_STATUS InitializeOffset(VOID) {
   if(mAttempted)return mStatus;
   mAttempted=TRUE;
   UINT64 Milliseconds=0;
@@ -84,6 +84,13 @@ EFI_STATUS PianoRtcOffsetInitialize(VOID) {
   }
   DEBUG((DEBUG_WARN,"PIANO_RTC_OFFSET source=persist/time/ats_2 status=%r readonly=1 available=%u\n",mStatus,mStatus==EFI_SUCCESS));
   return mStatus;
+}
+
+EFI_STATUS PianoRtcOffsetInitialize(UINT32 *OffsetSeconds) {
+  if(!OffsetSeconds)return EFI_INVALID_PARAMETER;
+  EFI_STATUS Status=InitializeOffset();
+  if(Status==EFI_SUCCESS)*OffsetSeconds=mOffset;
+  return Status;
 }
 
 STATIC INT32 Put32(VOID *Tree,INT32 Node,CONST CHAR8 *Name,UINT32 Value) {

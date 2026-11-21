@@ -6,7 +6,6 @@ HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 
 import prepare_nv_runtime_guard as guard
 MARKER='  // The product has no persistent variable writer after ExitBootServices.'
 INC=ROOT/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include'
-RTC=ROOT/'uefi/components/product-support/Library/UnsupportedRealTimeClockLib/UnsupportedRealTimeClockLib.c'
 class RuntimeNvGuardTests(unittest.TestCase):
  def pinned_sources(self,root):
   # Pinned VariableRuntimeDxe sources, as the build's workspace checkout starts
@@ -117,43 +116,6 @@ int main(void){
 ''','-ffunction-sections','-fdata-sections','-Wl,--gc-sections',
     '-Wno-misleading-indentation','-I'+str(nv/'Include'),
     '-I'+str(ROOT/'uefi/core/storage'))
- def test_actual_runtime_properties_keep_variable_reads(self):
-  self.compile_and_run('''#include <assert.h>
-#undef NULL
-#include "'''+str(RTC)+'''"
-EFI_GUID gEfiRtPropertiesTableGuid=EFI_RT_PROPERTIES_TABLE_GUID;
-static EFI_RT_PROPERTIES_TABLE *inherited,*published;
-EFI_STATUS EFIAPI EfiGetSystemConfigurationTable(EFI_GUID *Guid,VOID **Table){
-  assert(Guid==&gEfiRtPropertiesTableGuid);
-  *Table=inherited;
-  return inherited?EFI_SUCCESS:EFI_NOT_FOUND;
-}
-static EFI_STATUS EFIAPI Publish(EFI_GUID *Guid,VOID *Table){
-  assert(Guid==&gEfiRtPropertiesTableGuid);
-  published=Table;
-  return EFI_SUCCESS;
-}
-static EFI_BOOT_SERVICES Services={.InstallConfigurationTable=Publish};
-EFI_BOOT_SERVICES *gBS=&Services;
-int main(void){
-  const UINT32 readers=EFI_RT_SUPPORTED_GET_VARIABLE|EFI_RT_SUPPORTED_GET_NEXT_VARIABLE_NAME|
-                      EFI_RT_SUPPORTED_QUERY_VARIABLE_INFO;
-  assert(LibRtcInitialize(NULL,NULL)==EFI_SUCCESS);
-  assert(published->Length==sizeof(*published));
-  assert((published->RuntimeServicesSupported&readers)==readers);
-  assert(!(published->RuntimeServicesSupported&EFI_RT_SUPPORTED_SET_VARIABLE));
-  EFI_RT_PROPERTIES_TABLE input={EFI_RT_PROPERTIES_TABLE_VERSION,sizeof(input),
-    EFI_RT_SUPPORTED_GET_VARIABLE|EFI_RT_SUPPORTED_SET_VARIABLE|EFI_RT_SUPPORTED_SET_TIME|
-    EFI_RT_SUPPORTED_RESET_SYSTEM};
-  inherited=&input;
-  assert(LibRtcInitialize(NULL,NULL)==EFI_SUCCESS);
-  assert(published->RuntimeServicesSupported==(EFI_RT_SUPPORTED_GET_VARIABLE|
-                                                EFI_RT_SUPPORTED_RESET_SYSTEM));
-  --input.Length;
-  assert(LibRtcInitialize(NULL,NULL)==EFI_COMPROMISED_DATA);
-  return 0;
-}
-''')
  def test_pinned_and_idempotent(self):
   with tempfile.TemporaryDirectory()as d:
    root=Path(d);path=self.pinned_sources(root)
