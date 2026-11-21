@@ -137,6 +137,12 @@ EFI_STATUS PianoDmaSyncForCpu(PIANO_DMA_BUFFER *Buffer){assert(FALSE);return EFI
 EFI_STATUS PianoDmaSyncForCpuQuiet(PIANO_DMA_BUFFER *Buffer){
   BOOLEAN Own=Buffer==&mRing;
   for(UINTN I=0;I<ARRAY_SIZE(mTrbs);++I)if(Buffer==&mTrbs[I])Own=TRUE;
+#if PIANO_USB_FASTBOOT
+  if(Buffer==&mBulkRx){
+    assert(mPending[2] && mPayload[2]==Buffer && !(((DWC_TRB *)mTrbs[2].Cpu)->Control&1));
+    Own=TRUE;
+  }
+#endif
   assert(Own && Buffer->Active);++Buffer->QuietSyncs;++quiet_syncs;return EFI_SUCCESS;
 }
 EFI_STATUS PianoDmaReportQuietSync(PIANO_DMA_BUFFER *Buffer){(void)Buffer;return EFI_SUCCESS;}

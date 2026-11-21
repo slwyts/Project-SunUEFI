@@ -106,6 +106,8 @@ struct PIANO_FASTBOOT {
 EFI_STATUS PianoFastbootInit(PIANO_FASTBOOT *State, VOID *Context,
                             PIANO_FB_SEND Send, PIANO_FB_LOG Log);
 EFI_STATUS PianoFastbootPacket(PIANO_FASTBOOT *State, CONST VOID *Data, UINTN Bytes);
+// Immutable single-packet replies. No allocation, device access or callbacks.
+CONST CHAR8 *PianoFastbootIdentityReply(CONST VOID *Packet,UINTN Bytes);
 #if PIANO_USB_SERVICE
 // Decode one absolute firmware filename. An empty inline name uses the staged
 // UTF-16LE text; FreePool the returned name after constructing its device path.

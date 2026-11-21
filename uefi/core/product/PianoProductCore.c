@@ -593,6 +593,17 @@ STATIC EFI_STATUS PrepareInstalledSystem(CONST EFI_DEVICE_PATH_PROTOCOL *Path) {
   (VOID)PianoProductBootLogMessage(L"正在启动系统",L"请稍候",EFI_SUCCESS,PianoBootMessageWait);
   return EFI_SUCCESS;
 }
+STATIC BOOLEAN LoaderTimedOut(VOID *Context) {
+  (VOID)Context;
+  // Called by the existing USB timer at TPL_CALLBACK. Do not probe hardware
+  // or invoke another driver while the child owns the application thread.
+  return PianoApplicationTimedOut() && BootLogAlive() && mLinuxActive && mLinuxApplication.Busy &&
+    mLinuxApplication.StartCalled && !mLinuxApplication.StartReturned && !mLinuxApplication.Retained &&
+    !mLinuxApplication.EbsObserved && mOwners.Report.Phase==PianoProductOwnersRunning &&
+    !mOwners.Report.Busy && !mOwners.Report.OuterTplHeld && !mOwners.Report.RetiredMask &&
+    !mLateHandoff.Busy && !mLateHandoff.Retained && !mLateHandoff.RetireCalls &&
+    mLateHandoff.Phase==PianoExitUnarmed;
+}
 STATIC VOID FinishInstalledSystemAttempt(EFI_STATUS Status) {
   mLinuxActive=FALSE;
   if(!gBS || !BootLogAlive() || mLinuxApplication.Retained || mLinuxApplication.EbsObserved ||
@@ -814,7 +825,7 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   if(Storage==NULL || Storage->Ready(Storage->Context)!=EFI_SUCCESS)FailStop(EFI_NOT_READY);
   mCounterFrequency=GetPerformanceCounterProperties(&mCounterStart,&mCounterEnd);
   if(!mCounterFrequency || mCounterStart==mCounterEnd)FailStop(EFI_UNSUPPORTED);
-  PIANO_DWC3_SERVICE_CONFIG UsbConfig={.Context=NULL,.NowUs=NowUs,.Storage=Storage,
+  PIANO_DWC3_SERVICE_CONFIG UsbConfig={.Context=NULL,.NowUs=NowUs,.Storage=Storage,.LoaderTimedOut=LoaderTimedOut,
     .BeforeRamlog=ProductDebugReplay,.ReportStatus=ProductReportStatus};
   BootLogStage("USB",EFI_NOT_STARTED);
   Status=PianoRawLinuxRegister(Image,SystemTable);if(Status!=EFI_SUCCESS)FailStop(Status);

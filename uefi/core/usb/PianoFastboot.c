@@ -256,6 +256,17 @@ STATIC VOID Hex64(UINT64 Value,CHAR8 *Out) {
 STATIC UINT32 FetchLimit(CONST PIANO_FASTBOOT *S){
   return S->Storage.MaxFetchBytes?S->Storage.MaxFetchBytes:PIANO_FASTBOOT_DEFAULT_FETCH_BYTES;
 }
+CONST CHAR8 *PianoFastbootIdentityReply(CONST VOID *Packet,UINTN Bytes) {
+  STATIC CONST struct {CONST CHAR8 *Command,*Reply;} Values[]={
+    {"getvar:version","OKAY0.4"},{"getvar:product","OKAYpiano-sunuefi"},
+    {"getvar:serialno","OKAYSunUEFI-piano"},{"getvar:version-bootloader","OKAYSunUEFI-debug-v1"},
+    {"getvar:is-userspace","OKAYno"}
+  };
+  for(UINTN I=0;I<ARRAY_SIZE(Values);++I)
+    if(Bytes==AsciiStrLen(Values[I].Command) && !CompareMem(Packet,Values[I].Command,Bytes))
+      return Values[I].Reply;
+  return NULL;
+}
 STATIC EFI_STATUS GetVar(PIANO_FASTBOOT *S, CONST CHAR8 *Name) {
   if(Equal(Name,"max-fetch-size")){
     if(!StorageReady(S))return Reply(S,"FAILstorage backend not ready");
@@ -269,11 +280,6 @@ STATIC EFI_STATUS GetVar(PIANO_FASTBOOT *S, CONST CHAR8 *Name) {
     if(Status!=EFI_SUCCESS)return Reply(S,Status==EFI_NOT_FOUND?"FAILunknown partition":"FAILinvalid partition information");
     CHAR8 Result[23]="OKAY0x";Hex64(Info.Bytes,Result+6);return Reply(S,Result);
   }
-  if(Equal(Name,"version"))return Reply(S,"OKAY0.4");
-  if(Equal(Name,"product"))return Reply(S,"OKAYpiano-sunuefi");
-  if(Equal(Name,"serialno"))return Reply(S,"OKAYSunUEFI-piano");
-  if(Equal(Name,"version-bootloader"))return Reply(S,"OKAYSunUEFI-debug-v1");
-  if(Equal(Name,"is-userspace"))return Reply(S,"OKAYno");
   if(Equal(Name,"storage-policy"))return Reply(S,PianoFastbootStorageWritable(S)?"OKAYsunuefi-partition-writes":"OKAYread-only");
   if(Equal(Name,"max-download-size"))return Reply(S,S->DiagnosticsOnly?"OKAY0x00000000":"OKAY0x04000000");
   if(Equal(Name,"SunUEFI:ram-boot")) {
@@ -433,7 +439,10 @@ EFI_STATUS PianoFastbootPacket(PIANO_FASTBOOT *S, CONST VOID *Data, UINTN Bytes)
      !Equal(Cmd,"reboot") && !Equal(Cmd,"continue"))
     return Reply(S,"FAILonly diagnostics available after boot failure");
   if(Equal(Cmd,"oem help"))return Help(S);
-  if(!AsciiStrnCmp(Cmd,"getvar:",7))return GetVar(S,Cmd+7);
+  if(!AsciiStrnCmp(Cmd,"getvar:",7)){
+    CONST CHAR8 *Identity=PianoFastbootIdentityReply(Cmd,Bytes);
+    return Identity?Reply(S,Identity):GetVar(S,Cmd+7);
+  }
   if(!AsciiStrnCmp(Cmd,"download:",9))return Download(S,Cmd+9);
   if(!AsciiStrnCmp(Cmd,"fetch:",6))return Fetch(S,Cmd+6);
   if(!AsciiStrnCmp(Cmd,"flash:",6))return Flash(S,Cmd+6,FALSE);

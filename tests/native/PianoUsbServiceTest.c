@@ -266,7 +266,7 @@ static VOID free_cold_model(VOID) {
   if(mFastboot.Download)free(mFastboot.Download);
   if(mFastboot.Upload && !mFastboot.UploadBorrowed && mFastboot.Upload!=mFastboot.Download)free(mFastboot.Upload);
   if(mLogSnapshot)free(mLogSnapshot);
-  while(mFrames){FB_FRAME *F=mFrames;mFrames=F->Next;free(F);}
+  ClearFrames();
   for(UINTN I=0;I<ARRAY_SIZE(all);++I){free(all[I]->Cpu);ZeroMem(all[I],sizeof(*all[I]));}
 }
 #if PIANO_USB_HOST
@@ -1084,6 +1084,37 @@ static VOID run_typec_orientation(TYPEC_CASE Test){
   free_cold_model();
 }
 #endif
+static BOOLEAN loader_timeout;
+static BOOLEAN loader_timed_out(VOID *Context){
+  assert(Context==(VOID *)0x55 && in_timer && current_tpl==TPL_CALLBACK);
+  return loader_timeout;
+}
+static UINT64 loader_now(VOID *Context){assert(Context==(VOID *)0x55);return fake_now+=10;}
+static VOID run_loader_query(VOID){
+  setup_model();stall_hook=NULL;current_tpl=TPL_APPLICATION;scenario=0;fake_now=0;
+  bs.RaiseTPL=raise_tpl;bs.RestoreTPL=restore_tpl;bs.CreateEvent=create_event;bs.CreateEventEx=create_event_ex;
+  bs.SetTimer=set_timer;bs.CloseEvent=close_event;clock.DisableClock=clock.DisableClockPowerDomain=persistent_disable;
+  PIANO_DWC3_SERVICE_CONFIG C={.Context=(VOID*)0x55,.NowUs=loader_now,.Storage=&backend,.LoaderTimedOut=loader_timed_out};
+  assert(PianoUsbControllerServiceStart((VOID*)123,&C)==EFI_SUCCESS);service_enumerate();
+  CONST CHAR8 *Query="getvar:product";
+  CopyMem(mBulkRx.Cpu,Query,strlen(Query));DWC_TRB *Out=mTrbs[2].Cpu,*In=mTrbs[3].Cpu;
+  Out->Size=mPosted[2]-(UINT32)strlen(Query);Out->Control&=~BIT0;
+  publish(0xc044);timer_tick();assert(mService.Count==1 && !mPending[3]);
+  loader_timeout=TRUE;
+  mService.State.Busy=TRUE;timer_tick();assert(mService.Count==1 && !mPending[3]);mService.State.Busy=FALSE;
+  timer_tick();assert(!mService.Count && mPending[3] && mFrames==&mPacketFrame &&
+    mPosted[3]==strlen("OKAYpiano-sunuefi") && !memcmp(mBulkTx.Cpu,"OKAYpiano-sunuefi",mPosted[3]));
+  In->Size=0;In->Control&=~BIT0;publish(0xc046);timer_tick();
+  assert(!mFrames && !mPending[3] && mPending[2] && !mPacketFrame.Data);
+  // The timer leaves an APP-only command in the queue. It is handled once
+  // by the ordinary worker when the child eventually returns.
+  Query="getvar:partition-size:xbl_config_a";UINTN Infos=backend_infos;
+  CopyMem(mBulkRx.Cpu,Query,strlen(Query));Out->Size=mPosted[2]-(UINT32)strlen(Query);Out->Control&=~BIT0;
+  publish(0xc044);timer_tick();timer_tick();assert(mService.Count==1 && !mPending[3] && mPending[2] && backend_infos==Infos);
+  loader_timeout=FALSE;
+  assert(PianoUsbControllerServicePumpApp(1,5000)==EFI_SUCCESS && mPending[3] && !mService.Count && backend_infos==Infos+1);
+  service_ack();free_cold_model();
+}
 static VOID run_stale_completion(VOID){
   setup_model();stall_hook=NULL;current_tpl=TPL_APPLICATION;scenario=0;fake_now=0;
   bs.RaiseTPL=raise_tpl;bs.RestoreTPL=restore_tpl;bs.CreateEvent=create_event;bs.CreateEventEx=create_event_ex;bs.SetTimer=set_timer;bs.CloseEvent=close_event;
@@ -1372,6 +1403,7 @@ int USB_SERVICE_TEST_MAIN(void) {
   for(UINTN I=0;I<15;++I){pid_t P=fork();assert(P>=0);if(!P){run_reset(I);_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S))return 1;}
   {pid_t P=fork();assert(P>=0);if(!P){run_idle_activity();_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S))return 1;}
   {pid_t P=fork();assert(P>=0);if(!P){run_stale_completion();_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S))return 1;}
+  {pid_t P=fork();assert(P>=0);if(!P){run_loader_query();_exit(0);}int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S))return 1;}
   for(REPLY_CASE I=0;I<ReplyCaseCount;++I){
     pid_t P=fork();assert(P>=0);if(!P){run_reply_recovery(I);_exit(0);}
     int S;assert(waitpid(P,&S,0)==P);if(!WIFEXITED(S)||WEXITSTATUS(S)){fprintf(stderr,"USB reply recovery case %u failed\n",(unsigned)I);return 1;}

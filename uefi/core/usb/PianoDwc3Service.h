@@ -16,6 +16,8 @@ typedef struct {
   // Context must outlive the service; public partition reads use the shared
   // UFS/USB SMMU guard rather than directly calling these callbacks.
   CONST PIANO_FB_STORAGE *Storage;
+  // Notification-safe, reads only firmware ownership and the watchdog flag.
+  BOOLEAN (*LoaderTimedOut)(VOID *Context);
   // Optional APP-only immutable snapshot reemit. CPU/RAM only: no MMIO,
   // allocation, BS, device access or recursive service work. Copied at Start.
   // Exact success is required before oem ramlog freezes the RAM console.
@@ -64,6 +66,7 @@ EFI_STATUS PianoDwc3ServiceStart(PIANO_OWNED_SMMU *Context,PIANO_DMA_DEVICE *Dev
   CONST PIANO_DWC3_SERVICE_CONFIG *Config);
 // Notification-safe: bounded ring/cache/MMIO and raw event queue only.
 EFI_STATUS PianoDwc3ServicePollBounded(UINTN MaxEvents);
+VOID PianoDwc3ServicePollLoaderQuery(VOID);
 EFI_STATUS PianoDwc3ServicePumpApp(UINT32 Reason,UINTN BudgetUs);
 // One-way failure mode for an already healthy device service; never restarts USB.
 EFI_STATUS PianoDwc3ServiceRestrictToDiagnostics(BOOLEAN AllowReboot);
