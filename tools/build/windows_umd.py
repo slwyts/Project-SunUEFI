@@ -104,7 +104,12 @@ def tool(*names):
     for name in names:
         if executable := shutil.which(name):
             # clang-cl and lld-link select their personality from argv[0].
-            return Path(executable).absolute()
+            path = Path(executable).absolute()
+            # PATHEXT often supplies .EXE; Meson compares the spelling of
+            # clang-cl.exe and llvm-lib.exe when selecting MSVC arguments.
+            if os.name == 'nt' and path.suffix.lower() == '.exe':
+                return path.with_suffix('.exe')
+            return path
     raise ValueError('Required Windows graphics build tool: ' + ' or '.join(names))
 
 
