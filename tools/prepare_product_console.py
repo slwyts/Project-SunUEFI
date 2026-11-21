@@ -15,19 +15,9 @@ STRINGS = (
     'Library/BootMaintenanceManagerUiLib/BootMaintenanceManagerStrings.uni',
     'Universal/DisplayEngineDxe/FormDisplayStr.uni',
 )
-BOOT_TEXT = (
-    '未能启动系统正在读取启动镜像正在保存设置并关闭存储正在交接系统'
-    '存储驱动未能安全退出仍有文件或驱动没有关闭为保护数据已停止启动'
-    '未能加载启动镜像请检查启动镜像或重新安装引导'
-    '长按电源重启在选择画面按音量上进入 Android按音量键返回启动菜单'
-    '显示初始化失败引导文件不可用输入初始化失败存储初始化失败'
-    'USB 初始化失败启动菜单退出失败系统交接失败请稍候设置未能保存'
-    '系统资源未能安全退出Linux 内核或设备树不可用无法读取本机内存布局'
-    '设备树内存或保留区不匹配系统交接检查失败无法退出固件服务'
-    'USB 设备仍在使用，未能安全断开请拔下 USB 设备后重试'
-    '正在启动系统启动超时系统引导程序未响应Linux 启动镜像未能加载或交接Linux 引导程序未能加载或交接未找到 Linux，请更新启动镜像'
-    '读取 Linux 启动镜像超时Linux 启动镜像格式不受支持，请更新镜像'
-    '触屏驱动未能安全退出键盘驱动未能安全退出'
+BOOT_SOURCES = (
+    Path('uefi/core/product/PianoProductCore.c'),
+    Path('uefi/core/product/PianoProductBootLog.c'),
 )
 
 
@@ -116,7 +106,12 @@ def font_header(root, chars, apply):
 
 def prepare(root, apply=False):
     chars, files = translations(root, apply)
-    chars.update(ch for ch in BOOT_TEXT if 0x2e80 <= ord(ch) < 0xfff0)
+    # The graphical boot log uses the same font as Setup, but its messages
+    # are CHAR16 source strings, not HII translations.
+    for source in BOOT_SOURCES:
+        text = (root / source).read_text(encoding='utf-8')
+        for literal in re.findall(r'L"((?:\\.|[^"\\])*)"', text):
+            chars.update(ch for ch in literal if 0x2e80 <= ord(ch) < 0xfff0)
     output_file(root / CONSOLE / 'PianoConsoleScale.h',
                 (root / SOURCE / 'PianoConsoleScale.h').read_bytes(), apply)
     return {'scale': 4, 'physical': [3200, 2136], 'logical': [800, 534],
