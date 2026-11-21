@@ -9,6 +9,7 @@ import struct
 
 from compose_piano_dtb import read_fdt
 import piano_vendor_inputs as vendor_inputs
+from prepare_product_early_memory import unbind_memory_map
 
 ROOT = Path(__file__).resolve().parents[1]
 NATIVE = 'uefi/platforms/pianoProductPkg/Library/MemoryMapLib/MemoryMapLib.c'
@@ -35,6 +36,8 @@ WINDOWS = (
     ('Piano_Display_DPU', '/soc/qcom,mdss_mdp@ae00000', 0xae00000, 0x93800, 0x94000),
     ('Piano_Display_DISPCC', '/soc/clock-controller@af00000', 0xaf00000, 0x20000, 0x20000),
     ('Piano_Display_CESTA', '/soc/cesta@af27000', 0xaf27000, 0x3000, 0x3000),
+    ('GPU_SMMU_Vote', '/soc/clock-controller@3d90000', 0x03d97000, 8, 0x1000),
+    ('GPU_SMMU_ID', '/soc/kgsl-smmu@3da0000', 0x03da0000, 0x2c, 0x1000),
 )
 CESTA_NAMES = ('SDE_CRMB', 'SDE_CRMB_PT', 'SDE_CRMC', 'SDE_CRMV', 'SDE_CRM_COMMON')
 CESTA_REGS = ((0xaf27000, 0x400), (0xaf27400, 0x400), (0xaf27800, 0x2000), (0xaf29800, 0x700), (0xaf29f00, 0x100))
@@ -133,6 +136,22 @@ def validate(inputs, native_data, owners=()):
             corroborated = b''.join(struct.pack('>II', *r) for r in ((0xaf21000, 0x6000), *CESTA_REGS))
             if crm.get('reg') != corroborated or tree.get('/soc/syscon@af27800', {}).get('reg') != struct.pack('>II', 0xaf27800, 0x2000):
                 raise ValueError('Android CRM/CRMC corroboration changed')
+        elif name == 'GPU_SMMU_Vote':
+            if not props or props.get('reg') != struct.pack('>II', 0x03d90000, 0x9800):
+                raise ValueError('Android GPU clock-controller register window changed')
+            xbl = native_tree[path]
+            names = xbl['reg-names'].rstrip(b'\0').split(b'\0')
+            regions = dict(zip(names, struct.iter_unpack('>II', xbl['reg']), strict=True))
+            bank, length = regions[b'GPUCC_GPU_CC_GPU_CC_GPU_CC_REG']
+            # Offsets 0x3000/0x3004 in this bank are the dedicated HLOS
+            # GPU SMMU clock and power votes in the stock ClockDxe.
+            if bank + 0x3000 != base or bank + length < base + page_size:
+                raise ValueError('XBL GPU SMMU vote registers changed')
+        elif name == 'GPU_SMMU_ID':
+            owner = native_tree['/soc/iort/GPU_GFX_MMU500_SMMU_GFX']
+            if not props or props.get('reg') != struct.pack('>II', base, 0x40000) or \
+                    int.from_bytes(owner['BaseAddress'], 'big') != base:
+                raise ValueError('GPU SMMU ID register window changed')
         elif not props or props.get('reg', b'')[:8] != struct.pack('>II', base, raw_size):
             raise ValueError('ROM exact reg changed: ' + path)
         if path.endswith('mdss_mdp@ae00000') and props.get('reg-names', b'').split(b'\0')[0] != b'mdp_phys':
@@ -203,7 +222,7 @@ def prepare(root, input_native_text, owners=()):
     windows = validate(inputs, native, owners)
     source = render(native, windows)
     metadata = {'status': 'HOST_DISPLAY_MMIO_CANDIDATE_REQUIRES_LIVE_AT_GCD',
-                'original_rows': 49, 'candidate_rows': 53, 'windows': windows,
+                'original_rows': 49, 'candidate_rows': 49 + len(windows), 'windows': windows,
                 'original_native_sha256': digest(native),
                 'generator_sha256': digest(generator_bytes),
                 'source_inputs': {p: {'sha256': digest(b), 'bytes': len(b)} for p, b in inputs.items()},
@@ -225,7 +244,7 @@ def prepare(root, input_native_text, owners=()):
 
 def recover_original(expanded_text):
     text, array, rows = parse_native(expanded_text.encode())
-    if len(rows) not in (52, 53) or array[1].count(MARKER) != 1:
+    if len(rows) not in (52, 53, 49 + len(WINDOWS)) or array[1].count(MARKER) != 1:
         raise ValueError('Expanded display table block missing/duplicated')
     original_body = array[1].split(MARKER)[0]
     if not original_body.endswith(','):
@@ -241,20 +260,24 @@ def original_native(root=ROOT):
     path = root / NATIVE
     if path.is_symlink():
         raise ValueError('Native source is a symlink')
-    text = path.read_text()
+    # Product staging binds the SEC-selected map after validating the graphics
+    # windows; compare the same source as prepare_product.verify_display_mapping().
+    text = unbind_memory_map(path.read_text())
     if digest(text.encode()) == PINS[NATIVE]:
         return text
     original = recover_original(text)
     expected, _ = prepare(root, original)
-    historical = render(original.encode(), validate({p:(root/p).read_bytes() for p in PINS if p!=NATIVE}, original.encode())[:3]).decode()
-    if text not in (expected, historical):
+    # Reapplying to an existing workspace starts from the unchanged pinned
+    # native source. Never treat a previous extension as the current one.
+    windows = validate({p:(root/p).read_bytes() for p in PINS if p!=NATIVE}, original.encode())
+    if text != expected and not any(text == render(original.encode(), windows[:n]).decode() for n in (3, 4)):
         raise ValueError('Native expanded source differs from exact reconstruction')
     return original
 
 
 def verify(root, expanded_text, record):
-    if len(parse_native(expanded_text.encode())[2]) != 53:
-        raise ValueError('Current display verification requires 53 rows')
+    if len(parse_native(expanded_text.encode())[2]) != 49 + len(WINDOWS):
+        raise ValueError('Current graphics mapping does not contain all device windows')
     original = recover_original(expanded_text)
     expected, expected_record = prepare(root, original, record.get('owners', ()))
     if expected != expanded_text or record != expected_record:

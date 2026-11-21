@@ -18,12 +18,12 @@ UINTN ArmReadCurrentEL(VOID){return AARCH64_EL1;}
 UINTN ArmReadHcr(VOID){return 0;}
 #include "PianoDisplayActualArmMmu.h"
 #include "PianoDisplayActualGcd.h"
-static CONST UINT64 bases[]={0x100000,0xae00000,0xaf00000,0xaf27000};
-static CONST UINT64 lengths[]={0x1f5000,0x94000,0x20000,0x3000};
+static CONST UINT64 bases[]={0x100000,0xae00000,0xaf00000,0xaf27000,0x03d97000,0x03da0000};
+static CONST UINT64 lengths[]={0x1f5000,0x94000,0x20000,0x3000,0x1000,0x1000};
 static VOID CheckHobs(VOID){
-  UINTN resources[4]={0},allocations[4]={0};EFI_PEI_HOB_POINTERS H;H.Raw=hob_list;
+  UINTN resources[ARRAY_SIZE(bases)]={0},allocations[ARRAY_SIZE(bases)]={0};EFI_PEI_HOB_POINTERS H;H.Raw=hob_list;
   while(!END_OF_HOB_LIST(H)){
-    for(UINTN I=0;I<4;++I){
+    for(UINTN I=0;I<ARRAY_SIZE(bases);++I){
       if(GET_HOB_TYPE(H)==EFI_HOB_TYPE_RESOURCE_DESCRIPTOR&&H.ResourceDescriptor->PhysicalStart==bases[I]){
         assert(H.ResourceDescriptor->ResourceLength==lengths[I]&&H.ResourceDescriptor->ResourceType==EFI_RESOURCE_MEMORY_MAPPED_IO&&
           H.ResourceDescriptor->ResourceAttribute==EFI_RESOURCE_ATTRIBUTE_UNCACHEABLE);
@@ -34,20 +34,20 @@ static VOID CheckHobs(VOID){
     }
     H.Raw=GET_NEXT_HOB(H);
   }
-  for(UINTN I=0;I<4;++I)assert(resources[I]==1&&!allocations[I]);
+  for(UINTN I=0;I<ARRAY_SIZE(bases);++I)assert(resources[I]==1&&!allocations[I]);
 }
 int main(VOID){
   assert(AddDev==2&&MMAP_IO==1&&EfiMemoryMappedIO==11&&EFI_RESOURCE_ATTRIBUTE_UNCACHEABLE==0x400&&ARM_MEMORY_REGION_ATTRIBUTE_DEVICE==6);
   EFI_MEMORY_REGION_DESCRIPTOR *Native,*Generated;UINT8 N,C;
   PianoDisplayOriginalGetMemoryMap(&Native,&N);PianoDisplayCandidateGetMemoryMap(&Generated,&C);
-  assert(N==49&&C==53&&!memcmp(Native,Generated,N*sizeof(*Native)));
-  for(UINTN I=0;I<4;++I){EFI_MEMORY_REGION_DESCRIPTOR *R=&Generated[N+I];
+  assert(N==49&&C==N+ARRAY_SIZE(bases)&&!memcmp(Native,Generated,N*sizeof(*Native)));
+  for(UINTN I=0;I<ARRAY_SIZE(bases);++I){EFI_MEMORY_REGION_DESCRIPTOR *R=&Generated[N+I];
     assert(R->Address==bases[I]&&R->Length==lengths[I]&&R->HobOption==AddDev&&R->ResourceType==MMAP_IO&&
       R->ResourceAttribute==EFI_RESOURCE_ATTRIBUTE_UNCACHEABLE&&R->MemoryType==EfiMemoryMappedIO&&R->ArmAttributes==ARM_MEMORY_REGION_ATTRIBUTE_DEVICE);
   }
   setup();memcpy(rows,Generated,C*sizeof(*rows));count=C;
   assert(MemoryPeim(0,0)==EFI_SUCCESS&&mmu_calls==1);CheckHobs();
-  for(UINTN I=0;I<4;++I){CONST ARM_MEMORY_REGION_DESCRIPTOR *M=mapped_at(bases[I]);
+  for(UINTN I=0;I<ARRAY_SIZE(bases);++I){CONST ARM_MEMORY_REGION_DESCRIPTOR *M=mapped_at(bases[I]);
     assert(M&&M->PhysicalBase==M->VirtualBase&&M->Length==lengths[I]&&M->Attributes==ARM_MEMORY_REGION_ATTRIBUTE_DEVICE);
     UINT64 Attr=ArmMemoryAttributeToPageAttribute(M->Attributes);
     assert(Attr==(TT_ATTR_INDX_DEVICE_MEMORY|TT_UXN_MASK|TT_PXN_MASK));
@@ -61,5 +61,5 @@ int main(VOID){
   assert(mapped_at(0xfc800000)->Attributes==ARM_MEMORY_REGION_ATTRIBUTE_WRITE_THROUGH);
   // No new System RAM, Conventional allocation or high-DRAM descriptor exists.
   for(UINTN I=N;I<C;++I)assert(Generated[I].ResourceType!=EFI_RESOURCE_SYSTEM_MEMORY&&Generated[I].MemoryType!=EfiConventionalMemory&&Generated[I].Address<0x80000000);
-  puts("Actual Mu MemoryPeim+HobLib and actual ArmMmu DEVICE helper: product49 unchanged; four MMIO UC resource HOBs, no allocation HOB, identity DEVICE/XN inputs, EL1 PXN/UXN passed; live GCD/AT/registers unverified");return 0;
+  puts("Mu resource HOBs and ArmMmu attributes validated for all graphics MMIO windows; original native regions unchanged");return 0;
 }
