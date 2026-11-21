@@ -60,6 +60,8 @@ NTSTATUS AdrenoGmuMemoryClose(ADRENO_GMU_MEMORY *m)
         m->attached = FALSE;
     }
     if (m->domain) {
+        status = unmap_buffer(m, &m->log);
+        if (!NT_SUCCESS(status)) return status;
         status = unmap_buffer(m, &m->hfi);
         if (!NT_SUCCESS(status)) return status;
         for (SIZE_T i = 0; i < m->reserved_count; ++i) {
@@ -78,6 +80,7 @@ NTSTATUS AdrenoGmuMemoryClose(ADRENO_GMU_MEMORY *m)
         m->requester = NULL;
     }
     free_buffer(&m->hfi);
+    free_buffer(&m->log);
     for (SIZE_T i = 0; i < m->reserved_count; ++i) free_buffer(&m->reserved[i]);
     if (m->reserved) ExFreePoolWithTag(m->reserved, GMU_MEMORY_TAG);
     free_buffer(&m->cache);
@@ -152,6 +155,8 @@ NTSTATUS AdrenoGmuMemoryOpen(ADRENO_GMU_MEMORY *m, PDEVICE_OBJECT pdo,
         }
     }
     status = map_buffer(m, &m->hfi, layout.hfi.address, layout.hfi.bytes, TRUE);
+    if (!NT_SUCCESS(status)) goto done;
+    status = map_buffer(m, &m->log, layout.log.address, layout.log.bytes, TRUE);
     if (!NT_SUCCESS(status)) goto done;
     status = m->iommu.V2.AttachDeviceEx(domain, requester);
     if (NT_SUCCESS(status)) m->attached = TRUE;

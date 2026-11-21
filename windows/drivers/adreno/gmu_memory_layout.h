@@ -13,6 +13,7 @@ struct adreno_gmu_range {
 struct adreno_gmu_layout {
     uint32_t cache_bytes;
     struct adreno_gmu_range hfi;
+    struct adreno_gmu_range log;
     size_t reserved_count;
 };
 

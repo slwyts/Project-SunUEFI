@@ -15,7 +15,7 @@ typedef struct {
     PIOMMU_DMA_DEVICE requester;
     PIOMMU_DMA_DOMAIN domain;
     BOOLEAN attached;
-    ADRENO_GMU_BUFFER cache, hfi;
+    ADRENO_GMU_BUFFER cache, hfi, log;
     ADRENO_GMU_BUFFER *reserved;
     SIZE_T reserved_count;
 } ADRENO_GMU_MEMORY;

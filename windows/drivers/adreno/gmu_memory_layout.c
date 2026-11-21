@@ -102,7 +102,7 @@ enum adreno_gmu_layout_status adreno_gmu_memory_layout(const void *image, size_t
     }
     layout->reserved_count = count;
     uint32_t hfi = kernel_base;
-    uint32_t size = page_end(ADRENO_HFI_SIZE);
+    const uint32_t size = page_end(ADRENO_HFI_SIZE), log_size = 4 * gmu_page;
     for (size_t i = 0; i < count; ++i) {
         if (reserved[i].address >= hfi + size) break;
         hfi = reserved[i].address + reserved[i].bytes;
@@ -110,5 +110,15 @@ enum adreno_gmu_layout_status adreno_gmu_memory_layout(const void *image, size_t
     if (!inside(hfi, size, kernel_base, kernel_size))
         return ADRENO_GMU_LAYOUT_INVALID;
     layout->hfi = (struct adreno_gmu_range){hfi, size};
+    uint32_t log = hfi + size;
+    for (size_t i = 0; i < count; ++i) {
+        uint32_t end = reserved[i].address + reserved[i].bytes;
+        if (end <= log) continue;
+        if (reserved[i].address >= log + log_size) break;
+        log = end;
+    }
+    if (!inside(log, log_size, kernel_base, kernel_size))
+        return ADRENO_GMU_LAYOUT_INVALID;
+    layout->log = (struct adreno_gmu_range){log, log_size};
     return ADRENO_GMU_LAYOUT_OK;
 }

@@ -47,5 +47,9 @@ _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS AdrenoHfiCommand(ADRENO_HFI *hfi, UCHAR id, const uint32_t *input, SIZE_T input_words,
                           uint32_t *reply, SIZE_T *reply_words, uint32_t *result, ULONG timeout_ms);
 
+/* Commands with a status-only response ignore optional trailing ACK data. */
+_IRQL_requires_(PASSIVE_LEVEL)
+NTSTATUS AdrenoHfiRequest(ADRENO_HFI *hfi, UCHAR id, const uint32_t *input, SIZE_T words, ULONG timeout_ms);
+
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS AdrenoHfiSetPerfTable(ADRENO_HFI *hfi, const struct adreno_perf_config *config, ULONG timeout_ms);

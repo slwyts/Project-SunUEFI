@@ -173,3 +173,13 @@ unlock:
     KeReleaseMutex(&hfi->command_mutex, FALSE);
     return status;
 }
+
+NTSTATUS AdrenoHfiRequest(ADRENO_HFI *hfi, UCHAR id, const uint32_t *input, SIZE_T words, ULONG timeout_ms)
+{
+    SIZE_T returned = 0;
+    uint32_t result = 0;
+    NTSTATUS s = AdrenoHfiCommand(hfi, id, input, words, NULL, &returned, &result, timeout_ms);
+    if (s != STATUS_SUCCESS && !(s == STATUS_BUFFER_TOO_SMALL && returned))
+        return s;
+    return result ? STATUS_DEVICE_PROTOCOL_ERROR : STATUS_SUCCESS;
+}

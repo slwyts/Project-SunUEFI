@@ -22,11 +22,5 @@ NTSTATUS AdrenoHfiSetPerfTable(ADRENO_HFI *hfi, const struct adreno_perf_config 
     case ADRENO_PERF_VERSION: return STATUS_NOT_SUPPORTED;
     default: return STATUS_DEVICE_CONFIGURATION_ERROR;
     }
-    SIZE_T words = 0;
-    uint32_t result = 0;
-    NTSTATUS status = AdrenoHfiCommand(hfi, ADRENO_HFI_TABLE, table.words, table.count,
-                                        NULL, &words, &result, timeout_ms);
-    if (!NT_SUCCESS(status))
-        return status;
-    return result == 0 ? STATUS_SUCCESS : STATUS_DEVICE_PROTOCOL_ERROR;
+    return AdrenoHfiRequest(hfi, ADRENO_HFI_TABLE, table.words, table.count, timeout_ms);
 }

@@ -4,7 +4,6 @@
 /* A8xx KGSL and Freedreno use the GMU CX always-on counter for host reads:
  * the CP register aperture may be fenced during an autonomous GX collapse.
  * Register word offsets in a6xx_gmu.xml are relative to the GPU origin. */
-#define A830_GMU_REGISTER_BASE 0x1b000u
 #define A830_GMU_ALWAYS_ON_COUNTER 0x1f840u
 #define A830_COUNTER_HZ 19200000u
 
@@ -15,32 +14,16 @@ void AdrenoInitializeGpuClock(ADRENO_WDDM_ADAPTER *adapter)
     adapter->counter_powered = FALSE;
 }
 
-NTSTATUS AdrenoMapGpuClock(ADRENO_WDDM_ADAPTER *adapter, const DXGKRNL_INTERFACE *dxgk,
-                          PCM_PARTIAL_RESOURCE_DESCRIPTOR gmu_registers)
+void AdrenoBindGpuClock(ADRENO_WDDM_ADAPTER *adapter, const ADRENO_REGISTER_WINDOW *registers)
 {
-    const ULONG offset = (A830_GMU_ALWAYS_ON_COUNTER - A830_GMU_REGISTER_BASE) * sizeof(ULONG);
-    const ULONG bytes = 2 * sizeof(ULONG);
-    ULONGLONG base;
-    void *mapping;
-    PHYSICAL_ADDRESS address;
+    const ULONG offset = A830_GMU_ALWAYS_ON_COUNTER - ADRENO_GMU_BASE_WORD;
+    KIRQL old;
     PAGED_CODE();
-
-    if (adapter->gmu_counter)
-        return STATUS_ALREADY_INITIALIZED;
-    if (!gmu_registers || (gmu_registers->Type != CmResourceTypeMemory &&
-                           gmu_registers->Type != CmResourceTypeMemoryLarge) ||
-        (gmu_registers->Flags & CM_RESOURCE_MEMORY_WRITE_ONLY))
-        return STATUS_DEVICE_CONFIGURATION_ERROR;
-    ULONGLONG size = RtlCmDecodeMemIoResource(gmu_registers, &base);
-    if ((base & (sizeof(ULONG) - 1)) || size < offset + bytes ||
-        base > (ULONGLONG)MAXLONGLONG - (offset + bytes - 1))
-        return STATUS_DEVICE_CONFIGURATION_ERROR;
-    address.QuadPart = (LONGLONG)(base + offset);
-    NTSTATUS status = dxgk->DxgkCbMapMemory(dxgk->DeviceHandle, address, bytes,
-                                             FALSE, FALSE, MmNonCached, &mapping);
-    if (NT_SUCCESS(status))
-        adapter->gmu_counter = mapping;
-    return status;
+    KeAcquireSpinLock(&adapter->clock_lock, &old);
+    adapter->counter_powered = FALSE;
+    adapter->gmu_counter = registers && registers->words && registers->bytes / sizeof(ULONG) >= offset + 2 ?
+                           registers->words + offset : NULL;
+    KeReleaseSpinLock(&adapter->clock_lock, old);
 }
 
 void AdrenoSetGpuClockPowered(ADRENO_WDDM_ADAPTER *adapter, BOOLEAN powered)
@@ -49,18 +32,6 @@ void AdrenoSetGpuClockPowered(ADRENO_WDDM_ADAPTER *adapter, BOOLEAN powered)
     KeAcquireSpinLock(&adapter->clock_lock, &old);
     adapter->counter_powered = powered && adapter->gmu_counter != NULL;
     KeReleaseSpinLock(&adapter->clock_lock, old);
-}
-
-NTSTATUS AdrenoUnmapGpuClock(ADRENO_WDDM_ADAPTER *adapter, const DXGKRNL_INTERFACE *dxgk)
-{
-    PAGED_CODE();
-    AdrenoSetGpuClockPowered(adapter, FALSE);
-    if (!adapter->gmu_counter)
-        return STATUS_SUCCESS;
-    NTSTATUS status = dxgk->DxgkCbUnmapMemory(dxgk->DeviceHandle, (void *)adapter->gmu_counter);
-    if (NT_SUCCESS(status))
-        adapter->gmu_counter = NULL;
-    return status;
 }
 
 _Use_decl_annotations_
