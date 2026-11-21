@@ -125,7 +125,9 @@ INF、签名目录（CAT）及其引用的所有文件。安装器把驱动放�
 构建项目自己的驱动包时，在装有 WDK 的 Windows 开发者终端运行
 `./build.sh windows drivers --catalogs`。WDK 的 Inf2Cat 检查每个带 INF 的 ARM64 包，
 生成列出包内文件哈希的 `.cat`，放在 `artifacts/windows/drivers/<项目>/Release/`。
-新生成的目录文件没有签名；按 Windows 驱动签名流程签署后再交给安装介质。
+Windows driver checks 的 `Windows-ARM64-UFS-unsigned` 下载项包含同一次构建、经过校验的
+`sunufs.inf`、`sunufs.sys` 和 `sunufs.cat`。新生成的目录文件没有签名；按 Windows
+驱动签名流程签署后再交给安装介质。目前这个包匹配的是 QEMU 的 PCI UFS 控制器。
 
 在已创建独立分区的平板上，从有 root 的 Android 连接 ADB。Linux 主机还需要
 Android platform-tools、`dosfstools`、`mtools`，完整安装另需 `ntfs-3g`、
