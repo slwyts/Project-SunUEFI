@@ -41,8 +41,9 @@ def prepare_mesa(spec, cache):
     top = 'mesa-' + mesa['version']
     tree = umd.WORK / 'sources' / (top + '-' + mesa['sha256'][:12])
     driver = umd.DRIVER / 'src'
-    patch = driver / 'mesa/mesa.patch'
-    patch_bytes = patch.read_bytes()
+    # Git for Windows may check out a diff with CRLF. Empty context lines in
+    # this donor patch must be passed to git apply exactly as committed.
+    patch_bytes = subprocess.check_output(['git', '-C', umd.DRIVER, 'cat-file', 'blob', 'HEAD:src/mesa/mesa.patch'])
     # Match the identifier supplied by the donor when it builds the Windows
     # backend, so both sides use the same shader/pipeline-cache identity.
     build_id = hashlib.sha256(mesa['commit'].encode() + patch_bytes).hexdigest()
@@ -62,7 +63,8 @@ def prepare_mesa(spec, cache):
             env = dict(os.environ, GIT_CEILING_DIRECTORIES=str(stage))
             for key in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR'):
                 env.pop(key, None)
-            subprocess.run(['git', 'apply', '--no-index', '--ignore-whitespace', patch], cwd=source, env=env, check=True)
+            subprocess.run(['git', 'apply', '--no-index', '--ignore-whitespace', '-'],
+                           input=patch_bytes, cwd=source, env=env, check=True)
             unpack(dx_archive, stage)
             (stage / ('DirectX-Headers-' + dx['commit'])).rename(directx_folder(source, dx['tag']))
             umd.write_changed(source / receipt.name, json.dumps(identity, sort_keys=True))
