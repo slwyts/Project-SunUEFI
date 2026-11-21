@@ -156,6 +156,10 @@ def build(args, spec, headers, libraries, kit_includes):
     work = umd.WORK / 'turnip'
     work.mkdir(exist_ok=True)
     compiler, linker, librarian = umd.tool('clang-cl'), umd.tool('lld-link'), umd.tool('llvm-lib')
+    if os.name == 'nt':
+        # PATHEXT can return clang-cl.EXE. Meson checks this basename
+        # case-sensitively to select the MSVC driver and linker arguments.
+        compiler = compiler.with_name('clang-cl.exe')
     cc = [compiler.as_posix(), '--target=aarch64-pc-windows-msvc', '-fuse-ld=lld',
           *(f.replace('\\', '/') for f in kit_includes(headers, work, external_names=True))]
     # Generate deterministic COFF objects; lld derives the PE timestamp from
