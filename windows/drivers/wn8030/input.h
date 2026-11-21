@@ -10,12 +10,17 @@ _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS Wn8030InputCreate(PDEVICE_OBJECT fdo, const CM_PARTIAL_RESOURCE_DESCRIPTOR *connection,
                           WN8030_INPUT **result);
 
-/* Called by the resource-owning function driver after power-on and RAM boot.
- * ISR time is measured by KeQueryInterruptTime[Precise], in 100 ns units. */
+/* D0 starts with the MCU awake. Cold starts need the RAM image; a retained
+ * resume is confirmed separately by the controller's data-ready IRQ. */
 _IRQL_requires_(PASSIVE_LEVEL)
-NTSTATUS Wn8030InputRead(WN8030_INPUT *input, ULONGLONG interrupt_time);
+NTSTATUS Wn8030InputWake(WN8030_INPUT *input, BOOLEAN cold, BOOLEAN *attached);
 _IRQL_requires_(PASSIVE_LEVEL)
-NTSTATUS Wn8030SetCoverPower(WN8030_INPUT *input, BOOLEAN enable);
+NTSTATUS Wn8030InputSleep(WN8030_INPUT *input);
+/* Timestamp from the data-ready interrupt, in 100 ns units. */
+_IRQL_requires_(PASSIVE_LEVEL)
+NTSTATUS Wn8030InputRead(WN8030_INPUT *input, ULONGLONG interrupt_time, BOOLEAN *attached);
+_IRQL_requires_(PASSIVE_LEVEL)
+NTSTATUS Wn8030CoverKeepAlive(WN8030_INPUT *input);
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS Wn8030SetBacklight(WN8030_INPUT *input, UCHAR brightness);
 

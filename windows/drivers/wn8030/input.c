@@ -16,7 +16,10 @@ struct WN8030_INPUT {
     KMUTEX lock;
     KSPIN_LOCK queue_lock;
     LIST_ENTRY operations;
+    EX_RUNDOWN_REF hid_rundown;
     BOOLEAN stopping;
+    BOOLEAN running;
+    BOOLEAN vhf_started;
     BOOLEAN caps;
     UCHAR brightness;
     ULONG configured_generation;
@@ -149,7 +152,8 @@ static VOID hid_worker(PDEVICE_OBJECT fdo, PVOID context)
         else if (p->reportBufferLen < 2 || p->reportBuffer[0] != p->reportId) status = STATUS_INVALID_PARAMETER;
         else {
             BOOLEAN caps = (p->reportBuffer[1] & 1) != 0;
-            status = in->reports.detached ? STATUS_SUCCESS : command(in, 0x2e, caps ? 0xfd : 0xfc);
+            status = !in->running || in->reports.detached ? STATUS_SUCCESS :
+                     command(in, 0x2e, caps ? 0xfd : 0xfc);
             if (NT_SUCCESS(status)) in->caps = caps;
         }
     }
@@ -163,14 +167,20 @@ static VOID hid_worker(PDEVICE_OBJECT fdo, PVOID context)
     IoFreeWorkItem(w->work);
     (void)VhfAsyncOperationComplete(w->op, status);
     if (next) IoQueueWorkItem(next->work, hid_worker, DelayedWorkQueue, next);
+    ExReleaseRundownProtection(&in->hid_rundown);
 }
 
 static void queue_op(WN8030_INPUT *in, VHFOPERATIONHANDLE op, struct hid_work *w,
                      PHID_XFER_PACKET p, enum hid_operation kind)
 {
+    if (!ExAcquireRundownProtection(&in->hid_rundown)) {
+        (void)VhfAsyncOperationComplete(op, STATUS_DELETE_PENDING);
+        return;
+    }
     w->work = IoAllocateWorkItem(in->fdo);
     if (!w->work) {
         (void)VhfAsyncOperationComplete(op, STATUS_INSUFFICIENT_RESOURCES);
+        ExReleaseRundownProtection(&in->hid_rundown);
         return;
     }
     w->in = in;
@@ -203,11 +213,11 @@ NTSTATUS Wn8030InputCreate(PDEVICE_OBJECT fdo, const CM_PARTIAL_RESOURCE_DESCRIP
     KeInitializeMutex(&in->lock, 0);
     KeInitializeSpinLock(&in->queue_lock);
     InitializeListHead(&in->operations);
+    ExInitializeRundownProtection(&in->hid_rundown);
     wn8030_reports_init(&in->reports);
     in->fdo = fdo;
     in->brightness = 80;
     NTSTATUS status = spb_open(connection, &in->spb);
-    if (NT_SUCCESS(status)) status = Wn8030BootFirmware(fdo->DriverObject, in->spb);
     if (NT_SUCCESS(status)) {
         VHF_CONFIG cfg;
         VHF_CONFIG_INIT(&cfg, fdo, (USHORT)wn8030_descriptor_length, (PUCHAR)wn8030_descriptor);
@@ -217,7 +227,6 @@ NTSTATUS Wn8030InputCreate(PDEVICE_OBJECT fdo, const CM_PARTIAL_RESOURCE_DESCRIP
         cfg.EvtVhfAsyncOperationSetFeature = set_op;
         cfg.EvtVhfAsyncOperationWriteReport = write_op;
         status = VhfCreate(&cfg, &in->vhf);
-        if (NT_SUCCESS(status)) status = VhfStart(in->vhf);
     }
     if (!NT_SUCCESS(status)) {
         if (in->vhf) VhfDelete(in->vhf, TRUE);
@@ -227,27 +236,69 @@ NTSTATUS Wn8030InputCreate(PDEVICE_OBJECT fdo, const CM_PARTIAL_RESOURCE_DESCRIP
     return status;
 }
 
-NTSTATUS Wn8030InputRead(WN8030_INPUT *in, ULONGLONG interrupt_time)
+NTSTATUS Wn8030InputWake(WN8030_INPUT *in, BOOLEAN cold, BOOLEAN *attached)
+{
+    PAGED_CODE();
+    *attached = FALSE;
+    lock(in);
+    NTSTATUS status = in->stopping ? STATUS_DELETE_PENDING : STATUS_SUCCESS;
+    if (NT_SUCCESS(status) && cold) status = Wn8030BootFirmware(in->fdo->DriverObject, in->spb);
+    if (NT_SUCCESS(status)) {
+        /* Stock powers the cover before the first attach report can arrive. */
+        *attached = in->reports.attachment_known && !in->reports.detached;
+        status = *attached ? configure_cover(in) : command(in, 0x25, 1);
+    }
+    if (NT_SUCCESS(status) && !in->vhf_started) {
+        /* VHF can call back before Start returns. Let its queued operations
+         * acquire the bus mutex; KMDF serializes D0 and removal. */
+        in->running = TRUE;
+        KeReleaseMutex(&in->lock, FALSE);
+        status = VhfStart(in->vhf);
+        lock(in);
+        in->vhf_started = NT_SUCCESS(status);
+    }
+    in->running = NT_SUCCESS(status);
+    KeReleaseMutex(&in->lock, FALSE);
+    return status;
+}
+
+NTSTATUS Wn8030InputSleep(WN8030_INPUT *in)
+{
+    PAGED_CODE();
+    lock(in);
+    NTSTATUS status = STATUS_SUCCESS;
+    if (in->running)
+        status = result_status(in, wn8030_release(&in->reports, scan_time(KeQueryInterruptTime()),
+                                                 send_report, in));
+    in->running = FALSE;
+    KeReleaseMutex(&in->lock, FALSE);
+    return status;
+}
+
+NTSTATUS Wn8030InputRead(WN8030_INPUT *in, ULONGLONG interrupt_time, BOOLEAN *attached)
 {
     UCHAR frame[WN8030_FRAME_SIZE];
     PAGED_CODE();
     lock(in);
-    NTSTATUS status = in->stopping ? STATUS_DELETE_PENDING : read_frame(in, frame);
+    NTSTATUS status = in->stopping ? STATUS_DELETE_PENDING :
+                      !in->running ? STATUS_DEVICE_NOT_READY : read_frame(in, frame);
     if (NT_SUCCESS(status)) {
         status = result_status(in, wn8030_frame(&in->reports, frame, sizeof(frame),
                                scan_time(interrupt_time), send_report, in));
         if (NT_SUCCESS(status) && needs_setup(in)) status = configure_cover(in);
     }
+    *attached = in->reports.attachment_known && !in->reports.detached;
     KeReleaseMutex(&in->lock, FALSE);
     return status;
 }
 
-NTSTATUS Wn8030SetCoverPower(WN8030_INPUT *in, BOOLEAN enable)
+NTSTATUS Wn8030CoverKeepAlive(WN8030_INPUT *in)
 {
     PAGED_CODE();
     lock(in);
     NTSTATUS status = in->stopping ? STATUS_DELETE_PENDING :
-                      enable && needs_setup(in) ? configure_cover(in) : command(in, 0x25, !!enable);
+                      !in->running || !in->reports.attachment_known || in->reports.detached ?
+                      STATUS_DEVICE_NOT_READY : needs_setup(in) ? configure_cover(in) : command(in, 0x25, 1);
     KeReleaseMutex(&in->lock, FALSE);
     return status;
 }
@@ -257,7 +308,7 @@ NTSTATUS Wn8030SetBacklight(WN8030_INPUT *in, UCHAR brightness)
     PAGED_CODE();
     lock(in);
     NTSTATUS status = in->stopping ? STATUS_DELETE_PENDING :
-                      in->reports.detached ? STATUS_SUCCESS : command(in, 0x23, brightness);
+                      !in->running || in->reports.detached ? STATUS_SUCCESS : command(in, 0x23, brightness);
     if (NT_SUCCESS(status)) in->brightness = brightness;
     KeReleaseMutex(&in->lock, FALSE);
     return status;
@@ -270,6 +321,8 @@ VOID Wn8030InputDelete(WN8030_INPUT *in)
     in->stopping = TRUE;
     (void)wn8030_release(&in->reports, scan_time(KeQueryInterruptTime()), send_report, in);
     KeReleaseMutex(&in->lock, FALSE);
+    /* Close the work queue before VHF retires its operation contexts. */
+    ExWaitForRundownProtectionRelease(&in->hid_rundown);
     VhfDelete(in->vhf, TRUE);
     ZwClose(in->spb);
     ExFreePoolWithTag(in, WN_TAG);

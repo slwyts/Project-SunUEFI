@@ -254,50 +254,116 @@ def graphics_test(_args):
     print(output / 'graphics-readback.exe')
 
 
+def kmdf_options(config, description, kits):
+    major = config.findtext('{*}KMDF_VERSION_MAJOR')
+    minor = config.findtext('{*}KMDF_VERSION_MINOR')
+    if not major or not minor:
+        raise ValueError('Specify the KMDF major and minor versions in the WDK project')
+    version = f'{major}.{minor}'
+    roots = [kit.parent.parent for kit in kits]
+
+    def locate(options, purpose):
+        match = next((path for path in options if path.exists()), None)
+        if not match:
+            raise ValueError(f'Missing {purpose} in the supplied Windows kits')
+        return match
+
+    headers = locate((kit.parent / 'wdf/kmdf' / version for kit in kits), f'KMDF {version} headers')
+    kernel_dirs = [kit.parent.parent / 'Lib' / kit.name / 'km/ARM64' for kit in kits]
+    wdf_dirs = [root / 'Lib/wdf/kmdf/ARM64' / version for root in roots]
+    # Standard ARM64 KMDF dependencies from WindowsDriver.KernelMode.KMDF.props;
+    # hardware-specific libraries belong to the project.
+    dependencies = ['bufferoverflowfastfailk.lib', 'ntoskrnl.lib', 'hal.lib', 'wmilib.lib']
+    for node in description.findall('.//{*}Link/{*}AdditionalDependencies'):
+        for dep in (node.text or '').split(';'):
+            dep = dep.strip()
+            if dep and dep != '%(AdditionalDependencies)':
+                dependencies.append(dep.removeprefix('$(DDK_LIB_PATH)').lower())
+    libraries = [locate((path / name for path in wdf_dirs), name) for name in ('wdfdriverentry.lib', 'wdfldr.lib')]
+    libraries += [locate((path / name for path in kernel_dirs), name) for name in dict.fromkeys(dependencies)]
+    return headers, libraries
+
+
+def clang_kit_includes(directories, work):
+    flags = [f'/imsvc{directory}' for directory in directories]
+    if os.name != 'nt':
+        # WDK headers use Windows filename casing, including for quoted
+        # includes in their own directory. Leave all original kits untouched.
+        roots = []
+        for directory in directories:
+            if any(parent in directories for parent in directory.parents):
+                continue
+            for base, _, files in os.walk(directory):
+                entries = [{'type': 'file', 'name': name, 'external-contents': str(Path(base) / name)}
+                           for name in files]
+                if entries:
+                    roots.append({'type': 'directory', 'name': base, 'contents': entries})
+        overlay = work / 'kit-headers.json'
+        overlay.write_text(json.dumps({'version': 0, 'case-sensitive': False, 'use-external-names': False,
+                                       'roots': roots}), encoding='utf-8')
+        flags.extend(['/clang:-ivfsoverlay', f'/clang:{overlay}'])
+    return flags
+
+def llvm_driver(project, kits):
+    work = ROOT / 'build/windows' / project.stem / 'Release'
+    output = ROOT / 'artifacts/windows/drivers' / project.stem / 'Release'
+    work.mkdir(parents=True, exist_ok=True)
+    output.mkdir(parents=True, exist_ok=True)
+    description = ET.parse(project)
+    config = description.find('.//{*}PropertyGroup[@Label="Configuration"]')
+    kind = config.findtext('{*}ConfigurationType')
+    directories, libraries = [], []
+    if kind == 'Driver' and config.findtext('{*}DriverType') == 'KMDF':
+        headers, libraries = kmdf_options(config, description, kits)
+        directories.append(headers)
+    elif kind != 'StaticLibrary':
+        raise ValueError(f'{project.name}: build this driver type with the full MSBuild/WDK toolset')
+    # Kernel CRT headers must win over the user CRT, including with split kits.
+    directories.extend(path for part in ('km', 'km/crt', 'shared', 'ucrt')
+                       for kit in kits if (path := kit / part).is_dir())
+    compile_flags = clang_kit_includes(directories, work)
+    compiler = required_tool('clang-cl')
+    objects = []
+    for unit in description.findall('.//{*}ClCompile[@Include]'):
+        source = project.parent / unit.attrib['Include']
+        obj = work / (source.stem + '.obj')
+        subprocess.run([compiler, '--target=aarch64-pc-windows-msvc', '/nologo', '/kernel', '/O2', '/Brepro',
+                        '/std:c17', '/W4', '/WX', '/c', '/D_ARM64_=1', *compile_flags, f'/Fo{obj}', source],
+                       check=True)
+        objects.append(obj)
+    if kind == 'StaticLibrary':
+        library = output / (project.stem + '.lib')
+        subprocess.run([required_tool('llvm-lib'), f'/out:{library}', *(obj.name for obj in objects)],
+                       cwd=work, check=True)
+        return library
+    driver = output / (project.stem + '.sys')
+    subprocess.run([required_tool('lld-link'), '/nologo', '/driver', '/machine:arm64', '/subsystem:native,10.0',
+                    '/entry:FxDriverEntry', '/nodefaultlib', '/opt:ref', '/opt:icf', '/integritycheck', '/dynamicbase',
+                    '/nxcompat', '/release', '/Brepro', f'/out:{driver}', *objects, *libraries], check=True)
+    return driver
+
+
 def drivers(args):
     projects = sorted((ROOT / 'windows/drivers').glob('*/*.vcxproj'))
     if not projects:
         raise ValueError('No Windows driver projects found')
-    if not args.kit_include:
-        msbuild = shutil.which('msbuild')
-        if not msbuild and os.name == 'nt':
-            locator = Path(os.environ['ProgramFiles(x86)']) / 'Microsoft Visual Studio/Installer/vswhere.exe'
-            if locator.is_file():
-                hits = subprocess.check_output([locator, '-latest', '-products', '*', '-requires',
-                                                'Microsoft.Component.MSBuild', '-find',
-                                                r'MSBuild\**\Bin\MSBuild.exe'], text=True).splitlines()
-                msbuild = next(iter(hits), None)
-        if not msbuild:
-            raise ValueError('Use a Visual Studio/WDK developer shell, or pass --kit-include for LLVM.')
+    if args.kit_include:
+        kits = [path.resolve() for path in args.kit_include]
         for project in projects:
-            subprocess.run([msbuild, project, '/m', '/p:Platform=ARM64', '/p:Configuration=Release'], check=True)
+            print(llvm_driver(project, kits))
         return
-
-    compiler, librarian = required_tool('clang-cl'), required_tool('llvm-lib')
-    # Kernel CRT headers must win over the user CRT, including with split kits.
-    includes = [f'/imsvc{path}' for name in ('km', 'km/crt', 'shared', 'ucrt')
-                for root in args.kit_include
-                if (path := root.resolve() / name).is_dir()]
+    msbuild = shutil.which('msbuild')
+    if not msbuild and os.name == 'nt':
+        locator = Path(os.environ['ProgramFiles(x86)']) / 'Microsoft Visual Studio/Installer/vswhere.exe'
+        if locator.is_file():
+            hits = subprocess.check_output([locator, '-latest', '-products', '*', '-requires',
+                                            'Microsoft.Component.MSBuild', '-find',
+                                            r'MSBuild\**\Bin\MSBuild.exe'], text=True).splitlines()
+            msbuild = next(iter(hits), None)
+    if not msbuild:
+        raise ValueError('Use a Visual Studio/WDK developer shell, or pass --kit-include for LLVM.')
     for project in projects:
-        description = ET.parse(project)
-        if {node.text for node in description.findall('.//{*}ConfigurationType')} != {'StaticLibrary'}:
-            raise ValueError(f'{project.name} needs the full WDK linker; build it with MSBuild')
-        work = ROOT / 'build/windows' / project.stem / 'Release'
-        output = ROOT / 'artifacts/windows/drivers' / project.stem / 'Release'
-        work.mkdir(parents=True, exist_ok=True)
-        output.mkdir(parents=True, exist_ok=True)
-        objects = []
-        for unit in description.findall('.//{*}ClCompile[@Include]'):
-            source = project.parent / unit.attrib['Include']
-            obj = work / (source.stem + '.obj')
-            subprocess.run([compiler, '--target=aarch64-pc-windows-msvc', '/nologo', '/kernel',
-                            '/std:c17', '/W4', '/WX', '/c', '/D_ARM64_=1',
-                            *includes, f'/Fo{obj}', source], check=True)
-            objects.append(obj)
-        library = output / (project.stem + '.lib')
-        subprocess.run([librarian, f'/out:{library}', *(obj.name for obj in objects)],
-                       cwd=work, check=True)
-        print(library)
+        subprocess.run([msbuild, project, '/m', '/p:Platform=ARM64', '/p:Configuration=Release'], check=True)
 
 
 def main(argv=None):
@@ -314,7 +380,8 @@ def main(argv=None):
     graphics.set_defaults(run=graphics_test)
     driver = commands.add_parser('drivers', help='Build the ARM64 WDK driver components')
     driver.add_argument('--kit-include', type=Path, action='append',
-                        help='Use LLVM with this versioned SDK/WDK Include directory (repeat for split kits)')
+                        help='Build with LLVM using this SDK/WDK Include/<version>, its WDF headers and ARM64 libraries '
+                             '(repeat for split kits)')
     driver.set_defaults(run=drivers)
     args = parser.parse_args(argv)
     try:
