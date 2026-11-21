@@ -33,6 +33,8 @@ on:
       - 'tests/unit/test_piano_qup_power.py'
       - 'tests/native/Rpmh*Test.c'
       - 'tests/unit/test_rpmh_provider.py'
+      - 'tests/native/ScmiPerfTest.c'
+      - 'tests/unit/test_scmi_perf.py'
       - 'tests/native/UfsControllerTest.c'
       - 'tests/unit/test_ufs_controller.py'
       - 'tools/build/windows.py'
@@ -69,7 +71,7 @@ jobs:
           --pattern test_wn8030_input.py --pattern test_wn8030_boot.py
           --pattern test_ufs_transfer.py --pattern test_ufs_link.py --pattern test_ufs_platform.py
           --pattern test_piano_ufs_clock.py --pattern test_piano_ufs_power.py --pattern test_ufs_controller.py
-          --pattern test_piano_qup_power.py --pattern test_rpmh_provider.py
+          --pattern test_piano_qup_power.py --pattern test_rpmh_provider.py --pattern test_scmi_perf.py
   readback:
     runs-on: windows-11-arm
     steps:

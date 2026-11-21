@@ -157,6 +157,10 @@ GPIO80 的当前状态：低电平为合盖，两侧边沿均通知系统。盖�
 公开基线的 CSRT 随固件提供，本版 WinPE 和专业版镜像没有为其中两个资源组注册
 Qualcomm HAL 扩展。表中有低功耗状态、串口调试或 HAL 资源，不等于 Windows 驱动已经接管硬件。
 
+处理器调频走小米固件的 SCMI 性能协议。`suncpucp.sys` 管理共享发送通道；
+Windows 电源插件的配套部件从固件列出两个 CPU 簇的档位和可用范围，不套用手机的频率表。
+平板上还需要把通道和处理器接到 Windows 的电源插件，才能测出实际频率与睡眠恢复后的行为。
+
 平板已用这份带 ACPI 的固件经 systemd-boot 启动 Debian。EFI 系统表
 给出 ACPI 2.0 指针，从设备读回的 XSDT、FADT、DSDT、MADT、GTDT 和 PPTT
 校验和均正确；Linux 的 PSCI 仍从设备树初始化。IORT 使用原厂 XBL 的
