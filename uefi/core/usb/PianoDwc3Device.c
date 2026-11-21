@@ -5,6 +5,7 @@
 #include "PianoDwc3Service.h"
 #if PIANO_USB_SERVICE
 #include "../Protocol/PianoProductRuntime.h"
+#include <Library/DevicePathLib.h>
 #endif
 #ifndef PIANO_USB_FASTBOOT
 #define PIANO_USB_FASTBOOT 0
@@ -381,23 +382,29 @@ STATIC EFI_STATUS FastbootQuery(VOID *Context,CONST CHAR8 *Name,CHAR8 Value[60])
   return EFI_SUCCESS;
 }
 #if PIANO_USB_SERVICE
-STATIC EFI_STATUS ServiceRequestUi(UINT32 Action);
+STATIC EFI_STATUS ServiceRequestUi(UINT32 Action,CONST CHAR8 *File);
 STATIC EFI_STATUS ServiceBeforeRamlog(BOOLEAN *ServicesLost);
 STATIC EFI_STATUS ServiceReportStatus(BOOLEAN *ServicesLost);
 #endif
 STATIC EFI_STATUS FastbootDiagnostic(VOID *Context,PIANO_FASTBOOT *State,CONST CHAR8 *Cmd) {
   (VOID)Context;
 #if PIANO_USB_SERVICE
+  CONST CHAR8 *File=!AsciiStrCmp(Cmd,"oem boot-efi")?"":
+    !AsciiStrnCmp(Cmd,"oem boot-efi ",13)?Cmd+13:NULL;
   UINT32 UiAction=!AsciiStrCmp(Cmd,"oem setup")?PIANO_PRODUCT_ACTION_SETUP:
     !AsciiStrCmp(Cmd,"oem shell")?PIANO_PRODUCT_ACTION_SHELL:
     !AsciiStrCmp(Cmd,"oem simpleinit")?PIANO_PRODUCT_ACTION_SIMPLEINIT:
-    !AsciiStrCmp(Cmd,"oem boot-stable")?PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE:PIANO_PRODUCT_ACTION_NONE;
+    (File || !AsciiStrCmp(Cmd,"oem boot-stable"))?PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE:PIANO_PRODUCT_ACTION_NONE;
   if(UiAction!=PIANO_PRODUCT_ACTION_NONE) {
-    EFI_STATUS UiStatus=ServiceRequestUi(UiAction);
+    EFI_STATUS UiStatus=ServiceRequestUi(UiAction,File);
     // An actual EBS fence forbids even a FAIL response DMA. Ordinary missing
     // runtime/backend rejection keeps the resident owner and replies normally.
     if(UiStatus==EFI_ABORTED)return UiStatus;
-    CONST CHAR8 *Reply=UiStatus==EFI_SUCCESS?"OKAY":"FAILUI navigation backend unavailable";
+    CONST CHAR8 *Reply=UiStatus==EFI_SUCCESS?"OKAY":
+      File && UiStatus==EFI_INVALID_PARAMETER?"FAILuse an absolute EFI path or stage a UTF-16LE path":
+      File && UiStatus==EFI_OUT_OF_RESOURCES?"FAILnot enough memory for EFI path":
+      File?"FAILcannot select an EFI file now; retry from the boot menu":
+      "FAILUI navigation backend unavailable";
     return FastbootSend(NULL,Reply,AsciiStrLen(Reply));
   }
 #endif
@@ -1119,9 +1126,11 @@ STATIC EFI_STATUS ServiceReportStatus(BOOLEAN *ServicesLost) {
 }
 STATIC BOOLEAN SameUiRuntime(CONST PIANO_PRODUCT_RUNTIME_PROTOCOL *A,CONST PIANO_PRODUCT_RUNTIME_PROTOCOL *B) {
   return A->Revision==B->Revision && A->Pump==B->Pump && A->BootServicesAlive==B->BootServicesAlive &&
-    A->RequestAction==B->RequestAction && A->GetPendingAction==B->GetPendingAction && A->AckAction==B->AckAction;
+    A->RequestAction==B->RequestAction && A->GetPendingAction==B->GetPendingAction && A->AckAction==B->AckAction &&
+    A->SelectBootFile==B->SelectBootFile;
 }
-STATIC EFI_STATUS ServiceRequestUi(UINT32 Action) {
+
+STATIC EFI_STATUS ServiceRequestUi(UINT32 Action,CONST CHAR8 *File) {
   if(mService.State.ServicesLost)return EFI_ABORTED;
   if(!mService.State.Started || mService.State.Phase!=PianoUsbServiceListening || mService.State.Retained ||
      !mExperimentRunning || !ServiceAtApp() || gBS->LocateProtocol==NULL)return EFI_NOT_READY;
@@ -1138,7 +1147,20 @@ STATIC EFI_STATUS ServiceRequestUi(UINT32 Action) {
   if(mService.State.ServicesLost)return EFI_ABORTED;
   if(!Alive || !SameUiRuntime(Runtime,&Methods))return EFI_NOT_READY;
   if(mService.UiRuntime==NULL){mService.UiRuntime=Runtime;mService.UiMethods=Methods;}
-  S=Methods.RequestAction(Runtime,Action); // CPU latch only; no nested dispatch.
+  if(File){
+    if(!Methods.SelectBootFile)return EFI_UNSUPPORTED;
+    CHAR16 *Name;
+    S=PianoFastbootEfiName(&mFastboot,File,&Name);
+    if(S!=EFI_SUCCESS)return S;
+    EFI_DEVICE_PATH_PROTOCOL *Path=FileDevicePath(NULL,Name);
+    FreePool(Name);
+    if(!Path)return EFI_OUT_OF_RESOURCES;
+    S=Methods.SelectBootFile(Runtime,Path,NULL,0);
+    if(mService.State.ServicesLost)return EFI_ABORTED;
+    FreePool(Path);
+  }else{
+    S=Methods.RequestAction(Runtime,Action);
+  }
   if(mService.State.ServicesLost)return EFI_ABORTED;
   if(S!=EFI_SUCCESS)return EFI_ERROR(S)?S:EFI_DEVICE_ERROR;
   if(!SameUiRuntime(Runtime,&Methods))return EFI_COMPROMISED_DATA;

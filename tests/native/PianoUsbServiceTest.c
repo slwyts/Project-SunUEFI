@@ -313,6 +313,24 @@ static VOID typec_poll(VOID){
 static PIANO_PRODUCT_RUNTIME_PROTOCOL navigation_runtime,navigation_replacement;
 static UINTN navigation_case,navigation_queries,navigation_requests,navigation_action;
 static BOOLEAN navigation_alive=TRUE;
+static CONST CHAR16 *navigation_name;
+EFI_DEVICE_PATH_PROTOCOL *EFIAPI FileDevicePath(EFI_HANDLE Device,CONST CHAR16 *Name){
+  assert(!Device && navigation_name);
+  UINTN I=0;
+  do {assert(Name[I]==navigation_name[I]);} while(Name[I++]);
+  UINTN Length=SIZE_OF_FILEPATH_DEVICE_PATH+I*sizeof(CHAR16);
+  FILEPATH_DEVICE_PATH *Node=calloc(1,Length+END_DEVICE_PATH_LENGTH);assert(Node);
+  Node->Header=(EFI_DEVICE_PATH_PROTOCOL){MEDIA_DEVICE_PATH,MEDIA_FILEPATH_DP,{(UINT8)Length,(UINT8)(Length>>8)}};
+  memcpy(Node->PathName,Name,I*sizeof(CHAR16));
+  *(EFI_DEVICE_PATH_PROTOCOL *)((UINT8 *)Node+Length)=(EFI_DEVICE_PATH_PROTOCOL){END_DEVICE_PATH_TYPE,END_ENTIRE_DEVICE_PATH_SUBTYPE,{4,0}};
+  return &Node->Header;
+}
+static EFI_STATUS EFIAPI navigation_file(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,CONST EFI_DEVICE_PATH_PROTOCOL *Path,
+  CONST VOID *Options,UINT32 Bytes){
+  assert(This==&navigation_runtime && current_tpl==TPL_APPLICATION && !in_timer && !Options && !Bytes);
+  assert(Path->Type==MEDIA_DEVICE_PATH && Path->SubType==MEDIA_FILEPATH_DP);
+  ++navigation_requests;return EFI_SUCCESS;
+}
 static EFI_STATUS EFIAPI navigation_pump(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Reason,UINTN Budget){(VOID)This;(VOID)Reason;(VOID)Budget;assert(!"navigation may not recursively pump");return EFI_UNSUPPORTED;}
 static BOOLEAN EFIAPI navigation_is_alive(PIANO_PRODUCT_RUNTIME_PROTOCOL *This){assert(This==&navigation_runtime && current_tpl==TPL_APPLICATION && !in_timer);return navigation_alive;}
 static EFI_STATUS EFIAPI navigation_pending(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 *Action,UINT64 *Seq){(VOID)This;(VOID)Action;(VOID)Seq;assert(!"USB navigation must only latch");return EFI_UNSUPPORTED;}
@@ -339,7 +357,7 @@ static VOID run_navigation(UINTN Test) {
   bs.RaiseTPL=raise_tpl;bs.RestoreTPL=restore_tpl;bs.CreateEvent=create_event;bs.CreateEventEx=create_event_ex;bs.SetTimer=set_timer;bs.CloseEvent=close_event;bs.LocateProtocol=navigation_locate;
   clock.DisableClock=clock.DisableClockPowerDomain=persistent_disable;
   navigation_case=Test;navigation_queries=navigation_requests=navigation_action=0;navigation_alive=Test!=3;
-  navigation_runtime=(PIANO_PRODUCT_RUNTIME_PROTOCOL){.Revision=PIANO_PRODUCT_RUNTIME_REVISION,.Pump=navigation_pump,.BootServicesAlive=navigation_is_alive,.RequestAction=navigation_request,.GetPendingAction=navigation_pending,.AckAction=navigation_ack};
+  navigation_runtime=(PIANO_PRODUCT_RUNTIME_PROTOCOL){.Revision=PIANO_PRODUCT_RUNTIME_REVISION,.Pump=navigation_pump,.BootServicesAlive=navigation_is_alive,.RequestAction=navigation_request,.GetPendingAction=navigation_pending,.AckAction=navigation_ack,.SelectBootFile=navigation_file};
   navigation_replacement=navigation_runtime;
   if(Test==2)navigation_runtime.Revision=99;
   if(Test==8)navigation_runtime.GetPendingAction=NULL;
@@ -348,7 +366,19 @@ static VOID run_navigation(UINTN Test) {
   if(Test==0){
     CONST CHAR8 *Commands[]={"oem setup","oem shell","oem simpleinit","oem boot-stable"};CONST UINT32 Actions[]={PIANO_PRODUCT_ACTION_SETUP,PIANO_PRODUCT_ACTION_SHELL,PIANO_PRODUCT_ACTION_SIMPLEINIT,PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE};
     for(UINTN I=0;I<ARRAY_SIZE(Commands);++I){UINTN Alloc=allocations;service_out(Commands[I]);assert(mPending[3] && mPosted[3]==4 && !memcmp(mBulkTx.Cpu,"OKAY",4) && navigation_action==Actions[I]);service_ack();assert(!closes && !clock_calls && allocations==Alloc && mService.State.Phase==PianoUsbServiceListening && mService.State.Action==PianoUsbServiceActionNone);}
-    assert(navigation_queries==4 && navigation_requests==4);service_out("getvar:version");service_ack();
+    assert(navigation_queries==4 && navigation_requests==4);
+    navigation_name=L"\\EFI\\Microsoft\\Boot\\bootmgfw.efi";
+    service_out("oem boot-efi /EFI/Microsoft/Boot/bootmgfw.efi");
+    assert(navigation_requests==5 && mPosted[3]==4 && !memcmp(mBulkTx.Cpu,"OKAY",4));service_ack();
+    service_out("oem boot-efi relative.efi");assert(navigation_requests==5 && !memcmp(mBulkTx.Cpu,"FAIL",4));service_ack();
+    service_out("oem boot-efi");assert(navigation_requests==5 && !memcmp(mBulkTx.Cpu,"FAIL",4));service_ack();
+    CONST CHAR16 Staged[]=L"\ufeff/EFI/测试/A directory name longer than the Fastboot command packet/启动.efi\r\n";
+    CHAR8 Download[32];snprintf(Download,sizeof(Download),"download:%08x",(unsigned)sizeof(Staged));
+    service_out(Download);service_ack();service_payload(Staged,sizeof(Staged));service_ack();
+    navigation_name=L"\\EFI\\测试\\A directory name longer than the Fastboot command packet\\启动.efi";
+    service_out("oem boot-efi");assert(navigation_requests==6 && mPosted[3]==4 && !memcmp(mBulkTx.Cpu,"OKAY",4));service_ack();
+    service_out("oem discard");service_ack();
+    service_out("getvar:version");service_ack();
   } else {
     if(Test==6 || Test==7){service_out("oem setup");service_ack();assert(navigation_requests==1);if(Test==7)navigation_runtime.RequestAction=navigation_changed_request;}
     if(Test==10){

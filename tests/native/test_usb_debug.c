@@ -8,7 +8,6 @@ EFI_BOOT_SERVICES *gBS;EFI_RUNTIME_SERVICES *gRT;
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}
 BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){return FALSE;}
 VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){ }
-VOID *EFIAPI AllocatePool(UINTN N){return malloc(N);}
 static EFI_BOOT_SERVICES bs;static EFI_USB_DEVICE_PROTOCOL usb;
 static UINT8 rx[RX_BYTES],tx[64];
 static USB_DEVICE_EVENT next_kind;static USB_DEVICE_EVENT_DATA next_data;

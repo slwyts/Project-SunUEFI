@@ -106,6 +106,11 @@ struct PIANO_FASTBOOT {
 EFI_STATUS PianoFastbootInit(PIANO_FASTBOOT *State, VOID *Context,
                             PIANO_FB_SEND Send, PIANO_FB_LOG Log);
 EFI_STATUS PianoFastbootPacket(PIANO_FASTBOOT *State, CONST VOID *Data, UINTN Bytes);
+#if PIANO_USB_SERVICE
+// Decode one absolute firmware filename. An empty inline name uses the staged
+// UTF-16LE text; FreePool the returned name after constructing its device path.
+EFI_STATUS PianoFastbootEfiName(CONST PIANO_FASTBOOT *State,CONST CHAR8 *Inline,CHAR16 **Name);
+#endif
 // Call at application TPL, only after queued replies drain.
 // Each step performs at most one bounded write/readback or one final flush.
 BOOLEAN PianoFastbootFlashPending(CONST PIANO_FASTBOOT *State);

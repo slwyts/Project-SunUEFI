@@ -367,7 +367,18 @@ static EFI_STATUS EFIAPI unload(EFI_HANDLE Handle){assert(Handle==(VOID *)400 &&
 EFI_STATUS PianoProductAcquireSimpleInit(PIANO_PRODUCT_PAYLOAD_VIEW *V,CONST VOID **Fdt){assert(!Fdt);++acquires;memset(V,0,sizeof(*V));if(scenario==2)return EFI_SECURITY_VIOLATION;assert(!loan);loan=TRUE;V->Image=payload;V->Bytes=sizeof(payload);V->Lease=(VOID *)123;return EFI_SUCCESS;}
 EFI_STATUS PianoProductValidateSimpleInit(CONST PIANO_PRODUCT_PAYLOAD_VIEW *V){++validates;assert(loan && V->Image==payload && V->Lease==(VOID *)123);return scenario==3?EFI_MEDIA_CHANGED:EFI_SUCCESS;}
 EFI_STATUS PianoProductReleaseSimpleInit(CONST PIANO_PRODUCT_PAYLOAD_VIEW *V){++releases;assert(loan && V->Lease==(VOID *)123 && !image_live);if(scenario==4)return EFI_DEVICE_ERROR;loan=FALSE;return EFI_SUCCESS;}
-EFI_STATUS PianoUsbControllerServicePumpApp(UINT32 Reason,UINTN Budget){assert(tpl==TPL_APPLICATION && alive && Budget==1000);++pumps;if(scenario==11)assert(runtime->Pump(runtime,Reason,Budget)==EFI_NOT_READY);return scenario==14?EFI_UNSUPPORTED:EFI_SUCCESS;}
+EFI_STATUS PianoUsbControllerServicePumpApp(UINT32 Reason,UINTN Budget){
+  assert(tpl==TPL_APPLICATION && alive && Budget==1000);++pumps;
+  if(scenario==11)assert(runtime->Pump(runtime,Reason,Budget)==EFI_NOT_READY);
+  if(scenario==169 && pumps==2){
+    assert(bulk_active && PianoBootPolicyReport()->Usb.BulkActive);
+    assert(runtime->SelectBootFile(runtime,(VOID *)124,NULL,0)==EFI_SUCCESS && !starts);
+  }
+  if(scenario==169 && pumps==3)bulk_active=FALSE; // The host receives the acknowledgement.
+  if(scenario==169 && pumps==4)
+    assert(runtime->SelectBootFile(runtime,(VOID *)124,NULL,0)==EFI_ACCESS_DENIED);
+  return scenario==14?EFI_UNSUPPORTED:EFI_SUCCESS;
+}
 EFI_STATUS PianoUsbControllerServiceGetStatus(PIANO_DWC3_SERVICE_STATUS *S){
   *S=(PIANO_DWC3_SERVICE_STATUS){.Revision=scenario==47?2:1,.Started=scenario!=14,.Configured=TRUE,.Phase=PianoUsbServiceListening,.BulkActive=scenario==83};
   if(scenario>=153){S->BulkActive=bulk_active;S->Downloading=download_active;S->WorkPending=bulk_active;S->QueuedEvents=bulk_events;}
@@ -388,7 +399,7 @@ EFI_STATUS PianoUsbControllerServiceGetStatus(PIANO_DWC3_SERVICE_STATUS *S){
 }
 EFI_STATUS PianoUsbControllerServiceStop(EFI_STATUS Reason,PIANO_USB_SERVICE_RETIRE_REPORT *Report){(void)Reason;(void)Report;++stops;assert(!"UI return must not stop shared USB");return EFI_DEVICE_ERROR;}
 int main(int argc,char **argv){
-  assert(argc==2);scenario=(UINT32)strtoul(argv[1],NULL,10);assert(scenario<=168);
+  assert(argc==2);scenario=(UINT32)strtoul(argv[1],NULL,10);assert(scenario<=169);
   gST=&system_table;if(scenario==151)gST->ConsoleInHandle=(VOID *)201;
   gBS=mmap(NULL,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);assert(gBS!=MAP_FAILED);
   *gBS=(EFI_BOOT_SERVICES){.RaiseTPL=raise,.RestoreTPL=restore,.CreateEventEx=create_ex,.CreateEvent=create,.CloseEvent=close_event,
@@ -404,6 +415,15 @@ int main(int argc,char **argv){
   if(scenario==13){assert(S==EFI_COMPROMISED_DATA && PianoBootPolicyReport()->Retained);goto Done;}
   if(scenario>=23 && scenario<=25){assert(S==EFI_COMPROMISED_DATA && PianoBootPolicyReport()->Retained && !starts);goto Done;}
   assert(S==EFI_SUCCESS && runtime && key_reg==1);
+  if(scenario==169){
+    bulk_active=TRUE;
+    assert(runtime->Pump(runtime,PIANO_PRODUCT_PUMP_APP,1000)==EFI_SUCCESS);
+    assert(runtime->Pump(runtime,PIANO_PRODUCT_PUMP_APP,1000)==EFI_SUCCESS);
+    assert(PianoBootPolicyReport()->BootSelection==PianoBootFile && bulk_active && !starts);
+    assert(PianoBootPolicyRun()==EFI_END_OF_FILE && pumps==3 && !bulk_active && !starts);
+    assert(runtime->Pump(runtime,PIANO_PRODUCT_PUMP_APP,1000)==EFI_SUCCESS);
+    assert(PianoBootPolicyStop()==EFI_SUCCESS);goto Done;
+  }
   if(scenario>=163){
     static PIANO_FV_APPLICATION Context;
     if(scenario==166){

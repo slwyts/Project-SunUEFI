@@ -14,6 +14,7 @@ INTN EFIAPI AsciiStrCmp(CONST CHAR8 *A,CONST CHAR8 *B){return strcmp(A,B);}
 INTN EFIAPI AsciiStrnCmp(CONST CHAR8 *A,CONST CHAR8 *B,UINTN N){return strncmp(A,B,N);}
 VOID *EFIAPI CopyMem(VOID *A,CONST VOID *B,UINTN N){return memcpy(A,B,N);}
 VOID *EFIAPI ZeroMem(VOID *A,UINTN N){return memset(A,0,N);}
+VOID *EFIAPI AllocatePool(UINTN N){return fail_alloc?NULL:malloc(N);}
 INTN EFIAPI CompareMem(CONST VOID *A,CONST VOID *B,UINTN N){return memcmp(A,B,N);}
 VOID *EFIAPI AllocateZeroPool(UINTN N){
   if(fail_alloc)return NULL;
@@ -100,7 +101,7 @@ static void diagnostics_only(void){
   command(&S,"getvar:SunUEFI:ram-boot","OKAYdisabled");
   command(&S,"getvar:all","OKAY");assert(calls==5 && !strcmp(replies[3],"INFOmax-download-size:0x00000000"));
   unsigned StorageQueries=storage_queries,BootQueries=boot_queries;
-  const char *Blocked[]={"download:00000003","fetch:xbl_config_a:0x0:0x1","boot", "oem setup","oem shell","oem simpleinit","oem boot-stable","oem sha256","oem discard","oem log","flash:boot_a"};
+  const char *Blocked[]={"download:00000003","fetch:xbl_config_a:0x0:0x1","boot", "oem setup","oem shell","oem simpleinit","oem boot-stable","oem boot-efi /EFI/BOOT/BOOTAA64.EFI","oem boot-efi","oem sha256","oem discard","oem log","flash:boot_a"};
   for(unsigned i=0;i<sizeof(Blocked)/sizeof(Blocked[0]);++i)
     command(&S,Blocked[i],"FAILonly diagnostics available after boot failure");
   assert(storage_queries==StorageQueries && boot_queries==BootQueries && !diagnostic_calls && !allocation);

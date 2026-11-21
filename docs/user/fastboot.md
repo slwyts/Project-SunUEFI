@@ -72,11 +72,24 @@ SunUEFI Fastboot 只允许刷写 `sunuefi_esp` 和 `sunuefi_root`。对这两个
 | 命令 | 作用 |
 | --- | --- |
 | `oem boot-stable` | 按固件的启动顺序选择系统；默认进入 systemd-boot |
+| `oem boot-efi /路径` | 只启动一次指定的 EFI 文件，不改固件启动顺序或默认系统 |
 | `oem setup`、`oem shell`、`oem simpleinit` | 切换到 UEFI 设置、Shell 或 SimpleInit 菜单 |
 | `reboot` | 保存设置、安全关闭外设后重启，沿用已保存的启动路线 |
 | `continue` | 同样重启，不改变启动选择，也不会直接启动 Linux |
 | `stage 文件` | 把文件下载到内存，最大 64 MiB |
 | `oem sha256`、`oem discard` | 对暂存的数据计算哈希，或丢弃它 |
+
+例如，从电脑启动已安装在启动分区上的 Windows Boot Manager：
+
+```sh
+fastboot -s SunUEFI-piano oem boot-efi /EFI/Microsoft/Boot/bootmgfw.efi
+```
+
+路径从卷的根目录开始，按 UEFI 的文件路径搜索顺序查找。如果几个卷有同名文件，
+可在平板的“从文件启动”中点选具体卷。路径较长或含中文时，把路径保存为
+UTF-16LE 文本，用 `fastboot -s SunUEFI-piano stage 路径.txt` 传入，再运行
+`fastboot -s SunUEFI-piano oem boot-efi`。这里传的是路径，不是 EFI 程序本身。
+`OKAY` 表示固件接受了这次选择；文件不存在或加载失败会回到平板菜单。
 
 ## 不支持的命令
 

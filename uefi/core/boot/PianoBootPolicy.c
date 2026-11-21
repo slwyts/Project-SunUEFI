@@ -139,8 +139,13 @@ STATIC BOOLEAN EFIAPI IsSimpleInitOption(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,
 STATIC EFI_STATUS EFIAPI SelectBootFile(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,
   CONST EFI_DEVICE_PATH_PROTOCOL *Path,CONST VOID *Options,UINT32 Bytes) {
   if(This!=&mRuntime || !Path)return EFI_INVALID_PARAMETER;
-  if(mReport.ActiveAction!=PIANO_PRODUCT_ACTION_SIMPLEINIT || !mAlive)return EFI_ACCESS_DENIED;
-  if(UsbBulkInProgress())return EFI_NOT_READY;
+  // A Fastboot selection arrives inside the USB pump while its own command
+  // is active. The parent drains the reply before launching the selected file.
+  BOOLEAN UsbRequest=mReport.Pumping && mReport.RequestedCoreAction==PianoUsbServiceActionNone &&
+    (mReport.ActiveAction==PIANO_PRODUCT_ACTION_NONE || UiAction(mReport.ActiveAction));
+  if(!mAlive || mReport.Retained || (!UsbRequest && mReport.ActiveAction!=PIANO_PRODUCT_ACTION_SIMPLEINIT))
+    return EFI_ACCESS_DENIED;
+  if(!UsbRequest && UsbBulkInProgress())return EFI_NOT_READY;
   EFI_STATUS Status=AtApp();
   if(Status!=EFI_SUCCESS)return Status;
   Status=PianoBootFileSelect(Path,Options,Bytes);

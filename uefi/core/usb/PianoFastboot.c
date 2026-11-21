@@ -5,6 +5,9 @@
 #include <Library/BaseMemoryLib.h>
 #include <Library/BaseCryptLib.h>
 #include <Library/MemoryAllocationLib.h>
+#if PIANO_USB_SERVICE
+#include <Protocol/DevicePath.h>
+#endif
 #if PIANO_USB_RAM_BOOT
 #include "PianoFastbootBoot.h"
 #endif
@@ -24,6 +27,39 @@ STATIC EFI_STATUS Reply(PIANO_FASTBOOT *S, CONST CHAR8 *Text) {
 STATIC BOOLEAN Equal(CONST CHAR8 *A, CONST CHAR8 *B) {
   return AsciiStrCmp(A,B)==0;
 }
+#if PIANO_USB_SERVICE
+EFI_STATUS PianoFastbootEfiName(CONST PIANO_FASTBOOT *State,CONST CHAR8 *Inline,CHAR16 **Name) {
+  CONST UINT8 *Data=(CONST UINT8 *)Inline;
+  UINTN Count=AsciiStrLen(Inline);
+  BOOLEAN Wide=Count==0;
+  *Name=NULL;
+  if(Wide){
+    if(!State->Complete || !State->Download || State->Received!=State->Expected ||
+       (State->Received&1))return EFI_INVALID_PARAMETER;
+    Data=State->Download;Count=State->Received/sizeof(CHAR16);
+    if(Count && Data[0]==0xff && Data[1]==0xfe){Data+=2;--Count;}
+    // Accept a UEFI CHAR16 string or a single line from a text editor.
+    if(Count && !Data[2*Count-2] && !Data[2*Count-1])--Count;
+    if(Count && Data[2*Count-2]=='\n' && !Data[2*Count-1]){
+      --Count;
+      if(Count && Data[2*Count-2]=='\r' && !Data[2*Count-1])--Count;
+    }
+  }
+  // The file-path device node length includes its header and terminator.
+  if(Count<2 || Count>(MAX_UINT16-SIZE_OF_FILEPATH_DEVICE_PATH)/sizeof(CHAR16)-1)
+    return EFI_INVALID_PARAMETER;
+  CHAR16 *Text=AllocatePool((Count+1)*sizeof(*Text));
+  if(!Text)return EFI_OUT_OF_RESOURCES;
+  for(UINTN I=0;I<Count;++I){
+    CHAR16 Ch=Wide?(CHAR16)(Data[2*I]|((UINT16)Data[2*I+1]<<8)):Data[I];
+    if(Ch=='/')Ch=L'\\';
+    if(Ch<0x20 || (!I && Ch!=L'\\')){FreePool(Text);return EFI_INVALID_PARAMETER;}
+    Text[I]=Ch;
+  }
+  Text[Count]=0;*Name=Text;
+  return EFI_SUCCESS;
+}
+#endif
 STATIC EFI_STATUS Help(PIANO_FASTBOOT *S) {
   STATIC CONST CHAR8 *Diagnostics[]={
     "INFOUEFI Fastboot commands:",
@@ -65,7 +101,8 @@ STATIC EFI_STATUS Help(PIANO_FASTBOOT *S) {
   if(S->Diagnostic){
     STATIC CONST CHAR8 *Navigation[]={
       "INFOoem setup / shell / simpleinit - open firmware UI",
-      "INFOoem boot-stable - start the configured OS boot order"
+      "INFOoem boot-stable - start the configured OS boot order",
+      "INFOoem boot-efi [PATH] - boot once; or stage a UTF-16LE path"
     };
     for(UINTN I=0;I<ARRAY_SIZE(Navigation);++I) {
       EFI_STATUS Status=Reply(S,Navigation[I]);if(Status!=EFI_SUCCESS)return Status;
@@ -410,7 +447,8 @@ EFI_STATUS PianoFastbootPacket(PIANO_FASTBOOT *S, CONST VOID *Data, UINTN Bytes)
   }
   if(Equal(Cmd,"oem sha256"))return HashDownload(S);
   if(Equal(Cmd,"oem discard")){PianoFastbootReset(S);return Reply(S,"OKAY");}
-  if(Equal(Cmd,"oem setup") || Equal(Cmd,"oem shell") || Equal(Cmd,"oem simpleinit") || Equal(Cmd,"oem boot-stable")) {
+  if(Equal(Cmd,"oem setup") || Equal(Cmd,"oem shell") || Equal(Cmd,"oem simpleinit") || Equal(Cmd,"oem boot-stable") ||
+     Equal(Cmd,"oem boot-efi") || !AsciiStrnCmp(Cmd,"oem boot-efi ",13)) {
 #if PIANO_USB_SERVICE
     if(S->Diagnostic==NULL)return Reply(S,"FAILUI navigation backend unavailable");
     EFI_STATUS Status=S->Diagnostic(S->Context,S,Cmd);
