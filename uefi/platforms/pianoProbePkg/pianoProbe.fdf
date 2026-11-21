@@ -81,5 +81,7 @@ READ_STATUS = TRUE
   INF MdeModulePkg/Universal/Console/GraphicsConsoleDxe/GraphicsConsoleDxe.inf
   INF SiliciumPkg/Drivers/SimpleFbDxe/SimpleFbDxe.inf
   INF MdeModulePkg/Universal/BdsDxe/BdsDxe.inf
+  INF MdeModulePkg/Universal/Acpi/AcpiTableDxe/AcpiTableDxe.inf
+  INF RuleOverride = ACPITABLE pianoProbePkg/AcpiTables/AcpiTables.inf
 
 !include SiliciumPkg/Common.fdf.inc

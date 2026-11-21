@@ -65,7 +65,7 @@
 | 指纹 | 旧传输路径完成 Linux 独立录入、保存与认证；自包含 Linux TEE 路径完成初始化及 fprintd 枚举 | 新路径还缺录入、重开模板及匹配／不匹配复测，不沿用旧路径结果；见[指纹实现](devel/hardware/led-ir-fingerprint.md#侧指纹) |
 | 红外 / RGB 灯 | 红外通过标准 LIRC 一次发送 1 秒报文；RGB 提供标准 LED 接口 | 红外载波、包络与距离未测量；RGB 发光位置未确认 |
 | 默认桌面 | 中文界面、拼音输入法、Chromium 浏览器，GNOME 动画开启 | — |
-| Windows / WinPE | 目标 | 未启动 |
+| Windows / WinPE | 目标 | ACPI 表集已接入产品构建；Windows 枚举尚未上机验证 |
 
 ### 其它发行版
 

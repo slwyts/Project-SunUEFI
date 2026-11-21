@@ -28,6 +28,7 @@
 | [仓库地图](devel/repository-map.md) | 目录用途，哪些文件可以直接改 |
 | [测试](devel/testing.md) | 主机检查和设备验证 |
 | [发布要求与未完成工作](devel/release.md) | 原生软件包、标准启动、硬件适配及发布前的检查清单 |
+| [启动 Windows 安装介质](devel/windows-boot.md) | ACPI 表集的产物、临时启动与安装、WinPE 验证和回 Android |
 | [本地输入](devel/local-inputs.md) | 完整构建需要的、不在仓库里的文件 |
 | [补丁登记](devel/patches.md) | 补丁目录和选用规则 |
 | [贡献指南](../CONTRIBUTING.md) | 提交规范和流程 |

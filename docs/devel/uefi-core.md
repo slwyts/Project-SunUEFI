@@ -45,6 +45,11 @@ GPT 检查结构、CRC、分区重叠和逻辑边界。查询、扫描和启动�
 
 任何一步无法确认外设已经停止时，固件保留可能仍被 DMA 使用的内存，拒绝继续。整机重启和关机在 `ExitBootServices` 成功后调用 `ResetSystem`。具体实现见[触屏实现](boot/uefi-console.md#触屏)与[电源动作](boot/uefi-console.md#电源动作与退出)。
 
+给 Windows 交接时不做这套拆除。固件在 `ExitBootServices` 时按调用者镜像路径
+区分目标，`winload.efi`、`bootmgfw.efi` 和 `bootmgr.efi` 视为 Windows，只校验
+TPL、内存稳定性和 owners 配置后放行，触屏、USB、UFS 和显示时钟保持已初始化。
+其他镜像仍走上面的顺序。表与对象见 [ACPI 表](acpi.md)。
+
 DWC3 停机时先结束活动端点传输，再清除 `RUN_STOP`。等待 `DEVCTRLHLT` 时持续
 确认事件缓冲区中的事件，不再处理新请求或提交 TRB；USB2 PHY 在整个停机过程中
 保持唤醒。只有收到控制器停止确认后，才归还 DMA 缓冲区并释放 SMMU 与时钟。
