@@ -158,7 +158,11 @@ def build(args, spec, headers, libraries, kit_includes):
     compiler, linker, librarian = umd.tool('clang-cl'), umd.tool('lld-link'), umd.tool('llvm-lib')
     cc = [compiler.as_posix(), '--target=aarch64-pc-windows-msvc', '-fuse-ld=lld',
           *(f.replace('\\', '/') for f in kit_includes(headers, work, external_names=True))]
-    link = ['/LIBPATH:' + p.as_posix() for p in linker_paths(libraries, work)]
+    # Generate deterministic COFF objects; lld derives the PE timestamp from
+    # the image contents. Keep build and SDK paths out of __FILE__ and debug info.
+    paths = [(tree, 'mesa'), (work, 'build'), *((p, 'kit/' + p.name) for p in headers)]
+    compile_flags = ['/Brepro', *('/clang:-ffile-prefix-map=' + p.as_posix() + '=' + name for p, name in paths)]
+    link = ['/Brepro', *('/LIBPATH:' + p.as_posix() for p in linker_paths(libraries, work))]
     windres = resource_compiler(args.windres, headers, work / 'kit-headers.json')
     # Meson machine files quote every argument separately, including paths
     # containing spaces. Drive letters and backslashes are normalized above.
@@ -167,7 +171,8 @@ def build(args, spec, headers, libraries, kit_includes):
                 f"strip = {umd.tool('llvm-strip').as_posix()!r}\nwindres = {windres!r}\n"
                 "[host_machine]\nsystem = 'windows'\ncpu_family = 'aarch64'\ncpu = 'arm64'\nendian = 'little'\n"
                 "[properties]\nneeds_exe_wrapper = true\n"
-                f"[built-in options]\nc_link_args = {link!r}\ncpp_link_args = {link!r}\n")
+                f"[built-in options]\nc_args = {compile_flags!r}\ncpp_args = {compile_flags!r}\n"
+                f"c_link_args = {link!r}\ncpp_link_args = {link!r}\n")
     umd.write_changed(cross, settings)
     options = ['--buildtype=release', '--wrap-mode=nodownload', '--force-fallback-for=zlib,DirectX-Headers',
                '-Dplatforms=windows', '-Dvulkan-drivers=freedreno', '-Dfreedreno-kmds=windows',
