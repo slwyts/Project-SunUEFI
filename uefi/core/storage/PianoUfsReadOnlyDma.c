@@ -1025,6 +1025,10 @@ EFI_STATUS PianoUfsBlockIoPrepareForReset(VOID){
 #ifndef PIANO_UFS_BOUNDED_VOLUME
   if(!mBlockLive)return ResetFailure(EFI_NOT_READY); // Must disconnect while media is live.
 #endif
+#if PIANO_UFS_PRODUCT_STORAGE
+  EFI_STATUS EspStatus=FlushEspWrites();
+  if(EspStatus!=EFI_SUCCESS)return ResetFailure(EspStatus);
+#endif
   for(UINTN I=0;I<ARRAY_SIZE(mBlockHandles);++I)if(mBlockHandles[I]!=NULL){
     EFI_STATUS S=ResetExact(gBS->DisconnectController(mBlockHandles[I],NULL,NULL));mResetReport.Disconnect=S;
     DEBUG((DEBUG_WARN,"SUNUEFI_UFS_DISCONNECT index=%u handle=%p status=%r\n",(UINT32)I,mBlockHandles[I],S));
@@ -1032,6 +1036,10 @@ EFI_STATUS PianoUfsBlockIoPrepareForReset(VOID){
   }
   mResetReport.Disconnect=EFI_SUCCESS;
 #if PIANO_UFS_PRODUCT_STORAGE
+  // A filesystem can write inside Stop(), and PartitionDxe can discard its
+  // FlushBlocks result. The transport is still live until HaltService().
+  EspStatus=FlushEspWrites();
+  if(EspStatus!=EFI_SUCCESS)return ResetFailure(EspStatus);
   if(mProductVolume && mProductVolume->State.Provisioned){EFI_STATUS S=PianoUfsProductVolumeClose(mProductVolume);if(S!=EFI_SUCCESS)return ResetFailure(S);}
 #endif
   mResetReport.Halt=ResetExact(HaltService());if(mResetReport.Halt!=EFI_SUCCESS)return ResetFailure(mResetReport.Halt);

@@ -212,8 +212,8 @@ STATIC EFI_STATUS StorageTransfer(CONST PIANO_STORAGE_PARTITION *P,UINT64 Block,
     if(S==EFI_SUCCESS && !Writing)CopyMem((UINT8 *)Buffer+At,mData.Cpu,Chunk);
     At+=Chunk;
   }
-  if(S!=EFI_SUCCESS&&Writing)mPartitionFailed=TRUE;
   if(S==EFI_SUCCESS)S=ProductSmmuGuard(FALSE);
+  if(S!=EFI_SUCCESS&&Writing)mPartitionFailed=TRUE;
   mPartitionExecuting=mBlockBusy=mProductExecuting=FALSE;
   if(!mExitRetained)gBS->RestoreTPL(Old);
   return S;
@@ -270,14 +270,17 @@ STATIC EFI_STATUS EFIAPI EspWriteBlocks(EFI_BLOCK_IO_PROTOCOL *This,UINT32 Media
   return Status;
 }
 
-STATIC EFI_STATUS EFIAPI EspFlushBlocks(EFI_BLOCK_IO_PROTOCOL *This) {
-  if(!mBlockLive || !This->Media->MediaPresent)return EFI_NO_MEDIA;
+STATIC EFI_STATUS FlushEspWrites(VOID) {
   if(mPartitionFailed)return EFI_DEVICE_ERROR;
-  // FAT also flushes when closing the last file opened for reading.
   if(!mEspNeedsFlush)return EFI_SUCCESS;
   EFI_STATUS Status=PianoStorageFlush(&mFilePartitions[EspPartition]);
   if(Status==EFI_SUCCESS)mEspNeedsFlush=FALSE;
   return Status;
+}
+
+STATIC EFI_STATUS EFIAPI EspFlushBlocks(EFI_BLOCK_IO_PROTOCOL *This) {
+  if(!mBlockLive || !This->Media->MediaPresent)return EFI_NO_MEDIA;
+  return FlushEspWrites();
 }
 
 STATIC VOID EFIAPI ConfigureEsp(CONST EFI_PARTITION_ENTRY *Entry,EFI_BLOCK_IO_PROTOCOL *Child) {

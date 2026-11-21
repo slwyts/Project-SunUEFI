@@ -28,6 +28,8 @@
 UFS 整盘和原厂分区的标准 Block I/O 保持只读。独立的 `sunuefi_esp` 在原有 GPT
 分区句柄上提供写入，EFI 程序能用标准文件接口保存启动状态，systemd-boot 也能
 更新启动计数。写入使用本次 GPT 的实际范围；FAT 已标记为不干净时，只读挂载。
+EFI 程序应在交接前刷新或关闭写入的文件。固件会在存储控制器停机前同步已交给
+块设备的写入，包括卸载文件系统时产生的写入；只读启动不会为此发送刷盘命令。
 固件变量文件另见[变量持久化](boot/uefi-console.md#persist-中的-uefi-变量)。
 
 Fastboot 只对刷写 `sunuefi_esp` 和 `sunuefi_root` 启用写入。写前按 GPT 名称
