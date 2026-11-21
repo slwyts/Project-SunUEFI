@@ -13,6 +13,8 @@ on:
       - 'tests/unit/test_wn8030_input.py'
       - 'tests/unit/test_wn8030_boot.py'
       - 'tests/native/Wn8030ReportsTest.c'
+      - 'tests/native/UfsTransferTest.c'
+      - 'tests/unit/test_ufs_transfer.py'
       - 'tools/build/windows.py'
       - 'build.sh'
       - '.github/workflows/windows-graphics.yml'
@@ -39,6 +41,7 @@ jobs:
           ./build.sh check --group python-all --no-skips --pattern test_gmu_firmware.py
           --pattern test_gmu_memory_layout.py --pattern test_hfi_queue.py
           --pattern test_wn8030_input.py --pattern test_wn8030_boot.py
+          --pattern test_ufs_transfer.py
   readback:
     runs-on: windows-11-arm
     steps:
