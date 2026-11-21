@@ -1,4 +1,16 @@
 {
+  "mu_wide_platforms": {
+    "commit": "3e1d052064beb6e59cda3cfba87d50e6cc088174",
+    "url": "https://github.com/sunflower2333/mu_wide_platforms.git"
+  },
+  "uefi_oneplus_ace5_pro": {
+    "commit": "1a5cb057fedc4d353f735ec12a5901d9e59779f4",
+    "url": "https://github.com/AnyLaySys/uefi_oneplus_ace5_pro.git"
+  },
+  "woa_oneplus_ace5_pro": {
+    "commit": "631adde242c816ca57ca9903e96bc343e4716a07",
+    "url": "https://github.com/AnyLaySys/woa_oneplus_ace5_pro.git"
+  },
   "Mu-Silicium": {
     "commit": "8471e47f5248ebbffc2e6196b683204163efe155",
     "url": "https://github.com/Project-Silicium/Mu-Silicium.git"

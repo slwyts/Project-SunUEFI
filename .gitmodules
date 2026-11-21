@@ -19,3 +19,12 @@
 [submodule "upstream/piano-sensors-current"]
 	path = upstream/piano-sensors-current
 	url = https://github.com/blu-sharky/piano-sensors.git
+[submodule "upstream/mu_wide_platforms"]
+	path = upstream/mu_wide_platforms
+	url = https://github.com/sunflower2333/mu_wide_platforms.git
+[submodule "upstream/uefi_oneplus_ace5_pro"]
+	path = upstream/uefi_oneplus_ace5_pro
+	url = https://github.com/AnyLaySys/uefi_oneplus_ace5_pro.git
+[submodule "upstream/woa_oneplus_ace5_pro"]
+	path = upstream/woa_oneplus_ace5_pro
+	url = https://github.com/AnyLaySys/woa_oneplus_ace5_pro.git

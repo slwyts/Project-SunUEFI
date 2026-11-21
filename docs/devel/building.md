@@ -22,8 +22,9 @@ GitHub Actions 使用 `ubuntu-26.04` 运行主机检查，用 `ubuntu-26.04-arm`
 
 上游源码放在 `upstream/`，固定在指定提交。本地修改在 `patches/`、`uefi/`、`linux/`、`tools/`。构建在 `build/` 下的副本里应用补丁，不要改构建副本。
 只构建某一部分时，可用 `./build.sh sources --group firmware`、`--group kernel`
-或 `--group devices` 获取该阶段的子模块。它们与完整构建共用同一份源码锁，
-不拉取其他阶段的子模块或上游测试数据。
+或 `--group devices` 获取该阶段的子模块。移植 Windows 时用 `./build.sh sources --group windows`，
+可取得小太阳的 Piano 平台、一加 Ace 5 Pro 的 UEFI 和整套公开 Windows 驱动源码。
+各组共用同一份源码锁，不拉取其他组或上游测试数据。
 
 ## 构建容器
 

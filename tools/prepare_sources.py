@@ -13,6 +13,7 @@ SOURCE_GROUPS = {
     'firmware': ('Mu-Silicium', 'simple-init', 'dtc'),
     'kernel': ('v4l2loopback',),
     'devices': ('debian-piano-current', 'piano-sensors-current', 'audioreach-topology'),
+    'windows': ('mu_wide_platforms', 'uefi_oneplus_ace5_pro', 'woa_oneplus_ace5_pro'),
 }
 GIT_TRANSFER_INTERRUPTED = re.compile(
     r'\bcurl (?:18|28|52|55|56|92)\b|^fatal: early EOF$'
