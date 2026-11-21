@@ -255,7 +255,9 @@ def graphics_test(_args):
 
 
 def drivers(args):
-    project = ROOT / 'windows/drivers/adreno/adreno.vcxproj'
+    projects = sorted((ROOT / 'windows/drivers').glob('*/*.vcxproj'))
+    if not projects:
+        raise ValueError('No Windows driver projects found')
     if not args.kit_include:
         msbuild = shutil.which('msbuild')
         if not msbuild and os.name == 'nt':
@@ -267,31 +269,35 @@ def drivers(args):
                 msbuild = next(iter(hits), None)
         if not msbuild:
             raise ValueError('Use a Visual Studio/WDK developer shell, or pass --kit-include for LLVM.')
-        subprocess.run([msbuild, project, '/m', '/p:Platform=ARM64', '/p:Configuration=Release'], check=True)
+        for project in projects:
+            subprocess.run([msbuild, project, '/m', '/p:Platform=ARM64', '/p:Configuration=Release'], check=True)
         return
 
     compiler, librarian = required_tool('clang-cl'), required_tool('llvm-lib')
-    work = ROOT / 'build/windows/adreno/Release'
-    output = ROOT / 'artifacts/windows/drivers/adreno/Release'
-    work.mkdir(parents=True, exist_ok=True)
-    output.mkdir(parents=True, exist_ok=True)
     # Kernel CRT headers must win over the user CRT, including with split kits.
     includes = [f'/imsvc{path}' for name in ('km', 'km/crt', 'shared', 'ucrt')
                 for root in args.kit_include
                 if (path := root.resolve() / name).is_dir()]
-    units = ET.parse(project).findall('.//{*}ClCompile[@Include]')
-    objects = []
-    for unit in units:
-        source = project.parent / unit.attrib['Include']
-        obj = work / (source.stem + '.obj')
-        subprocess.run([compiler, '--target=aarch64-pc-windows-msvc', '/nologo', '/kernel',
-                        '/std:c17', '/W4', '/WX', '/c', '/D_ARM64_=1',
-                        *includes, f'/Fo{obj}', source], check=True)
-        objects.append(obj)
-    library = output / (project.stem + '.lib')
-    subprocess.run([librarian, f'/out:{library}', *(obj.name for obj in objects)],
-                   cwd=work, check=True)
-    print(library)
+    for project in projects:
+        description = ET.parse(project)
+        if {node.text for node in description.findall('.//{*}ConfigurationType')} != {'StaticLibrary'}:
+            raise ValueError(f'{project.name} needs the full WDK linker; build it with MSBuild')
+        work = ROOT / 'build/windows' / project.stem / 'Release'
+        output = ROOT / 'artifacts/windows/drivers' / project.stem / 'Release'
+        work.mkdir(parents=True, exist_ok=True)
+        output.mkdir(parents=True, exist_ok=True)
+        objects = []
+        for unit in description.findall('.//{*}ClCompile[@Include]'):
+            source = project.parent / unit.attrib['Include']
+            obj = work / (source.stem + '.obj')
+            subprocess.run([compiler, '--target=aarch64-pc-windows-msvc', '/nologo', '/kernel',
+                            '/std:c17', '/W4', '/WX', '/c', '/D_ARM64_=1',
+                            *includes, f'/Fo{obj}', source], check=True)
+            objects.append(obj)
+        library = output / (project.stem + '.lib')
+        subprocess.run([librarian, f'/out:{library}', *(obj.name for obj in objects)],
+                       cwd=work, check=True)
+        print(library)
 
 
 def main(argv=None):
@@ -306,7 +312,7 @@ def main(argv=None):
     build.set_defaults(run=run_media)
     graphics = commands.add_parser('graphics-test', help='Build the ARM64 Direct3D hardware readback test')
     graphics.set_defaults(run=graphics_test)
-    driver = commands.add_parser('drivers', help='Build the ARM64 WDK graphics driver components')
+    driver = commands.add_parser('drivers', help='Build the ARM64 WDK driver components')
     driver.add_argument('--kit-include', type=Path, action='append',
                         help='Use LLVM with this versioned SDK/WDK Include directory (repeat for split kits)')
     driver.set_defaults(run=drivers)

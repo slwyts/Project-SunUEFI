@@ -1,15 +1,16 @@
-name: Windows graphics checks
+name: Windows driver checks
 
 on:
   push:
     branches: [woa]
     paths: &graphics_paths
-      - 'windows/drivers/adreno/**'
-      - 'windows/drivers/packages.config'
+      - 'windows/drivers/**'
       - 'vendor/firmware/piano-qcom/gen80000_gmu.bin'
       - 'tests/unit/test_gmu_firmware.py'
       - 'tests/unit/test_gmu_memory_layout.py'
       - 'tests/unit/test_hfi_queue.py'
+      - 'tests/unit/test_wn8030_input.py'
+      - 'tests/native/Wn8030ReportsTest.c'
       - 'tools/build/windows.py'
       - 'build.sh'
       - '.github/workflows/windows-graphics.yml'
@@ -32,7 +33,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - run: ./build.sh check --group python-all --no-skips --pattern test_gmu_firmware.py --pattern test_gmu_memory_layout.py --pattern test_hfi_queue.py
+      - run: ./build.sh check --group python-all --no-skips --pattern test_gmu_firmware.py --pattern test_gmu_memory_layout.py --pattern test_hfi_queue.py --pattern test_wn8030_input.py
   readback:
     runs-on: windows-11-arm
     steps:
