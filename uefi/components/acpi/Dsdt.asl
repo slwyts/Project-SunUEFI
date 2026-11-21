@@ -104,7 +104,7 @@ DefinitionBlock ("", "DSDT", 2, "SUNUEF", "PIANO   ", 1)
         Device (GCLK)
         {
             Name (_HID, "PRP0001")
-            Name (_UID, Zero)
+            Name (_UID, "GPUCC")
             Name (_DDN, "Qualcomm GPU clock controller")
             Name (_DSD, Package ()
             {

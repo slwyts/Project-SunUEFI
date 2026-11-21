@@ -87,6 +87,14 @@ class PianoDsdtTest(unittest.TestCase):
         self.assertEqual(len(outcomes), sum(not x.startswith('set ') for x in items), result)
         return [aml_result(outcome) for outcome in outcomes]
 
+    def test_gpu_and_clock_controller_have_distinct_acpi_identities(self):
+        gpu = self.evaluate(r'\_SB.GPU0._HID', r'\_SB.GPU0._UID')
+        clock = self.evaluate(r'\_SB.GCLK._HID', r'\_SB.GCLK._UID')
+        self.assertEqual(gpu, ['PRP0001', 0])  # Preserve the existing GPU instance.
+        # Windows uses strings for the hardware and instance components.
+        self.assertNotEqual(tuple(str(part).casefold() for part in gpu),
+                            tuple(str(part).casefold() for part in clock))
+
     def test_preserved_methods_match_the_published_piano_aml(self):
         reference = DSDT.parent / 'pakala/DSDT.aml'
         container = r'\_SB.SYSM'
