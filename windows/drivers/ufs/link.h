@@ -56,3 +56,9 @@ struct ufs_link {
 enum ufs_link_error ufs_link_begin(struct ufs_link *link, const struct ufs_link_io *io, uint64_t now_us);
 enum ufs_link_phase ufs_link_poll(struct ufs_link *link, uint64_t now_us);
 int ufs_link_stop(struct ufs_link *link);
+
+/* Resolve the Windows/SCSI LUN into the address byte used by UFS UPIUs.
+ * REPORT LUNS is sent to the device's standard report-LUNs well-known LU,
+ * also when target discovery began at a non-existent ordinary LUN zero.
+ */
+int ufs_scsi_lun(uint32_t enabled, uint8_t requested, const uint8_t *cdb, size_t bytes, uint8_t *wire_lun);

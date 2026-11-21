@@ -9,13 +9,14 @@
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Label="Configuration">
-    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <ConfigurationType>Driver</ConfigurationType>
     <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
     <DriverType>WDM</DriverType>
     <TargetVersion>Windows10</TargetVersion>
     <DriverTargetPlatform>Universal</DriverTargetPlatform>
   </PropertyGroup>
   <PropertyGroup>
+    <TargetName>sunufs</TargetName>
     <IntDir>$(MSBuildThisFileDirectory)..\..\..\build\windows\ufs\$(Configuration)\</IntDir>
     <OutDir>$(MSBuildThisFileDirectory)..\..\..\artifacts\windows\drivers\ufs\$(Configuration)\</OutDir>
   </PropertyGroup>
@@ -26,8 +27,13 @@
       <WarningLevel>Level4</WarningLevel>
       <TreatWarningAsError>true</TreatWarningAsError>
     </ClCompile>
+    <Link>
+      <AdditionalDependencies>$(DDK_LIB_PATH)storport.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <Inf Include="sunufs.inf" />
+    <ClCompile Include="miniport.c" />
     <ClCompile Include="transfer.c" />
     <ClCompile Include="storport_io.c" />
     <ClCompile Include="link.c" />
@@ -35,6 +41,7 @@
     <ClCompile Include="platform.c" />
     <ClCompile Include="platform_storport.c" />
     <ClInclude Include="transfer.h" />
+    <ClInclude Include="miniport.h" />
     <ClInclude Include="storport_io.h" />
     <ClInclude Include="link.h" />
     <ClInclude Include="storport_link.h" />

@@ -100,6 +100,14 @@ static void warm_nop(struct host *h)
 
 int main(void)
 {
+    const uint8_t report_luns[12] = {0xa0}, inquiry[6] = {0x12}, flush[10] = {0x35};
+    uint8_t wire_lun = 0xee;
+    assert(ufs_scsi_lun(0x80, 0, report_luns, sizeof(report_luns), &wire_lun) && wire_lun == 0x81);
+    assert(!ufs_scsi_lun(0x80, 0, inquiry, sizeof(inquiry), &wire_lun));
+    assert(ufs_scsi_lun(0x80, 7, inquiry, sizeof(inquiry), &wire_lun) && wire_lun == 7);
+    assert(ufs_scsi_lun(0x80000000u, 31, flush, sizeof(flush), &wire_lun) && wire_lun == 31);
+    assert(!ufs_scsi_lun(~0u, 32, inquiry, sizeof(inquiry), &wire_lun));
+    assert(!ufs_scsi_lun(0x80, 0, report_luns, 6, &wire_lun));
     struct host h;
     for (int warm = 0; warm != 2; ++warm) {
         init(&h, warm);

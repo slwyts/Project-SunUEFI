@@ -254,34 +254,40 @@ def graphics_test(_args):
     print(output / 'graphics-readback.exe')
 
 
-def kmdf_options(config, description, kits):
-    major = config.findtext('{*}KMDF_VERSION_MAJOR')
-    minor = config.findtext('{*}KMDF_VERSION_MINOR')
-    if not major or not minor:
-        raise ValueError('Specify the KMDF major and minor versions in the WDK project')
-    version = f'{major}.{minor}'
-    roots = [kit.parent.parent for kit in kits]
-
+def wdk_driver_options(config, description, kits):
     def locate(options, purpose):
         match = next((path for path in options if path.exists()), None)
         if not match:
             raise ValueError(f'Missing {purpose} in the supplied Windows kits')
         return match
 
-    headers = locate((kit.parent / 'wdf/kmdf' / version for kit in kits), f'KMDF {version} headers')
     kernel_dirs = [kit.parent.parent / 'Lib' / kit.name / 'km/ARM64' for kit in kits]
-    wdf_dirs = [root / 'Lib/wdf/kmdf/ARM64' / version for root in roots]
-    # Standard ARM64 KMDF dependencies from WindowsDriver.KernelMode.KMDF.props;
-    # hardware-specific libraries belong to the project.
-    dependencies = ['bufferoverflowfastfailk.lib', 'ntoskrnl.lib', 'hal.lib', 'wmilib.lib']
+    framework = config.findtext('{*}DriverType')
+    headers, libraries = [], []
+    dependencies = ['bufferoverflowfastfailk.lib', 'ntoskrnl.lib']
+    if framework == 'KMDF':
+        major = config.findtext('{*}KMDF_VERSION_MAJOR')
+        minor = config.findtext('{*}KMDF_VERSION_MINOR')
+        if not major or not minor:
+            raise ValueError('Specify the KMDF major and minor versions in the WDK project')
+        version = f'{major}.{minor}'
+        headers.append(locate((kit.parent / 'wdf/kmdf' / version for kit in kits), f'KMDF {version} headers'))
+        wdf_dirs = [kit.parent.parent / 'Lib/wdf/kmdf/ARM64' / version for kit in kits]
+        libraries.extend(locate((path / name for path in wdf_dirs), name)
+                         for name in ('wdfdriverentry.lib', 'wdfldr.lib'))
+        dependencies.extend(('hal.lib', 'wmilib.lib'))
+        entry = 'FxDriverEntry'
+    elif framework == 'WDM':
+        entry = 'GsDriverEntry'
+    else:
+        raise ValueError(f'Build {framework} drivers with the full MSBuild/WDK toolset')
     for node in description.findall('.//{*}Link/{*}AdditionalDependencies'):
         for dep in (node.text or '').split(';'):
             dep = dep.strip()
             if dep and dep != '%(AdditionalDependencies)':
                 dependencies.append(dep.removeprefix('$(DDK_LIB_PATH)').lower())
-    libraries = [locate((path / name for path in wdf_dirs), name) for name in ('wdfdriverentry.lib', 'wdfldr.lib')]
     libraries += [locate((path / name for path in kernel_dirs), name) for name in dict.fromkeys(dependencies)]
-    return headers, libraries
+    return headers, libraries, entry
 
 
 def clang_kit_includes(directories, work):
@@ -313,9 +319,8 @@ def llvm_driver(project, kits):
     config = description.find('.//{*}PropertyGroup[@Label="Configuration"]')
     kind = config.findtext('{*}ConfigurationType')
     directories, libraries = [], []
-    if kind == 'Driver' and config.findtext('{*}DriverType') == 'KMDF':
-        headers, libraries = kmdf_options(config, description, kits)
-        directories.append(headers)
+    if kind == 'Driver':
+        directories, libraries, entry = wdk_driver_options(config, description, kits)
     elif kind != 'StaticLibrary':
         raise ValueError(f'{project.name}: build this driver type with the full MSBuild/WDK toolset')
     # Kernel CRT headers must win over the user CRT, including with split kits.
@@ -336,10 +341,13 @@ def llvm_driver(project, kits):
         subprocess.run([required_tool('llvm-lib'), f'/out:{library}', *(obj.name for obj in objects)],
                        cwd=work, check=True)
         return library
-    driver = output / (project.stem + '.sys')
+    target = description.findtext('.//{*}TargetName') or project.stem
+    driver = output / (target + '.sys')
     subprocess.run([required_tool('lld-link'), '/nologo', '/driver', '/machine:arm64', '/subsystem:native,10.0',
-                    '/entry:FxDriverEntry', '/nodefaultlib', '/opt:ref', '/opt:icf', '/integritycheck', '/dynamicbase',
+                    f'/entry:{entry}', '/nodefaultlib', '/opt:ref', '/opt:icf', '/integritycheck', '/dynamicbase',
                     '/nxcompat', '/release', '/Brepro', f'/out:{driver}', *objects, *libraries], check=True)
+    for item in description.findall('.//{*}Inf[@Include]'):
+        shutil.copy2(project.parent / item.attrib['Include'], output)
     return driver
 
 

@@ -1,0 +1,46 @@
+; SPDX-License-Identifier: BSD-2-Clause
+[Version]
+Signature="$WINDOWS NT$"
+Class=SCSIAdapter
+ClassGuid={4D36E97B-E325-11CE-BFC1-08002BE10318}
+Provider=%Provider%
+DriverVer=11/21/2026,1.0.0.0
+CatalogFile=sunufs.cat
+PnpLockdown=1
+
+[Manufacturer]
+%Provider%=Controllers,NTarm64
+
+[Controllers.NTarm64]
+%PciController%=Controller,PCI\VEN_1B36&DEV_0013
+
+[Controller.NT]
+CopyFiles=DriverFiles
+
+[Controller.NT.Services]
+AddService=sunufs,0x00000002,MiniportService
+
+[MiniportService]
+DisplayName=%ServiceName%
+ServiceType=1
+StartType=0
+ErrorControl=1
+LoadOrderGroup=SCSI Miniport
+ServiceBinary=%13%\sunufs.sys
+
+[DestinationDirs]
+DriverFiles=13
+
+[DriverFiles]
+sunufs.sys
+
+[SourceDisksNames]
+1=%Provider%
+
+[SourceDisksFiles]
+sunufs.sys=1
+
+[Strings]
+Provider="Project SunUEFI"
+ServiceName="SunUEFI UFS host controller"
+PciController="QEMU UFS Host Controller"

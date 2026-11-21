@@ -20,7 +20,7 @@ static void consume(void *context) { (void)context; __dmb(_ARM64_BARRIER_OSHLD);
 enum ufs_link_error UfsLinkBegin(UFS_IO_QUEUE *q, struct ufs_link *link, ULONGLONG now_us)
 {
     if (!q || !link || !q->extension || !q->registers || !q->list || !q->slot_count ||
-        q->running || q->active || q->managing || q->faults) return UFS_LINK_OWNED;
+        q->running || q->owns_list || q->active || q->managing || q->faults) return UFS_LINK_OWNED;
     q->device_ready = FALSE;
     struct ufs_link_io io = {
         .context = q, .read = read_register, .write = write_register, .publish = publish, .consume = consume,
@@ -43,5 +43,6 @@ BOOLEAN UfsLinkStop(UFS_IO_QUEUE *q, struct ufs_link *link)
     if (!ufs_link_stop(link)) return FALSE;
     q->managing = FALSE;
     q->device_ready = (link->phase == UFS_LINK_READY);
+    q->enabled_luns = q->device_ready ? link->enabled_luns : 0;
     return TRUE;
 }

@@ -4,7 +4,7 @@
 #include <storport.h>
 #include "transfer.h"
 
-/* The PnP/power layer supplies a translated HCI resource, and UTRDs/UCDs in
+/* The PnP/power layer supplies the assigned HCI resource, and UTRDs/UCDs in
  * Storport DMA common buffers. Each UCD starts with struct ufs_upius followed
  * immediately by its PRDT. Keep every buffer mapped until Stop succeeds.
  * Serialize StartIo, ISR, Stop and Complete with Storport's interrupt lock.
@@ -24,12 +24,12 @@ typedef struct {
     STOR_PHYSICAL_ADDRESS list_dma;
     ULONGLONG dma_limit;  /* Minimum of the HCI and platform DMA masks. */
     UFS_IO_SLOT slot[UFS_SDB_MAX_SLOTS];
-    ULONG slot_count, active, faults;
+    ULONG slot_count, active, faults, enabled_luns;
     USHORT prds_per_command;
-    BOOLEAN running, managing, device_ready;
+    BOOLEAN running, owns_list, managing, device_ready;
 } UFS_IO_QUEUE;
 
-/* Maps the ACPI memory range using the reported bus interface, not PCI BARs.
+/* Map the bus-relative ACCESS_RANGE with its reported bus interface.
  * Select the HCI resource in HwFindAdapter; clocks must already be active.
  * Storport owns the uncached extension. Unmap the HCI once Stop succeeds.
  */
@@ -49,3 +49,8 @@ ULONG UfsIoInterrupt(UFS_IO_QUEUE *queue);
  * and prove DMA quiescence before aborting SRBs or freeing their mappings.
  */
 BOOLEAN UfsIoStop(UFS_IO_QUEUE *queue);
+/* An actual HCI reset at interrupt synchronization. Complete even failed
+ * SRBs only once HCE and both lists and doorbells are observed stopped.
+ * An unacknowledged reset retains every SRB and mapping for a later retry.
+ */
+BOOLEAN UfsIoReset(UFS_IO_QUEUE *queue);

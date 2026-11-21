@@ -9,7 +9,7 @@ enum {
     UICARG3 = 0x9c, MEM_CFG = 0x300, UTR_COMPLETE = 1, UIC_COMPLETE = 0x400,
     LINK_FATAL = 0x80 | 0x800 | 0x1000 | 0x10000 | 0x20000 | 0x40000,
     UIC_TIMEOUT_US = 500000, DEVICE_INIT_US = 1500000, QUERY_TIMEOUT_US = 1500000,
-    POLL_INIT_US = 1000, NOP_TIMEOUT_US = 50000
+    POLL_INIT_US = 1000, NOP_TIMEOUT_US = 50000, REPORT_LUNS_WLUN = 0x81
 };
 
 static uint32_t read_reg(const struct ufs_link *l, unsigned reg) { return l->io.read(l->io.context, reg); }
@@ -17,6 +17,19 @@ static void write_reg(const struct ufs_link *l, unsigned reg, uint32_t v) { l->i
 
 static uint16_t be16(const uint8_t *p) { return (uint16_t)((uint16_t)p[0] << 8 | p[1]); }
 static void le16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
+
+int ufs_scsi_lun(uint32_t enabled, uint8_t requested, const uint8_t *cdb, size_t bytes, uint8_t *wire_lun)
+{
+    if (!wire_lun || !cdb || !bytes || requested >= UFS_MAX_UNIT_NUMBERS) return 0;
+    if (cdb[0] == 0xa0) {
+        if (bytes != 12) return 0;
+        *wire_lun = REPORT_LUNS_WLUN;
+        return 1;
+    }
+    if (!(enabled & (1u << requested))) return 0;
+    *wire_lun = requested;
+    return 1;
+}
 
 static enum ufs_link_phase fail(struct ufs_link *l, enum ufs_link_error e)
 {
@@ -87,7 +100,7 @@ static void submit(struct ufs_link *l, uint64_t now)
         cdb[8] = (uint8_t)(bytes >> 8); cdb[9] = (uint8_t)bytes;
         struct ufs_transfer x;
         if (!ufs_transfer_init(&x, l->io.list, &u->scsi, &u->report_prd, 1, l->io.ucd_dma, UINT64_MAX,
-                               0x81, 0, UFS_SIMPLE, UFS_DATA_IN, cdb, sizeof(cdb), bytes) ||
+                               REPORT_LUNS_WLUN, 0, UFS_SIMPLE, UFS_DATA_IN, cdb, sizeof(cdb), bytes) ||
             !ufs_transfer_add_dma(&x, l->io.ucd_dma + offsetof(struct ufs_management_ucd, lun_list), bytes) ||
             !ufs_transfer_ready(&x)) { fail(l, UFS_LINK_RESOURCES); return; }
         le16(d + 30, offsetof(struct ufs_management_ucd, report_prd) / 4);
