@@ -5,7 +5,7 @@
 #include <string.h>
 
 enum { BASE = 0xd00, STRIDE = 0x2a0, ARM = 0x10000, TRIGGER = 0x1000000,
-       DONE = 0x10100, WORDS = RPMH_APPS_DRV2_SIZE / 4 };
+       MSG_WRITE = 1u << 16, DONE = 0x10100, WORDS = RPMH_APPS_DRV2_SIZE / 4 };
 struct hw {
     uint32_t word[WORDS];
     uint32_t wait_off, msg_off, cmd_spacing, fail_read, stale_reg, stale_value;
@@ -75,9 +75,12 @@ static void configure(struct hw *h, unsigned major, unsigned ncpt)
 static void complete(struct hw *h, unsigned count, unsigned expected_mask)
 {
     uint32_t mask = *word(h,wait_reg(h,h->target)+12);
-    assert(mask == expected_mask && mask == *word(h,wait_reg(h,h->target)));
-    for (unsigned i = 0; i < count; ++i)
-        *word(h,msg(h,h->target,i)+12) = DONE;
+    uint32_t wait = *word(h,wait_reg(h,h->target));
+    assert(mask == expected_mask && !(wait & ~mask));
+    for (unsigned i = 0; i < count; ++i) {
+        uint32_t m = msg(h,h->target,i);
+        *word(h,m+12) = (!(*word(h,m) & MSG_WRITE) || (wait & (1u<<i))) ? DONE : 1u<<8;
+    }
     *word(h,wait_reg(h,h->target)+8) = 1;
     *word(h,BASE+4) |= 1u << h->target;
 }
@@ -100,7 +103,7 @@ static void test_transaction(unsigned major)
     *word(&h,BASE+4) = 4;
     *word(&h,BASE) = 0xa4;
     h.target = 1;
-    assert(rpmh_rsc_begin(&r,c,16,1)==RPMH_RSC_PENDING && h.triggers==1 && !rpmh_rsc_idle(&r));
+    assert(rpmh_rsc_begin(&r,c,16,1,0xffff)==RPMH_RSC_PENDING && h.triggers==1 && !rpmh_rsc_idle(&r));
     assert(!rpmh_rsc_interrupt(&r) && *word(&h,BASE+4)==4);
     assert(*word(&h,BASE)==0xa6);
     for (unsigned i=0;i<16;++i) {
@@ -112,7 +115,7 @@ static void test_transaction(unsigned major)
     *word(&h,wait_reg(&h,1)+8)=1;
     for (unsigned i=0;i<16;++i) *word(&h,msg(&h,1,i)+12)=DONE;
     assert(rpmh_rsc_poll(&r,NULL,0)==RPMH_RSC_PENDING);
-    assert(rpmh_rsc_begin(&r,c,1,1)==RPMH_RSC_BUSY);
+    assert(rpmh_rsc_begin(&r,c,1,1,1)==RPMH_RSC_BUSY);
     assert(rpmh_rsc_cancel_unsent(&r)==RPMH_RSC_BUSY);
     assert(rpmh_rsc_init(&r,&io,RPMH_APPS_DRV2_BASE,RPMH_APPS_DRV2_SIZE)==RPMH_RSC_BUSY);
     assert(h.writes==writes);
@@ -131,15 +134,42 @@ static void test_transaction(unsigned major)
     /* Read every reply, including a valid all-ones data word. A short
      * output buffer doesn't consume the request. */
     *word(&h,BASE)|=2;
-    assert(rpmh_rsc_begin(&r,c,2,0)==RPMH_RSC_PENDING);
+    assert(rpmh_rsc_begin(&r,c,2,0,2)==RPMH_RSC_PENDING);
     assert(*word(&h,msg(&h,1,0))==0x108 && *word(&h,msg(&h,1,1))==0x108);
     *word(&h,msg(&h,1,0)+16)=UINT32_MAX;
     *word(&h,msg(&h,1,1)+16)=0x51545800;
     complete(&h,2,3);
     assert(rpmh_rsc_interrupt(&r) && *word(&h,BASE+4)==4 && !rpmh_rsc_interrupt(&r));
+    *word(&h,msg(&h,1,0)+12)=1u<<8;
+    assert(rpmh_rsc_poll(&r,result,2)==RPMH_RSC_PENDING);
+    *word(&h,msg(&h,1,0)+12)=DONE;
     assert(rpmh_rsc_poll(&r,result,1)==RPMH_RSC_INVALID && !rpmh_rsc_idle(&r));
     assert(rpmh_rsc_poll(&r,result,2)==RPMH_RSC_OK && result[0]==UINT32_MAX && result[1]==0x51545800);
     assert(*word(&h,BASE)==0xe6 && h.acked==2);
+}
+
+static void test_bcm_commit(unsigned major)
+{
+    struct hw h;
+    struct rpmh_rsc r = {0};
+    const struct rpmh_rsc_io io = {&h,read_reg,write_reg};
+    /* Piano CN0/CN1 share VCD 5. Only the second command commits it. */
+    const struct rpmh_rsc_command c[] = {{0x50030,0x20004001},{0x50034,0x60004001}};
+    configure(&h,major,16);
+    assert(rpmh_rsc_init(&r,&io,RPMH_APPS_DRV2_BASE,RPMH_APPS_DRV2_SIZE)==RPMH_RSC_OK);
+    assert(rpmh_rsc_begin(&r,c,2,1,4)==RPMH_RSC_INVALID && !h.writes);
+    assert(rpmh_rsc_begin(&r,c,2,1,2)==RPMH_RSC_PENDING && h.triggers==1);
+    assert(*word(&h,wait_reg(&h,0)+12)==3 && *word(&h,wait_reg(&h,0))==2);
+    assert(*word(&h,msg(&h,0,0))==0x10108 && *word(&h,msg(&h,0,1))==0x10108);
+    complete(&h,2,3);
+    assert(rpmh_rsc_interrupt(&r));
+    *word(&h,msg(&h,0,0)+12)=0;
+    assert(rpmh_rsc_poll(&r,NULL,0)==RPMH_RSC_PENDING);
+    *word(&h,msg(&h,0,0)+12)=1u<<8;
+    *word(&h,msg(&h,0,1)+12)=1u<<8;
+    assert(rpmh_rsc_poll(&r,NULL,0)==RPMH_RSC_PENDING);
+    *word(&h,msg(&h,0,1)+12)=DONE;
+    assert(rpmh_rsc_poll(&r,NULL,0)==RPMH_RSC_OK && rpmh_rsc_idle(&r) && h.acked==1);
 }
 
 int main(void)
@@ -161,29 +191,31 @@ int main(void)
     *word(&h,BASE)=2; *word(&h,BASE+4)=2;
     assert(rpmh_rsc_check_irq_handoff(&r)==RPMH_RSC_BUSY && *word(&h,BASE+4)==2);
     *word(&h,BASE)=*word(&h,BASE+4)=0;
-    assert(rpmh_rsc_begin(&r,&cmd,4,1)==RPMH_RSC_INVALID);
+    assert(rpmh_rsc_begin(&r,&cmd,4,1,1)==RPMH_RSC_INVALID);
     /* Slot zero appears free but another active slot has an in-flight
      * different register of the same VRM. No controller writes are allowed. */
     *word(&h,wait_reg(&h,2)+12)=2;
     *word(&h,msg(&h,2,1)+4)=0x4010c;
-    assert(rpmh_rsc_begin(&r,&cmd,1,1)==RPMH_RSC_BUSY && !h.writes);
+    assert(rpmh_rsc_begin(&r,&cmd,1,1,1)==RPMH_RSC_BUSY && !h.writes);
     *word(&h,wait_reg(&h,2)+12)=0;
     h.stale_reg = msg(&h,0,0)+4; h.stale_value = 0x40104;
-    assert(rpmh_rsc_begin(&r,&cmd,1,1)==RPMH_RSC_PENDING && !h.triggers);
+    assert(rpmh_rsc_begin(&r,&cmd,1,1,1)==RPMH_RSC_PENDING && !h.triggers);
     assert(rpmh_rsc_cancel_unsent(&r)==RPMH_RSC_CANCELLED && rpmh_rsc_idle(&r));
     assert(!h.triggers && !h.acked && !*word(&h,BASE) && !*word(&h,wait_reg(&h,0)+12));
-    assert(rpmh_rsc_begin(&r,&cmd,1,1)==RPMH_RSC_PENDING && !h.triggers);
+    assert(rpmh_rsc_begin(&r,&cmd,1,1,1)==RPMH_RSC_PENDING && !h.triggers);
     h.stale_reg=UINT32_MAX;
     assert(rpmh_rsc_poll(&r,NULL,0)==RPMH_RSC_PENDING && h.triggers==1);
     complete(&h,1,1);
     h.stale_reg=wait_reg(&h,0)+4; h.stale_value=ARM|TRIGGER;
     assert(rpmh_rsc_poll(&r,NULL,0)==RPMH_RSC_PENDING && !h.acked && h.triggers==1);
-    assert(rpmh_rsc_begin(&r,&cmd,1,1)==RPMH_RSC_BUSY);
+    assert(rpmh_rsc_begin(&r,&cmd,1,1,1)==RPMH_RSC_BUSY);
     h.stale_reg=UINT32_MAX;
     assert(rpmh_rsc_poll(&r,NULL,0)==RPMH_RSC_OK && h.acked==1 && h.triggers==1);
     test_transaction(2);
     test_transaction(3);
-    printf("APPS DRV2 %08x %x: active TCS 0..2, 2.7/3.0 command layouts, ACK and readback passed.\n",
+    test_bcm_commit(2);
+    test_bcm_commit(3);
+    printf("APPS DRV2 %08x %x: active TCS 0..2, 2.7/3.0 layouts, VCD commit, ACK and readback passed.\n",
            RPMH_APPS_DRV2_BASE, RPMH_APPS_DRV2_SIZE);
     return 0;
 }

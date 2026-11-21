@@ -26,7 +26,7 @@ struct rpmh_rsc {
     struct rpmh_rsc_io io;
     struct rpmh_rsc_command command[RPMH_TCS_MAX_COMMANDS];
     uint32_t reply[RPMH_TCS_MAX_COMMANDS];
-    uint32_t control_base;
+    uint32_t control_base, wait_mask;
     unsigned commands_per_tcs, version, phase, slot, count, writing, irq_was_enabled, irq_seen, cancelling;
 };
 
@@ -38,8 +38,10 @@ enum rpmh_rsc_result rpmh_rsc_init(struct rpmh_rsc *, const struct rpmh_rsc_io *
 /* Before the OS connects the shared DRV interrupt, check that it won't
  * inherit an interrupt from a solver TCS or an unidentified transaction. */
 enum rpmh_rsc_result rpmh_rsc_check_irq_handoff(struct rpmh_rsc *);
+/* wait_mask orders commands within a TCS. The TCS always requests a
+ * completion IRQ; read data is returned only after every reply is valid. */
 enum rpmh_rsc_result rpmh_rsc_begin(struct rpmh_rsc *, const struct rpmh_rsc_command *,
-                                    unsigned count, int write);
+                                    unsigned count, int write, unsigned wait_mask);
 /* Under the same IRQ synchronization as begin/poll, acknowledge only this
  * transfer's level interrupt. Queue the completion worker when it returns 1. */
 int rpmh_rsc_interrupt(struct rpmh_rsc *);

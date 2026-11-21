@@ -91,7 +91,7 @@ static int sync_level(struct rpmh_provider *p, unsigned i)
     struct rpmh_rsc_command cmd = {p->rail[i].address,value};
     /* A lost acknowledgement doesn't prove that the rail stayed put. */
     p->restore_rails |= BIT(i);
-    if (!p->transport.write(p->transport.context,&cmd,1)) return 0;
+    if (!p->transport.write(p->transport.context, &cmd, 1, 1)) return 0;
     p->applied.corner[i] = value;
     p->restore_rails &= ~BIT(i);
     return 1;
@@ -113,7 +113,9 @@ static int sync_bus(struct rpmh_provider *p)
         unsigned end = batch.end[g], mask = 0;
         for (unsigned i = first; i < end; ++i) mask |= BIT(batch.id[i]);
         p->restore_bcms |= mask;
-        if (!p->transport.write(p->transport.context,&batch.cmd[first],end - first)) return 0;
+        /* Vote for all BCMs in one VCD before waiting on its final commit. */
+        unsigned count = end - first;
+        if (!p->transport.write(p->transport.context, &batch.cmd[first], count, BIT(count - 1))) return 0;
         for (unsigned i = first; i < end; ++i)
             p->applied.bus.xy[batch.id[i]] = target.xy[batch.id[i]];
         p->restore_bcms &= ~mask;

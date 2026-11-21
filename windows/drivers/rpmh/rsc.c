@@ -49,6 +49,8 @@ static void put(struct rpmh_rsc *r, uint32_t reg, uint32_t value)
 
 static uint32_t msg_id(const struct rpmh_rsc *r)
 {
+    /* Like a synchronous rpmh_write_batch, request a response from every
+     * target. WAIT_FOR_CMPL separately orders commands within the TCS. */
     return MSG_LENGTH | RESP_REQUIRED | (r->writing ? MSG_WRITE : 0u);
 }
 
@@ -145,7 +147,7 @@ static enum rpmh_rsc_result trigger_if_ready(struct rpmh_rsc *r)
     if (!control(r, w+4, &val)) return RPMH_RSC_IO_ERROR;
     if (val != (r->control_base | AMC_ENABLE)) return RPMH_RSC_PENDING;
     if (!control(r, w, &val)) return RPMH_RSC_IO_ERROR;
-    if (val != mask) return RPMH_RSC_PENDING;
+    if (val != r->wait_mask) return RPMH_RSC_PENDING;
     if (!control(r, w+12, &val)) return RPMH_RSC_IO_ERROR;
     if (val != mask) return RPMH_RSC_PENDING;
     for (unsigned i = 0; i < r->count; ++i) {
@@ -163,12 +165,12 @@ static enum rpmh_rsc_result trigger_if_ready(struct rpmh_rsc *r)
 }
 
 enum rpmh_rsc_result rpmh_rsc_begin(struct rpmh_rsc *r, const struct rpmh_rsc_command *cmd,
-                                    unsigned count, int write)
+                                    unsigned count, int write, unsigned wait_mask)
 {
     uint32_t original, base = 0;
     unsigned slot;
     if (!r || !r->version || !cmd || !count || count > r->commands_per_tcs ||
-        (write != 0 && write != 1)) return RPMH_RSC_INVALID;
+        (write != 0 && write != 1) || (wait_mask >> count)) return RPMH_RSC_INVALID;
     if (!rpmh_rsc_idle(r)) return RPMH_RSC_BUSY;
     for (unsigned i = 0; i < count; ++i)
         if (!cmd[i].address) return RPMH_RSC_INVALID;
@@ -179,6 +181,7 @@ enum rpmh_rsc_result rpmh_rsc_begin(struct rpmh_rsc *r, const struct rpmh_rsc_co
     r->slot = slot;
     r->count = count;
     r->writing = (unsigned)write;
+    r->wait_mask = wait_mask;
     r->control_base = base;
     r->irq_was_enabled = original & bit;
     r->irq_seen = 0;
@@ -193,7 +196,7 @@ enum rpmh_rsc_result rpmh_rsc_begin(struct rpmh_rsc *r, const struct rpmh_rsc_co
         if (write) put(r, m+8, cmd[i].data);
     }
     uint32_t w = wait_reg(r, slot);
-    put(r, w, mask);
+    put(r, w, wait_mask);
     put(r, w+12, mask);
     put(r, w+4, base | AMC_ENABLE);
     return trigger_if_ready(r);
@@ -241,9 +244,10 @@ enum rpmh_rsc_result rpmh_rsc_poll(struct rpmh_rsc *r, uint32_t *read_data, unsi
         if (!(val & 1)) return RPMH_RSC_PENDING;
         for (unsigned i = 0; i < r->count; ++i) {
             uint32_t m = msg_reg(r, r->slot, i);
+            uint32_t required = CMD_ISSUED;
+            if (!r->writing || (r->wait_mask & (1u << i))) required |= CMD_COMPLETE;
             if (!control(r, m+12, &val)) return RPMH_RSC_IO_ERROR;
-            if ((val & (CMD_ISSUED | CMD_COMPLETE)) != (CMD_ISSUED | CMD_COMPLETE))
-                return RPMH_RSC_PENDING;
+            if ((val & required) != required) return RPMH_RSC_PENDING;
             if (!r->writing && !read_reg(r, m+16, &r->reply[i])) return RPMH_RSC_IO_ERROR;
         }
         /* Clear trigger before disabling AMC. Don't send a second trigger

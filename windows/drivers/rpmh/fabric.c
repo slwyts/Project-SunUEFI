@@ -50,7 +50,10 @@ unsigned rpmh_fabric_init(struct rpmh_fabric *f, const struct rpmh_cmd_db *db)
         b->unit = le32(entry.aux);
         b->width = (uint16_t)(entry.aux[4] | (unsigned)entry.aux[5] << 8);
         b->vcd = entry.aux[6];
-        if (!b->unit || !b->width) f->paths &= ~routes[i].paths;
+        /* Qualcomm normalizes zero factors to one; bit-vote BCMs such as
+         * ACV publish no bandwidth width and still belong to the path. */
+        if (!b->unit) b->unit = 1;
+        if (!b->width) b->width = 1;
         for (unsigned j = 0; j < i; ++j)
             if (f->bcm[j].address == b->address)
                 f->paths &= ~(routes[i].paths | routes[j].paths);

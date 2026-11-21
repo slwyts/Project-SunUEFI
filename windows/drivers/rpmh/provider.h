@@ -6,9 +6,9 @@ enum rpmh_rail { RPMH_XO, RPMH_CX, RPMH_MX, RPMH_RAIL_COUNT };
 
 struct rpmh_transport {
     void *context;
-    /* Return success only after this entire group was acknowledged. If an
-     * earlier write timed out, retire it before submitting this one. */
-    int (*write)(void *, const struct rpmh_rsc_command *, unsigned);
+    /* The wait mask controls ordering inside one TCS, not which messages
+     * request a response. Retire the old request before sending a new one. */
+    int (*write)(void *, const struct rpmh_rsc_command *, unsigned count, unsigned wait_mask);
 };
 
 /* Values requested by the boot-time AP clients, not a measurement of the

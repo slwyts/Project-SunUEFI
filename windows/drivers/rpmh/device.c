@@ -147,7 +147,7 @@ static int retire(RPMH_DEVICE *d, ULONGLONG until, BOOLEAN cancel_unsent)
     }
 }
 
-static int submit(void *context, const struct rpmh_rsc_command *commands, unsigned count)
+static int submit(void *context, const struct rpmh_rsc_command *commands, unsigned count, unsigned wait_mask)
 {
     RPMH_DEVICE *d = context;
     ULONGLONG until = KeQueryInterruptTime() + REQUEST_MS * 10000;
@@ -159,7 +159,7 @@ static int submit(void *context, const struct rpmh_rsc_command *commands, unsign
     enum rpmh_rsc_result r;
     do {
         WdfInterruptAcquireLock(d->interrupt);
-        r = gone(d) ? RPMH_RSC_IO_ERROR : rpmh_rsc_begin(&d->rsc, commands, count, 1);
+        r = gone(d) ? RPMH_RSC_IO_ERROR : rpmh_rsc_begin(&d->rsc, commands, count, 1, wait_mask);
         WdfInterruptReleaseLock(d->interrupt);
         if (r != RPMH_RSC_BUSY || KeQueryInterruptTime() >= until) break;
         wait_for_reply(d);

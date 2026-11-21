@@ -36,10 +36,11 @@ static void make_db(uint8_t *b)
 }
 
 struct hardware { uint32_t vote[ARC_N+BCM_N]; unsigned calls, fail_at, failures; };
-static int write_group(void *context, const struct rpmh_rsc_command *cmd, unsigned n)
+static int write_group(void *context, const struct rpmh_rsc_command *cmd, unsigned n, unsigned wait)
 {
     struct hardware *h = context;
     ++h->calls;
+    assert(n && n <= RPMH_TCS_MAX_COMMANDS && wait == BIT(n - 1));
     for (unsigned i = 0; i < n; ++i) {
         unsigned j = 0;
         while (j < ARC_N+BCM_N && address(j) != cmd[i].address) ++j;
