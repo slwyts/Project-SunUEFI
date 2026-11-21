@@ -61,7 +61,9 @@ Debian 默认 sid，Ubuntu 默认 noble，Arch Linux ARM 默认 rolling；Deepin
 
 本地使用原厂杜比扬声器处理时，给 `./build.sh bsp package --audio-topology`
 加上 `--speaker-acdb /path/to/Mi_acdb_cal.acdb`。构建从匹配的 Piano 原厂 ACDB
-提取 95 项扬声器参数，加入 AudioReach 拓扑的 DAP 模块。配套内核在播放准备时
+提取 95 项扬声器参数，加入 AudioReach 拓扑的 DAP 模块。立体声矩阵沿用国行和国际版
+`odm/etc/dolby/dax-default.xml` 的 `speaker` 模式 1，让左右声道分别送到同侧的两只扬声器。
+配套内核在播放准备时
 分批发送完整参数，最后启用处理。ALSA UCM 仍提供同一个扬声器，DAP 路径接收
 48 kHz 立体声并向 TDM 输出四路。普通拓扑没有这条路径时，UCM 使用原有四声道
 PCM。该配置适用于本地打包，原厂调音数据随输入提供。

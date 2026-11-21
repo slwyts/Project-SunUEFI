@@ -176,7 +176,8 @@ def topology_copyright(source):
                         for record in source['repositories'].values())
     calibration = ''
     if 'speaker_calibration' in source:
-        calibration = ('The DAP parameters are extracted from the original Xiaomi ACDB supplied at build time.\n'
+        calibration = ('The DAP parameters use the original Xiaomi ACDB supplied at build time and the\n'
+                       "stereo speaker matrix from the original Android dax-default.xml.\n"
                        'The BSD-3-Clause license below applies to the topology source.\n\n')
     return ('AudioReach topology for Xiaomi Pad 8 Pro, licensed BSD-3-Clause.\n'
             f'SunUEFI source: {source["source"]}\n'

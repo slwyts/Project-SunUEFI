@@ -5,6 +5,9 @@ import re
 import struct
 
 
+DAP_OUTPUT_MODE = 0x000108de
+
+
 def _words(data, offset, count):
     return struct.unpack_from(f"<{count}I", data, offset)
 
@@ -70,7 +73,8 @@ def _speaker_params(chunks):
         if not payload or len(payload) != length or param in params:
             raise ValueError("Invalid speaker DAP parameter")
         params[param] = payload
-    if len(params) != 95 or _words(params[0x000108de], 0, 2) != (1, 4):
+    output_mode = params.get(DAP_OUTPUT_MODE, b"")
+    if len(params) != 95 or len(output_mode) != 200 or _words(output_mode, 0, 2) != (1, 4):
         raise ValueError("The speaker DAP calibration must describe four outputs")
     if next(reversed(params)) != 0x08001026 or params[0x08001026] != struct.pack("<I", 1):
         raise ValueError("The speaker DAP must be enabled after calibration")
@@ -81,8 +85,13 @@ def write_calibration(source, destination, policy):
     data = source.read_bytes()
     if sha256(data).hexdigest() not in policy["acdb_sha256"]:
         raise ValueError("Expected the original Piano Mi_acdb_cal.acdb from a supported HyperOS release")
+    params = _speaker_params(_chunks(data))
+    # Android applies the speaker profile after loading ACDB. The mode 1
+    # payload carries two input rows; the remaining coefficient slots are zero.
+    stereo = struct.pack("<2I8i", 1, 4, *policy["stereo_matrix"])
+    params[DAP_OUTPUT_MODE] = stereo.ljust(len(params[DAP_OUTPUT_MODE]), b"\0")
     result = bytearray()
-    for param, payload in _speaker_params(_chunks(data)).items():
+    for param, payload in params.items():
         result.extend(struct.pack("<4I", policy["instance"], param, len(payload), 0))
         result.extend(payload)
         result.extend(bytes(-len(payload) % 8))
