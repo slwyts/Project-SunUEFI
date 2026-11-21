@@ -16,6 +16,7 @@ on:
       - 'sources.lock.json'
       - '.gitmodules'
       - 'patches/**'
+      - '!patches/mesa/26.2.4/**'
       - 'uefi/**'
       - 'vendor/piano/**'
       - 'vendor/piano-linux/**'
