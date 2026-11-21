@@ -56,7 +56,50 @@ DefinitionBlock ("", "DSDT", 2, "SUNUEF", "PIANO   ", 1)
                 Memory32Fixed (ReadWrite, 0x0F000000, 0x00202000)
                 Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) { 240 }
             })
+
+            Name (GAVL, Zero)
+            OperationRegion (LREG, GeneralPurposeIO, Zero, One)
+            Field (LREG, ByteAcc, NoLock, Preserve)
+            {
+                Connection (GpioIo (Shared, PullDefault, , , IoRestrictionInputOnly,
+                                    "\\_SB.TLMM", 0, ResourceConsumer) { 80 }),
+                LCOV, 1
+            }
+
+            Method (_REG, 2, NotSerialized)
+            {
+                If (Arg0 == 0x08) // GeneralPurposeIO
+                {
+                    GAVL = Arg1
+                    If (Arg1) { Notify (\_SB.LID0, 0x80) }
+                }
+            }
+
+            Name (_AEI, ResourceTemplate ()
+            {
+                GpioInt (Edge, ActiveBoth, Exclusive, PullDefault, 3000,
+                         "\\_SB.TLMM", 0, ResourceConsumer) { 80 }
+            })
+
+            Method (_E50, 0, NotSerialized)
+            {
+                Notify (\_SB.LID0, 0x80)
+            }
         }
+
+        Device (LID0)
+        {
+            Name (_HID, EisaId ("PNP0C0D"))
+            Name (_DEP, Package () { \_SB.TLMM })
+
+            Method (_LID, 0, NotSerialized)
+            {
+                // Do not report a closed cover while its GPIO cannot be read.
+                If (\_SB.TLMM.GAVL) { Return (\_SB.TLMM.LCOV) }
+                Return (One)
+            }
+        }
+
         // The render engine and its GMU share one requester namespace. The
         // display controller, GPU clock controller and SMMU have separate MMIO.
         Device (GPU0)

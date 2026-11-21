@@ -106,6 +106,26 @@ class PianoDsdtTest(unittest.TestCase):
                     calls.append(f'{dev}._DSM ({UUID(guid).bytes_le.hex(" ")}) {revision} {function} []')
         self.assertEqual(self.evaluate(*calls), self.evaluate(*calls, table=reference))
 
+    def test_cover_reports_the_live_gpio_and_notifies_windows(self):
+        lid, gpio = r'\_SB.LID0', r'\_SB.TLMM'
+        control, pin, polarity = struct.unpack('>III', self.dt['/soc/xiaomi_hall/lid_hall']['gpios'])
+        self.assertIn(b'qcom,sun-tlmm', self.handles[control]['compatible'].split(b'\0'))
+        self.assertEqual(polarity, 1)  # Active low: closed is zero in ACPI.
+        hid, event = self.evaluate(lid+'._HID', gpio+'._AEI')
+        self.assertEqual(hid, 0x0d0cd041)  # EISA PNP0C0D
+        self.assertEqual((event[0], event[4], event[7]), (0x8c, 0, 5))  # GPIO interrupt, both edges
+        pin_offset, = struct.unpack_from('<H', event, 14)
+        self.assertEqual(struct.unpack_from('<H', event, pin_offset), (pin,))
+        edge = gpio+f'._E{pin:02X}'
+        commands = '; '.join('evaluate '+q for q in
+                             (gpio+'._REG 8 0', lid+'._LID', gpio+'._REG 8 1', lid+'._LID', edge))
+        for level in (0, 1):
+            output = subprocess.check_output([self.interpreter, '-dt', '-r', '-fv', str(level), '-b', commands,
+                                              self.aml], text=True, stderr=subprocess.STDOUT, timeout=15)
+            states = re.findall(r'Evaluation of \S+\._LID returned object[^\n]*\n\s*\[Integer\] = (\w+)', output)
+            self.assertEqual([int(s, 16) for s in states], [1, level], output)
+            self.assertRegex(output.split('Evaluating '+edge)[-1], r'Notify on \[LID0\].*Value 0x80')
+
     def test_processor_containers_and_arm_idle_entries(self):
         sysm = r'\_SB.SYSM'
         self.assertEqual(self.evaluate(sysm+'._HID', sysm+'._UID'), ['ACPI0010', 0x100000])
