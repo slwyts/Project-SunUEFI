@@ -2,6 +2,7 @@
 #pragma once
 #include <ntddk.h>
 #include "hfi_queue.h"
+#include "hfi_perf_table.h"
 
 /* Called under the command mutex for an unsolicited packet on the response
  * ring. The packet is valid only during the call. Do not submit commands
@@ -45,3 +46,6 @@ NTSTATUS AdrenoHfiStart(ADRENO_HFI *hfi);
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS AdrenoHfiCommand(ADRENO_HFI *hfi, UCHAR id, const uint32_t *input, SIZE_T input_words,
                           uint32_t *reply, SIZE_T *reply_words, uint32_t *result, ULONG timeout_ms);
+
+_IRQL_requires_(PASSIVE_LEVEL)
+NTSTATUS AdrenoHfiSetPerfTable(ADRENO_HFI *hfi, const struct adreno_perf_config *config, ULONG timeout_ms);

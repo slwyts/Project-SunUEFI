@@ -8,10 +8,12 @@ on:
       - 'vendor/firmware/piano-qcom/gen80000_gmu.bin'
       - 'vendor/firmware/piano-keyboard/MCU_Upgrade.bin'
       - 'vendor/piano/dtb/xbl-config.dtb'
+      - 'vendor/piano/dtb/piano.dtb'
       - 'tools/compose_piano_dtb.py'
       - 'tests/unit/test_gmu_firmware.py'
       - 'tests/unit/test_gmu_memory_layout.py'
       - 'tests/unit/test_hfi_queue.py'
+      - 'tests/unit/test_hfi_perf_table.py'
       - 'tests/unit/test_wn8030_input.py'
       - 'tests/unit/test_wn8030_boot.py'
       - 'tests/native/Wn8030ReportsTest.c'
@@ -53,7 +55,7 @@ jobs:
           fi
       - run: >-
           ./build.sh check --group python-all --no-skips --pattern test_gmu_firmware.py
-          --pattern test_gmu_memory_layout.py --pattern test_hfi_queue.py
+          --pattern test_gmu_memory_layout.py --pattern test_hfi_queue.py --pattern test_hfi_perf_table.py
           --pattern test_wn8030_input.py --pattern test_wn8030_boot.py
           --pattern test_ufs_transfer.py --pattern test_ufs_link.py --pattern test_ufs_platform.py
           --pattern test_ufs_controller.py
