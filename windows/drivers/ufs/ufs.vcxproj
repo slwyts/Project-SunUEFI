@@ -32,10 +32,14 @@
     <ClCompile Include="storport_io.c" />
     <ClCompile Include="link.c" />
     <ClCompile Include="storport_link.c" />
+    <ClCompile Include="platform.c" />
+    <ClCompile Include="platform_storport.c" />
     <ClInclude Include="transfer.h" />
     <ClInclude Include="storport_io.h" />
     <ClInclude Include="link.h" />
     <ClInclude Include="storport_link.h" />
+    <ClInclude Include="platform.h" />
+    <ClInclude Include="platform_storport.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
