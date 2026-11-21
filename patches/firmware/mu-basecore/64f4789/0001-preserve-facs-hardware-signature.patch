@@ -1,0 +1,17 @@
+diff --git a/MdeModulePkg/Universal/Acpi/AcpiPlatformDxe/AcpiPlatform.c b/MdeModulePkg/Universal/Acpi/AcpiPlatformDxe/AcpiPlatform.c
+--- a/MdeModulePkg/Universal/Acpi/AcpiPlatformDxe/AcpiPlatform.c
++++ b/MdeModulePkg/Universal/Acpi/AcpiPlatformDxe/AcpiPlatform.c
+@@ -214,9 +214,11 @@ AcpiPlatformEntryPoint (
+       ASSERT (Size >= TableSize);
+ 
+       //
+-      // Checksum ACPI table
++      // The FACS has no description-header checksum.
+       //
+-      AcpiPlatformChecksum ((UINT8 *)CurrentTable, TableSize);
++      if (CurrentTable->Signature != EFI_ACPI_2_0_FIRMWARE_ACPI_CONTROL_STRUCTURE_SIGNATURE) {
++        AcpiPlatformChecksum ((UINT8 *)CurrentTable, TableSize);
++      }
+ 
+       //
+       // Install ACPI table

@@ -75,6 +75,17 @@
       }
     },
     {
+      "repository": "upstream/Mu-Silicium/Mu_Basecore",
+      "base_commit": "64f478939955e45faa632c160ae2a75a5ff7ef7f",
+      "patch": "mu-basecore/64f4789/0001-preserve-facs-hardware-signature.patch",
+      "sha256": "cc9e19f27ad9105046fbe43aae0ac245baf2ffc93a8bb364a65cab386a247f75",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/microsoft/mu_basecore",
+        "drop_when": "Remove when the ACPI platform driver installs FACS without writing its hardware signature as a table checksum."
+      }
+    },
+    {
       "repository": "upstream/Mu-Silicium",
       "base_commit": "8471e47f5248ebbffc2e6196b683204163efe155",
       "patch": "mu-silicium.patch",
