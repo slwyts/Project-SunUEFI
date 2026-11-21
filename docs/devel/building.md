@@ -124,7 +124,8 @@ INF、签名目录（CAT）及其引用的所有文件。安装器把驱动放�
 
 构建项目自己的驱动包时，在装有 WDK 的 Windows 开发者终端运行
 `./build.sh windows drivers --catalogs`。在 Windows 上，即使选用 Clang 编译，
-内核驱动也由 Visual Studio 的 ARM64 `link.exe /kernel` 链接。
+内核驱动也由 Visual Studio 的 ARM64 `link.exe /kernel` 链接。Linux 交叉编译使用
+LLVM，显式将中断代码和所需数据标为不可分页；两种构建的 UFS 驱动都已在 ARM64 WinPE 中完成读写。
 WDK 的 Inf2Cat 检查每个带 INF 的 ARM64 包，
 生成列出包内文件哈希的 `.cat`，放在 `artifacts/windows/drivers/<项目>/Release/`。
 Windows driver checks 的 `Windows-ARM64-UFS-unsigned` 下载项包含同一次构建、经过校验的

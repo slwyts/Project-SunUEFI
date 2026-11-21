@@ -374,7 +374,13 @@ def llvm_driver(project, kits):
         return library
     target = description.findtext('.//{*}TargetName') or project.stem
     driver = output / (target + '.sys')
-    linker = [msvc_arm64_linker(), '/kernel'] if os.name == 'nt' else [required_tool('lld-link')]
+    if os.name == 'nt':
+        linker = [msvc_arm64_linker(), '/kernel']
+    else:
+        # Unlike LINK /KERNEL, LLD /DRIVER does not mark ordinary kernel
+        # code and data resident. Leave deliberately pageable sections alone.
+        linker = [required_tool('lld-link'), '/section:.text,erp', '/section:.rdata,rp',
+                  '/section:.data,rwp', '/section:.pdata,rp', '/section:INIT,erd', '/tsaware:no']
     subprocess.run([*linker, '/nologo', '/driver', '/machine:arm64', '/subsystem:native,10.0',
                     f'/entry:{entry}', '/nodefaultlib', '/opt:ref', '/opt:icf', '/integritycheck', '/dynamicbase',
                     '/nxcompat', '/release', '/Brepro', f'/out:{driver}', *objects, *libraries], check=True)
