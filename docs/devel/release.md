@@ -147,6 +147,8 @@ systemd-boot、Linux 睡眠唤醒和返回 Android；安装 Windows 只使用明
 GPU 和 IORT 保留 Piano 本机的设备与 DMA 映射。公共 MCFG 描述七个 PCI ECAM 段，
 本机原厂只描述一个使用地址转换窗口的 PCIe 控制器，因此不向 Windows 发布这些段。
 调试表保留同一 USB-C 控制器的高速与超速配置；串口使用本机 GENI UART，GSI 为 611。
+GPIO 控制器沿用[同机社区实现](upstreams.md)的 `QCOMFFEB` 标识和 GSI 240，
+匹配安装介质自带的 `qcgpio_i.inf`。这描述的是控制器；键盘套还需要 I²C、供电和设备自身的驱动。
 公开基线的 CSRT 随固件提供，本版 WinPE 和专业版镜像没有为其中两个资源组注册
 Qualcomm HAL 扩展。表中有低功耗状态、串口调试或 HAL 资源，不等于 Windows 驱动已经接管硬件。
 

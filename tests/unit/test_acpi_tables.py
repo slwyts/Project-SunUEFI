@@ -69,19 +69,17 @@ class AcpiTablesTests(unittest.TestCase):
         self.assertEqual(pos, len(madt))
         self.assertEqual(sorted(found), list(enumerate(cpus)))
 
-    def test_gpu_pnp_resources_match_the_board(self):
+    def mmio_and_irqs(self, device):
         kit = Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT', ROOT / 'build/host-tools/usr')) / 'bin'
         tools = [shutil.which(str(kit / name)) or shutil.which(name) for name in ('iasl', 'acpiexec')]
         if not all(tools):
             self.skipTest('ACPICA compiler and interpreter are required')
         iasl, acpiexec = tools
-        gpu = self.board['/soc/qcom,kgsl-3d0@3d00000']
-        gmu = self.board['/soc/qcom,gmu@3d37000']
         with tempfile.TemporaryDirectory() as folder:
             prefix = Path(folder) / 'piano'
             subprocess.run([iasl, '-we', '-p', prefix, ROOT / 'uefi/components/acpi/Dsdt.asl'],
                            capture_output=True, check=True)
-            output = subprocess.check_output([acpiexec, '-b', r'evaluate \_SB.GPU0._CRS',
+            output = subprocess.check_output([acpiexec, '-b', rf'evaluate \_SB.{device}._CRS',
                                               prefix.with_suffix('.aml')], stderr=subprocess.STDOUT, text=True)
         resource = bytes.fromhex(' '.join(re.findall(r'^\s+[\da-f]+: ([\da-f ]+)//', output, re.I | re.M)))
         windows, irqs = [], []
@@ -97,9 +95,25 @@ class AcpiTablesTests(unittest.TestCase):
                 self.assertEqual(flags, 1)  # Consumer, level-high, exclusive
                 irqs.extend(struct.unpack_from(f'<{count}I', resource, offset + 5))
             else:
-                self.fail(f'Unrecognised GPU resource {kind:#x}')
+                self.fail(f'Unrecognised {device} resource {kind:#x}')
             offset += 3 + length
         self.assertEqual(resource[offset:], b'\x79\x00')
+        return windows, irqs
+
+    def test_gpio_pnp_resources_match_the_board(self):
+        gpio = next(n for n in self.board.values()
+                    if b'qcom,sun-tlmm' in n.get('compatible', b'').split(b'\0'))
+        windows, irqs = self.mmio_and_irqs('TLMM')
+        self.assertEqual(windows, list(struct.iter_unpack('>II', gpio['reg'])))
+        kind, spi, flags = struct.unpack('>III', gpio['interrupts'])
+        self.assertEqual((kind, flags), (0, 4))  # Level-high SPI
+        self.assertEqual(irqs, [32 + spi])
+
+    def test_gpu_pnp_resources_match_the_board(self):
+        gpu = self.board['/soc/qcom,kgsl-3d0@3d00000']
+        gmu = self.board['/soc/qcom,gmu@3d37000']
+        windows, irqs = self.mmio_and_irqs('GPU0')
+
         def registers(node):
             return dict(zip(node['reg-names'].rstrip(b'\0').split(b'\0'), struct.iter_unpack('>II', node['reg'])))
         kgsl, gmu_reg = registers(gpu), registers(gmu)

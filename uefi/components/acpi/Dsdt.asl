@@ -45,6 +45,18 @@ DefinitionBlock ("", "DSDT", 2, "SUNUEF", "PIANO   ", 1)
         Name (HSFL, Zero)
         Name (QUFN, Zero)
         Name (PEPI, Zero)
+        Device (TLMM)
+        {
+            Name (_HID, "QCOMFFEB")
+            Name (_UID, Zero)
+            Name (_CCA, One)
+            Name (_STA, 0x0F)
+            Name (_CRS, ResourceTemplate ()
+            {
+                Memory32Fixed (ReadWrite, 0x0F000000, 0x00202000)
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) { 240 }
+            })
+        }
         // The render engine and its GMU share one requester namespace. The
         // display controller, GPU clock controller and SMMU have separate MMIO.
         Device (GPU0)
