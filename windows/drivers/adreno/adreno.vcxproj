@@ -38,6 +38,7 @@
     <ClCompile Include="hfi_perf_table.c" />
     <ClCompile Include="hfi_perf.c" />
     <ClCompile Include="hfi.c" />
+    <ClCompile Include="wddm_clock.c" />
     <ClInclude Include="firmware.h" />
     <ClInclude Include="gmu_firmware.h" />
     <ClInclude Include="gmu_memory.h" />
@@ -46,6 +47,7 @@
     <ClInclude Include="hfi_queue.h" />
     <ClInclude Include="hfi_perf_table.h" />
     <ClInclude Include="hfi.h" />
+    <ClInclude Include="wddm_clock.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

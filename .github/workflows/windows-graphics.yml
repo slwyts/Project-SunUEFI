@@ -112,6 +112,8 @@ jobs:
           }
       - name: Check Direct3D readback using the software adapter
         run: .\artifacts\windows\tests\graphics-readback.exe --warp
+      - name: Compare a D3D12 queue timestamp with its clock calibration on WARP
+        run: .\artifacts\windows\tests\graphics-readback.exe --warp --api 12-timestamps
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: Windows-ARM64-graphics-readback

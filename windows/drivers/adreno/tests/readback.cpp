@@ -260,7 +260,7 @@ HRESULT make_buffer(ID3D12Device *device, D3D12_HEAP_TYPE type, D3D12_RESOURCE_S
                                             IID_PPV_ARGS(resource.GetAddressOf()));
 }
 
-HRESULT run12(IDXGIAdapter1 *adapter, LUID wanted, ID3DBlob *code)
+HRESULT run12(IDXGIAdapter1 *adapter, LUID wanted, ID3DBlob *code, bool timestamps)
 {
     ComPtr<ID3D12Device> device;
     TRY(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device)));
@@ -287,12 +287,25 @@ HRESULT run12(IDXGIAdapter1 *adapter, LUID wanted, ID3DBlob *code)
     TRY(make_buffer(device.Get(), D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST,
                     D3D12_RESOURCE_FLAG_NONE, readback));
     D3D12_COMMAND_QUEUE_DESC queue_desc{};
-    queue_desc.Type = D3D12_COMMAND_LIST_TYPE_COMPUTE;
+    // Timestamps are mandatory on direct queues, optional on compute queues.
+    queue_desc.Type = timestamps ? D3D12_COMMAND_LIST_TYPE_DIRECT : D3D12_COMMAND_LIST_TYPE_COMPUTE;
     ComPtr<ID3D12CommandQueue> queue;
     ComPtr<ID3D12CommandAllocator> allocator;
     ComPtr<ID3D12GraphicsCommandList> commands;
     ComPtr<ID3D12Fence> fence;
     TRY(device->CreateCommandQueue(&queue_desc, IID_PPV_ARGS(&queue)));
+    ComPtr<ID3D12QueryHeap> queries;
+    ComPtr<ID3D12Resource> query_result;
+    if (timestamps) {
+        D3D12_QUERY_HEAP_DESC query_desc{D3D12_QUERY_HEAP_TYPE_TIMESTAMP, 1, 0};
+        TRY(device->CreateQueryHeap(&query_desc, IID_PPV_ARGS(&queries)));
+        TRY(make_buffer(device.Get(), D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST,
+                        D3D12_RESOURCE_FLAG_NONE, query_result));
+        UINT64 frequency = 0;
+        TRY(queue->GetTimestampFrequency(&frequency));
+        if (!frequency) return check(E_FAIL, "D3D12 zero timestamp frequency");
+        std::printf("D3D12 timestamp frequency: %llu Hz\n", static_cast<unsigned long long>(frequency));
+    }
     TRY(device->CreateCommandAllocator(queue_desc.Type, IID_PPV_ARGS(&allocator)));
     TRY(device->CreateCommandList(0, queue_desc.Type, allocator.Get(), pipeline.Get(),
                                   IID_PPV_ARGS(&commands)));
@@ -323,8 +336,14 @@ HRESULT run12(IDXGIAdapter1 *adapter, LUID wanted, ID3DBlob *code)
         barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
         barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
         commands->ResourceBarrier(1, &barrier);
+        if (timestamps) {
+            commands->EndQuery(queries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0);
+            commands->ResolveQueryData(queries.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0, 1, query_result.Get(), 0);
+        }
         TRY(commands->Close());
         ID3D12CommandList *submitted = commands.Get();
+        UINT64 gpu_before = 0, cpu_before = 0;
+        if (timestamps) TRY(queue->GetClockCalibration(&gpu_before, &cpu_before));
         queue->ExecuteCommandLists(1, &submitted);
         TRY(queue->Signal(fence.Get(), ++value));
         TRY(fence->SetEventOnCompletion(value, event.handle));
@@ -337,6 +356,21 @@ HRESULT run12(IDXGIAdapter1 *adapter, LUID wanted, ID3DBlob *code)
             return check(E_FAIL, "D3D12 fence value");
         const D3D12_RANGE reading{0, bytes}, not_written{0, 0};
         void *mapped = nullptr;
+        if (timestamps) {
+            UINT64 gpu_after = 0, cpu_after = 0;
+            TRY(queue->GetClockCalibration(&gpu_after, &cpu_after));
+            const D3D12_RANGE range{0, sizeof(UINT64)};
+            TRY(query_result->Map(0, &range, &mapped));
+            const UINT64 event_time = *static_cast<const UINT64 *>(mapped);
+            query_result->Unmap(0, &not_written);
+            std::printf("GPU calibration %llu..%llu, queue timestamp %llu, QPC %llu..%llu\n",
+                        static_cast<unsigned long long>(gpu_before), static_cast<unsigned long long>(gpu_after),
+                        static_cast<unsigned long long>(event_time), static_cast<unsigned long long>(cpu_before),
+                        static_cast<unsigned long long>(cpu_after));
+            if (cpu_after <= cpu_before || gpu_after <= gpu_before ||
+                event_time < gpu_before || event_time > gpu_after)
+                return check(E_FAIL, "GPU timestamp outside queue clock calibration");
+        }
         TRY(readback->Map(0, &reading, &mapped));
         bool ok = matches(static_cast<const uint32_t *>(mapped), seed);
         readback->Unmap(0, &not_written);
@@ -348,7 +382,7 @@ HRESULT run12(IDXGIAdapter1 *adapter, LUID wanted, ID3DBlob *code)
 
 int main(int argc, char **argv)
 {
-    bool list = false, warp = false, raster = true, use11 = true, use12 = true;
+    bool list = false, warp = false, raster = true, use11 = true, use12 = true, timestamps = false;
     const char *requested = nullptr;
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--list")) list = true;
@@ -357,11 +391,12 @@ int main(int argc, char **argv)
         else if (!std::strcmp(argv[i], "--api") && i + 1 < argc) {
             ++i;
             use11 = !std::strcmp(argv[i], "11");
-            use12 = !std::strcmp(argv[i], "12");
+            timestamps = !std::strcmp(argv[i], "12-timestamps");
+            use12 = timestamps || !std::strcmp(argv[i], "12");
             raster = use11 || !std::strcmp(argv[i], "11-fl10");
             if (!raster && !use12) return 2;
         } else {
-            std::fprintf(stderr, "Usage: graphics-readback [--list | --warp | --luid HIGH:LOW] [--api 11-fl10|11|12]\n");
+            std::fprintf(stderr, "Usage: graphics-readback [--list | --warp | --luid HIGH:LOW] [--api 11-fl10|11|12|12-timestamps]\n");
             return 2;
         }
     }
@@ -419,7 +454,7 @@ int main(int argc, char **argv)
         passed &= ok;
     }
     if (use12) {
-        bool ok = SUCCEEDED(run12(selected.Get(), desc.AdapterLuid, code.Get()));
+        bool ok = SUCCEEDED(run12(selected.Get(), desc.AdapterLuid, code.Get(), timestamps));
         std::printf("D3D12 shader/fence/readback: %s\n", ok ? "PASS" : "FAIL");
         passed &= ok;
     }
