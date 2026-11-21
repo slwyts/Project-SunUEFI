@@ -87,21 +87,28 @@ def acpi_smmu_resources(board, xbl):
     def cells(record, name):
         return [item[0] for item in struct.iter_unpack('>I', record[name])]
 
+    result = {}
+    arrays = []
+    for symbol, xbl_name, prefix in (('apps_smmu', 'APPS_MMU500_SMMU_APP', 'SMMU'),
+                                     ('kgsl_smmu', 'GPU_GFX_MMU500_SMMU_GFX', 'GPU_SMMU')):
+        smmu = node(symbol)
+        base, span = cells(smmu, 'reg')  # The OS window includes all context banks.
+        irq = []
+        for kind, number, trigger in struct.iter_unpack('>III', smmu['interrupts']):
+            if kind != 0 or (trigger & 15) not in (1, 4):
+                raise ValueError(f'Cannot describe the {symbol} interrupt as a GIC SPI')
+            irq.append((number + 32, int((trigger & 15) == 1)))
+        if cells(smmu, '#global-interrupts') != [1] or len(irq) <= 1:
+            raise ValueError(f'Expected the {symbol} global fault IRQ followed by its context IRQs')
+        props = xbl['/soc/iort/' + xbl_name]
+        result.update({prefix + '_BASE': base, prefix + '_SPAN': span,
+                       prefix + '_FLAGS': cells(props, 'Flags')[0],
+                       prefix + '_GLOBAL_IRQ': irq[0][0], prefix + '_GLOBAL_IRQ_FLAGS': irq[0][1],
+                       prefix + '_CONTEXT_COUNT': len(irq) - 1})
+        arrays.append(f'#define PIANO_{prefix}_CONTEXT_IRQS {{'
+                      + ', '.join(f'{{{gsi}, {flags}}}' for gsi, flags in irq[1:]) + '}\n')
+
     smmu = node('apps_smmu')
-    base, span = cells(smmu, 'reg')  # The OS window includes all context banks.
-    irq = []
-    for kind, number, trigger in struct.iter_unpack('>III', smmu['interrupts']):
-        if kind != 0 or (trigger & 15) not in (1, 4):
-            raise ValueError('Cannot describe the apps SMMU interrupt as a GIC SPI')
-        irq.append((number + 32, int((trigger & 15) == 1)))
-    if cells(smmu, '#global-interrupts') != [1] or len(irq) <= 1:
-        raise ValueError('Expected the SMMU global fault IRQ followed by its context IRQs')
-    props = xbl['/soc/iort/APPS_MMU500_SMMU_APP']
-    result = {
-        'SMMU_BASE': base, 'SMMU_SPAN': span, 'SMMU_FLAGS': cells(props, 'Flags')[0],
-        'SMMU_GLOBAL_IRQ': irq[0][0], 'SMMU_GLOBAL_IRQ_FLAGS': irq[0][1],
-        'SMMU_CONTEXT_COUNT': len(irq) - 1,
-    }
     for name, symbol, xbl_name in (('UFS', 'ufshc_mem', 'NAMEDNODE_UFS_95MEM'),
                                     ('USB', 'dwc3_0', 'NAMEDNODE_USB0')):
         device = node(symbol)
@@ -114,10 +121,27 @@ def acpi_smmu_resources(board, xbl):
     its, result['UFS_MSI_ID'] = cells(node('ufshc_mem'), 'msi-parent')
     if [its] != cells(node('gic_its'), 'phandle'):
         raise ValueError('UFS MSI parent does not match the GIC ITS in the MADT')
+
+    gpu = '/soc/iort/NAMEDNODE_GPU'
+    result['GPU_COHERENT'] = cells(xbl[gpu], 'CacheCoherency')[0]
+    result['GPU_DMA_BITS'] = cells(xbl[gpu], 'DeviceMemAddressSize')[0]
+    gpu_smmu = cells(xbl['/soc/iort/GPU_GFX_MMU500_SMMU_GFX'], 'phandle')
+    mappings = []
+    for path, route in xbl.items():
+        if path.startswith(gpu + '/SIDMappings/'):
+            count = cells(route, 'NumIDs')[0]
+            if not count or cells(route, 'OutputReference') != gpu_smmu:
+                raise ValueError(f'{path} does not map a requester to the GPU SMMU')
+            # XBL stores the count, whereas an IORT range encodes count minus one.
+            mappings.append((cells(route, 'InputBase')[0], count - 1, cells(route, 'OutputBase')[0],
+                             cells(route, 'Flags')[0]))
+    result['GPU_MAPPING_COUNT'] = len(mappings)
+    arrays.append('#define PIANO_GPU_MAPPINGS(ENTRY) '
+                  + ', '.join(f'ENTRY(0x{start:x}, {length}, 0x{out:x}, {flags})'
+                              for start, length, out, flags in sorted(mappings)) + '\n')
     return ('// Derived from the Piano board DT and XBL IORT description.\n'
             + ''.join(f'#define PIANO_{name} 0x{value:x}\n' for name, value in result.items())
-            + '#define PIANO_SMMU_CONTEXT_IRQS {'
-            + ', '.join(f'{{{gsi}, {flags}}}' for gsi, flags in irq[1:]) + '}\n')
+            + ''.join(arrays))
 
 def simpleinit_boot_guid_header(root=ROOT):
     inf=root/'uefi/components/product-support'/SIMPLEINIT_BOOT_MODULE

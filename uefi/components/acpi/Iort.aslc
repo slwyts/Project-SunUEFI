@@ -16,12 +16,26 @@ typedef struct {
 } PIANO_SMMU;
 
 typedef struct {
+  EFI_ACPI_6_0_IO_REMAPPING_SMMU_NODE Node;
+  EFI_ACPI_6_0_IO_REMAPPING_SMMU_INT  Context[PIANO_GPU_SMMU_CONTEXT_COUNT];
+} PIANO_GPU_SMMU;
+
+typedef struct {
   EFI_ACPI_6_0_IO_REMAPPING_NAMED_COMP_NODE Node;
   CHAR8                                     Path[sizeof ("\\_SB_.XXXX")];
-  // Keep each named node 64 bytes, including the optional name padding.
+  // A named component with a single mapping occupies 64 bytes.
   UINT8                                     Padding[4];
+} PIANO_NAMED_COMPONENT;
+
+typedef struct {
+  PIANO_NAMED_COMPONENT                     Component;
   EFI_ACPI_6_0_IO_REMAPPING_ID_TABLE        Dma;
 } PIANO_NAMED_DEVICE;
+
+typedef struct {
+  PIANO_NAMED_COMPONENT                     Component;
+  EFI_ACPI_6_0_IO_REMAPPING_ID_TABLE        Dma[PIANO_GPU_MAPPING_COUNT];
+} PIANO_GPU_DEVICE;
 
 typedef struct {
   EFI_ACPI_6_0_IO_REMAPPING_TABLE Header;
@@ -29,26 +43,43 @@ typedef struct {
   PIANO_SMMU                      Smmu;
   PIANO_NAMED_DEVICE              Ufs;
   PIANO_NAMED_DEVICE              Usb;
+  PIANO_GPU_SMMU                  GpuSmmu;
+  PIANO_GPU_DEVICE                Gpu;
 } PIANO_IORT;
 #pragma pack()
 
-// Each named component is a DMA requester with one physical StreamID.
-#define DMA_DEVICE(Name, Sid, Width, Coherent) {                       \
+#define NAMED_COMPONENT(Table, Name, Count, Width, Coherent) {         \
   .Node = { .Node = { .Type = EFI_ACPI_IORT_TYPE_NAMED_COMP,           \
-    .Length = sizeof (PIANO_NAMED_DEVICE), .Revision = 2,              \
-    .NumIdMappings = 1, .IdReference = OFFSET_OF (PIANO_NAMED_DEVICE, Dma) }, \
+    .Length = sizeof (Table), .Revision = 2,                           \
+    .NumIdMappings = Count, .IdReference = OFFSET_OF (Table, Dma) },   \
     .CacheCoherent = Coherent, .AddressSizeLimit = Width,              \
     .MemoryAccessFlags = Coherent ? EFI_ACPI_IORT_MEM_ACCESS_FLAGS_CPM | \
                                     EFI_ACPI_IORT_MEM_ACCESS_FLAGS_DACS : 0 }, \
-  .Path = Name, .Dma = { .OutputBase = Sid,                            \
+  .Path = Name }
+
+#define DMA_DEVICE(Name, Sid, Width, Coherent) {                       \
+  .Component = NAMED_COMPONENT (PIANO_NAMED_DEVICE, Name, 1, Width, Coherent), \
+  .Dma = { .OutputBase = Sid,                                          \
     .OutputReference = OFFSET_OF (PIANO_IORT, Smmu),                   \
     .Flags = EFI_ACPI_IORT_ID_MAPPING_FLAGS_SINGLE } }
+
+#define GPU_MAPPING(Input, Range, Sid, MappingFlags) {                 \
+  .InputBase = Input, .NumIds = Range, .OutputBase = Sid,              \
+  .OutputReference = OFFSET_OF (PIANO_IORT, GpuSmmu), .Flags = MappingFlags }
+
+#define SMMU_REGISTERS(Prefix, Table)                                  \
+  .Base = Prefix ## _BASE, .Span = Prefix ## _SPAN,                    \
+  .Model = EFI_ACPI_IORT_SMMUv1v2_MODEL_MMU500, .Flags = Prefix ## _FLAGS, \
+  .GlobalInterruptArrayRef = OFFSET_OF (EFI_ACPI_6_0_IO_REMAPPING_SMMU_NODE, SMMU_NSgIrpt), \
+  .SMMU_NSgIrpt = Prefix ## _GLOBAL_IRQ, .SMMU_NSgIrptFlags = Prefix ## _GLOBAL_IRQ_FLAGS, \
+  .NumContextInterrupts = Prefix ## _CONTEXT_COUNT,                    \
+  .ContextInterruptArrayRef = OFFSET_OF (Table, Context)
 
 STATIC PIANO_IORT mIort = {
   .Header = {
     .Header = PIANO_HEADER (EFI_ACPI_6_3_IO_REMAPPING_TABLE_SIGNATURE, PIANO_IORT,
                             EFI_ACPI_IO_REMAPPING_TABLE_REVISION_00),
-    .NumNodes = 4, .NodeOffset = OFFSET_OF (PIANO_IORT, Its)
+    .NumNodes = 6, .NodeOffset = OFFSET_OF (PIANO_IORT, Its)
   },
   .Its = {
     .Node = { .Node = { .Type = EFI_ACPI_IORT_TYPE_ITS_GROUP, .Length = sizeof (PIANO_ITS) },
@@ -59,13 +90,7 @@ STATIC PIANO_IORT mIort = {
     .Node = {
       .Node = { .Type = EFI_ACPI_IORT_TYPE_SMMUv1v2, .Length = sizeof (PIANO_SMMU),
                 .Revision = 1, .NumIdMappings = 1, .IdReference = OFFSET_OF (PIANO_SMMU, Msi) },
-      .Base = PIANO_SMMU_BASE, .Span = PIANO_SMMU_SPAN,
-      .Model = EFI_ACPI_IORT_SMMUv1v2_MODEL_MMU500,
-      .Flags = PIANO_SMMU_FLAGS,
-      .GlobalInterruptArrayRef = OFFSET_OF (EFI_ACPI_6_0_IO_REMAPPING_SMMU_NODE, SMMU_NSgIrpt),
-      .SMMU_NSgIrpt = PIANO_SMMU_GLOBAL_IRQ, .SMMU_NSgIrptFlags = PIANO_SMMU_GLOBAL_IRQ_FLAGS,
-      .NumContextInterrupts = PIANO_SMMU_CONTEXT_COUNT,
-      .ContextInterruptArrayRef = OFFSET_OF (PIANO_SMMU, Context)
+      SMMU_REGISTERS (PIANO_SMMU, PIANO_SMMU)
     },
     .Context = PIANO_SMMU_CONTEXT_IRQS,
     // Only UFS has an MSI parent; USB uses its wired GIC interrupt.
@@ -73,7 +98,20 @@ STATIC PIANO_IORT mIort = {
              .OutputReference = OFFSET_OF (PIANO_IORT, Its) }
   },
   .Ufs = DMA_DEVICE ("\\_SB_.UFS0", PIANO_UFS_SID, PIANO_UFS_DMA_BITS, PIANO_UFS_COHERENT),
-  .Usb = DMA_DEVICE ("\\_SB_.URS0", PIANO_USB_SID, PIANO_USB_DMA_BITS, PIANO_USB_COHERENT)
+  .Usb = DMA_DEVICE ("\\_SB_.URS0", PIANO_USB_SID, PIANO_USB_DMA_BITS, PIANO_USB_COHERENT),
+  .GpuSmmu = {
+    .Node = {
+      .Node = { .Type = EFI_ACPI_IORT_TYPE_SMMUv1v2, .Length = sizeof (PIANO_GPU_SMMU),
+                .Revision = 1 },
+      SMMU_REGISTERS (PIANO_GPU_SMMU, PIANO_GPU_SMMU)
+    },
+    .Context = PIANO_GPU_SMMU_CONTEXT_IRQS
+  },
+  .Gpu = {
+    .Component = NAMED_COMPONENT (PIANO_GPU_DEVICE, "\\_SB_.GPU0", PIANO_GPU_MAPPING_COUNT,
+                                  PIANO_GPU_DMA_BITS, PIANO_GPU_COHERENT),
+    .Dma = { PIANO_GPU_MAPPINGS (GPU_MAPPING) }
+  }
 };
 
 VOID * EFIAPI ReferenceAcpiTable (VOID) { return &mIort; }

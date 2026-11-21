@@ -35,7 +35,7 @@ jobs:
           sudo apt-get "${download_options[@]}" -o APT::Update::Error-Mode=any update
           install_dependencies() {
             sudo apt-get "${download_options[@]}" install -y --no-install-recommends \
-              alsa-utils binutils-aarch64-linux-gnu build-essential cargo clang \
+              acpica-tools alsa-utils binutils-aarch64-linux-gnu build-essential cargo clang \
               debhelper libarchive-tools libjpeg-dev libssl-dev libyuv-dev m4 \
               makepkg pacman-package-manager zstd
           }

@@ -1,5 +1,7 @@
 """Check the compiled ARM tables against Piano's independent firmware descriptions."""
+import os
 import platform
+import re
 import shutil
 import struct
 import subprocess
@@ -65,6 +67,54 @@ class AcpiTablesTests(unittest.TestCase):
         self.assertEqual(pos, len(madt))
         self.assertEqual(sorted(found), list(enumerate(cpus)))
 
+    def test_gpu_pnp_resources_match_the_board(self):
+        kit = Path(os.environ.get('SUNUEFI_TOOLCHAIN_ROOT', ROOT / 'build/host-tools/usr')) / 'bin'
+        tools = [shutil.which(str(kit / name)) or shutil.which(name) for name in ('iasl', 'acpiexec')]
+        if not all(tools):
+            self.skipTest('ACPICA compiler and interpreter are required')
+        iasl, acpiexec = tools
+        gpu = self.board['/soc/qcom,kgsl-3d0@3d00000']
+        gmu = self.board['/soc/qcom,gmu@3d37000']
+        with tempfile.TemporaryDirectory() as folder:
+            prefix = Path(folder) / 'piano'
+            subprocess.run([iasl, '-we', '-p', prefix, ROOT / 'uefi/components/acpi/Dsdt.asl'],
+                           capture_output=True, check=True)
+            output = subprocess.check_output([acpiexec, '-b', r'evaluate \_SB.GPU0._CRS',
+                                              prefix.with_suffix('.aml')], stderr=subprocess.STDOUT, text=True)
+        resource = bytes.fromhex(' '.join(re.findall(r'^\s+[\da-f]+: ([\da-f ]+)//', output, re.I | re.M)))
+        windows, irqs = [], []
+        offset = 0
+        while offset < len(resource) and resource[offset] != 0x79:  # EndTag
+            kind, length = struct.unpack_from('<BH', resource, offset)
+            if kind == 0x86:  # 32-bit fixed memory
+                writable, start, size = struct.unpack_from('<BII', resource, offset + 3)
+                self.assertEqual(writable, 1)
+                windows.append((start, size))
+            elif kind == 0x89:  # Extended interrupt
+                flags, count = struct.unpack_from('<BB', resource, offset + 3)
+                self.assertEqual(flags, 1)  # Consumer, level-high, exclusive
+                irqs.extend(struct.unpack_from(f'<{count}I', resource, offset + 5))
+            else:
+                self.fail(f'Unrecognised GPU resource {kind:#x}')
+            offset += 3 + length
+        self.assertEqual(resource[offset:], b'\x79\x00')
+        def registers(node):
+            return dict(zip(node['reg-names'].rstrip(b'\0').split(b'\0'), struct.iter_unpack('>II', node['reg'])))
+        kgsl, gmu_reg = registers(gpu), registers(gmu)
+        gpucc = self.board['/soc/clock-controller@3d90000']
+        gpucc_base, gpucc_bytes = struct.unpack('>II', gpucc['reg'])
+        gbase, gbytes = gmu_reg[b'gmu']
+        self.assertEqual({kgsl[b'kgsl_3d0_reg_memory'], kgsl[b'rscc'], kgsl[b'cx_misc'],
+                          gmu_reg[b'gmu_ao_blk_dec0']}, set(windows) - {windows[1]})
+        # Expose the GMU's TCM and HFI, not GPUCC's MMIO inside the larger stock debug window.
+        gstart, glen = windows[1]
+        self.assertTrue(gbase <= gstart <= 0x03d6d000 and 0x03d7e654 <= gstart + glen <= gbase + gbytes)
+        self.assertTrue(all(s + n <= gpucc_base or s >= gpucc_base + gpucc_bytes for s, n in windows))
+        ordered = sorted(windows)
+        self.assertTrue(all(s + n <= after for (s, n), (after, _) in zip(ordered, ordered[1:])))
+        self.assertEqual(irqs, [spi + 32 for node in (gpu, gmu) for kind, spi, flags in
+                                struct.iter_unpack('>III', node['interrupts']) if (kind, flags) == (0, 4)])
+
     def test_iort_dma_paths_and_context_irqs_match_xbl(self):
         iort = self.tables['Iort']
         self.assertEqual(struct.unpack_from('<4sI', iort), (b'IORT', len(iort)))
@@ -81,24 +131,48 @@ class AcpiTablesTests(unittest.TestCase):
             if kind != 1:
                 continue
             maps, offset = struct.unpack_from('<II', node, 8)
-            self.assertEqual(maps, 1)
             path = node[29:offset].split(b'\0', 1)[0].decode()
-            _, _, sid, smmu_offset, flags = struct.unpack_from('<5I', node, offset)
-            self.assertEqual(flags, 1)  # Single mapping for a non-PCI requester.
-            named[path] = sid
-            smmu_type, smmu = nodes[smmu_offset]
-            self.assertEqual(smmu_type, 3)
-        self.assertEqual(set(named), {'\\_SB_.UFS0', '\\_SB_.URS0'})
+            self.assertEqual(len(node), offset + 20 * maps)
+            named[path] = list(struct.iter_unpack('<5I', node[offset:]))
+        self.assertEqual(set(named), {'\\_SB_.UFS0', '\\_SB_.URS0', '\\_SB_.GPU0'})
+        app_smmu = named['\\_SB_.UFS0'][0][3]
         for path, xbl_name in (('\\_SB_.UFS0', 'NAMEDNODE_UFS_95MEM'), ('\\_SB_.URS0', 'NAMEDNODE_USB0')):
             route = self.xbl['/soc/iort/'+xbl_name+'/SIDMappings/SIDMappings_0']
-            self.assertEqual(named[path], cell(route['OutputBase']))
-        xbl = self.xbl['/soc/iort/APPS_MMU500_SMMU_APP']
-        global_off, count, context_off = struct.unpack_from('<III', smmu, 40)
-        self.assertEqual(struct.unpack_from('<I', smmu, global_off), (cell(xbl['NSGIRPT_GSIV']),))
-        interrupts = [struct.unpack_from('<I', smmu, context_off + 8*i)[0] for i in range(count)]
-        self.assertEqual(interrupts, [v for (v,) in struct.iter_unpack('>I', xbl['ContextInterrupts'])])
+            # A single mapping ignores the input and identifies the sole requester.
+            self.assertEqual(named[path], [(0, 0, cell(route['OutputBase']), app_smmu, 1)])
+
+        gpu = named['\\_SB_.GPU0']
+        gpu_smmu = gpu[0][3]
+        self.assertNotEqual(app_smmu, gpu_smmu)
+        xbl_gpu = '/soc/iort/NAMEDNODE_GPU'
+        expected = [(cell(n['InputBase']), cell(n['NumIDs']) - 1, cell(n['OutputBase']), gpu_smmu, cell(n['Flags']))
+                    for p, n in self.xbl.items() if p.startswith(xbl_gpu + '/SIDMappings/')]
+        self.assertEqual(gpu, sorted(expected))
+        # In particular, the HAL's ACPI requester ID for the GMU is not its physical SID.
+        handle, sid, mask = struct.unpack('>III', self.board['/soc/qcom,gmu@3d37000']['iommus'])
+        self.assertEqual((handle, mask), (cell(self.board['/soc/kgsl-smmu@3da0000']['phandle']), 0))
+        self.assertIn((0x03000005, 0, sid, gpu_smmu, 0), gpu)
+
+        for offset, xbl_name, symbol in ((app_smmu, 'APPS_MMU500_SMMU_APP', 'apps_smmu'),
+                                         (gpu_smmu, 'GPU_GFX_MMU500_SMMU_GFX', 'kgsl_smmu')):
+            kind, smmu = nodes[offset]
+            self.assertEqual(kind, 3)
+            xbl = self.xbl['/soc/iort/' + xbl_name]
+            dt = self.board[self.board['/__symbols__'][symbol].rstrip(b'\0').decode()]
+            base, span = struct.unpack_from('<QQ', smmu, 16)
+            self.assertEqual((base, span), struct.unpack('>II', dt['reg']))
+            self.assertEqual(base, cell(xbl['BaseAddress']))
+            self.assertEqual(struct.unpack_from('<II', smmu, 32), (cell(xbl['Model']), cell(xbl['Flags'])))
+            global_off, count, context_off = struct.unpack_from('<III', smmu, 40)
+            self.assertEqual(struct.unpack_from('<II', smmu, global_off),
+                             (cell(xbl['NSGIRPT_GSIV']), cell(xbl['NSGIRPT_FLAGS'])))
+            interrupts = [struct.unpack_from('<II', smmu, context_off + 8*i) for i in range(count)]
+            self.assertEqual(interrupts, list(zip((v for (v,) in struct.iter_unpack('>I', xbl['ContextInterrupts'])),
+                                                  (v for (v,) in struct.iter_unpack('>I', xbl['ContextInterruptFlags'])))))
+        self.assertEqual(struct.unpack_from('<II', nodes[gpu_smmu][1], 8), (0, 0))  # Only wired GPU IRQs.
+        smmu = nodes[app_smmu][1]
         msi_offset, = struct.unpack_from('<I', smmu, 12)
         in_id, _, out_id, its_offset, _ = struct.unpack_from('<5I', smmu, msi_offset)
-        self.assertEqual(in_id, named['\\_SB_.UFS0'])
+        self.assertEqual(in_id, named['\\_SB_.UFS0'][0][2])
         self.assertEqual(out_id, cell(self.board['/soc/ufshc@1d84000']['msi-parent'][4:]))
         self.assertEqual(nodes[its_offset][0], 0)
