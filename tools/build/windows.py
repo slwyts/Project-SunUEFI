@@ -306,8 +306,10 @@ def clang_kit_includes(directories, work, *, external_names=False):
                     roots.append({'type': 'directory', 'name': base, 'contents': entries})
         overlay = work / 'kit-headers.json'
         # Incremental builds need real filenames in Clang's dependency files.
-        overlay.write_text(json.dumps({'version': 0, 'case-sensitive': False, 'use-external-names': external_names,
-                                       'roots': roots}), encoding='utf-8')
+        contents = json.dumps({'version': 0, 'case-sensitive': False, 'use-external-names': external_names,
+                               'roots': roots}).encode()
+        if not overlay.is_file() or overlay.read_bytes() != contents:
+            overlay.write_bytes(contents)
         flags.extend(['/clang:-ivfsoverlay', f'/clang:{overlay}'])
     return flags
 
