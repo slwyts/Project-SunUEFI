@@ -1090,6 +1090,16 @@ static BOOLEAN loader_timed_out(VOID *Context){
   return loader_timeout;
 }
 static UINT64 loader_now(VOID *Context){assert(Context==(VOID *)0x55);return fake_now+=10;}
+static VOID loader_send(CONST CHAR8 *Command){
+  assert(mPending[2] && !mPending[3]);UINTN Size=strlen(Command);
+  CopyMem(mBulkRx.Cpu,Command,Size);
+  DWC_TRB *Out=mTrbs[2].Cpu;Out->Size=mPosted[2]-(UINT32)Size;Out->Control&=~BIT0;
+  publish(0xc044);timer_tick();
+}
+static VOID loader_ack(CONST CHAR8 *Response){
+  assert(mPending[3] && mPosted[3]==strlen(Response) && !memcmp(mBulkTx.Cpu,Response,mPosted[3]));
+  DWC_TRB *In=mTrbs[3].Cpu;In->Size=0;In->Control&=~BIT0;publish(0xc046);timer_tick();
+}
 static VOID run_loader_query(VOID){
   setup_model();stall_hook=NULL;current_tpl=TPL_APPLICATION;scenario=0;fake_now=0;
   bs.RaiseTPL=raise_tpl;bs.RestoreTPL=restore_tpl;bs.CreateEvent=create_event;bs.CreateEventEx=create_event_ex;
@@ -1102,10 +1112,13 @@ static VOID run_loader_query(VOID){
   publish(0xc044);timer_tick();assert(mService.Count==1 && !mPending[3]);
   loader_timeout=TRUE;
   mService.State.Busy=TRUE;timer_tick();assert(mService.Count==1 && !mPending[3]);mService.State.Busy=FALSE;
-  timer_tick();assert(!mService.Count && mPending[3] && mFrames==&mPacketFrame &&
+  timer_tick();assert(!mService.Count && mPending[3] && mFrames==&mPackets[0].Frame &&
     mPosted[3]==strlen("OKAYpiano-sunuefi") && !memcmp(mBulkTx.Cpu,"OKAYpiano-sunuefi",mPosted[3]));
   In->Size=0;In->Control&=~BIT0;publish(0xc046);timer_tick();
-  assert(!mFrames && !mPending[3] && mPending[2] && !mPacketFrame.Data);
+  assert(!mFrames && !mPending[3] && mPending[2] && !mPackets[0].Frame.Data);
+  loader_send("oem status");
+  loader_ack("INFOEFI loader timed out; UEFI owns USB; handoff not started");
+  loader_ack("OKAY");assert(mPending[2] && !mFrames);
   // The timer leaves an APP-only command in the queue. It is handled once
   // by the ordinary worker when the child eventually returns.
   Query="getvar:partition-size:xbl_config_a";UINTN Infos=backend_infos;
@@ -1113,7 +1126,14 @@ static VOID run_loader_query(VOID){
   publish(0xc044);timer_tick();timer_tick();assert(mService.Count==1 && !mPending[3] && mPending[2] && backend_infos==Infos);
   loader_timeout=FALSE;
   assert(PianoUsbControllerServicePumpApp(1,5000)==EFI_SUCCESS && mPending[3] && !mService.Count && backend_infos==Infos+1);
-  service_ack();free_cold_model();
+  service_ack();loader_timeout=TRUE;loader_send("reboot");
+  assert(mFastboot.RebootRequested && mService.State.Phase==PianoUsbServiceListening);
+  loader_ack("INFOReboot requested; waiting for the EFI loader to return");
+  assert(mService.State.Phase==PianoUsbServiceListening);
+  loader_ack("OKAY");
+  assert(mService.State.Action==PianoUsbServiceActionReboot &&
+    mService.State.Phase==PianoUsbServiceStopRequested && !resets && !mFrames);
+  free_cold_model();
 }
 static VOID run_stale_completion(VOID){
   setup_model();stall_hook=NULL;current_tpl=TPL_APPLICATION;scenario=0;fake_now=0;

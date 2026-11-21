@@ -88,9 +88,8 @@ STATIC UINT64 mBulkOutBytes,mBulkInBytes;
 // bounce buffers, so reset can clear staged pools without touching active DMA.
 typedef struct FB_FRAME {struct FB_FRAME *Next;UINTN Bytes,Offset;UINT8 *Data;} FB_FRAME;
 STATIC FB_FRAME *mFrames,*mFramesTail;
-// One Fastboot status packet fits without entering the pool allocator.
-STATIC UINT8 mPacketData[64];
-STATIC FB_FRAME mPacketFrame;
+// A status line followed by its final acknowledgement needs no pool access.
+STATIC struct {FB_FRAME Frame;UINT8 Data[64];} mPackets[2];
 STATIC UINTN mFrameCount,mFrameBytes,mInFlightBytes;
 // Status includes bounded startup reports even when the RAM console is absent.
 #define FB_QUEUE_FRAMES 48U
@@ -351,8 +350,8 @@ STATIC EFI_STATUS ConfigureEp(UINT8 Ep,BOOLEAN Modify) {
 STATIC UINT32 BulkMps(VOID){return mControl.SuperSpeed?1024:(mControl.Speed==1 || mControl.Speed==3?64:512);}
 STATIC VOID FreeFrame(FB_FRAME *Frame) {
   ZeroMem(Frame->Data,Frame->Bytes);
-  if(Frame==&mPacketFrame)mPacketFrame.Data=NULL;
-  else FreePool(Frame);
+  for(UINTN I=0;I<ARRAY_SIZE(mPackets);++I)if(Frame==&mPackets[I].Frame){Frame->Data=NULL;return;}
+  FreePool(Frame);
 }
 STATIC VOID ClearFrames(VOID) {
   while(mFrames!=NULL){FB_FRAME *Next=mFrames->Next;FreeFrame(mFrames);mFrames=Next;}
@@ -373,10 +372,13 @@ STATIC EFI_STATUS FastbootSend(VOID *Context,CONST VOID *Data,UINTN Bytes) {
   (VOID)Context;
   if(Data==NULL || !Bytes || Bytes>FB_QUEUE_BYTES || mFrameCount>=FB_QUEUE_FRAMES || mFrameBytes>FB_QUEUE_BYTES-Bytes)
     return EFI_OUT_OF_RESOURCES;
-  FB_FRAME *Frame;
-  if(Bytes<=sizeof(mPacketData) && !mPacketFrame.Data){
-    Frame=&mPacketFrame;Frame->Data=mPacketData;
-  }else{
+  FB_FRAME *Frame=NULL;
+  if(Bytes<=sizeof(mPackets[0].Data)){
+    for(UINTN I=0;I<ARRAY_SIZE(mPackets);++I)if(!mPackets[I].Frame.Data){
+      Frame=&mPackets[I].Frame;Frame->Data=mPackets[I].Data;break;
+    }
+  }
+  if(!Frame){
     Frame=AllocatePool(sizeof(*Frame)+Bytes);if(!Frame)return EFI_OUT_OF_RESOURCES;
     Frame->Data=(UINT8 *)(Frame+1);
   }
@@ -568,7 +570,28 @@ STATIC EFI_STATUS FinishConfiguration(VOID) {
   mConfigWaiting=FALSE;
   return mStatusWaiting?StartStatus():EFI_SUCCESS;
 }
-STATIC EFI_STATUS BulkComplete(UINT8 Ep,UINT8 EventStatus,CONST CHAR8 *IdentityReply) {
+typedef enum {LoaderCommandNone,LoaderIdentity,LoaderStatus,LoaderReboot} LOADER_COMMAND;
+STATIC LOADER_COMMAND LoaderCommand(CONST VOID *Data,UINTN Bytes) {
+  if(PianoFastbootIdentityReply(Data,Bytes))return LoaderIdentity;
+  if(Bytes==sizeof("oem status")-1 && !CompareMem(Data,"oem status",Bytes))return LoaderStatus;
+  if(Bytes==sizeof("reboot")-1 && !CompareMem(Data,"reboot",Bytes))return LoaderReboot;
+  return LoaderCommandNone;
+}
+STATIC EFI_STATUS SendLoaderReply(LOADER_COMMAND Command,CONST VOID *Data,UINTN Bytes) {
+  if(LoaderCommand(Data,Bytes)!=Command || mPackets[0].Frame.Data || mPackets[1].Frame.Data)
+    return EFI_COMPROMISED_DATA;
+  if(Command==LoaderIdentity){
+    CONST CHAR8 *Reply=PianoFastbootIdentityReply(Data,Bytes);
+    return FastbootSend(NULL,Reply,AsciiStrLen(Reply));
+  }
+  CONST CHAR8 *Info=Command==LoaderStatus?"INFOEFI loader timed out; UEFI owns USB; handoff not started":
+    "INFOReboot requested; waiting for the EFI loader to return";
+  EFI_STATUS S=FastbootSend(NULL,Info,AsciiStrLen(Info));if(S!=EFI_SUCCESS)return S;
+  // The stable command literal only latches a reset and queues its OKAY.
+  // Only the APP owner manager can actually retire devices and reboot.
+  return Command==LoaderReboot?PianoFastbootPacket(&mFastboot,"reboot",6):FastbootSend(NULL,"OKAY",4);
+}
+STATIC EFI_STATUS BulkComplete(UINT8 Ep,UINT8 EventStatus,LOADER_COMMAND Command) {
   if(!mPending[Ep])return mEnding[Ep] || !mBulkLive?EFI_SUCCESS:EFI_COMPROMISED_DATA;
   // A queued completion may precede END/reset and refer to the old TRB.
   // Inspect the current TRB without transferring DMA ownership to the CPU.
@@ -589,13 +612,8 @@ STATIC EFI_STATUS BulkComplete(UINT8 Ep,UINT8 EventStatus,CONST CHAR8 *IdentityR
     // No OUT TRB is posted while a response is queued or IN owns its bounce.
     if(mFrames!=NULL || mPending[3])return EFI_COMPROMISED_DATA;
     BOOLEAN Download=mFastboot.Receiving;
-    if(IdentityReply){
-      // Only a fixed identity reply is allowed on the notification stack.
-      // Recheck after DMA completion, never pass changed data to the parser.
-      if(mPacketFrame.Data || PianoFastbootIdentityReply(mBulkRx.Cpu,Bytes)!=IdentityReply)
-        return EFI_COMPROMISED_DATA;
-      S=FastbootSend(NULL,IdentityReply,AsciiStrLen(IdentityReply));
-    }else S=PianoFastbootPacket(&mFastboot,mBulkRx.Cpu,Bytes);
+    S=Command!=LoaderCommandNone?SendLoaderReply(Command,mBulkRx.Cpu,Bytes):
+      PianoFastbootPacket(&mFastboot,mBulkRx.Cpu,Bytes);
     if(EFI_ERROR(S))return S;
     if(mFastboot.BootTransferFrozen)return EFI_ABORTED;
     if(mExperimentContractFailed)return EFI_DEVICE_ERROR; // Never start reply DMA after a failed CB contract.
@@ -736,7 +754,7 @@ STATIC EFI_STATUS Event(UINT32 E) {
 #if PIANO_USB_FASTBOOT
     if(Ep>3)return EFI_UNSUPPORTED;
     if(Type==7)return BulkEnded(Ep,E);
-    if(Type==1)return BulkComplete(Ep,Status,NULL);
+    if(Type==1)return BulkComplete(Ep,Status,LoaderCommandNone);
     return EFI_SUCCESS;
 #else
     return EFI_UNSUPPORTED;
@@ -1373,9 +1391,10 @@ VOID PianoDwc3ServicePollLoaderQuery(VOID) {
      mService.State.Phase!=PianoUsbServiceListening || mService.State.Retained || mService.State.ServicesLost ||
      mService.DiagnosticsOnly || !mConfigured || !mBulkLive || mEnding[2] || mEnding[3] ||
      mFastboot.Receiving || mFastboot.Flash || mFastboot.FlashExecuting || mFastboot.BootPreparing ||
-     mFastboot.BootPending || mFastboot.BootTransferFrozen || mFastboot.RebootRequested ||
+     mFastboot.BootPending || mFastboot.BootTransferFrozen ||
      mFastboot.ExitRequested || !mService.Config.LoaderTimedOut(mService.Config.Context))return;
-  if(mFrames && (mFrames!=&mPacketFrame || mFrames->Next))return;
+  for(CONST FB_FRAME *F=mFrames;F;F=F->Next)
+    if(F!=&mPackets[0].Frame && F!=&mPackets[1].Frame)return;
   // A timer cannot interrupt an APP service operation while Busy is set.
   // Consume at most one already-queued event; preserve protocol order and
   // leave enumeration, storage, image loading and reset to the APP worker.
@@ -1383,31 +1402,33 @@ VOID PianoDwc3ServicePollLoaderQuery(VOID) {
   if(mService.Count){
     UINT32 E=mService.Events[mService.Head];
     UINT8 Ep=(E>>1)&31,Type=(E>>6)&15,Status=(E>>12)&15;
-    CONST CHAR8 *Reply=NULL;
+    LOADER_COMMAND Command=LoaderCommandNone;
     BOOLEAN Complete=!(E&1) && Type==1 && (Ep==2 || Ep==3);
     if(Complete){
       if(!mPending[Ep] || (Status&1))return;
       if(Ep==2){
-        if(mFrames || mPacketFrame.Data || mPayload[2]!=&mBulkRx)return;
+        if(mFastboot.RebootRequested || mFrames || mPayload[2]!=&mBulkRx)return;
         if(PianoDmaSyncForCpuQuiet(&mTrbs[2])!=EFI_SUCCESS)return;
         DWC_TRB *Trb=mTrbs[2].Cpu;
         UINT32 Residual=Trb->Size&0xffffff;
         if((Trb->Control&1) || (Trb->Size>>28)==4 || Residual>mPosted[2] || mPosted[2]-Residual>64)return;
         if(PianoDmaSyncForCpuQuiet(&mBulkRx)!=EFI_SUCCESS)return;
-        Reply=PianoFastbootIdentityReply(mBulkRx.Cpu,mPosted[2]-Residual);
-        if(!Reply)return;
-      }else if(mFrames!=&mPacketFrame || mPayload[3]!=&mBulkTx)return;
+        Command=LoaderCommand(mBulkRx.Cpu,mPosted[2]-Residual);
+        if(Command==LoaderCommandNone)return;
+      }else if(!mFrames || mPayload[3]!=&mBulkTx)return;
     }else if(!((E&1) && ((E>>8)&15)==3) && !(!(E&1) && (Ep==2 || Ep==3) && Type==3))return;
     // Link-state notifications and bulk XferNotReady do not alter endpoint
     // state in Event(). A bus reset or a control transfer must never be skipped.
     mService.Head=(mService.Head+1)%SERVICE_EVENTS;
     --mService.Count;
     mServingLoaderQuery=TRUE;
-    if(Complete)S=BulkComplete(Ep,Status,Reply);
+    if(Complete)S=BulkComplete(Ep,Status,Command);
     else S=Event(E);
   }
   mServingLoaderQuery=TRUE;
-  if(S==EFI_SUCCESS && !mService.Count && !mService.State.ServicesLost &&
+  if(S==EFI_SUCCESS && mFastboot.RebootRequested && !mFrames && !mPending[3] && !mEnding[3]){
+    mService.State.Action=PianoUsbServiceActionReboot;mService.State.Phase=PianoUsbServiceStopRequested;
+  }else if(S==EFI_SUCCESS && !mService.Count && !mService.State.ServicesLost &&
      !ServiceWaitingToDispatch() && !mPending[2] && !mPending[3])S=BulkPump();
   if(S!=EFI_SUCCESS)(VOID)ServiceError(S);
   mServingLoaderQuery=FALSE;
