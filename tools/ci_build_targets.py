@@ -76,7 +76,7 @@ def select(files, manual=None):
     uefi = False
     denial = False
     for name in files:
-        if name in NON_PRODUCT_FILES:
+        if name in NON_PRODUCT_FILES or name.startswith('patches/mesa/26.2.4/'):
             continue
         if name in DENIAL_FILES or name.startswith('patches/denial/'):
             denial = True

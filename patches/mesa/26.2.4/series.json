@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "targets": ["windows"],
+  "patches": [
+    {
+      "file": "freedreno-xml-includes-windows-paths.patch",
+      "sha256": "088dd0c7a6214b744c3a38d946c1858c1a17db444033bdab156980632a0e7c40",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://gitlab.freedesktop.org/mesa/mesa/-/blob/mesa-26.2.4/src/freedreno/tests/check_xml_includes.awk",
+        "drop_when": "Mesa's XML include check recognizes its wrapper headers with Windows path separators and still rejects direct includes from other files."
+      }
+    }
+  ]
+}

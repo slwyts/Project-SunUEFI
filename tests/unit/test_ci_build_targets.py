@@ -131,7 +131,7 @@ class CiBuildTargetsTests(unittest.TestCase):
     def test_windows_media_does_not_publish_linux_images(self):
         files = ['tools/build/windows.py', 'tools/build/windows_umd.py', 'tools/build/windows_turnip.py',
                  'windows/deployment/probe.cmd',
-                 'config/windows-graphics.json', 'upstream/woa_oneplus_ace5_pro',
+                 'config/windows-graphics.json', 'upstream/woa_oneplus_ace5_pro', 'patches/mesa/26.2.4/series.json',
                  '.github/workflows/windows.yml', '.github/workflows/windows-userspace.yml']
         self.assertEqual(targets.select(files), [])
         self.assertEqual(targets.select([*files, 'uefi/components/acpi/Dsdt.asl']), PRODUCTS)

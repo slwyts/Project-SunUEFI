@@ -1,0 +1,15 @@
+Subject: [PATCH] freedreno: normalize Windows paths in the XML include check
+
+Python glob on Windows passes paths with backslashes to awk. Compare the
+same source-relative paths on either host, without changing which headers
+are permitted to include the generated XML.
+
+diff --git a/src/freedreno/tests/check_xml_includes.awk b/src/freedreno/tests/check_xml_includes.awk
+--- a/src/freedreno/tests/check_xml_includes.awk
++++ b/src/freedreno/tests/check_xml_includes.awk
+@@ -32,4 +32,5 @@ FNR == 1 {
+     relpath = FILENAME
++    gsub(/\\/, "/", relpath)
+     sub(/^.*src\/freedreno\//, "src/freedreno/", relpath)
+     if (relpath in allowed) {
+         nextfile

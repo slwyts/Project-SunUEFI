@@ -6,6 +6,7 @@ on:
     paths: &inputs
       - 'upstream/woa_oneplus_ace5_pro'
       - 'config/windows-graphics.json'
+      - 'patches/mesa/26.2.4/**'
       - 'tools/build/windows_umd.py'
       - 'tools/build/windows_turnip.py'
       - 'tools/build/windows.py'
@@ -62,7 +63,7 @@ jobs:
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: artifacts/windows/drivers/adreno/Release
-          key: win-arm64-graphics-${{ steps.donor.outputs.image }}-${{ steps.donor.outputs.commit }}-${{ hashFiles('build.sh', 'tools/build/windows*.py', 'windows/drivers/packages.config', 'windows/drivers/adreno/requirements-build.txt', 'config/windows-graphics.json', '.github/workflows/windows-userspace.yml') }}
+          key: win-arm64-graphics-${{ steps.donor.outputs.image }}-${{ steps.donor.outputs.commit }}-${{ hashFiles('build.sh', 'tools/build/windows*.py', 'windows/drivers/packages.config', 'windows/drivers/adreno/requirements-build.txt', 'config/windows-graphics.json', 'patches/mesa/26.2.4/**', '.github/workflows/windows-userspace.yml') }}
       - name: Build the native ARM64 Direct3D and Vulkan drivers
         if: steps.libraries.outputs.cache-hit != 'true'
         shell: pwsh

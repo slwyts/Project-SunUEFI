@@ -5,6 +5,7 @@
   },
   "mesa": {
     "version": "26.2.4",
+    "patch_series": "patches/mesa/26.2.4/series.json",
     "commit": "96cb43121031992b85767f9c1be8f3f48e22b1d2",
     "url": "https://archive.mesa3d.org/mesa-26.2.4.tar.xz",
     "sha256": "bce5f7fbebb934373b86c999a064d52fb5065878dc57f287f95346648ec832e9"

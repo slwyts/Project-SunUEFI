@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 from ci_build_targets import TARGETS
 
-PATCH_TARGETS = (*TARGETS, 'nixos')
+PATCH_TARGETS = (*TARGETS, 'nixos', 'windows')
 
 
 def digest(path):
