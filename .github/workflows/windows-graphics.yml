@@ -29,6 +29,8 @@ on:
       - 'tests/native/PianoUfsPowerTest.c'
       - 'tests/native/test_windows_driver_catalog.py'
       - 'tests/unit/test_piano_ufs_power.py'
+      - 'tests/native/PianoQupPowerTest.c'
+      - 'tests/unit/test_piano_qup_power.py'
       - 'tests/native/UfsControllerTest.c'
       - 'tests/unit/test_ufs_controller.py'
       - 'tools/build/windows.py'
@@ -65,6 +67,7 @@ jobs:
           --pattern test_wn8030_input.py --pattern test_wn8030_boot.py
           --pattern test_ufs_transfer.py --pattern test_ufs_link.py --pattern test_ufs_platform.py
           --pattern test_piano_ufs_clock.py --pattern test_piano_ufs_power.py --pattern test_ufs_controller.py
+          --pattern test_piano_qup_power.py
   readback:
     runs-on: windows-11-arm
     steps:
