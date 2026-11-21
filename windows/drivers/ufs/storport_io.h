@@ -26,7 +26,7 @@ typedef struct {
     UFS_IO_SLOT slot[UFS_SDB_MAX_SLOTS];
     ULONG slot_count, active, faults;
     USHORT prds_per_command;
-    BOOLEAN running;
+    BOOLEAN running, managing, device_ready;
 } UFS_IO_QUEUE;
 
 /* Maps the ACPI memory range using the reported bus interface, not PCI BARs.

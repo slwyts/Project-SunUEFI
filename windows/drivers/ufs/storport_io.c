@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 #include "storport_io.h"
+#include "link.h"
 #include <srbhelper.h>
 #include <intrin.h>
 
@@ -17,7 +18,8 @@ static ULONG command_bytes(const UFS_IO_QUEUE *q)
     /* The final DWORD is a separate aligned DMA target for an odd byte count.
      * It is never counted in the PRD table itself.
      */
-    return (ULONG)sizeof(struct ufs_upius) + q->prds_per_command * (ULONG)sizeof(struct ufs_prd) + sizeof(ULONG);
+    ULONG data = (ULONG)sizeof(struct ufs_upius) + q->prds_per_command * (ULONG)sizeof(struct ufs_prd) + sizeof(ULONG);
+    return max(data, (ULONG)sizeof(struct ufs_management_ucd));
 }
 
 static ULONG rd(UFS_IO_QUEUE *q, ULONG reg)
@@ -104,7 +106,7 @@ fail:
 
 VOID UfsIoRelease(UFS_IO_QUEUE *q)
 {
-    if (!q->running && !q->active && q->registers) {
+    if (!q->running && !q->active && !q->managing && q->registers) {
         StorPortFreeDeviceBase(q->extension, q->registers);
         RtlZeroMemory(q, sizeof(*q));
     }
@@ -113,7 +115,7 @@ VOID UfsIoRelease(UFS_IO_QUEUE *q)
 BOOLEAN UfsIoStart(UFS_IO_QUEUE *q)
 {
     if (!q || !q->extension || !q->registers || !q->list || !q->slot_count || q->slot_count > UFS_SDB_MAX_SLOTS ||
-        !q->prds_per_command || q->running || q->active || q->faults)
+        !q->prds_per_command || q->running || q->managing || !q->device_ready || q->active || q->faults)
         return FALSE;
     ULONG caps = rd(q, HCI_CAP), version = rd(q, HCI_VER);
     if (version < 0x200 || version == MAXULONG || caps == MAXULONG || q->slot_count > 1 + (caps & 31) ||
@@ -289,6 +291,7 @@ ULONG UfsIoInterrupt(UFS_IO_QUEUE *q)
 
 BOOLEAN UfsIoStop(UFS_IO_QUEUE *q)
 {
+    if (q->managing) return FALSE;
     if (!q->running) return TRUE;
     if (q->active || rd(q, HCI_UTRLDBR)) return FALSE;
     wr(q, HCI_IE, rd(q, HCI_IE) & ~(UTR_COMPLETE | TRANSFER_FAULTS));
@@ -296,6 +299,6 @@ BOOLEAN UfsIoStop(UFS_IO_QUEUE *q)
     if (rd(q, HCI_UTRLRSR) || rd(q, HCI_UTRLDBR)) return FALSE;
     wr(q, HCI_UTRLBA, 0);
     wr(q, HCI_UTRLBAU, 0);
-    q->running = FALSE;
+    q->running = q->device_ready = FALSE;
     return TRUE;
 }
