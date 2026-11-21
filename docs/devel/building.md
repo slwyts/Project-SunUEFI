@@ -67,6 +67,27 @@ docker run --rm -v "$PWD:/workspace" -w /workspace sunuefi-builder bash -euc '
 
 原理见[合体 BOOT](boot/combined-boot.md)。
 
+## Windows ARM64 显卡驱动
+
+`./build.sh windows graphics-umd` 直接编译固定版本的 Ace 5 Pro Adreno 用户态前端，
+输出 `artifacts/windows/drivers/adreno/Release/a830_umd_arm64.dll`。它把 Direct3D 绘图
+交给 Turnip；单独一个 DLL 不能驱动平板显卡，还需要匹配的 Vulkan 和内核驱动。
+
+先运行 `./build.sh sources --group windows`。构建需要 LLVM（`clang-cl`、`lld-link`）、
+Ninja、Bison、Flex，以及带 ARM64 库的 Visual C++、Windows SDK 和 WDK。
+在配置好这些工具的 Visual Studio 开发者终端运行上述命令即可；
+在 Linux 上或 SDK 与 WDK 分开安装时，显式传入相应目录：
+
+```sh
+./build.sh windows graphics-umd --vc-tools "$VC_TOOLS" \
+  --kit-include "$WDK_INCLUDE" --kit-include "$SDK_INCLUDE"
+```
+
+`--vc-tools` 指向 `VC/Tools/MSVC/<版本>`，`--kit-include` 指向各工具包的
+`Include/<版本>`。如果 ARM64 库不在对应的 `Lib/<版本>` 下，用 `--kit-lib`
+指定实际的 `um/arm64`、`ucrt/arm64` 目录。首次构建下载并校验 Mesa 头文件和
+vkd3d 着色器编译器的源码归档，后续可复用 `--source-cache` 中的文件。
+
 ## Windows ARM64 安装介质
 
 在 Linux 构建机上安装 `7z` 和 `wimlib-imagex`，传入自己的微软 ARM64 安装 ISO：

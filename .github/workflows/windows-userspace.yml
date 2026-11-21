@@ -1,0 +1,86 @@
+name: Windows Adreno user-mode driver
+
+on:
+  push:
+    branches: [woa]
+    paths: &inputs
+      - 'upstream/woa_oneplus_ace5_pro'
+      - 'config/windows-graphics.json'
+      - 'tools/build/windows_umd.py'
+      - 'tools/build/windows.py'
+      - 'windows/drivers/packages.config'
+      - 'build.sh'
+      - '.github/workflows/windows-userspace.yml'
+  pull_request:
+    branches: [woa, main]
+    paths: *inputs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-userspace-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Select the pinned Adreno source
+        id: donor
+        shell: pwsh
+        run: |
+          $source = (Get-Content sources.lock.json -Raw | ConvertFrom-Json).woa_oneplus_ace5_pro
+          "repo=$(([Uri]$source.url).AbsolutePath.Trim('/').Replace('.git',''))" >> $env:GITHUB_OUTPUT
+          "commit=$(git rev-parse HEAD:upstream/woa_oneplus_ace5_pro)" >> $env:GITHUB_OUTPUT
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ steps.donor.outputs.repo }}
+          ref: ${{ steps.donor.outputs.commit }}
+          path: upstream/woa_oneplus_ace5_pro
+          sparse-checkout: |
+            src/qcom-gpu
+            src/mesa
+          persist-credentials: false
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            build/source-cache/windows-graphics
+            build/windows/nuget/Microsoft.Windows.WDK.arm64.*/c/Include/*/um
+            build/windows/nuget/Microsoft.Windows.WDK.arm64.*/c/Include/*/shared
+          key: arm64-umd-inputs-${{ hashFiles('config/windows-graphics.json', 'windows/drivers/packages.config') }}
+      - name: Build and load the native ARM64 Direct3D front end
+        shell: pwsh
+        run: |
+          if (!(Get-Command win_bison,bison -ErrorAction SilentlyContinue) -or
+              !(Get-Command win_flex,flex -ErrorAction SilentlyContinue)) {
+            choco install winflexbison3 --no-progress -y
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+          $includes = 'build/windows/nuget/Microsoft.Windows.WDK.arm64.*/c/Include/*'
+          if (!(Test-Path "$includes/um/d3d10umddi.h")) {
+            nuget restore windows/drivers/packages.config -PackagesDirectory build/windows/nuget -NonInteractive
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+          $wdk = Get-ChildItem $includes -Directory | Where-Object { Test-Path "$($_.FullName)/um/d3d10umddi.h" } | Select-Object -First 1
+          $installer = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $vs = & $installer -latest -products '*' -property installationPath
+          $vc = Get-ChildItem "$vs/VC/Tools/MSVC" -Directory | Where-Object { Test-Path "$($_.FullName)/lib/arm64/msvcprt.lib" } |
+            Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+          $sdkRoot = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots').KitsRoot10
+          $sdk = Get-ChildItem "$sdkRoot/Include" -Directory | Where-Object { Test-Path "$($_.FullName)/um/windows.h" } |
+            Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+          if (!$wdk -or !$vc -or !$sdk) { throw 'Missing ARM64 VC libraries or SDK/WDK user-mode headers.' }
+          bash ./build.sh windows graphics-umd --vc-tools $vc.FullName --kit-include $wdk.FullName --kit-include $sdk.FullName
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $dll = (Resolve-Path artifacts/windows/drivers/adreno/Release/a830_umd_arm64.dll).Path
+          $handle = [System.Runtime.InteropServices.NativeLibrary]::Load($dll)
+          try {
+            foreach ($name in 'OpenAdapter10','OpenAdapter10_2') {
+              [void][System.Runtime.InteropServices.NativeLibrary]::GetExport($handle, $name)
+            }
+          } finally { [System.Runtime.InteropServices.NativeLibrary]::Free($handle) }

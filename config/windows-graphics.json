@@ -1,0 +1,12 @@
+{
+  "mesa": {
+    "version": "26.2.4",
+    "url": "https://archive.mesa3d.org/mesa-26.2.4.tar.xz",
+    "sha256": "bce5f7fbebb934373b86c999a064d52fb5065878dc57f287f95346648ec832e9"
+  },
+  "vkd3d": {
+    "version": "1.14",
+    "url": "https://dl.winehq.org/vkd3d/source/vkd3d-1.14.tar.xz",
+    "sha256": "c94015d59ebe8ae72c4d802af5ca1517d9744548842a4e776534612a8d905485"
+  }
+}

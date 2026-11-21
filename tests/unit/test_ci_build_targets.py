@@ -129,8 +129,9 @@ class CiBuildTargetsTests(unittest.TestCase):
         self.assertEqual(targets.select([*check_files, 'tools/package/camera.py']), PRODUCTS)
 
     def test_windows_media_does_not_publish_linux_images(self):
-        files = ['tools/build/windows.py', 'windows/deployment/probe.cmd',
-                 '.github/workflows/windows.yml']
+        files = ['tools/build/windows.py', 'tools/build/windows_umd.py', 'windows/deployment/probe.cmd',
+                 'config/windows-graphics.json', 'upstream/woa_oneplus_ace5_pro',
+                 '.github/workflows/windows.yml', '.github/workflows/windows-userspace.yml']
         self.assertEqual(targets.select(files), [])
         self.assertEqual(targets.select([*files, 'uefi/components/acpi/Dsdt.asl']), PRODUCTS)
 

@@ -290,7 +290,7 @@ def wdk_driver_options(config, description, kits):
     return headers, libraries, entry
 
 
-def clang_kit_includes(directories, work):
+def clang_kit_includes(directories, work, *, external_names=False):
     flags = [f'/imsvc{directory}' for directory in directories]
     if os.name != 'nt':
         # WDK headers use Windows filename casing, including for quoted
@@ -305,7 +305,8 @@ def clang_kit_includes(directories, work):
                 if entries:
                     roots.append({'type': 'directory', 'name': base, 'contents': entries})
         overlay = work / 'kit-headers.json'
-        overlay.write_text(json.dumps({'version': 0, 'case-sensitive': False, 'use-external-names': False,
+        # Incremental builds need real filenames in Clang's dependency files.
+        overlay.write_text(json.dumps({'version': 0, 'case-sensitive': False, 'use-external-names': external_names,
                                        'roots': roots}), encoding='utf-8')
         flags.extend(['/clang:-ivfsoverlay', f'/clang:{overlay}'])
     return flags
@@ -375,6 +376,10 @@ def drivers(args):
 
 
 def main(argv=None):
+    if __package__:
+        from . import windows_umd
+    else:
+        import windows_umd
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     build = commands.add_parser('media', help='Prepare WinPE on FAT32 and Windows Setup files on NTFS')
@@ -386,6 +391,7 @@ def main(argv=None):
     build.set_defaults(run=run_media)
     graphics = commands.add_parser('graphics-test', help='Build the ARM64 Direct3D hardware readback test')
     graphics.set_defaults(run=graphics_test)
+    windows_umd.add_parser(commands)
     driver = commands.add_parser('drivers', help='Build the ARM64 WDK driver components')
     driver.add_argument('--kit-include', type=Path, action='append',
                         help='Build with LLVM using this SDK/WDK Include/<version>, its WDF headers and ARM64 libraries '

@@ -8,9 +8,12 @@ on:
     paths-ignore:
       - 'windows/**'
       - 'tools/build/windows.py'
+      - 'tools/build/windows_umd.py'
+      - 'config/windows-graphics.json'
       - 'tests/unit/test_windows.py'
       - '.github/workflows/windows.yml'
       - '.github/workflows/windows-graphics.yml'
+      - '.github/workflows/windows-userspace.yml'
 
 permissions:
   contents: read
