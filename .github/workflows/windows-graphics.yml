@@ -84,7 +84,8 @@ jobs:
             build/windows/nuget/*/c/Include/wdf/kmdf
             build/windows/nuget/*/c/Lib/*/km/ARM64/*.lib
             build/windows/nuget/*/c/Lib/wdf/kmdf/ARM64
-          key: windows-arm64-wdk-link-${{ hashFiles('windows/drivers/packages.config') }}
+            build/windows/nuget/*/c/bin/*/x86
+          key: windows-arm64-wdk-package-${{ hashFiles('windows/drivers/packages.config') }}
       - if: steps.kits.outputs.cache-hit != 'true'
         run: nuget restore windows/drivers/packages.config -PackagesDirectory build/windows/nuget -NonInteractive
       - name: Compile the ARM64 kernel driver components
@@ -94,7 +95,7 @@ jobs:
           for kit in build/windows/nuget/*/c/Include/[0-9]*; do
             [[ -d "$kit" ]] && opts+=(--kit-include "$kit")
           done
-          ./build.sh windows drivers "${opts[@]}"
+          ./build.sh windows drivers "${opts[@]}" --catalogs
       - name: Verify the ARM64 KMDF and Storport drivers
         shell: pwsh
         run: |
@@ -107,8 +108,12 @@ jobs:
           $pe = llvm-readobj --file-headers --coff-imports "$storage/sunufs.sys" | Out-String
           if ($LASTEXITCODE -ne 0 -or $pe -notmatch 'Machine: IMAGE_FILE_MACHINE_ARM64' -or
               $pe -notmatch 'Subsystem: IMAGE_SUBSYSTEM_NATIVE' -or $pe -notmatch 'Symbol: StorPortInitialize' -or
-              !(Test-Path "$storage/sunufs.inf")) {
-            throw 'Expected an ARM64 Storport miniport and its INF.'
+              !(Test-Path "$storage/sunufs.inf") -or !(Test-Path "$storage/sunufs.cat")) {
+            throw 'Expected an ARM64 Storport miniport, its INF and its WDK catalog.'
+          }
+          $catalog = certutil -dump "$storage/sunufs.cat" | Out-String
+          if ($LASTEXITCODE -ne 0 -or $catalog -notmatch 'sunufs\.sys' -or $catalog -notmatch 'sunufs\.inf') {
+            throw 'The WDK catalog does not list both UFS package files.'
           }
       - name: Check Direct3D readback using the software adapter
         run: .\artifacts\windows\tests\graphics-readback.exe --warp

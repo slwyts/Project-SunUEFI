@@ -354,14 +354,43 @@ def llvm_driver(project, kits):
     return driver
 
 
+def make_driver_catalogs(projects, kits):
+    # Inf2Cat is a host tool. The WDK ships the x86 program for use on
+    # Arm64 Windows as well; /os selects the architecture of the package.
+    candidates = [kit.parent.parent / 'bin' / kit.name / 'x86/Inf2Cat.exe' for kit in kits]
+    sdk = Path(os.environ.get('WindowsSdkDir') or Path(os.environ['ProgramFiles(x86)']) / 'Windows Kits/10')
+    installed = sdk / 'bin'
+    if installed.is_dir():
+        versions = (p for p in installed.iterdir() if all(n.isdigit() for n in p.name.split('.')))
+        candidates.extend(p / 'x86/Inf2Cat.exe' for p in
+                          sorted(versions, key=lambda p: tuple(map(int, p.name.split('.'))), reverse=True))
+    tool = next((p for p in candidates if p.is_file()), None) or shutil.which('Inf2Cat.exe')
+    if not tool:
+        raise ValueError('Install the Windows Driver Kit or provide its Include/<version> with --kit-include')
+    for project in projects:
+        sources = ET.parse(project).findall('.//{*}Inf[@Include]')
+        if not sources:
+            continue  # Kernel components without a PnP package have no catalog.
+        package = ROOT / 'artifacts/windows/drivers' / project.stem / 'Release'
+        for item in sources:
+            name = Path(item.attrib['Include']).with_suffix('.inf').name
+            if not (package / name).is_file():
+                raise ValueError(f'Missing built driver INF: {package / name}')
+        subprocess.run([tool, f'/driver:{package}', '/os:10_GE_ARM64'], check=True)
+
+
 def drivers(args):
     projects = sorted((ROOT / 'windows/drivers').glob('*/*.vcxproj'))
     if not projects:
         raise ValueError('No Windows driver projects found')
+    if args.catalogs and os.name != 'nt':
+        raise ValueError('Generating Windows driver catalogs requires the WDK on a Windows host')
     if args.kit_include:
         kits = [path.resolve() for path in args.kit_include]
         for project in projects:
             print(llvm_driver(project, kits))
+        if args.catalogs:
+            make_driver_catalogs(projects, kits)
         return
     msbuild = shutil.which('msbuild')
     if not msbuild and os.name == 'nt':
@@ -375,6 +404,8 @@ def drivers(args):
         raise ValueError('Use a Visual Studio/WDK developer shell, or pass --kit-include for LLVM.')
     for project in projects:
         subprocess.run([msbuild, project, '/m', '/p:Platform=ARM64', '/p:Configuration=Release'], check=True)
+    if args.catalogs:
+        make_driver_catalogs(projects, [])
 
 
 def main(argv=None):
@@ -398,6 +429,8 @@ def main(argv=None):
     driver.add_argument('--kit-include', type=Path, action='append',
                         help='Build with LLVM using this SDK/WDK Include/<version>, its WDF headers and ARM64 libraries '
                              '(repeat for split kits)')
+    driver.add_argument('--catalogs', action='store_true',
+                        help='Use the Windows WDK to validate each INF package and generate an unsigned Arm64 catalog')
     driver.set_defaults(run=drivers)
     args = parser.parse_args(argv)
     try:

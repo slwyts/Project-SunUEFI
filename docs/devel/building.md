@@ -122,6 +122,11 @@ INF、签名目录（CAT）及其引用的所有文件。安装器把驱动放�
 `install.log` 分别记录两步结果。驱动签名和设备匹配均由 Windows 处理。
 没有对应硬件的包可以预装，不代表该设备已工作。不指定驱动目录时普通介质保留原版 WIM。
 
+构建项目自己的驱动包时，在装有 WDK 的 Windows 开发者终端运行
+`./build.sh windows drivers --catalogs`。WDK 的 Inf2Cat 检查每个带 INF 的 ARM64 包，
+生成列出包内文件哈希的 `.cat`，放在 `artifacts/windows/drivers/<项目>/Release/`。
+新生成的目录文件没有签名；按 Windows 驱动签名流程签署后再交给安装介质。
+
 在已创建独立分区的平板上，从有 root 的 Android 连接 ADB。Linux 主机还需要
 Android platform-tools、`dosfstools`、`mtools`，完整安装另需 `ntfs-3g`、
 `img2simg` 和 `wimlib-imagex`。先查看分区和介质选择：
