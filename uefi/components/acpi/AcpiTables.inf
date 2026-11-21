@@ -13,13 +13,19 @@
 
 [Sources]
   Dsdt.asl
-  Fadt.aslc
-  Madt.aslc
-  Gtdt.aslc
-  Pptt.aslc
   Iort.aslc
   SmmuResources.h
   PianoAcpi.h
+
+[Binaries.AARCH64]
+  BIN|Tables/APIC.bin
+  BIN|Tables/CSRT.bin
+  BIN|Tables/DBG2.bin
+  BIN|Tables/FACP.bin
+  BIN|Tables/FACS.bin
+  BIN|Tables/GTDT.bin
+  BIN|Tables/PPTT.bin
+  BIN|Tables/SPCR.bin
 
 [Packages]
   MdePkg/MdePkg.dec

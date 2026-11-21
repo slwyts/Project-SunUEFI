@@ -141,6 +141,13 @@ Android。过程日志与采集留在本地构建目录，已确认的实现结�
 systemd-boot、Linux 睡眠唤醒和返回 Android；安装 Windows 只使用明确
 选定的独立系统空间，不让安装程序重新分配整块 UFS。
 
+固件使用小太阳 Piano 平台的 ACPI 基线。[原版输入](../../uefi/components/acpi/pakala/)
+包含其固件清单实际选中的板级 DSDT 和九张公共表。产品只安装一张 DSDT：从原版移植
+八个 CPU 的低功耗状态、UFS、USB 主机与设备模式、物理接口及供驱动调用的方法；
+GPU 和 IORT 保留 Piano 本机的设备与 DMA 映射。公共 MCFG 描述七个 PCI ECAM 段，
+本机原厂只描述一个使用地址转换窗口的 PCIe 控制器，因此不向 Windows 发布这些段。
+表中有低功耗状态、串口调试或高通 HAL 资源，不等于 Windows 驱动已经接管硬件。
+
 平板已用这份带 ACPI 的固件经 systemd-boot 启动 Debian。EFI 系统表
 给出 ACPI 2.0 指针，从设备读回的 XSDT、FADT、DSDT、MADT、GTDT 和 PPTT
 校验和均正确；Linux 的 PSCI 仍从设备树初始化。IORT 使用原厂 XBL 的

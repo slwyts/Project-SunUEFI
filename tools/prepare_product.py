@@ -18,6 +18,7 @@ from prepare_product_early_memory import prepare as prepare_early_memory, verify
 from prepare_product_handoff import prepare as prepare_handoff, stage_provider, verify_provider
 import piano_display_mapping as display_mapping
 import piano_vendor_inputs as vendor_inputs
+from firmware import pakala_acpi
 from core_source import core_source, has_core_source
 
 CORE_GUID='35E0D1B5-93CE-4D6A-9A93-6ADAA3F26C40'
@@ -571,8 +572,10 @@ def prepare(root=ROOT):
     for name in SOURCE_NAMES:shutil.copyfile(core_source(name, root),app/name)
     from compose_piano_dtb import read_fdt
     nodes=read_fdt((root/vendor_inputs.XBL_DTB).read_bytes())['tree']
+    board=read_fdt(inputs['board_dtb'])['tree']
+    pakala_acpi.prepare(target/'AcpiTables/pakala',target/'AcpiTables/Tables',board)
     (target/'AcpiTables/SmmuResources.h').write_text(
-        acpi_smmu_resources(read_fdt(inputs['board_dtb'])['tree'], nodes))
+        acpi_smmu_resources(board,nodes))
     tables=[props['table'] for path,props in nodes.items()
             if path.endswith('/usb0/ss_phy_cfg') and 'table' in props]
     if len(tables)!=1 or len(tables[0])%8:raise ValueError('Expected one Piano XBL USB3 PHY table')
@@ -710,7 +713,16 @@ def prepare(root=ROOT):
         BOOT_PICKER_MODULE,'pianoProductPkg/'+SIMPLEINIT_BOOT_MODULE,'MdeModulePkg/Logo/LogoDxe.inf',
         'ShellPkg/Application/Shell/Shell.inf','pianoProductPkg/Applications/ProductCore/ProductCore.inf')
     text=text.replace('!include SiliciumPkg/Common.fdf.inc',''.join('  INF '+module+'\n' for module in modules)+
-        '  INF RuleOverride = ACPITABLE '+ACPI_TABLES+'\n'+native_fdf+'\n!include SiliciumPkg/Common.fdf.inc')
+        '  INF RuleOverride = PIANOACPI '+ACPI_TABLES+'\n'+native_fdf+'\n!include SiliciumPkg/Common.fdf.inc')
+    text+='''
+[Rule.Common.USER_DEFINED.PIANOACPI]
+  FILE FREEFORM = $(NAMED_GUID) {
+    RAW ACPI Optional |.acpi
+    RAW ASL           |.aml
+    RAW BIN           |.bin
+    UI STRING="$(MODULE_NAME)" Optional
+  }
+'''
     fdf.write_text(text)
     early_memory=prepare_early_memory(root,target)
     verify_early_memory(root,target,early_memory)

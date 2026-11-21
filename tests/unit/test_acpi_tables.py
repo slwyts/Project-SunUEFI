@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 from compose_piano_dtb import read_fdt
+from firmware import pakala_acpi
 from prepare_product import acpi_smmu_resources
 
 
@@ -35,16 +36,17 @@ class AcpiTablesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             work = Path(folder)
             (work / 'SmmuResources.h').write_text(acpi_smmu_resources(cls.board, cls.xbl))
-            for name in ('Madt', 'Iort'):
-                subprocess.run(['cc', '-c', '-x', 'c', '-fshort-wchar', '-include', 'Uefi.h',
-                                '-I', include, '-I', include / arch, '-I', work, source / (name+'.aslc'),
-                                '-o', work / 'table.o'], check=True)
-                subprocess.run(['objcopy', '-j', '.data', '-O', 'binary', work / 'table.o',
-                                work / 'table.bin'], check=True)
-                cls.tables[name] = (work / 'table.bin').read_bytes()
+            pakala_acpi.prepare(source / 'pakala', work / 'Tables', cls.board)
+            cls.tables.update((p.stem, p.read_bytes()) for p in (work / 'Tables').glob('*.bin'))
+            subprocess.run(['cc', '-c', '-x', 'c', '-fshort-wchar', '-include', 'Uefi.h',
+                            '-I', include, '-I', include / arch, '-I', work, source / 'Iort.aslc',
+                            '-o', work / 'table.o'], check=True)
+            subprocess.run(['objcopy', '-j', '.data', '-O', 'binary', work / 'table.o',
+                            work / 'table.bin'], check=True)
+            cls.tables['Iort'] = (work / 'table.bin').read_bytes()
 
     def test_madt_describes_every_cpu_and_redistributor(self):
-        madt = self.tables['Madt']
+        madt = self.tables['APIC']
         self.assertEqual(struct.unpack_from('<4sI', madt), (b'APIC', len(madt)))
         gic = self.board['/soc/interrupt-controller@16000000']
         dist_base, _, redistrib_base, _ = struct.unpack('>4I', gic['reg'])

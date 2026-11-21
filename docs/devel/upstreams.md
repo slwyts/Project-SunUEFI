@@ -5,7 +5,7 @@ SunUEFI 不是从零重写所有东西。上游源码固定在 `upstream/` 的�
 | 项目 | 负责什么 | 我们在上面做了什么 |
 | --- | --- | --- |
 | [TianoCore EDK2](https://github.com/tianocore/edk2) / [Mu-Silicium](https://github.com/Project-Silicium/Mu-Silicium) | UEFI 基础代码和高通平台集成 | Piano 平台、启动交接、存储、输入、显示继承、UEFI Fastboot，以及对原厂分区的只读保护和安全退出 |
-| [mu_wide_platforms 的 Piano 平台](https://github.com/sunflower2333/mu_wide_platforms/tree/3e1d052064beb6e59cda3cfba87d50e6cc088174/Platforms/PakalaPkg/Device/xiaomi-piano) | 小米平板 8 Pro 的 Project Mu 固件、驱动清单和 ACPI | 对照同机 UFS 的硬件标识、中断和启动服务。SunUEFI 从源码编译自己的 ACPI 表，寄存器范围按原厂设备树核对。 |
+| [mu_wide_platforms 的 Piano 平台](https://github.com/sunflower2333/mu_wide_platforms/tree/3e1d052064beb6e59cda3cfba87d50e6cc088174/Platforms/PakalaPkg/Device/xiaomi-piano) | 小米平板 8 Pro 的 Project Mu 固件、驱动清单和 ACPI | Windows 的 ACPI 以该项目实际打包的十张表为基线：沿用板级 DSDT 的 CPU 低功耗状态与 USB 双角色描述，保留本机的 GPU 和 DMA 映射。板级差异见[发布检查](release.md#原生-windows-11-arm64)。 |
 | [OnePlus Ace 5 Pro UEFI](https://github.com/AnyLaySys/uefi_oneplus_ace5_pro/tree/1a5cb057fedc4d353f735ec12a5901d9e59779f4/Platforms/OnePlus/hummerPkg/AcpiTables) | 同芯片手机的 ACPI 源码 | 对照 SM8750 的启动和设备描述，不沿用手机专用的 GPU 硬件标识或板级资源。 |
 | [OnePlus Ace 5 Pro Windows 驱动](https://github.com/AnyLaySys/woa_oneplus_ace5_pro/tree/ed648ec56a7cc8532bbbfef90061932684c6d870) | 同为 SM8750 的 WDDM 图形内核驱动、Turnip 用户态后端与无线驱动 | Piano 原厂 Android 报告 `Adreno830v2`，设备树芯片 ID 是 `0x44050001`。可对照其 GPU 提交和同步；内屏、供电、温控和无线校准取自 Piano，不能照搬手机配置。 |
 | [Xiaomi Pad 6S Pro Linux](https://github.com/code002-2/Xiaomi-pad-6s-pro-Linux) / [debian-sheng](https://github.com/ianchb/debian-sheng) | 小米平板的多发行版适配，以及充电、手写笔和指纹方案 | 参考 MiPPS 认证、磁吸笔连接和 TEE 指纹接入，按 Piano 的实际硬件移植 |
