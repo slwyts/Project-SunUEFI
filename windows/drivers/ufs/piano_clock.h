@@ -2,8 +2,8 @@
 #pragma once
 #include "platform.h"
 
-/* Each register is its own assigned four-byte PnP resource. The shared GCC
- * GDSC, HW control, vote and root-clock frequency registers are not mapped.
+/* Each lane/reset register is an assigned four-byte resource. Power domains
+ * have their own owner; these callbacks do not program shared clock votes.
  */
 enum piano_ufs_clock_reg {
     PIANO_UFS_BCR,
@@ -28,10 +28,9 @@ struct piano_ufs_clocks {
     uint8_t old_mux[3];
 };
 
-/* A real, independently reference-counted provider is required for both
- * power domains, supplies, base clocks and interconnects. The PnP caller
- * serializes this scope with device D0/D3. An independent clock driver must
- * not also own the assigned control bits. Zero-initialize on first use.
+/* Bus power must be established before touching the lane clocks and BCR.
+ * The PnP caller serializes this scope with D0/D3. An independent clock
+ * driver must not own the same control bits. Zero-initialize on first use.
  */
 int piano_ufs_clock_init(struct piano_ufs_clocks *clock, const struct piano_ufs_clock_io *io,
                          void *supply_context, int (*supply)(void *, int), struct ufs_platform_power *power);
