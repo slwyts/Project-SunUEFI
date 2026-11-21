@@ -146,6 +146,9 @@ systemd-boot、Linux 睡眠唤醒和返回 Android；安装 Windows 只使用明
 八个 CPU 的低功耗状态、UFS、USB 主机与设备模式、物理接口及供驱动调用的方法；
 GPU 和 IORT 保留 Piano 本机的设备与 DMA 映射。公共 MCFG 描述七个 PCI ECAM 段，
 本机原厂只描述一个使用地址转换窗口的 PCIe 控制器，因此不向 Windows 发布这些段。
+内存不沿用社区固件的固定 DXE 堆：它从 `0xb90c0000` 开始建交接表，而本机原厂
+设备树将该地址留给 DSP，堆中还跨过一段硬件同步缓冲区。SunUEFI 使用
+[本次启动的内存布局](uefi-core.md#esp-启动文件与系统交接)，不按标称容量套用地址表。
 调试表保留同一 USB-C 控制器的高速与超速配置；串口使用本机 GENI UART，GSI 为 611。
 GPIO 控制器沿用[同机社区实现](upstreams.md)的 `QCOMFFEB` 标识和 GSI 240，
 匹配安装介质自带的 `qcgpio_i.inf`。保护套通过标准 ACPI 盖合设备 `PNP0C0D` 报告
