@@ -69,14 +69,19 @@ void rpmh_provider_power_lost(struct rpmh_provider *p)
     for (const struct rpmh_client *c = p->clients; c; c = c->next) {
         for (unsigned i = 0; i < RPMH_RAIL_COUNT; ++i)
             if (c->corner[i]) p->restore_rails |= BIT(i);
-        for (unsigned i = 0; i < RPMH_UFS_SUPPLY_COUNT; ++i)
+        for (unsigned i = 0; i < RPMH_UFS_REFCLK; ++i)
             if (c->ufs[i] != RPMH_SUPPLY_OFF) p->vrm.restore |= BIT(i);
+        for (unsigned i = RPMH_UFS_REFCLK; i < RPMH_UFS_SUPPLY_COUNT; ++i) {
+            const struct rpmh_supply_request *r = &c->aux[i - RPMH_UFS_REFCLK];
+            if (r->enable || r->min_mv) p->vrm.restore |= BIT(i);
+        }
     }
     p->vrm.floor = (struct rpmh_vrm_votes){0};
+    p->vrm.boot_holds = p->vrm.managed = 0;
     p->restore_bcms |= rpmh_fabric_bcm_mask(&p->fabric, p->touched_paths);
     p->floor = (struct rpmh_boot_votes){0};
     p->applied = (struct rpmh_boot_votes){0};
-    p->adopted = 0;
+    p->adopted = p->boot_rails = p->boot_bcms = 0;
 }
 
 int rpmh_client_open(struct rpmh_provider *p, struct rpmh_client *c)
@@ -164,6 +169,82 @@ int rpmh_provider_reconcile(struct rpmh_provider *p)
     return platform_ok;
 }
 
+int rpmh_provider_boot(struct rpmh_provider *p, unsigned rails, unsigned paths, unsigned supplies, int hold)
+{
+    if (!p || (!rails && !paths && !supplies) || rails >> RPMH_RAIL_COUNT || (paths & ~p->fabric.paths) ||
+        supplies >> RPMH_UFS_SUPPLY_COUNT) return 0;
+    if (hold) {
+        /* After an unexpected D3, other clients still own their accepted
+         * requests. On return to this RSC, restore their missing initial
+         * votes as well. The next caller need not know every sibling's
+         * paths or wait for siblings to probe a second time. */
+        rails |= p->restore_rails;
+        if (p->restore_bcms) paths |= p->touched_paths;
+        supplies |= p->vrm.restore;
+    }
+    for (unsigned i = 0; i < RPMH_RAIL_COUNT; ++i)
+        if ((rails & BIT(i)) && !p->rail[i].address) return 0;
+    for (unsigned i = 0; i < RPMH_UFS_SUPPLY_COUNT; ++i)
+        if ((supplies & BIT(i)) && !p->vrm.address[i]) return 0;
+    unsigned buses = rpmh_fabric_bcm_mask(&p->fabric,paths);
+    if (hold) {
+        unsigned add_rails = rails & ~p->floor.rails, add_buses = buses & ~p->floor.bus.mask;
+        struct rpmh_fabric_votes base = {.mask = buses}, high;
+        struct rpmh_fabric_load load = {0};
+        for (unsigned i = 0; i < RPMH_FABRIC_PATH_COUNT; ++i) {
+            if (!(paths & BIT(i))) continue;
+            /* Keep the numeric and performance-enable resources on this
+             * path available until all users have supplied their own votes. */
+            load.avg_kBps[i] = load.peak_kBps[i] = INT32_MAX;
+            load.performance |= BIT(i);
+        }
+        if (!rpmh_fabric_aggregate_load(&p->fabric,paths,&load,&base,&high)) return 0;
+        for (unsigned i = 0; i < RPMH_RAIL_COUNT; ++i) {
+            if (!(add_rails & BIT(i))) continue;
+            /* rpmhpd clamps a domain to its highest firmware corner before
+             * sync_state. Ignore the padding after the last real level. */
+            unsigned corner = i == RPMH_XO ? 3 : 0;
+            if (i != RPMH_XO) {
+                const struct rpmh_db_entry *e = &p->rail[i];
+                for (unsigned k = 1; k < e->aux_size/2; ++k)
+                    if (e->aux[2*k] || e->aux[2*k+1]) corner = k;
+            }
+            p->floor.corner[i] = corner;
+        }
+        for (unsigned i = 0; i < RPMH_FABRIC_BCM_COUNT; ++i)
+            if (add_buses & BIT(i)) p->floor.bus.xy[i] = high.xy[i];
+        p->floor.rails |= add_rails; p->applied.rails |= add_rails;
+        p->floor.bus.mask |= add_buses; p->applied.bus.mask |= add_buses;
+        p->boot_rails |= add_rails; p->restore_rails |= add_rails;
+        p->boot_bcms |= add_buses; p->restore_bcms |= add_buses;
+        p->touched_paths |= paths;
+        return reconcile_platform(p) && (!supplies || rpmh_vrm_hold_boot(p,supplies));
+    }
+    if ((rails & ~p->floor.rails) || (buses & ~p->floor.bus.mask) ||
+        (supplies & ~p->vrm.floor.mask) || !reconcile_platform(p)) return 0;
+    unsigned drop_rails = rails & p->boot_rails, drop_buses = buses & p->boot_bcms;
+    struct rpmh_boot_votes old = p->floor;
+    for (unsigned i = 0; i < RPMH_RAIL_COUNT; ++i)
+        if (drop_rails & BIT(i)) p->floor.corner[i] = 0;
+    for (unsigned i = 0; i < RPMH_FABRIC_BCM_COUNT; ++i)
+        if (drop_buses & BIT(i)) p->floor.bus.xy[i] = 0;
+    /* Lower the bus vote before its voltage supplies. On an uncertain
+     * completion reassert the previous, already sufficient boot requests. */
+    int ok = !drop_buses || sync_bus(p);
+    for (unsigned i = RPMH_RAIL_COUNT; ok && i; --i)
+        if (drop_rails & BIT(i-1)) ok = sync_level(p,i-1);
+    if (!ok) {
+        p->floor = old;
+        p->restore_rails |= drop_rails;
+        p->restore_bcms |= drop_buses;
+        (void)reconcile_platform(p);
+        return 0;
+    }
+    p->boot_rails &= ~drop_rails;
+    p->boot_bcms &= ~drop_buses;
+    return !supplies || rpmh_vrm_finish_boot(p,supplies);
+}
+
 int rpmh_set_level(struct rpmh_provider *p, struct rpmh_client *c, enum rpmh_rail rail, uint32_t level)
 {
     unsigned i = (unsigned)rail;
@@ -216,11 +297,22 @@ int rpmh_set_ufs_supplies(struct rpmh_provider *p, struct rpmh_client *c,
     return 0;
 }
 
+int rpmh_set_aux_supply(struct rpmh_provider *p, struct rpmh_client *c, enum rpmh_ufs_supply supply,
+                        const struct rpmh_supply_request *r)
+{
+    return p && member(p,c) && rpmh_vrm_set_aux(p,c,supply,r);
+}
+
 int rpmh_client_close(struct rpmh_provider *p, struct rpmh_client *c)
 {
     if (!p || !member(p,c)) return 0;
     if ((c->ufs[RPMH_UFS_VCC] || c->ufs[RPMH_UFS_VCCQ]) &&
         !rpmh_set_ufs_supplies(p, c, RPMH_SUPPLY_OFF, RPMH_SUPPLY_OFF)) return 0;
+    const struct rpmh_supply_request off_request = {0};
+    for (unsigned i = RPMH_UFS_SUPPLY_COUNT; i > RPMH_UFS_REFCLK; --i) {
+        const struct rpmh_supply_request *r = &c->aux[i - 1 - RPMH_UFS_REFCLK];
+        if ((r->enable || r->min_mv) && !rpmh_set_aux_supply(p,c,(enum rpmh_ufs_supply)(i-1),&off_request)) return 0;
+    }
     for (unsigned i = 0; i < RPMH_FABRIC_PATH_COUNT; ++i)
         if ((c->avg[i] || c->peak[i]) && !rpmh_set_bandwidth(p,c,(enum rpmh_fabric_path)i,0,0)) return 0;
     static const enum rpmh_rail off[] = {RPMH_CX,RPMH_MX,RPMH_XO};
@@ -237,7 +329,11 @@ int rpmh_provider_quiet(struct rpmh_provider *p)
 {
     if (!rpmh_provider_reconcile(p)) return 0;
     for (const struct rpmh_client *c = p->clients; c; c = c->next) {
-        for (unsigned i = 0; i < RPMH_UFS_SUPPLY_COUNT; ++i) if (c->ufs[i] != RPMH_SUPPLY_OFF) return 0;
+        for (unsigned i = 0; i < RPMH_UFS_REFCLK; ++i) if (c->ufs[i] != RPMH_SUPPLY_OFF) return 0;
+        for (unsigned i = RPMH_UFS_REFCLK; i < RPMH_UFS_SUPPLY_COUNT; ++i) {
+            const struct rpmh_supply_request *r = &c->aux[i - RPMH_UFS_REFCLK];
+            if (r->enable || r->min_mv) return 0;
+        }
         for (unsigned i = 0; i < RPMH_RAIL_COUNT; ++i) if (c->corner[i]) return 0;
         for (unsigned i = 0; i < RPMH_FABRIC_PATH_COUNT; ++i) if (c->avg[i] || c->peak[i]) return 0;
     }

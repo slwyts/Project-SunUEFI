@@ -52,8 +52,98 @@ static void check(const struct mock *m, unsigned index, uint32_t addr, uint32_t 
     assert(index < m->written && m->log[index].address == addr && m->log[index].data == value);
 }
 
+struct aux_hw {
+    uint32_t reg[4][3];
+    unsigned messages, fail_next, first[20];
+};
+
+static int write_aux(void *context, const struct rpmh_rsc_command *cmd, unsigned n, unsigned wait)
+{
+    struct aux_hw *h = context;
+    assert(n && n <= 3 && wait == (1u << n)-1);
+    unsigned rail = (cmd[0].address - 0x40000)/0x10;
+    assert(rail < 4);
+    if (h->messages < 20) h->first[h->messages] = rail;
+    ++h->messages;
+    for (unsigned j = 0; j < n; ++j) {
+        unsigned off = cmd[j].address - (0x40000+rail*0x10);
+        assert(off == 0 || off == 4 || off == 8);
+        h->reg[rail][off/4] = cmd[j].data;
+    }
+    if (h->fail_next) { h->fail_next = 0; return 0; }
+    return 1;
+}
+
+static void check_boot_supplies(void)
+{
+    const enum rpmh_ufs_supply REF = RPMH_UFS_REFCLK, PARENT = RPMH_UFS_VCCQ_PARENT;
+    uint8_t b[HEADER+4*ENTRY] = {0};
+    const char *const names[] = {"ldob17","ldod1","ldoi2","smpi7"};
+    u32(b+4,0x0c0330db); u16(b+8,RPMH_VRM); u16(b+12,4*ENTRY); u16(b+14,4);
+    for (unsigned i = 0; i < 4; ++i) {
+        memcpy(b+HEADER+i*ENTRY,names[i],strlen(names[i]));
+        u32(b+HEADER+i*ENTRY+16,0x40000+i*0x10);
+    }
+    struct rpmh_cmd_db db;
+    struct rpmh_provider p;
+    struct aux_hw h = {.fail_next = 1};
+    struct rpmh_transport io = {&h,write_aux};
+    struct rpmh_client disk, wifi, bt, audio;
+    assert(rpmh_db_open(&db,b,sizeof(b)) && rpmh_provider_start(&p,&db,&io,3));
+    assert(rpmh_client_open(&p,&disk) && rpmh_client_open(&p,&wifi) && rpmh_client_open(&p,&bt) &&
+           rpmh_client_open(&p,&audio));
+    /* No previous AP votes are supplied. A failed boot request is never
+     * marked applied; the still-pending enable is acknowledged on retry. */
+    assert(!rpmh_provider_boot(&p,0,0,15,1) && p.vrm.restore);
+    assert(rpmh_provider_boot(&p,0,0,15,1) && !p.vrm.restore && p.vrm.boot_holds == 15);
+    assert(h.first[0] == REF && h.first[1] == REF && h.first[2] == PARENT &&
+           h.first[3] == RPMH_UFS_VCC && h.first[4] == RPMH_UFS_VCCQ);
+    assert(h.reg[PARENT][0] == 1340 && h.reg[PARENT][1] == 1 && h.reg[PARENT][2] == 7);
+    struct rpmh_supply_request storage_ref = {.ua=100,.enable=1}, storage_parent = {.ua=210000,.enable=1};
+    struct rpmh_supply_request wlan = {.min_mv=1312,.max_mv=1340,.enable=1};
+    struct rpmh_supply_request codec = {.ua=5000,.min_mv=1200,.max_mv=1200,.enable=1};
+    assert(rpmh_set_aux_supply(&p,&disk,REF,&storage_ref) && rpmh_set_aux_supply(&p,&disk,PARENT,&storage_parent));
+    assert(rpmh_set_aux_supply(&p,&wifi,PARENT,&wlan) && rpmh_set_aux_supply(&p,&bt,PARENT,&wlan));
+    assert(rpmh_set_aux_supply(&p,&audio,REF,&codec));
+    assert(rpmh_set_ufs_supplies(&p,&disk,RPMH_SUPPLY_HIGH,RPMH_SUPPLY_HIGH));
+    assert(rpmh_provider_boot(&p,0,0,15,0) && !p.vrm.boot_holds);
+    assert(h.reg[PARENT][0] == 1312 && h.reg[PARENT][1] == 1 && h.reg[PARENT][2] == 7);
+    assert(h.reg[REF][0] == 1200 && h.reg[REF][2] == 3);
+    unsigned msg = h.messages;
+    struct rpmh_supply_request clash = {.min_mv=1224,.max_mv=1256,.enable=1};
+    assert(!rpmh_set_aux_supply(&p,&disk,PARENT,&clash) && h.messages == msg);
+    assert(rpmh_client_close(&p,&disk));
+    assert(h.reg[PARENT][0] == 1312 && h.reg[PARENT][1] == 1 && h.reg[PARENT][2] == 3);
+    assert(h.reg[REF][1] == 1 && !h.reg[RPMH_UFS_VCC][1]);
+    assert(rpmh_client_close(&p,&wifi) && h.reg[PARENT][1]);
+    assert(rpmh_client_close(&p,&bt) && !h.reg[PARENT][1]);
+    assert(rpmh_client_close(&p,&audio) && !h.reg[REF][1] && rpmh_provider_quiet(&p));
+
+    /* Across D3, a still-open consumer's upper bound constrains the new AP
+     * boot vote too. Do not briefly reprogram the rail outside this range. */
+    struct rpmh_supply_request narrow = {.min_mv=1256,.max_mv=1264,.enable=1};
+    assert(rpmh_client_open(&p,&disk) && rpmh_set_aux_supply(&p,&disk,PARENT,&narrow));
+    rpmh_provider_power_lost(&p);
+    assert(rpmh_provider_boot(&p,0,0,1u<<RPMH_UFS_VCC,1));
+    assert(h.reg[PARENT][0]==1264 && h.reg[PARENT][1]);
+    assert(rpmh_provider_boot(&p,0,0,(1u<<PARENT)|(1u<<RPMH_UFS_VCC),0));
+    assert(h.reg[PARENT][0]==1256 && h.reg[PARENT][1] && rpmh_client_close(&p,&disk));
+    /* A witnessed old request is not a probe hold and must not be erased
+     * when other consumers finish enumerating. */
+    rpmh_provider_power_lost(&p);
+    struct rpmh_vrm_votes inherited = {.mask = 1u << PARENT, .vote[RPMH_UFS_VCCQ_PARENT] = {1224,1,3}};
+    assert(rpmh_vrm_adopt(&p.vrm,&inherited));
+    h.reg[PARENT][0] = 1224; h.reg[PARENT][1] = 1; h.reg[PARENT][2] = 3;
+    assert(rpmh_provider_boot(&p,0,0,15,1) && rpmh_provider_boot(&p,0,0,15,0));
+    assert(h.reg[PARENT][0] == 1224 && h.reg[PARENT][1] && h.reg[PARENT][2] == 3);
+    assert(rpmh_client_open(&p,&disk));
+    assert(rpmh_set_aux_supply(&p,&disk,PARENT,&storage_parent) && h.reg[PARENT][0] == 1224);
+    assert(rpmh_client_close(&p,&disk) && h.reg[PARENT][0] == 1224 && h.reg[PARENT][1]);
+}
+
 int main(void)
 {
+    check_boot_supplies();
     uint8_t bytes[HEADER + 3*ENTRY];
     struct rpmh_cmd_db db;
     struct mock m = {0};

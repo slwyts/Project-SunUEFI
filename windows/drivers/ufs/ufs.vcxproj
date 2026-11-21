@@ -43,6 +43,7 @@
     <ClCompile Include="piano_clock.c" />
     <ClCompile Include="piano_clock_storport.c" />
     <ClCompile Include="piano_power.c" />
+    <ClCompile Include="piano_rpmh.c" />
     <ClInclude Include="transfer.h" />
     <ClInclude Include="miniport.h" />
     <ClInclude Include="storport_io.h" />
@@ -53,6 +54,7 @@
     <ClInclude Include="piano_clock.h" />
     <ClInclude Include="piano_clock_storport.h" />
     <ClInclude Include="piano_power.h" />
+    <ClInclude Include="piano_rpmh.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

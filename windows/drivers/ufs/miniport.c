@@ -91,7 +91,10 @@ static BOOLEAN start_step(PVOID extension, PVOID context)
     ULONGLONG now = *(ULONGLONG *)context;
     if (a->state != UfsStarting) return FALSE;
     if (!a->io.managing) {
-        if (UfsLinkBegin(&a->io, &a->link, now) == UFS_LINK_OK) return TRUE;
+        if (UfsLinkBegin(&a->io, &a->link, now) == UFS_LINK_OK) {
+            a->link.read_parameters = (uint8_t)(a->link_power_ready != NULL && !a->start_timer);
+            return TRUE;
+        }
     } else {
         enum ufs_link_phase phase = UfsLinkPoll(&a->link, now);
         if (phase != UFS_LINK_READY && phase != UFS_LINK_FAILED) return TRUE;
@@ -130,7 +133,12 @@ static BOOLEAN initialize_passive(PVOID extension)
             enum ufs_platform_phase phase = ufs_platform_poll(&a->platform.phy, now);
             if (phase == UFS_PLATFORM_FAILED || phase == UFS_PLATFORM_STOPPING) break;
         } else if (!StorPortSynchronizeAccess(a, start_step, &now)) {
-            if (a->state == UfsOnline) return TRUE;
+            if (a->state == UfsOnline) {
+                if (a->link_power_ready)
+                    a->link_power_ready(a->link_power_context,
+                        a->link.parameter_count == UfsPaParameterCount ? a->link.parameter : NULL);
+                return TRUE;
+            }
             break;
         }
         if (StorPortDelayExecution(a, START_POLL_US) != STOR_STATUS_SUCCESS) break;

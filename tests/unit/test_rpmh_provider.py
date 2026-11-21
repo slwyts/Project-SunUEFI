@@ -66,6 +66,26 @@ class RpmhProviderTest(unittest.TestCase):
                 self.assertEqual(int.from_bytes(rail[prop], 'big'), voltage)
             self.assertEqual(int.from_bytes(hba[pin+'-max-microamp'], 'big'), load)
 
+        for supply, peer, source, name, kind, vmin, vmax, init, load, threshold in (
+            ('qcom,vddp-ref-clk','/soc/spf_core_platform/lpass-cdc/wcd939x-codec',
+             'cdc-vdd-px','ldoi2','pmic5-ldo',1200000,1200000,1200000,100,30000),
+            ('qcom,vccq-parent','/soc/bt_peach','qcom,bt-vdd-rfa1p25',
+             'smpi7','pmic5-ftsmps',1224000,1340000,1256000,210000,200000),
+        ):
+            ref = hba[supply + '-supply']
+            self.assertEqual(ref, tree[peer][source + '-supply'])
+            path, = (key for key, node in tree.items() if node.get('phandle') == ref)
+            regulator, hardware = tree[path], tree[path.rsplit('/',1)[0]]
+            self.assertEqual(hardware['qcom,resource-name'].rstrip(b'\0').decode(), name)
+            self.assertEqual(hardware['qcom,regulator-type'].rstrip(b'\0').decode(), kind)
+            self.assertEqual(struct.unpack('>II',hardware['qcom,supported-modes']), (1,4))
+            self.assertEqual(struct.unpack('>II',hardware['qcom,mode-threshold-currents']), (0,threshold))
+            self.assertEqual(tuple(int.from_bytes(regulator[v],'big') for v in
+                                   ('regulator-min-microvolt','regulator-max-microvolt','qcom,init-voltage')),
+                             (vmin,vmax,init))
+            self.assertEqual(int.from_bytes(hba[supply+'-max-microamp'],'big'),load)
+        self.assertEqual(hba['qcom,vccq-parent-supply'],tree['/soc/qcom,cnss-peach@b0000000']['vdd-wlan-rfa2-supply'])
+
 
 if __name__ == '__main__':
     unittest.main()

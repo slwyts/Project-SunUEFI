@@ -127,10 +127,13 @@ static void submit(struct ufs_link *l, uint64_t now)
     l->phase = UFS_LINK_WAIT_REPLY;
 }
 
-static enum ufs_link_phase next_unit(struct ufs_link *l)
+static enum ufs_link_phase next_unit(struct ufs_link *l, uint64_t now)
 {
     uint32_t remaining = l->reported_luns & ~l->enabled_luns;
-    if (!remaining) return l->phase = UFS_LINK_READY;
+    if (!remaining) {
+        l->since = now;
+        return l->phase = l->read_parameters ? UFS_LINK_GET_PARAMETERS : UFS_LINK_READY;
+    }
     for (l->unit = 0; !(remaining & (UINT32_C(1) << l->unit)); ++l->unit) {}
     l->command = UFS_MGMT_UNIT;
     return l->phase = UFS_LINK_SEND;
@@ -161,7 +164,7 @@ static enum ufs_link_phase report_luns(struct ufs_link *l, uint64_t now)
         mask |= bit;
     }
     l->reported_luns = mask;
-    return next_unit(l);
+    return next_unit(l,now);
 }
 
 static enum ufs_link_phase complete(struct ufs_link *l, uint64_t now)
@@ -225,7 +228,7 @@ static enum ufs_link_phase complete(struct ufs_link *l, uint64_t now)
     } else {
         if (desc[0] < 4 || desc[2] != l->unit || !desc[3]) return fail(l, UFS_LINK_PROTOCOL);
         l->enabled_luns |= UINT32_C(1) << l->unit;
-        return next_unit(l);
+        return next_unit(l,now);
     }
     return l->phase = UFS_LINK_SEND;
 }
@@ -279,6 +282,37 @@ enum ufs_link_phase ufs_link_poll(struct ufs_link *l, uint64_t now)
     case UFS_LINK_INIT_POLL:
         if (now - l->since >= POLL_INIT_US) l->phase = UFS_LINK_SEND;
         break;
+    case UFS_LINK_GET_PARAMETERS: {
+        static const uint16_t attr[UfsPaParameterCount] = {
+            [UfsPaPowerMode]=0x1571, [UfsPaTxGear]=0x1568, [UfsPaRxGear]=0x1583,
+            [UfsPaTxLanes]=0x1560, [UfsPaRxLanes]=0x1580, [UfsPaHsSeries]=0x156a,
+        };
+        if (read_reg(l,HCS) & 8) {
+            write_reg(l,IS,UIC_COMPLETE);
+            write_reg(l,UICARG1,(uint32_t)attr[l->parameter_count] << 16);
+            write_reg(l,UICARG2,0);
+            write_reg(l,UICARG3,0);
+            l->uic_inflight = 1;
+            write_reg(l,UICCMD,0x01); /* DME_GET a local PA attribute. */
+            l->phase = UFS_LINK_WAIT_PARAMETER;
+            l->since = now;
+        } else if (now-l->since >= UIC_TIMEOUT_US) l->phase = UFS_LINK_READY;
+        break;
+    }
+    case UFS_LINK_WAIT_PARAMETER:
+        if (read_reg(l,IS) & UIC_COMPLETE) {
+            uint32_t result = read_reg(l,UICARG2) & 0xff, value = read_reg(l,UICARG3);
+            l->uic_inflight = 0;
+            write_reg(l,IS,UIC_COMPLETE);
+            /* This read only refines the discovery bandwidth. Unsupported
+             * attributes must not suppress a working disk. */
+            if (result || value > UINT8_MAX) return l->phase = UFS_LINK_READY;
+            l->parameter[l->parameter_count++] = (uint8_t)value;
+            l->since = now;
+            return l->phase = l->parameter_count == UfsPaParameterCount ? UFS_LINK_READY : UFS_LINK_GET_PARAMETERS;
+        }
+        if (now-l->since >= UIC_TIMEOUT_US) return fail(l,UFS_LINK_TIMEOUT);
+        break;
     default: return fail(l, UFS_LINK_PROTOCOL);
     }
     return l->phase;
@@ -287,7 +321,6 @@ enum ufs_link_phase ufs_link_poll(struct ufs_link *l, uint64_t now)
 int ufs_link_stop(struct ufs_link *l)
 {
     if (!l->owns_controller) return 1;
-    unsigned first = !l->stopping;
     l->stopping = 1;
     if (l->uic_inflight) {
         if (!(read_reg(l, IS) & UIC_COMPLETE)) return 0;
@@ -295,9 +328,10 @@ int ufs_link_stop(struct ufs_link *l)
         write_reg(l, IS, UIC_COMPLETE);
     }
     if (l->owns_list) {
-        if (first) {
+        if (!l->list_stop_issued) {
             write_reg(l, UTRLRSR, 0);
             if (l->transfer_inflight && (read_reg(l, UTRLDBR) & 1)) write_reg(l, UTRLCLR, ~UINT32_C(1));
+            l->list_stop_issued = 1;
         }
         if (read_reg(l, UTRLRSR) || read_reg(l, UTRLDBR)) return 0;
         l->io.consume(l->io.context);

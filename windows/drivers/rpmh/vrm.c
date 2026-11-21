@@ -1,13 +1,18 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 #include "provider.h"
 
-/* Piano's PMIC5 LDO constraints and load thresholds. The resources are
+/* Piano's PMIC5 regulator constraints and load thresholds. The resources are
  * discovered by name on every D0, not by their PMIC bus addresses. */
-static const struct { const char *name; unsigned mv, high_ua, threshold_ua; } supplies[] = {
-    [RPMH_UFS_VCC]  = {"ldob17", 2504, 1300000, 10000},
-    [RPMH_UFS_VCCQ] = {"ldod1",  1200, 1200000, 30000},
+static const struct {
+    const char *name;
+    unsigned min_mv, max_mv, init_mv, high_ua, threshold_ua, low_mode;
+} supplies[] = {
+    [RPMH_UFS_VCC]         = {"ldob17", 2504, 2504, 2504, 1300000, 10000, 4},
+    [RPMH_UFS_VCCQ]        = {"ldod1",  1200, 1200, 1200, 1200000, 30000, 4},
+    [RPMH_UFS_REFCLK]      = {"ldoi2",  1200, 1200, 1200,       0, 30000, 3},
+    [RPMH_UFS_VCCQ_PARENT] = {"smpi7",  1224, 1340, 1256,       0,200000, 3},
 };
-enum { MV = 0, ENABLE = 4, MODE = 8, UFS_LPM_UA = 1000, LDO_LPM = 4, LDO_HPM = 7 };
+enum { MV = 0, ENABLE = 4, MODE = 8, UFS_LPM_UA = 1000, HIGH_MODE = 7 };
 
 int rpmh_vrm_init(struct rpmh_vrm *v, const struct rpmh_cmd_db *db)
 {
@@ -39,7 +44,7 @@ int rpmh_vrm_adopt(struct rpmh_vrm *v, const struct rpmh_vrm_votes *votes)
         unsigned bit = 1u << i;
         if (!(votes->mask & bit)) continue;
         struct rpmh_vrm_vote raw = votes->vote[i];
-        if (!v->address[i] || raw.mv > supplies[i].mv || raw.enable > 1 || raw.mode > LDO_HPM ||
+        if (!v->address[i] || raw.mv > supplies[i].max_mv || raw.enable > 1 || raw.mode > HIGH_MODE ||
             ((v->floor.mask & bit) && !equal(v->floor.vote[i], raw))) return 0;
     }
     for (unsigned i = 0; i < RPMH_UFS_SUPPLY_COUNT; ++i) {
@@ -51,23 +56,50 @@ int rpmh_vrm_adopt(struct rpmh_vrm *v, const struct rpmh_vrm_votes *votes)
     return 1;
 }
 
-static struct rpmh_vrm_vote required(const struct rpmh_provider *p, unsigned supply)
+static int required(const struct rpmh_provider *p, unsigned supply, struct rpmh_vrm_vote *out)
 {
     struct rpmh_vrm_vote v = p->vrm.floor.vote[supply];
-    unsigned ua = 0;
+    unsigned ua = 0, min_mv = 0, max_mv = supplies[supply].max_mv, active = 0;
     for (const struct rpmh_client *c = p->clients; c; c = c->next) {
-        if (c->ufs[supply] == RPMH_SUPPLY_OFF) continue;
-        /* Above the threshold no further load can change the requested mode. */
-        ua += c->ufs[supply] == RPMH_SUPPLY_HIGH ? supplies[supply].high_ua : UFS_LPM_UA;
-        if (ua >= supplies[supply].threshold_ua) break;
+        uint32_t load;
+        if (supply < RPMH_UFS_REFCLK) {
+            if (c->ufs[supply] == RPMH_SUPPLY_OFF) continue;
+            load = c->ufs[supply] == RPMH_SUPPLY_HIGH ? supplies[supply].high_ua : UFS_LPM_UA;
+        } else {
+            const struct rpmh_supply_request *r = &c->aux[supply - RPMH_UFS_REFCLK];
+            if (r->min_mv > min_mv) min_mv = r->min_mv;
+            if (r->max_mv && r->max_mv < max_mv) max_mv = r->max_mv;
+            if (!r->enable) continue;
+            load = r->ua;
+        }
+        active = 1;
+        if (load > supplies[supply].threshold_ua - ua) ua = supplies[supply].threshold_ua;
+        else ua += load;
     }
-    if (ua) {
-        unsigned mode = ua >= supplies[supply].threshold_ua ? LDO_HPM : LDO_LPM;
+    if (min_mv > max_mv) return 0;
+    if (v.mv > max_mv) {
+        /* A boot hold is our new request, not an immutable firmware
+         * floor. Choose the highest voltage still permitted by all of
+         * this regulator's consumers, including clients surviving D3. */
+        if (!(p->vrm.boot_holds & (1u << supply))) return 0;
+        v.mv = (uint16_t)max_mv;
+    }
+    if (min_mv > v.mv) v.mv = (uint16_t)min_mv;
+    if (active) {
+        unsigned mode = ua >= supplies[supply].threshold_ua ? HIGH_MODE : supplies[supply].low_mode;
         v.enable = 1;
-        v.mv = (uint16_t)supplies[supply].mv;
+        if (v.mv < supplies[supply].min_mv) v.mv = (uint16_t)supplies[supply].init_mv;
+        if (v.mv > max_mv) return 0;
         if (mode > v.mode) v.mode = (uint8_t)mode;
+    } else if (p->vrm.managed & (1u << supply)) {
+        /* Removing an enable vote is not a request for an invalid 0 mV
+         * output. Keep the programmed board defaults (or a voltage-only
+         * consumer's range) while this AP no longer enables the supply. */
+        if (!v.mv) v.mv = (uint16_t)supplies[supply].init_mv;
+        if (!v.mode) v.mode = (uint8_t)supplies[supply].low_mode;
     }
-    return v;
+    *out = v;
+    return 1;
 }
 
 static int apply(struct rpmh_provider *p, unsigned i)
@@ -75,7 +107,8 @@ static int apply(struct rpmh_provider *p, unsigned i)
     struct rpmh_vrm *v = &p->vrm;
     unsigned bit = 1u << i, force = v->restore & bit;
     if (!(v->floor.mask & bit)) return 0;
-    struct rpmh_vrm_vote to = required(p, i), from = v->applied[i];
+    struct rpmh_vrm_vote to, from = v->applied[i];
+    if (!required(p, i, &to)) return 0;
     uint32_t base = v->address[i];
     struct rpmh_rsc_command cmd[3];
     unsigned n = 0;
@@ -102,17 +135,22 @@ static int apply(struct rpmh_provider *p, unsigned i)
 
 int rpmh_vrm_sync(struct rpmh_provider *p, unsigned mask)
 {
-    /* The UFS core toggles VCC first, then VCCQ. The independent VCCQ
-     * proxy is just another client and keeps its own enable/load request. */
-    enum rpmh_ufs_supply first = RPMH_UFS_VCC, second = RPMH_UFS_VCCQ;
-    if (p->vrm.rollback && !required(p, RPMH_UFS_VCC).enable) {
-        /* Unwind a partly enabled device in reverse order, including a
-         * VCCQ command that took effect after the caller timed out. */
-        first = RPMH_UFS_VCCQ;
-        second = RPMH_UFS_VCC;
+    enum rpmh_ufs_supply order[] = { RPMH_UFS_REFCLK, RPMH_UFS_VCCQ_PARENT, RPMH_UFS_VCC, RPMH_UFS_VCCQ };
+    struct rpmh_vrm_vote to[RPMH_UFS_SUPPLY_COUNT];
+    for (unsigned i = 0; i < RPMH_UFS_SUPPLY_COUNT; ++i)
+        if ((mask & (1u << i)) && !required(p,i,&to[i])) return 0;
+    /* Start parents before dependent rails. On normal media power-down
+     * the UFS core releases VCC, then VCCQ. Roll back a failed acquisition
+     * in reverse order, including commands with a delayed completion. */
+    for (unsigned i = 0; i < RPMH_UFS_SUPPLY_COUNT; ++i) {
+        unsigned s = order[i];
+        if ((mask & (1u << s)) && to[s].enable && !apply(p,s)) return 0;
     }
-    if ((mask & (1u << first)) && !apply(p, first)) return 0;
-    if ((mask & (1u << second)) && !apply(p, second)) return 0;
+    if (!p->vrm.rollback) { order[2] = RPMH_UFS_VCCQ; order[3] = RPMH_UFS_VCC; }
+    for (unsigned i = RPMH_UFS_SUPPLY_COUNT; i; --i) {
+        unsigned s = order[i-1];
+        if ((mask & (1u << s)) && !to[s].enable && !apply(p,s)) return 0;
+    }
     if (!p->vrm.restore) p->vrm.rollback = 0;
     return 1;
 }
@@ -121,7 +159,69 @@ void rpmh_vrm_restore_demands(struct rpmh_provider *p, unsigned mask)
 {
     /* A preceding rail may have succeeded before the failed one. A later
      * rail which was never attempted needs no write at all. */
-    for (unsigned i = 0; i < RPMH_UFS_SUPPLY_COUNT; ++i)
-        if ((mask & (1u << i)) && !equal(p->vrm.applied[i], required(p, i))) p->vrm.restore |= 1u << i;
+    for (unsigned i = 0; i < RPMH_UFS_SUPPLY_COUNT; ++i) {
+        struct rpmh_vrm_vote to;
+        if ((mask & (1u << i)) && required(p,i,&to) && !equal(p->vrm.applied[i], to)) p->vrm.restore |= 1u << i;
+    }
     p->vrm.rollback = 1;
+}
+
+int rpmh_vrm_set_aux(struct rpmh_provider *p, struct rpmh_client *c, enum rpmh_ufs_supply supply,
+                     const struct rpmh_supply_request *r)
+{
+    unsigned i = (unsigned)supply;
+    if (!r || i < RPMH_UFS_REFCLK || i >= RPMH_UFS_SUPPLY_COUNT || r->enable > 1 ||
+        (!r->enable && r->ua) || (!!r->min_mv != !!r->max_mv) ||
+        (r->min_mv && (r->min_mv < supplies[i].min_mv || r->max_mv > supplies[i].max_mv ||
+                        r->min_mv > r->max_mv))) return 0;
+    unsigned bit = 1u << i;
+    if (!(p->vrm.floor.mask & bit) || (p->vrm.restore && !rpmh_vrm_sync(p, p->vrm.restore))) return 0;
+    struct rpmh_supply_request *entry = &c->aux[i - RPMH_UFS_REFCLK], old = *entry;
+    *entry = *r;
+    if (rpmh_vrm_sync(p, bit)) return 1;
+    *entry = old;
+    rpmh_vrm_restore_demands(p, bit);
+    (void)rpmh_vrm_sync(p, p->vrm.restore);
+    return 0;
+}
+
+int rpmh_vrm_hold_boot(struct rpmh_provider *p, unsigned mask)
+{
+    if (!p || !mask || (mask >> RPMH_UFS_SUPPLY_COUNT)) return 0;
+    for (unsigned i = 0; i < RPMH_UFS_SUPPLY_COUNT; ++i)
+        if ((mask & (1u << i)) && !p->vrm.address[i]) return 0;
+    unsigned add = mask & ~p->vrm.floor.mask;
+    for (unsigned i = 0; i < RPMH_UFS_SUPPLY_COUNT; ++i) {
+        if (!(add & (1u << i))) continue;
+        /* A temporary OS request, not a claim to know the old AP vote.
+         * All board consumers of these rails accept this voltage. Keep
+         * them powered during enumeration until their owners synchronize. */
+        p->vrm.floor.vote[i] = (struct rpmh_vrm_vote){(uint16_t)supplies[i].max_mv, 1, HIGH_MODE};
+    }
+    p->vrm.floor.mask |= add;
+    p->vrm.boot_holds |= add;
+    p->vrm.restore |= add;  /* Never mark the new request applied without a hardware reply. */
+    return rpmh_vrm_sync(p, mask & p->vrm.restore);
+}
+
+int rpmh_vrm_finish_boot(struct rpmh_provider *p, unsigned mask)
+{
+    if (!p || !mask || (mask & ~p->vrm.floor.mask)) return 0;
+    unsigned drop = mask & p->vrm.boot_holds;
+    if (!drop) return 1;
+    if (p->vrm.restore && !rpmh_vrm_sync(p, p->vrm.restore)) return 0;
+    struct rpmh_vrm_votes old = p->vrm.floor;
+    unsigned old_managed = p->vrm.managed;
+    p->vrm.managed |= drop;
+    for (unsigned i = 0; i < RPMH_UFS_SUPPLY_COUNT; ++i)
+        if (drop & (1u << i)) p->vrm.floor.vote[i] = (struct rpmh_vrm_vote){0};
+    if (!rpmh_vrm_sync(p, drop)) {
+        p->vrm.floor = old;
+        p->vrm.managed = old_managed;
+        rpmh_vrm_restore_demands(p, drop);
+        (void)rpmh_vrm_sync(p, p->vrm.restore);
+        return 0;
+    }
+    p->vrm.boot_holds &= ~drop;
+    return 1;
 }

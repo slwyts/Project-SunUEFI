@@ -59,6 +59,7 @@ BOOLEAN UfsPlatformRelease(UFS_PLATFORM_DEVICE *d, ULONGLONG now_us)
 {
     if (!d) return FALSE;
     if (!d->extension) return TRUE;
+    if (d->media_may_power_off && !d->media_may_power_off(d->release_context)) return FALSE;
     UFS_IO_QUEUE *q = d->queue;
     if (q->running || q->owns_list || q->active || q->managing || !ufs_platform_stop(&d->phy, now_us)) return FALSE;
     if (d->bus_vote && !d->power.set_bus_power(d->power.context, 0)) return FALSE;

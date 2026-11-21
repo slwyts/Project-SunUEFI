@@ -15,6 +15,8 @@ typedef struct {
     ULONGLONG frequency, retire_since;
     BOOLEAN start_timer;
     BOOLEAN needs_reset;
+    PVOID link_power_context;
+    void (*link_power_ready)(PVOID, const uint8_t *);
 } UFS_ADAPTER;
 
 /* The Piano bus/power implementation calls this from its own matched PnP

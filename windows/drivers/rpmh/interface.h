@@ -10,7 +10,7 @@
 static const GUID GUID_PIANO_RPMH_INTERFACE = {
     0xdda1f9f3,0x747d,0x4750,{0x99,0xfa,0x17,0x2c,0xae,0x1c,0xd8,0xe6}
 };
-#define PIANO_RPMH_INTERFACE_VERSION 2
+#define PIANO_RPMH_INTERFACE_VERSION 3
 typedef struct {
     INTERFACE Header;
     NTSTATUS (*Open)(PVOID, struct rpmh_client **);
@@ -22,4 +22,11 @@ typedef struct {
      * retry before using it: a timed-out transition may still be retiring. */
     NTSTATUS (*SetUfsSupplies)(PVOID, struct rpmh_client *, enum rpmh_supply_load, enum rpmh_supply_load);
     NTSTATUS (*AdoptRegulators)(PVOID, const struct rpmh_vrm_votes *);
+    /* The two shared board rails accept independent load, voltage range
+     * and enable votes from storage, audio and wireless clients. */
+    NTSTATUS (*SetAuxSupply)(PVOID, struct rpmh_client *, enum rpmh_ufs_supply, const struct rpmh_supply_request *);
+    /* Hold before probing the first consumer. Only the platform owning the
+     * complete set of consumer dependencies calls Finish after they sync. */
+    NTSTATUS (*HoldBootResources)(PVOID, unsigned rails, unsigned paths, unsigned supplies);
+    NTSTATUS (*FinishBootResources)(PVOID, unsigned rails, unsigned paths, unsigned supplies);
 } PIANO_RPMH_INTERFACE;

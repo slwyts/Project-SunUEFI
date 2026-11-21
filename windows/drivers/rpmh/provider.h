@@ -25,7 +25,8 @@ struct rpmh_client {
     struct rpmh_client *next;
     uint32_t corner[RPMH_RAIL_COUNT];
     uint32_t avg[RPMH_FABRIC_PATH_COUNT], peak[RPMH_FABRIC_PATH_COUNT];
-    enum rpmh_supply_load ufs[RPMH_UFS_SUPPLY_COUNT];
+    enum rpmh_supply_load ufs[2]; /* Device VCC and VCCQ, in the UFS core's load modes. */
+    struct rpmh_supply_request aux[2]; /* Reference clock and VCCQ parent, shared with other devices. */
 };
 
 struct rpmh_provider {
@@ -35,13 +36,18 @@ struct rpmh_provider {
     struct rpmh_fabric fabric;
     struct rpmh_vrm vrm;
     struct rpmh_boot_votes floor, applied;
-    unsigned slots, adopted, touched_paths, restore_rails, restore_bcms;
+    unsigned slots, adopted, touched_paths, restore_rails, restore_bcms, boot_rails, boot_bcms;
 };
 
 /* The caller holds one passive lock for this provider and all its clients. */
 int rpmh_provider_start(struct rpmh_provider *, const struct rpmh_cmd_db *, const struct rpmh_transport *,
                         unsigned slots);
 int rpmh_provider_adopt(struct rpmh_provider *, const struct rpmh_boot_votes *);
+/* Establish *new* OS requests for unobserved resources after firmware has
+ * relinquished this RSC. The platform, not a single child, releases a
+ * resource's boot hold after every user of that resource is accounted for. */
+int rpmh_provider_boot(struct rpmh_provider *, unsigned rail_mask, unsigned path_mask,
+                       unsigned supply_mask, int hold);
 /* Preserve accepted requests across an unclean power transition. The old
  * boot votes and acknowledgements are no longer evidence about hardware. */
 void rpmh_provider_power_lost(struct rpmh_provider *);
@@ -56,6 +62,8 @@ int rpmh_set_bandwidth(struct rpmh_provider *, struct rpmh_client *, enum rpmh_f
  * requesting either rail off; a stopped HBA alone does not prove that. */
 int rpmh_set_ufs_supplies(struct rpmh_provider *, struct rpmh_client *,
                           enum rpmh_supply_load vcc, enum rpmh_supply_load vccq);
+int rpmh_set_aux_supply(struct rpmh_provider *, struct rpmh_client *, enum rpmh_ufs_supply,
+                        const struct rpmh_supply_request *);
 /* Restore the last accepted client demands after an unknown completion. */
 int rpmh_provider_can_reconcile(const struct rpmh_provider *);
 int rpmh_provider_reconcile(struct rpmh_provider *);

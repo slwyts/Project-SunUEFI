@@ -126,6 +126,38 @@ int main(void)
     assert(rpmh_client_close(&p,&keyboard) && rpmh_provider_quiet(&p));
     assert(hw.vote[4]==2 && !hw.vote[6] && !p.clients && !p.restore_bcms);
     assert(!rpmh_client_close(&p,&keyboard));
+
+    /* No previous AP values. The provider establishes new hardware requests
+     * before accepting drivers' demands; failed handoff restores the holds. */
+    assert(rpmh_provider_start(&p,&db,&tr,3));
+    hw=(struct hardware){0};
+    unsigned domains = BIT(RPMH_XO) | BIT(RPMH_CX) | BIT(RPMH_MX);
+    unsigned paths = BIT(RPMH_CPU_QUP1);
+    assert(rpmh_provider_boot(&p,domains,paths,0,1) && p.boot_rails == domains);
+    assert(hw.vote[0] == 3 && hw.vote[1] == 3 && hw.vote[2] == 3);
+    assert(p.boot_bcms && hw.vote[4]);
+    assert(rpmh_client_open(&p,&keyboard));
+    assert(rpmh_set_level(&p,&keyboard,RPMH_CX,16) && rpmh_set_bandwidth(&p,&keyboard,RPMH_CPU_QUP1,2,40));
+    unsigned calls = hw.calls;
+    assert(rpmh_provider_boot(&p,domains,paths,0,1) && hw.calls == calls);
+    hw.fail_at=hw.calls+1; hw.failures=1;
+    assert(!rpmh_provider_boot(&p,domains,paths,0,0) && p.boot_rails == domains && p.boot_bcms);
+    assert(rpmh_provider_boot(&p,domains,paths,0,0) && !p.boot_rails && !p.boot_bcms);
+    assert(!hw.vote[0] && hw.vote[1] == 1 && !hw.vote[2] && hw.vote[4] && rpmh_client_close(&p,&keyboard));
+
+    /* The first driver back from forced D3 does not own the QUP route.
+     * Re-establish the keyboard's accepted vote without re-opening it. */
+    assert(rpmh_provider_boot(&p,0,BIT(RPMH_QUP1_CORE),0,1) && rpmh_client_open(&p,&keyboard));
+    assert(rpmh_set_level(&p,&keyboard,RPMH_CX,16) && rpmh_set_bandwidth(&p,&keyboard,RPMH_QUP1_CORE,19200,0));
+    assert(rpmh_provider_boot(&p,0,BIT(RPMH_QUP1_CORE),0,0));
+    uint32_t before_suspend=hw.vote[5];
+    assert(before_suspend);
+    rpmh_provider_power_lost(&p);
+    memset(hw.vote,0,sizeof(hw.vote));
+    assert(rpmh_provider_boot(&p,BIT(RPMH_MX),0,0,1) && !p.restore_bcms && !p.restore_rails);
+    assert(hw.vote[1] >= 1 && hw.vote[5] >= before_suspend);
+    assert(rpmh_provider_boot(&p,BIT(RPMH_MX)|BIT(RPMH_CX),paths|BIT(RPMH_QUP1_CORE),0,0));
+    assert(hw.vote[1] == 1 && hw.vote[5] == before_suspend && rpmh_client_close(&p,&keyboard));
     puts("RPMh: transferred AP floor, shared client votes, acknowledged VCDs and late writes verified.");
     return 0;
 }

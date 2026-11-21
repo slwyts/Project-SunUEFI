@@ -463,6 +463,34 @@ static NTSTATUS adopt_regulators(PVOID context, const struct rpmh_vrm_votes *vot
     return s;
 }
 
+static NTSTATUS set_aux_supply(PVOID context, struct rpmh_client *client, enum rpmh_ufs_supply supply,
+                               const struct rpmh_supply_request *r)
+{
+    RPMH_DEVICE *d = rpmh_device((WDFDEVICE)context);
+    lock_device(d);
+    NTSTATUS s = gone(d) ? STATUS_DEVICE_REMOVED : !d->online ? STATUS_DEVICE_NOT_READY :
+                 rpmh_set_aux_supply(&d->provider, client, supply, r) ? STATUS_SUCCESS : STATUS_IO_DEVICE_ERROR;
+    update_retry(d);
+    unlock_device(d);
+    return s;
+}
+
+static NTSTATUS boot_resources(PVOID context, unsigned rails, unsigned paths, unsigned supplies, int hold)
+{
+    RPMH_DEVICE *d = rpmh_device((WDFDEVICE)context);
+    lock_device(d);
+    NTSTATUS s = gone(d) ? STATUS_DEVICE_REMOVED : !d->online ? STATUS_DEVICE_NOT_READY :
+                 rpmh_provider_boot(&d->provider,rails,paths,supplies,hold)
+                 ? STATUS_SUCCESS : STATUS_IO_DEVICE_ERROR;
+    update_retry(d);
+    unlock_device(d);
+    return s;
+}
+static NTSTATUS hold_boot(PVOID ctx, unsigned rails, unsigned paths, unsigned supplies)
+{ return boot_resources(ctx,rails,paths,supplies,1); }
+static NTSTATUS finish_boot(PVOID ctx, unsigned rails, unsigned paths, unsigned supplies)
+{ return boot_resources(ctx,rails,paths,supplies,0); }
+
 static NTSTATUS adopt(PVOID context, const struct rpmh_boot_votes *votes)
 {
     RPMH_DEVICE *d = rpmh_device((WDFDEVICE)context);
@@ -545,6 +573,9 @@ static NTSTATUS add_device(WDFDRIVER driver, PWDFDEVICE_INIT init)
     api.Adopt = adopt;
     api.SetUfsSupplies = set_ufs_supplies;
     api.AdoptRegulators = adopt_regulators;
+    api.SetAuxSupply = set_aux_supply;
+    api.HoldBootResources = hold_boot;
+    api.FinishBootResources = finish_boot;
     WDF_QUERY_INTERFACE_CONFIG query;
     WDF_QUERY_INTERFACE_CONFIG_INIT(&query, &api.Header, &GUID_PIANO_RPMH_INTERFACE, NULL);
     return WdfDeviceAddQueryInterface(device, &query);

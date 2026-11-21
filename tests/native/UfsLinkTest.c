@@ -9,7 +9,7 @@ struct host {
     struct ufs_management_ucd ucd;
     struct ufs_link l;
     uint64_t now;
-    unsigned startup, publish, consume, read_init, transfers, hold_stop;
+    unsigned startup, publish, consume, read_init, transfers, hold_stop, get_count;
     uint32_t original_ie;
 };
 static uint32_t reg_read(void *ctx, unsigned reg) { return ((struct host *)ctx)->regs[reg / 4]; }
@@ -22,6 +22,11 @@ static void reg_write(void *ctx, unsigned reg, uint32_t value)
         assert(h->publish == ++h->transfers); h->regs[reg / 4] |= value;
     } else if (reg == 0x5c) {
         assert(value == ~UINT32_C(1)); if (!h->hold_stop) h->regs[0x58 / 4] &= value;
+    } else if (reg == 0x90 && value == 1) {
+        static const unsigned pa[] = {0x1571,0x1568,0x1583,0x1560,0x1580,0x156a};
+        assert(h->get_count < sizeof(pa)/sizeof(*pa) && h->regs[0x94 / 4] == (pa[h->get_count] << 16));
+        assert(!h->regs[0x98 / 4] && !h->regs[0x9c / 4] && !(h->regs[0x20 / 4] & 0x400));
+        ++h->get_count;
     } else if (reg == 0x90) {
         assert(value == 0x16 && !h->regs[0x94 / 4] && !h->regs[0x98 / 4] && !h->regs[0x9c / 4]);
         ++h->startup;
@@ -111,17 +116,37 @@ int main(void)
     struct host h;
     for (int warm = 0; warm != 2; ++warm) {
         init(&h, warm);
+        h.l.read_parameters = (uint8_t)warm;
+        static const uint8_t attr[] = {0x11,4,5,1,2,2};
         for (unsigned i = 0; i < 100 && h.l.phase != UFS_LINK_READY; ++i) {
             if (h.l.phase == UFS_LINK_WAIT_STARTUP) { h.regs[0x20 / 4] |= 0x400; h.regs[0x30 / 4] = 0x10f; }
             if (h.l.phase == UFS_LINK_WAIT_REPLY) deliver(&h);
+            if (h.l.phase == UFS_LINK_WAIT_PARAMETER) {
+                assert(h.get_count && h.get_count <= sizeof(attr));
+                h.regs[0x9c / 4] = attr[h.get_count-1];
+                h.regs[0x20 / 4] |= 0x400;
+            }
             assert(pump(&h) != UFS_LINK_FAILED);
         }
         assert(h.l.phase == UFS_LINK_READY && h.l.error == UFS_LINK_OK && h.l.enabled_luns == 0x41 &&
                h.l.lun_count == 2 && h.l.specification == 0x410 && h.l.manufacturer == 0x01ce);
         assert(h.startup == (unsigned)!warm && h.read_init == 3);
+        if (warm) assert(h.l.parameter_count == sizeof(attr) && !memcmp(h.l.parameter,attr,sizeof(attr)));
+        else assert(!h.get_count && !h.l.parameter_count);
         assert(ufs_link_stop(&h.l) && !h.l.owns_controller && !h.l.owns_list &&
                h.regs[0x24 / 4] == h.original_ie && !h.regs[0x50 / 4] && !h.regs[0x54 / 4]);
     }
+    /* Host power-down in the middle of a DME_GET must wait for UIC, then
+     * actually stop its transfer list. A late completion is not a new UIC. */
+    init(&h,1); h.l.read_parameters = 1;
+    for (unsigned i = 0; i < 100 && h.l.phase != UFS_LINK_WAIT_PARAMETER; ++i) {
+        if (h.l.phase == UFS_LINK_WAIT_REPLY) deliver(&h);
+        assert(pump(&h) != UFS_LINK_FAILED);
+    }
+    assert(h.l.owns_list && h.l.uic_inflight && !ufs_link_stop(&h.l));
+    assert(pump(&h) == UFS_LINK_WAIT_PARAMETER && h.get_count == 1);
+    h.regs[0x20 / 4] |= 0x400;
+    assert(ufs_link_stop(&h.l) && !h.regs[0x60 / 4] && !h.l.owns_controller);
     warm_nop(&h);
     assert(ufs_link_poll(&h.l, h.now + 50000) == UFS_LINK_FAILED && h.l.error == UFS_LINK_TIMEOUT);
     h.hold_stop = 1;

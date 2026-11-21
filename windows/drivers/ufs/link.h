@@ -27,8 +27,11 @@ struct ufs_link_io {
 enum ufs_link_phase {
     UFS_LINK_IDLE, UFS_LINK_WAIT_HCE, UFS_LINK_WAIT_UIC, UFS_LINK_WAIT_STARTUP,
     UFS_LINK_WAIT_PRESENT, UFS_LINK_SEND, UFS_LINK_WAIT_REPLY, UFS_LINK_INIT_POLL,
-    UFS_LINK_READY, UFS_LINK_FAILED, UFS_LINK_STOPPED
+    UFS_LINK_READY, UFS_LINK_FAILED, UFS_LINK_STOPPED,
+    UFS_LINK_GET_PARAMETERS, UFS_LINK_WAIT_PARAMETER
 };
+enum ufs_pa_parameter { UfsPaPowerMode, UfsPaTxGear, UfsPaRxGear, UfsPaTxLanes, UfsPaRxLanes,
+                        UfsPaHsSeries, UfsPaParameterCount };
 enum ufs_link_error {
     UFS_LINK_OK, UFS_LINK_RESOURCES, UFS_LINK_OWNED, UFS_LINK_CONTROLLER,
     UFS_LINK_TIMEOUT, UFS_LINK_UIC, UFS_LINK_OCS, UFS_LINK_REJECTED, UFS_LINK_PROTOCOL
@@ -46,7 +49,8 @@ struct ufs_link {
     uint32_t enabled_luns, reported_luns, previous_ie, fault_interrupts;
     uint16_t specification, manufacturer;
     uint8_t lun_count, lun_capacity, unit, query_status, ocs, uic_result, nop_attempts;
-    unsigned cold, owns_controller, owns_list, uic_inflight, transfer_inflight, stopping;
+    unsigned cold, owns_controller, owns_list, uic_inflight, transfer_inflight, stopping, list_stop_issued;
+    uint8_t read_parameters, parameter_count, parameter[UfsPaParameterCount];
 };
 
 /* Caller serializes management with the ISR, D-state and regular SRBs.
