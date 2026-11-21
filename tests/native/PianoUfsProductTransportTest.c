@@ -19,7 +19,7 @@ static EFI_TPL CurrentTpl;static UINTN CaptureCalls,Doorbells,DmaBegins,DmaCompl
 static UINTN Freed,Disconnected,Uninstalled,ClockStops;
 static UINTN NativeReads,LastReadBytes,LastWriteBytes,LargestRead,LargestWrite;
 static UINTN CorruptCapture;static UINT64 CorruptPage;
-static BOOLEAN TranslateBad,PartialWrite,PartialRead,WrongReadLun,RetainOnRead,ResetAttempted;
+static BOOLEAN TranslateBad,PartialWrite,PartialRead,WrongReadLun,RetainOnRead,RetainOnSync,ResetAttempted;
 static UINT64 FakeUs,ReadDelay,WriteDelay,SyncDelay,DoorbellReadyUs;
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){(void)Level;return FALSE;}VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){(void)Level;(void)Format;}
 VOID EFIAPI MemoryFence(VOID){}VOID EFIAPI CpuPause(VOID){}
@@ -125,6 +125,7 @@ UINT32 EFIAPI MmioWrite32(UINTN Address,UINT32 Value){
       if(mPartitionExecuting)assert(!ReadBe32(Ucd+18) && !Ucd[23] && !Ucd[24]);
       else assert(ReadBe32(Ucd+18)==375040 && Ucd[23]==14 && Ucd[24]==0);
       ++NativeSyncs;
+      if(RetainOnSync)mExitRetained=mTrl.ExitRetained=mUcd.ExitRetained=TRUE;
     }
   }
   UINT64 Delay=Ucd[0]!=1?0:Ucd[16]==0x28?ReadDelay:Ucd[16]==0x2a?WriteDelay:Ucd[16]==0x35?SyncDelay:0;
@@ -147,7 +148,7 @@ static VOID native_fresh(BOOLEAN Provisioned){
   fresh(Provisioned);memset(Regs,0,sizeof(Regs));memset(Trl,0,sizeof(Trl));memset(Ucd,0,sizeof(Ucd));memset(Data,0,sizeof(Data));memset(&mContext,0,sizeof(mContext));memset(&Hardware,0,sizeof(Hardware));memset(&mResetReport,0,sizeof(mResetReport));memset(mBlockHandles,0,sizeof(mBlockHandles));
   CaptureCalls=Doorbells=DmaBegins=DmaCompletes=Allocations=Installs=Connects=NativeWrites=NativeSyncs=Freed=Disconnected=Uninstalled=ClockStops=0;CorruptCapture=0;TranslateBad=PartialWrite=ResetAttempted=FALSE;CurrentTpl=TPL_APPLICATION;
   NativeReads=LastReadBytes=LastWriteBytes=LargestRead=LargestWrite=0;
-  CorruptPage=0;PartialRead=WrongReadLun=RetainOnRead=mPartitionExecuting=mPartitionFailed=FALSE;
+  CorruptPage=0;PartialRead=WrongReadLun=RetainOnRead=RetainOnSync=mPartitionExecuting=mPartitionFailed=FALSE;
   FakeUs=ReadDelay=WriteDelay=SyncDelay=DoorbellReadyUs=0;
   mStorageIoTiming=NULL;
   mProductVolume=NULL;mProductExecuting=mProductRetained=mProductPublished=mBlockBusy=mExitRetained=FALSE;mBlockLive=mInstalled=mEverInstalled=TRUE;mLunCount=6;mShutdownHandle=mExitBootEvent=NULL;mSavedBase=0x12345000;mSavedUpper=0;
@@ -295,8 +296,66 @@ static VOID partition_batches(VOID){
   assert(PianoStorageSetIoTiming(NULL)==&Timing && Timing.Read.Submitted==1 && !Timing.Read.Completed && !Timing.Read.WaitUs);
   puts("Actual product UFS: 1 MiB READ(10)/WRITE(10) FUA, timed doorbells, whole-range gate, interior DMA map and exit retention passed.");
 }
+
+static VOID esp_block_writes(VOID) {
+  native_fresh(TRUE);
+  ZeroMem(&mEsp,sizeof(mEsp));
+  ZeroMem(mFilePartitions,sizeof(mFilePartitions));
+  EFI_GUID EspType=EFI_PART_TYPE_EFI_SYSTEM_PART_GUID;
+  EFI_PARTITION_ENTRY Factory={.PartitionTypeGUID=EspType,.UniquePartitionGUID={.Data1=2},
+    .PartitionName=L"esp",.StartingLBA=375104,.EndingLBA=375167};
+  EFI_PARTITION_ENTRY Esp={.PartitionTypeGUID=EspType,.UniquePartitionGUID={.Data1=3},
+    .PartitionName=L"sunuefi_esp",.StartingLBA=375168,.EndingLBA=375183};
+  EFI_PARTITION_ENTRY Table[]={Factory,Esp};
+  PIANO_GPT_HEADER Header={.Entries=ARRAY_SIZE(Table),.EntryBytes=sizeof(Table[0])};
+  FindEspInGpt(4,Table,&Header);
+  assert(mEsp.Matches==1 && mEsp.LunIndex==4);
+  EFI_BLOCK_IO_MEDIA Media={.MediaId=17,.MediaPresent=TRUE,.ReadOnly=TRUE,.LogicalPartition=TRUE,
+    .BlockSize=4096,.LastBlock=15};
+  EFI_BLOCK_IO_PROTOCOL Child={.Media=&Media};
+  ConfigureEsp(&Factory,&Child);
+  assert(Media.ReadOnly && Child.WriteBlocks==NULL);
+  mCapabilities[4].WriteProtected=TRUE;
+  ConfigureEsp(&Esp,&Child);
+  assert(Media.ReadOnly && Child.WriteBlocks==NULL);
+  mCapabilities[4].WriteProtected=FALSE;
+  Media.LastBlock=16;
+  ConfigureEsp(&Esp,&Child);
+  assert(Media.ReadOnly && Child.WriteBlocks==NULL);
+  Media.LastBlock=15;
+  ConfigureEsp(&Esp,&Child);
+  assert(!Media.ReadOnly && Child.WriteBlocks && Child.FlushBlocks && mBlocks[4].Media.ReadOnly);
+  assert(Child.FlushBlocks(&Child)==EFI_SUCCESS && !Doorbells);
+  UINT8 DataBlock[4096],Readback[4096];
+  memset(DataBlock,0xc3,sizeof(DataBlock));
+  assert(Child.WriteBlocks(&Child,16,0,sizeof(DataBlock),DataBlock)==EFI_MEDIA_CHANGED);
+  assert(Child.WriteBlocks(&Child,17,15,1,DataBlock)==EFI_BAD_BUFFER_SIZE);
+  assert(Child.WriteBlocks(&Child,17,MAX_UINT64,sizeof(DataBlock),DataBlock)==EFI_INVALID_PARAMETER);
+  assert(Child.WriteBlocks(&Child,17,16,sizeof(DataBlock),DataBlock)==EFI_INVALID_PARAMETER);
+  assert(!NativeWrites && !Doorbells);
+  CurrentTpl=TPL_CALLBACK; // EnhancedFatDxe holds the FAT lock during synchronous I/O.
+  assert(Child.WriteBlocks(&Child,17,15,sizeof(DataBlock),DataBlock)==EFI_SUCCESS && CurrentTpl==TPL_CALLBACK);
+  assert(Child.FlushBlocks(&Child)==EFI_SUCCESS && NativeWrites==1 && NativeSyncs==1);
+  assert(Child.FlushBlocks(&Child)==EFI_SUCCESS && NativeSyncs==1);
+  assert(ServiceRead(NULL,4,Esp.EndingLBA,sizeof(Readback),Readback)==EFI_SUCCESS);
+  assert(!memcmp(DataBlock,Readback,sizeof(DataBlock)));
+  CurrentTpl=TPL_APPLICATION;
+  assert(Child.WriteBlocks(&Child,17,0,sizeof(DataBlock),DataBlock)==EFI_SUCCESS);
+  RetainOnSync=TRUE;
+  assert(Child.FlushBlocks(&Child)==EFI_ABORTED && mEspNeedsFlush && mPartitionFailed);
+  assert(CurrentTpl==TPL_CALLBACK && mTrl.Active && mUcd.Active);
+  assert(Child.FlushBlocks(&Child)==EFI_DEVICE_ERROR && NativeSyncs==2);
+  FindEspInGpt(0,Table,&Header); // A second live GPT entry with the same label is ambiguous.
+  Child.WriteBlocks=NULL; Media.ReadOnly=TRUE;
+  ConfigureEsp(&Esp,&Child);
+  assert(mEsp.Matches==2 && Media.ReadOnly && !Child.WriteBlocks);
+  ZeroMem(&mEsp,sizeof(mEsp));
+  ZeroMem(mFilePartitions,sizeof(mFilePartitions));
+  mEspNeedsFlush=FALSE;
+}
 int main(void){
   filesystem_write_preparation();
+  esp_block_writes();
   partition_batches();
   assert(PIANO_SMMU_FSR_FORMAT_MASK==0x600 && PIANO_SMMU_FSR_FAULT_MASK==0xC00001FE);
   native_fresh(FALSE);assert(PianoUfsProductVolumeOpen(&volume,&io)==EFI_NOT_FOUND && !NativeWrites && !NativeSyncs && !Allocations && !Installs && !mProductRetained && CurrentTpl==TPL_APPLICATION);

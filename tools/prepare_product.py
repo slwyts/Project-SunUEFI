@@ -567,8 +567,9 @@ def prepare(root=ROOT):
         nested.parent.mkdir(parents=True,exist_ok=True)
         shutil.copyfile(path,nested)
     shutil.copytree(source/'Protocol',app/'Protocol')
-    shutil.copyfile(source/'Protocol/PianoRawPartitionWrite.h',
-                    root/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/Protocol/PianoRawPartitionWrite.h')
+    for name in ('PianoRawPartitionWrite.h','PianoPartitionBlockIo.h'):
+        shutil.copyfile(source/'Protocol'/name,
+                        root/'upstream/Mu-Silicium/Mu_Basecore/MdePkg/Include/Protocol'/name)
     for component,names in PRODUCT_COMPONENTS.items():
         for name in names:shutil.copyfile(root/'uefi/components'/component/name,app/name)
     pogo_firmware=prepare_pogo_firmware(root,app)

@@ -130,6 +130,13 @@ STATIC struct {EFI_STATUS CacheStatus,UnitStatus;BOOLEAN WriteProtected,Fua,Writ
 #ifdef PIANO_UFS_BLOCKIO
 STATIC PIANO_GPT_HEADER mGpts[8];
 STATIC UINTN mPartitions[8];
+#if PIANO_UFS_PRODUCT_STORAGE
+STATIC struct {
+  UINTN Matches,LunIndex;
+  EFI_PARTITION_ENTRY Entry;
+} mEsp;
+STATIC VOID FindEspInGpt(UINTN LunIndex,CONST VOID *Entries,CONST PIANO_GPT_HEADER *Header);
+#endif
 #ifndef PIANO_UFS_BOUNDED_VOLUME
 STATIC UINTN mPublishedHandles,mIoReads[8],mIoBytes[8];
 STATIC EFI_STATUS mTests[8];
@@ -813,6 +820,9 @@ STATIC EFI_STATUS ReadGpts(VOID) {
   UINT8 Tag=64;UINTN Valid=0;
 #ifdef PIANO_UFS_BLOCKIO
   ZeroMem(mGpts,sizeof(mGpts));ZeroMem(mPartitions,sizeof(mPartitions));
+#if PIANO_UFS_PRODUCT_STORAGE
+  ZeroMem(&mEsp,sizeof(mEsp));
+#endif
 #endif
   for(UINTN I=0;I<mLunCount;++I) {
     EFI_STATUS Status=ReadBlock(&Tag,I,0);if(EFI_ERROR(Status))return Status;
@@ -833,6 +843,9 @@ STATIC EFI_STATUS ReadGpts(VOID) {
     }
     UINTN Active=0;
     if(!EFI_ERROR(Status))Status=PianoGptCheckEntries(Entries,Header.ArrayBytes,&Header,&Active);
+#if PIANO_UFS_PRODUCT_STORAGE
+    if(!EFI_ERROR(Status))FindEspInGpt(I,Entries,&Header);
+#endif
     FreePool(Entries);
     DEBUG((DEBUG_WARN,"SUNUEFI_UFS_GPT_VERIFIED lun=%u status=%r header_crc=%08x array_crc=%08x entry_lba=%lx array_bytes=%u entries=%u active_partitions=%u\n",
       mLuns[I].Id,Status,Header.HeaderCrc,Header.ArrayCrc,Header.EntryLba,Header.ArrayBytes,Header.Entries,(UINT32)Active));
@@ -1065,6 +1078,10 @@ EFI_STATUS PianoUfsBlockIoShutdownForReset(VOID){
   // No queue restart after restoring bases, unmapping or detaching the domain.
   if(mInstalled && (!QueuesStopped() || Read(0x24)!=0))return ResetFailure(EFI_DEVICE_ERROR);
   if(mExitBootEvent!=NULL){S=ResetExact(gBS->CloseEvent(mExitBootEvent));if(S!=EFI_SUCCESS){mResetReport.Protocols=S;return ResetFailure(S);}mExitBootEvent=NULL;}
+#if PIANO_UFS_PRODUCT_STORAGE
+  S=UnpublishEspAccess();
+  if(S!=EFI_SUCCESS){mResetReport.Protocols=S;return ResetFailure(S);}
+#endif
   for(UINTN I=0;I<ARRAY_SIZE(mBlockHandles);++I)if(mBlockHandles[I]!=NULL){
 #if PIANO_UFS_PRODUCT_STORAGE
     if(I==7 && mProductPublished)S=ResetExact(gBS->UninstallMultipleProtocolInterfaces(mBlockHandles[I],&gEfiBlockIoProtocolGuid,&mProductVolume->Block,&gEfiDevicePathProtocolGuid,&mProductPath,NULL));
@@ -1119,6 +1136,9 @@ VOID PianoUfsBlockIoStop(VOID) {
   }
   if(EFI_ERROR(HaltService())){DmaFaultStop();return;}
   if(mExitBootEvent!=NULL){gBS->CloseEvent(mExitBootEvent);mExitBootEvent=NULL;}
+#if PIANO_UFS_PRODUCT_STORAGE
+  if(UnpublishEspAccess()!=EFI_SUCCESS){CpuDeadLoop();return;}
+#endif
   for(UINTN I=0;I<mLunCount;++I)if(mBlockHandles[I]!=NULL) {
     EFI_STATUS Status=gBS->UninstallMultipleProtocolInterfaces(mBlockHandles[I],&gEfiBlockIoProtocolGuid,
 #ifdef PIANO_UFS_BOUNDED_VOLUME
@@ -1169,6 +1189,10 @@ STATIC EFI_STATUS PublishBlocks(VOID) {
   EFI_GUID Guid=PIANO_UFS_SHUTDOWN_GUID;
   EFI_STATUS Status=gBS->InstallMultipleProtocolInterfaces(&mShutdownHandle,&Guid,&mShutdown,NULL);
   if(EFI_ERROR(Status))return Status;
+#if PIANO_UFS_PRODUCT_STORAGE
+  Status=PublishEspAccess();
+  if(EFI_ERROR(Status))DEBUG((DEBUG_WARN,"SUNUEFI_ESP_WRITE_UNAVAILABLE status=%r\n",Status));
+#endif
   Status=gBS->CreateEventEx(EVT_NOTIFY_SIGNAL,TPL_NOTIFY,PianoUfsExitBoot,NULL,&gEfiEventExitBootServicesGuid,&mExitBootEvent);
   if(EFI_ERROR(Status))return Status;
   PianoUfsRetainClocks();

@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // Included by the sole UFS owner; no second SMMU domain or DMA allocation.
 #include <Protocol/PianoRawPartitionWrite.h>
-STATIC PIANO_STORAGE_PARTITION mFilePartitions[3];
+#include <Protocol/PianoPartitionBlockIo.h>
+#include <Guid/Gpt.h>
+enum { PersistPartition, EspPartition, RootPartition, FilePartitionCount };
+STATIC PIANO_STORAGE_PARTITION mFilePartitions[FilePartitionCount];
 STATIC EFI_GUID mRawPartitionWriteGuid=PIANO_RAW_PARTITION_WRITE_GUID;
 EFI_STATUS PianoStorageOpenPersist(EFI_HANDLE Handle, PIANO_STORAGE_PARTITION *P) {
   EFI_PARTITION_INFO_PROTOCOL *Info=NULL;
@@ -140,7 +143,8 @@ STATIC BOOLEAN StorageWriteProtected(UINTN Index){
 }
 EFI_STATUS PianoStorageOpen(CONST CHAR16 *Name,PIANO_STORAGE_PARTITION *P){
   if(!Name||!P||mExitRetained||!mBlockLive||mBlockBusy||mResetReport.Prepared||mResetReport.Failed||mPartitionFailed)return EFI_NOT_READY;
-  STATIC CONST CHAR16 *Names[]={L"persist",L"sunuefi_esp",L"sunuefi_root"};UINTN Slot=0;
+  STATIC CONST CHAR16 *Names[FilePartitionCount]={[PersistPartition]=L"persist",
+    [EspPartition]=L"sunuefi_esp",[RootPartition]=L"sunuefi_root"};UINTN Slot=0;
   while(Slot<ARRAY_SIZE(Names)&&StrCmp(Name,Names[Slot]))++Slot;
   if(Slot==ARRAY_SIZE(Names))return EFI_ACCESS_DENIED;
   if(mFilePartitions[Slot].Identity){*P=mFilePartitions[Slot];return EFI_SUCCESS;}
@@ -227,8 +231,85 @@ STATIC EFI_STATUS StorageFlush(CONST PIANO_STORAGE_PARTITION *P){
   if(S==EFI_SUCCESS)S=Submit("PARTITION_SYNC",Tag,FALSE);
   if(S==EFI_SUCCESS)S=ProductSmmuGuard(FALSE);
   if(S!=EFI_SUCCESS)mPartitionFailed=TRUE;
-  mPartitionExecuting=mBlockBusy=mProductExecuting=FALSE;gBS->RestoreTPL(Old);return S;
+  mPartitionExecuting=mBlockBusy=mProductExecuting=FALSE;
+  if(!mExitRetained)gBS->RestoreTPL(Old);
+  return S;
 }
 EFI_STATUS PianoStorageFlush(CONST PIANO_STORAGE_PARTITION *P){
   return FilePartition(P)?StorageFlush(P):EFI_INVALID_PARAMETER;
+}
+
+// Keep the original GPT child and the FAT driver's cache. The parent LUN is
+// still read-only; these methods translate only this ESP's relative LBAs.
+STATIC EFI_GUID mPartitionBlockIoGuid=PIANO_PARTITION_BLOCK_IO_GUID;
+STATIC EFI_HANDLE mEspAccessHandle;
+STATIC BOOLEAN mEspNeedsFlush;
+
+STATIC VOID FindEspInGpt(UINTN LunIndex,CONST VOID *Entries,CONST PIANO_GPT_HEADER *Header) {
+  STATIC CONST EFI_GUID Unused={0};
+  for(UINTN I=0;I<Header->Entries;++I){
+    CONST EFI_PARTITION_ENTRY *Entry=(CONST VOID *)((CONST UINT8 *)Entries+I*Header->EntryBytes);
+    if(!CompareGuid(&Entry->PartitionTypeGUID,&Unused) &&
+       !StrnCmp(Entry->PartitionName,L"sunuefi_esp",ARRAY_SIZE(Entry->PartitionName))){
+      ++mEsp.Matches;
+      mEsp.LunIndex=LunIndex;
+      CopyMem(&mEsp.Entry,Entry,sizeof(mEsp.Entry));
+    }
+  }
+}
+
+STATIC EFI_STATUS EFIAPI EspWriteBlocks(EFI_BLOCK_IO_PROTOCOL *This,UINT32 MediaId,EFI_LBA Lba,UINTN Bytes,VOID *Buffer) {
+  CONST PIANO_STORAGE_PARTITION *P=&mFilePartitions[EspPartition];
+  if(!mBlockLive || !This->Media->MediaPresent)return EFI_NO_MEDIA;
+  if(MediaId!=This->Media->MediaId || MediaId!=P->MediaId)return EFI_MEDIA_CHANGED;
+  if(This->Media->ReadOnly)return EFI_WRITE_PROTECTED;
+  if(!Bytes)return EFI_SUCCESS;
+  if(Bytes%P->BlockBytes)return EFI_BAD_BUFFER_SIZE;
+  EFI_STATUS Status=PianoStorageWrite(P,Lba,Bytes,Buffer);
+  if(Status==EFI_SUCCESS)mEspNeedsFlush=TRUE;
+  return Status;
+}
+
+STATIC EFI_STATUS EFIAPI EspFlushBlocks(EFI_BLOCK_IO_PROTOCOL *This) {
+  if(!mBlockLive || !This->Media->MediaPresent)return EFI_NO_MEDIA;
+  if(mPartitionFailed)return EFI_DEVICE_ERROR;
+  // FAT also flushes when closing the last file opened for reading.
+  if(!mEspNeedsFlush)return EFI_SUCCESS;
+  EFI_STATUS Status=PianoStorageFlush(&mFilePartitions[EspPartition]);
+  if(Status==EFI_SUCCESS)mEspNeedsFlush=FALSE;
+  return Status;
+}
+
+STATIC VOID EFIAPI ConfigureEsp(CONST EFI_PARTITION_ENTRY *Entry,EFI_BLOCK_IO_PROTOCOL *Child) {
+  if(!mBlockLive || mEsp.Matches!=1 || CompareMem(Entry,&mEsp.Entry,sizeof(*Entry)))return;
+  CONST UINTN Index=mEsp.LunIndex;
+  CONST UINT64 Blocks=Entry->EndingLBA-Entry->StartingLBA+1;
+  EFI_BLOCK_IO_MEDIA *Media=Child->Media;
+  if(!Media->MediaPresent || !Media->LogicalPartition || Media->BlockSize!=mLuns[Index].Block ||
+     Media->BlockSize!=4096 || Media->LastBlock!=Blocks-1 || Entry->EndingLBA>MAX_UINT32 ||
+     StorageWriteProtected(Index))return;
+  PIANO_STORAGE_PARTITION *P=&mFilePartitions[EspPartition];
+  *P=(PIANO_STORAGE_PARTITION){mLuns[Index].Id,Media->BlockSize,Media->MediaId,Entry->StartingLBA,
+                               Blocks,Entry->UniquePartitionGUID,P};
+  Child->WriteBlocks=EspWriteBlocks;
+  Child->FlushBlocks=EspFlushBlocks;
+  Media->ReadOnly=FALSE;
+}
+
+STATIC PIANO_PARTITION_BLOCK_IO_PROTOCOL mPartitionBlockIo={ConfigureEsp};
+
+STATIC EFI_STATUS PublishEspAccess(VOID) {
+  STATIC CONST EFI_GUID EspType=EFI_PART_TYPE_EFI_SYSTEM_PART_GUID;
+  if(mEsp.Matches!=1 || !CompareGuid(&mEsp.Entry.PartitionTypeGUID,&EspType))return EFI_NOT_FOUND;
+  EFI_HANDLE Handle=mBlockHandles[mEsp.LunIndex];
+  EFI_STATUS Status=gBS->InstallProtocolInterface(&Handle,&mPartitionBlockIoGuid,EFI_NATIVE_INTERFACE,&mPartitionBlockIo);
+  if(Status==EFI_SUCCESS)mEspAccessHandle=Handle;
+  return Status;
+}
+
+STATIC EFI_STATUS UnpublishEspAccess(VOID) {
+  if(!mEspAccessHandle)return EFI_SUCCESS;
+  EFI_STATUS Status=gBS->UninstallProtocolInterface(mEspAccessHandle,&mPartitionBlockIoGuid,&mPartitionBlockIo);
+  if(Status==EFI_SUCCESS)mEspAccessHandle=NULL;
+  return Status;
 }

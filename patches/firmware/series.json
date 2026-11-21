@@ -64,6 +64,17 @@
       }
     },
     {
+      "repository": "upstream/Mu-Silicium/Mu_Basecore",
+      "base_commit": "64f478939955e45faa632c160ae2a75a5ff7ef7f",
+      "patch": "mu-basecore/cfb9372/0006-use-partition-write-provider-for-esp.patch",
+      "sha256": "d9b0f45716a4c40ad1be864a3cfafad72c04587a3da4a48042dbe5e87138507b",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI",
+        "drop_when": "Remove when PartitionDxe supports per-partition write backends on a read-only disk and writable FAT volumes are mounted read-only if dirty. Verify EFI file writes on the independent ESP without enabling writes on the parent LUN."
+      }
+    },
+    {
       "repository": "upstream/Mu-Silicium",
       "base_commit": "8471e47f5248ebbffc2e6196b683204163efe155",
       "patch": "mu-silicium.patch",

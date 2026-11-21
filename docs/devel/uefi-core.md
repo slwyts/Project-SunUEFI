@@ -25,8 +25,10 @@
 
 ## UFS 写入
 
-标准 Block I/O 以只读方式发布原厂 UFS。固件变量文件的写入范围见
-[变量持久化](boot/uefi-console.md#persist-中的-uefi-变量)。
+UFS 整盘和原厂分区的标准 Block I/O 保持只读。独立的 `sunuefi_esp` 在原有 GPT
+分区句柄上提供写入，EFI 程序能用标准文件接口保存启动状态，systemd-boot 也能
+更新启动计数。写入使用本次 GPT 的实际范围；FAT 已标记为不干净时，只读挂载。
+固件变量文件另见[变量持久化](boot/uefi-console.md#persist-中的-uefi-变量)。
 
 Fastboot 只对刷写 `sunuefi_esp` 和 `sunuefi_root` 启用写入。写前按 GPT 名称
 定位并复核介质标识、GUID 和范围，再卸载目标文件系统。每段写入后读回比较，

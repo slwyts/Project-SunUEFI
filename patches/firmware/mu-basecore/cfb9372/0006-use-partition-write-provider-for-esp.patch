@@ -1,0 +1,44 @@
+diff --git a/MdeModulePkg/Universal/Disk/PartitionDxe/Partition.c b/MdeModulePkg/Universal/Disk/PartitionDxe/Partition.c
+--- a/MdeModulePkg/Universal/Disk/PartitionDxe/Partition.c
++++ b/MdeModulePkg/Universal/Disk/PartitionDxe/Partition.c
+@@ -11,6 +11,9 @@
+ **/
+ 
+ #include "Partition.h"
++#include <Protocol/PianoPartitionBlockIo.h>
++
++STATIC EFI_GUID mPartitionBlockIoGuid = PIANO_PARTITION_BLOCK_IO_GUID;
+ 
+ //
+ // Partition Driver Global Variables.
+@@ -1238,6 +1241,16 @@ PartitionInstallChildHandle (
+   //
+   CopyMem (&Private->PartitionInfo, PartitionInfo, sizeof (EFI_PARTITION_INFO_PROTOCOL));
+ 
++  // A parent with a read-only raw interface can authorize writes to a GPT
++  // partition without exposing a second block device or a second filesystem.
++  if ((PartitionInfo->Type == PARTITION_TYPE_GPT) && (Private->DiskIo2 == NULL)) {
++    PIANO_PARTITION_BLOCK_IO_PROTOCOL  *Access;
++
++    if (!EFI_ERROR (gBS->HandleProtocol (ParentHandle, &mPartitionBlockIoGuid, (VOID **)&Access))) {
++      Access->Configure (&Private->PartitionInfo.Info.Gpt, &Private->BlockIo);
++    }
++  }
++
+   if (TypeGuid != NULL) {
+     CopyGuid (&(Private->TypeGuid), TypeGuid);
+   } else {
+diff --git a/FatPkg/EnhancedFatDxe/Init.c b/FatPkg/EnhancedFatDxe/Init.c
+--- a/FatPkg/EnhancedFatDxe/Init.c
++++ b/FatPkg/EnhancedFatDxe/Init.c
+@@ -413,6 +413,10 @@ FatOpenDevice (
+     }
+ 
+     Volume->DirtyValue = Volume->NotDirtyValue & DirtyMask;
++    // Do not modify an already dirty volume. Leave recovery to the OS.
++    if (Volume->NotDirtyValue == Volume->DirtyValue) {
++      Volume->ReadOnly = TRUE;
++    }
+   }
+ 
+   //
