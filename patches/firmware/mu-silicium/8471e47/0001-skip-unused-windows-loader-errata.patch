@@ -1,0 +1,13 @@
+diff --git a/Silicon/Silicium/SiliciumPkg/SiliciumPkg.dsc.inc b/Silicon/Silicium/SiliciumPkg/SiliciumPkg.dsc.inc
+--- a/Silicon/Silicium/SiliciumPkg/SiliciumPkg.dsc.inc
++++ b/Silicon/Silicium/SiliciumPkg/SiliciumPkg.dsc.inc
+@@ -469,7 +469,9 @@
+   #
+   MdeModulePkg/Universal/BdsDxe/BdsDxe.inf {
+     <LibraryClasses>
++!if $(HAS_ACTLR_EL1_UNIMPLEMENTED_ERRATA) || $(HAS_AMCNTENSET0_EL0_UNIMPLEMENTED_ERRATA) || $(HAS_GIC_V3_WITHOUT_IRM_FLAG_SUPPORT_ERRATA) || $(HAS_PSCI_MEMPROTECT_FAILING_ERRATA) || $(HAS_CNTFRQ_EL0_EMPTY_ERRATA)
+       NULL|SiliciumPkg/Library/KernelErrataPatcherLib/KernelErrataPatcherLib.inf
++!endif
+   }
+   PcBdsPkg/MsBootPolicy/MsBootPolicy.inf
+   MdeModulePkg/Universal/PrintDxe/PrintDxe.inf

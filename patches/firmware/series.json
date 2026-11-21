@@ -97,6 +97,17 @@
       }
     },
     {
+      "repository": "upstream/Mu-Silicium",
+      "base_commit": "8471e47f5248ebbffc2e6196b683204163efe155",
+      "patch": "mu-silicium/8471e47/0001-skip-unused-windows-loader-errata.patch",
+      "sha256": "4b1fcf1a9a006ef3c829f6bf1a412838d8309b8d8223b919ae89f20a09aa94df",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/Project-Silicium/Mu-Silicium",
+        "drop_when": "Remove when Silicium leaves the standard UEFI boot services and Windows loader untouched on platforms without a configured kernel erratum."
+      }
+    },
+    {
       "repository": "upstream/simple-init",
       "base_commit": "3d66a6e78d519dd050fbebde4db6c5ac933f9aa4",
       "patch": "simple-init.patch",
