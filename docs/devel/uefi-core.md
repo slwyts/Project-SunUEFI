@@ -165,6 +165,9 @@ SM8750 没有启用 Mu 的处理器勘误补丁。启动 Windows 时，固件不
 UKI 失败后的后备。它与产品 UKI 共用资源退出检查；UEFI Fastboot 的单次
 下载上限仍为 64 MiB。
 
+系统引导程序可通过标准 `EFI_RNG_PROTOCOL` 取得启动所需的随机数据。固件使用
+EDK2 的 RNG 驱动：默认取自 CPU 的 RNDR，也支持显式请求 Arm 固件的原始随机源。
+
 固件的四个 EFI 时间调用返回 `EFI_UNSUPPORTED`，并通过 `EFI_RT_PROPERTIES_TABLE` 报告；不发布占位 EFI RTC。Linux 使用 PMIC RTC，UEFI 只读原厂 `persist/time/ats_2`，通过保留内存中的标准 NVMEM 单元传入日历偏移，见 [RTC 与原厂时间](hardware/sleep.md#rtc-与原厂时间)。
 
 ## UEFI 核心代码结构

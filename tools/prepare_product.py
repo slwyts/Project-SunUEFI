@@ -75,6 +75,7 @@ HOST_MODULES=('MdeModulePkg/Bus/Pci/XhciDxe/XhciDxe.inf','MdeModulePkg/Bus/Usb/U
 ACPI_MODULES=('MdeModulePkg/Universal/Acpi/AcpiTableDxe/AcpiTableDxe.inf',
               'MdeModulePkg/Universal/Acpi/AcpiPlatformDxe/AcpiPlatformDxe.inf')
 ACPI_TABLES='pianoProductPkg/AcpiTables/AcpiTables.inf'
+RNG_DXE='SecurityPkg/RandomNumberGenerator/RngDxe/RngDxe.inf'
 
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -657,6 +658,11 @@ def prepare(root=ROOT):
   MdeModulePkg/Bus/Pci/XhciDxe/XhciDxe.inf
   MdeModulePkg/Bus/Usb/UsbMouseDxe/UsbMouseDxe.inf
   pianoProductPkg/Drivers/PianoGopDxe/PianoGopDxe.inf
+  '''+RNG_DXE+''' {
+    <LibraryClasses>
+      RngLib|MdePkg/Library/BaseRngLib/BaseRngLib.inf
+      ArmTrngLib|ArmPkg/Library/ArmTrngLib/ArmTrngLib.inf
+  }
   pianoProductPkg/Applications/ProductCore/ProductCore.inf {
     <LibraryClasses>
       SmbiosStringTableLib|DynamicTablesPkg/Library/Common/SmbiosStringTableLib/SmbiosStringTableLib.inf
@@ -691,7 +697,7 @@ def prepare(root=ROOT):
     dsc.write_text(text)
     fdf=target/'pianoProduct.fdf';text=fdf.read_text().replace('# Host-only stage-0 diagnostic; NOT hardware validated.','# Single PianoUEFI product integration candidate; INCOMPLETE_NOT_RELEASE.')
     text=text.replace('SiliciumPkg/Drivers/SimpleFbDxe/SimpleFbDxe.inf','pianoProductPkg/Drivers/PianoGopDxe/PianoGopDxe.inf')
-    modules=DISK_MODULES+HOST_MODULES+ACPI_MODULES+SETUP_FV_MODULES+(
+    modules=DISK_MODULES+HOST_MODULES+ACPI_MODULES+SETUP_FV_MODULES+(RNG_DXE,
         'MdeModulePkg/Universal/SmbiosDxe/SmbiosDxe.inf',
         BOOT_PICKER_MODULE,'pianoProductPkg/'+SIMPLEINIT_BOOT_MODULE,'MdeModulePkg/Logo/LogoDxe.inf',
         'ShellPkg/Application/Shell/Shell.inf','pianoProductPkg/Applications/ProductCore/ProductCore.inf')
