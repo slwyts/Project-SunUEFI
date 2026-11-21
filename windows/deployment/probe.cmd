@@ -2,6 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 chcp 65001 >nul
 echo 正在初始化设备。检查完成后，Windows PE 会自动重启。
+if exist "%SystemDrive%\SunUEFI\drivers.cmd" call "%SystemDrive%\SunUEFI\drivers.cmd"
 wpeinit
 wpeutil UpdateBootInfo
 set "result="
@@ -21,7 +22,7 @@ for %%D in (S T U V W Y Z) do if not exist %%D:\ if not defined result (
 )
 :collect
 if not defined result (
-    echo 未能读取测试卷，无法保存检查结果。
+    echo Windows PE 未识别带标记的测试卷，无法保存检查结果。请检查存储控制器驱动。
     goto restart
 )
 echo 正在记录磁盘和设备信息。
@@ -32,6 +33,7 @@ set /p "readback="<"%result%\boot.log"
 if "!readback!"=="!stamp!" echo readback=ok>>"%result%\boot.log"
 ver >>"%result%\boot.log"
 reg query HKLM\SYSTEM\CurrentControlSet\Control /v PEFirmwareType >>"%result%\boot.log" 2>&1
+if exist "%SystemDrive%\SunUEFI\drivers.log" copy /y "%SystemDrive%\SunUEFI\drivers.log" "%result%\" >nul
 reg query "HKLM\HARDWARE\RESOURCEMAP\System Resources\Physical Memory" /v ".Translated" >"%result%\memory.txt" 2>&1
 (echo list disk&echo list volume&echo exit) | diskpart >"%result%\storage.txt" 2>&1
 pnputil /enum-devices /connected /deviceids >"%result%\devices.txt" 2>&1

@@ -84,7 +84,16 @@ docker run --rm -v "$PWD:/workspace" -w /workspace sunuefi-builder bash -euc '
 WinPE，不打开安装程序。启动脚本初始化设备，找到带 `SunUEFI/WinPE/probe.tag`
 的卷后，在同目录记录本次启动、磁盘卷和设备，再重启。`memory.txt`
 是 Windows 内核识别的物理内存地址段，不是固件报告的标称容量。若 Windows
-没有识别带标记的卷，脚本仍请求重启，不写其他卷。普通安装介质不包含这个启动脚本。
+没有识别带标记的卷，脚本仍请求重启，不写其他卷。普通安装介质不包含这个探测脚本。
+
+需要额外的设备驱动时，构建介质可加 `--drivers /path/to/arm64-packages`，
+适用于 WinPE 和完整安装。传入已解包的 ARM64 驱动目录，以供应商原来的布局保留
+INF、签名目录（CAT）及其引用的所有文件。安装器把驱动放在 WinPE 内存盘里；
+即使内置存储尚未被识别，也能先用 PnPUtil 将驱动加入 Driver Store，再初始化设备。
+诊断介质将结果写到启动卷 `SunUEFI/WinPE/drivers.log`。完整安装则先展开 Windows，
+再用 DISM 将同一批驱动加入新系统；启动卷 `SunUEFI/Deployment/` 里的 `drivers.log`、
+`install.log` 分别记录两步结果。驱动签名和设备匹配均由 Windows 处理。
+没有对应硬件的包可以预装，不代表该设备已工作。不指定驱动目录时普通介质保留原版 WIM。
 
 在已创建独立分区的平板上，从有 root 的 Android 连接 ADB。Linux 主机还需要
 Android platform-tools、`dosfstools`、`mtools`，完整安装另需 `ntfs-3g`、

@@ -1,4 +1,6 @@
+import shutil
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -42,6 +44,39 @@ class WindowsMediaTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Not a generated Windows media directory'):
             windows.publish(self.root / 'media', output, self.root / 'previous')
         self.assertEqual(fallback.read_bytes(), b'existing systemd-boot')
+
+    @unittest.skipUnless(shutil.which('wimlib-imagex'), 'wimlib-imagex is needed to exercise WIM servicing')
+    def test_driver_files_only_enter_the_selected_boot_image(self):
+        tool = shutil.which('wimlib-imagex')
+        base = self.root / 'base'
+        base.mkdir()
+        (base / 'original').write_bytes(b'original file')
+        wim = self.root / 'boot.wim'
+        subprocess.run([tool, 'capture', base, wim, 'Base', '--quiet'], check=True)
+        subprocess.run([tool, 'append', base, wim, 'Setup', '--quiet'], check=True)
+        original = windows.digest(wim)
+        windows.customize_winpe(tool, wim, 2, self.root, False, None)
+        self.assertEqual(windows.digest(wim), original)
+
+        drivers = self.root / 'vendor packages'
+        package = drivers / 'storage chip'
+        (package / 'arm64').mkdir(parents=True)
+        (package / 'STORAGE.INF').write_bytes(b'inf bytes')
+        (package / 'storage.cat').write_bytes(b'catalog bytes')
+        (package / 'arm64' / 'device.sys').write_bytes(b'payload bytes')
+        self.assertEqual(windows.driver_infs(drivers), ['storage chip/STORAGE.INF'])
+        windows.customize_winpe(tool, wim, 2, self.root, False, drivers)
+        unchanged = subprocess.check_output([tool, 'dir', wim, '1'], text=True)
+        self.assertNotIn('/SunUEFI', unchanged)
+        self.assertIn('/original', unchanged)
+        for item in package.rglob('*'):
+            if item.is_file():
+                data = subprocess.check_output([tool, 'extract', wim, '2',
+                                                '/SunUEFI/Drivers/' + item.relative_to(drivers).as_posix(),
+                                                '--to-stdout'])
+                self.assertEqual(data, item.read_bytes())
+        ini = subprocess.check_output([tool, 'extract', wim, '2', '/Windows/System32/winpeshl.ini', '--to-stdout'])
+        self.assertIn(b'\\SunUEFI\\drivers.cmd setup"\r\n', ini)
 
 
 if __name__ == '__main__':

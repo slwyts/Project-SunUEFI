@@ -108,11 +108,57 @@ def publish(tree, output, previous):
         raise
 
 
-def media(iso, output, probe=False):
+def driver_infs(directory):
+    if not directory.is_dir():
+        raise ValueError(f'Windows driver directory not found: {directory}')
+    infs = []
+    for path in directory.rglob('*'):
+        if path.is_symlink():
+            raise ValueError(f'Use regular files in a Windows driver package, not a symlink: {path}')
+        if path.is_file() and path.suffix.lower() == '.inf':
+            infs.append(path.relative_to(directory).as_posix())
+    if not infs:
+        raise ValueError(f'No INF driver packages found in {directory}')
+    return sorted(infs)
+
+
+def customize_winpe(wimtool, wim, index, work, probe, drivers):
+    commands = []
+
+    def add_text(name, destination, text=None):
+        # cmd.exe seeks to labels by byte offset. Do not depend on Git line endings.
+        if text is None:
+            text = (TEMPLATES / name).read_text(encoding='utf-8')
+        (work / name).write_bytes(text.replace('\n', '\r\n').encode('utf-8'))
+        commands.append(f'add {name} {destination}')
+
+    if drivers is not None:
+        # Capture directly from the selected directory. Keep relative INF/CAT/payload paths
+        # intact and never copy this package into the output being captured.
+        subprocess.run([wimtool, 'update', wim, str(index)], cwd=drivers,
+                       input='add . /SunUEFI/Drivers\n', text=True, check=True)
+        add_text('drivers.cmd', '/SunUEFI/drivers.cmd')
+    if probe:
+        add_text('winpeshl.ini', '/Windows/System32/winpeshl.ini')
+        add_text('probe.cmd', '/Windows/System32/sunuefi-probe.cmd')
+    elif drivers is not None:
+        add_text('winpeshl.ini', '/Windows/System32/winpeshl.ini',
+                 '[LaunchApps]\n%SYSTEMROOT%\\System32\\cmd.exe, "/d /c %SYSTEMDRIVE%\\SunUEFI\\drivers.cmd setup"\n')
+    if commands:
+        subprocess.run([wimtool, 'update', wim, str(index)], cwd=work,
+                       input='\n'.join(commands) + '\n', text=True, check=True)
+
+
+def media(iso, output, probe=False, drivers=None):
     seven = required_tool('7z')
     wimtool = required_tool('wimlib-imagex')
     if not iso.is_file():
         raise ValueError(f'ISO not found: {iso}')
+    if drivers is not None:
+        drivers = drivers.resolve()
+        if output.parent.resolve().is_relative_to(drivers):
+            raise ValueError('Choose a Windows driver directory separate from the media build directory')
+        infs = driver_infs(drivers)
     output.parent.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(dir=output.parent, prefix='.winpe-') as temp:
         work = Path(temp)
@@ -149,15 +195,8 @@ def media(iso, output, probe=False):
         sources = member(raw, 'sources')
         member(sources, 'boot.wim').rename(wim)
         boot_index = check_ramdisk(member(boot, 'bcd'), sdi, wim)
+        customize_winpe(wimtool, wim, boot_index, work, probe, drivers)
         if probe:
-            # cmd.exe seeks to labels by byte offset. Keep the Windows files
-            # independent of the checkout's line-ending policy.
-            for name in ('winpeshl.ini', 'probe.cmd'):
-                text = (TEMPLATES / name).read_text(encoding='utf-8')
-                (work / name).write_bytes(text.replace('\n', '\r\n').encode('utf-8'))
-            subprocess.run([wimtool, 'update', wim, str(boot_index)], cwd=work, text=True,
-                           input='add winpeshl.ini /Windows/System32/winpeshl.ini\n'
-                                 'add probe.cmd /Windows/System32/sunuefi-probe.cmd\n', check=True)
             marker = esp / 'SunUEFI/WinPE/probe.tag'
             marker.parent.mkdir(parents=True)
             marker.touch()
@@ -166,6 +205,8 @@ def media(iso, output, probe=False):
             raise ValueError('WinPE boot index is not an ARM64 image')
         result = {'format': 'sunuefi-windows-media', 'loader': LOADER.as_posix(),
                   'boot': {'index': boot_index, 'images': images}, 'probe': probe}
+        if drivers is not None:
+            result['drivers'] = infs
         if not probe:
             names = {p.name.casefold(): p for p in sources.iterdir()}
             available = [names[n] for n in INSTALL_IMAGE if n in names]
@@ -188,7 +229,7 @@ def media(iso, output, probe=False):
 
 def run_media(args):
     output = args.output or ROOT / 'artifacts/windows' / ('winpe' if args.probe else 'media')
-    result = media(args.iso, output.absolute(), args.probe)
+    result = media(args.iso, output.absolute(), args.probe, args.drivers)
     print(f'WinPE: {output}/esp/{result["loader"]}')
     if 'install' in result:
         print(f'Windows: {output}/ntfs/{result["install"]["path"]}')
@@ -260,6 +301,8 @@ def main(argv=None):
     build.add_argument('--iso', required=True, type=Path, help='Windows ARM64 installation ISO')
     build.add_argument('--output', type=Path, help='Generated files (default: artifacts/windows/media or winpe)')
     build.add_argument('--probe', action='store_true', help='Boot a diagnostic WinPE, collect local logs and reboot')
+    build.add_argument('--drivers', type=Path,
+                       help='Include signed ARM64 INF packages from this directory in WinPE and the installed OS')
     build.set_defaults(run=run_media)
     graphics = commands.add_parser('graphics-test', help='Build the ARM64 Direct3D hardware readback test')
     graphics.set_defaults(run=graphics_test)

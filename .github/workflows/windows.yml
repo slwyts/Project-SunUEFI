@@ -32,11 +32,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Install FAT32 test tools
+      - name: Install FAT32 and Windows image tools
         run: |
-          if ! command -v mkfs.fat >/dev/null || ! command -v mcopy >/dev/null; then
+          if ! command -v mkfs.fat >/dev/null || ! command -v mcopy >/dev/null || ! command -v wimlib-imagex >/dev/null; then
             sudo apt-get -o Acquire::Retries=3 update
-            sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends dosfstools mtools
+            sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends dosfstools mtools wimtools
           fi
       - run: ./build.sh windows media --help
       - run: ./build.sh install windows --help

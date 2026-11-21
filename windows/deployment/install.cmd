@@ -1,7 +1,13 @@
 @echo off
-setlocal EnableExtensions EnableDelayedExpansion
-wpeinit
+setlocal EnableExtensions
 chcp 65001 >nul
+set "drivers=%SystemDrive%\SunUEFI\drivers.cmd"
+set "driver_error="
+if exist "%drivers%" (
+    call "%drivers%"
+    if errorlevel 1 set "driver_error=1"
+)
+wpeinit
 set "SUNUEFI_MARKER=@TARGET_MARKER@"
 set "SUNUEFI_IMAGE=@IMAGE_NAME@"
 set "SUNUEFI_INDEX=@IMAGE_INDEX@"
@@ -22,8 +28,13 @@ if not defined esp (
 )
 set "work=%esp%\SunUEFI\Deployment"
 set "log=%work%\install.log"
+if exist "%SystemDrive%\SunUEFI\drivers.log" copy /y "%SystemDrive%\SunUEFI\drivers.log" "%work%\" >nul
+if defined driver_error (
+    echo Windows PE 未能添加选定的驱动。请检查同目录的 drivers.log。>"%log%"
+    goto stop
+)
 if not defined dest (
-    echo Windows 未识别指定的系统卷。>"%log%"
+    echo Windows 未识别指定的系统卷。请检查存储控制器驱动。>"%log%"
     goto stop
 )
 if /i "%dest%"=="%esp%" goto stop
@@ -37,6 +48,11 @@ if /i "%SUNUEFI_IMAGE:~-4%"==".swm" set "split=/SWMFile:%dest%\SunUEFI-install*.
 echo 正在安装 Windows。详细进度记录在 %log%。
 dism /Apply-Image /ImageFile:"%dest%\%SUNUEFI_IMAGE%" %split% /Index:%SUNUEFI_INDEX% /ApplyDir:%dest%\ /ScratchDir:"%scratch%" /CheckIntegrity /Verify >>"%log%" 2>&1
 if errorlevel 1 goto failed
+if exist "%drivers%" (
+    echo 正在将选定的驱动加入新系统。
+    call "%drivers%" offline %dest% "%scratch%" >>"%log%" 2>&1
+    if errorlevel 1 goto failed
+)
 
 rem Generate boot files on the new Windows volume. BCDBoot may also write
 rem EFI\Boot; only Microsoft's own directory belongs on the shared ESP.

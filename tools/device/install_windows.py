@@ -312,6 +312,8 @@ def deploy(device, directory, esp_mib, edition, execute, workspace):
               'disk_guid': gpt.geometry['disk_guid'], 'replace_system': install or before[1]['first'] != system['first'],
               'gpt_change': before != parts, 'install': root_sources(media, directory, edition)[0] if install else 'WinPE',
               'device_written': False}
+    if media.get('drivers'):
+        action['drivers'] = media['drivers']
     if not execute:
         return action
     if install or before != parts:
