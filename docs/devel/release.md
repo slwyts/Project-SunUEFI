@@ -172,9 +172,10 @@ WinPE 里选中通用驱动。启动文件由固件读出；要证明 Windows �
 
 用 `./build.sh windows graphics-test` 构建 ARM64 测试程序，在 Windows 运行
 `graphics-readback.exe --list` 列出图形适配器。选定本机 Adreno 的
-LUID 后运行 `graphics-readback.exe --luid 高位:低位`，分别检查 D3D11 和
-D3D12 的命令完成与结果读回。CI 中的 `--warp` 用微软软件适配器校验测试
-程序本身，不能计作平板的硬件结果。
+LUID 后运行 `graphics-readback.exe --luid 高位:低位`。它先用 D3D11 的 10_0
+功能级画两帧不同的图案并逐像素读回，再分别检查 D3D11 11_0 和 D3D12 的计算结果。
+只检查社区前端目前支持的基础绘图时加 `--api 11-fl10`；这一项通过不代表计算着色器也能用。
+CI 中的 `--warp` 用微软软件适配器校验测试程序本身，不能计作平板的硬件结果。
 
 在已装 WDK 的 Visual Studio 开发者终端，用 `./build.sh windows drivers`
 构建 ARM64 内核驱动部件。使用 LLVM 交叉编译时，传入 `--kit-include`

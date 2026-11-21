@@ -52,22 +52,20 @@ bool matches(const uint32_t *data, uint32_t seed)
     return true;
 }
 
-HRESULT compile(ComPtr<ID3DBlob> &code)
+HRESULT compile(const char *source, const char *entry, const char *profile, ComPtr<ID3DBlob> &code)
 {
     ComPtr<ID3DBlob> errors;
-    HRESULT hr = D3DCompile(shader_source, sizeof(shader_source) - 1, "readback", nullptr, nullptr,
-                            "main", "cs_5_0", D3DCOMPILE_ENABLE_STRICTNESS, 0, &code, &errors);
+    HRESULT hr = D3DCompile(source, std::strlen(source), "readback", nullptr, nullptr,
+                            entry, profile, D3DCOMPILE_ENABLE_STRICTNESS, 0, &code, &errors);
     if (FAILED(hr) && errors)
         std::fwrite(errors->GetBufferPointer(), 1, errors->GetBufferSize(), stderr);
     return check(hr, "D3DCompile");
 }
 
-HRESULT run11(IDXGIAdapter1 *adapter, LUID wanted, ID3DBlob *code)
+HRESULT create11(IDXGIAdapter1 *adapter, LUID wanted, D3D_FEATURE_LEVEL level,
+                 ComPtr<ID3D11Device> &device, ComPtr<ID3D11DeviceContext> &context)
 {
-    ComPtr<ID3D11Device> device;
-    ComPtr<ID3D11DeviceContext> context;
-    const D3D_FEATURE_LEVEL levels[]{D3D_FEATURE_LEVEL_11_0};
-    TRY(D3D11CreateDevice(adapter, D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0, levels, 1,
+    TRY(D3D11CreateDevice(adapter, D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0, &level, 1,
                           D3D11_SDK_VERSION, &device, nullptr, &context));
     ComPtr<IDXGIDevice> dxgi;
     ComPtr<IDXGIAdapter> actual;
@@ -77,7 +75,123 @@ HRESULT run11(IDXGIAdapter1 *adapter, LUID wanted, ID3DBlob *code)
     TRY(actual->GetDesc(&identity));
     if (!equal_luid(identity.AdapterLuid, wanted))
         return check(E_UNEXPECTED, "D3D11 selected a different adapter");
+    return S_OK;
+}
 
+HRESULT wait11(ID3D11DeviceContext *context, ID3D11Query *query)
+{
+    context->End(query);
+    context->Flush();
+    ULONGLONG start = GetTickCount64();
+    for (;;) {
+        BOOL completed = FALSE;
+        HRESULT hr = context->GetData(query, &completed, sizeof(completed), D3D11_ASYNC_GETDATA_DONOTFLUSH);
+        if (FAILED(hr))
+            return check(hr, "D3D11 GetData");
+        if (hr == S_OK && completed)
+            return S_OK;
+        if (GetTickCount64() - start >= timeout_ms)
+            return check(HRESULT_FROM_WIN32(ERROR_TIMEOUT), "D3D11 queue completion");
+        Sleep(1);
+    }
+}
+
+HRESULT draw10(IDXGIAdapter1 *adapter, LUID wanted)
+{
+    constexpr UINT width = 31, height = 17;
+    constexpr char source[] = R"(
+        cbuffer Params : register(b0) { uint phase; }
+        float4 vs(uint id : SV_VertexID) : SV_Position {
+            float2 uv = float2((id << 1) & 2, id & 2);
+            return float4(uv * float2(2, -2) + float2(-1, 1), 0, 1);
+        }
+        float4 ps(float4 pos : SV_Position) : SV_Target {
+            uint2 xy = uint2(pos.xy);
+            return float4((xy.x ^ xy.y ^ phase) & 1, ((xy.x >> 1) ^ phase) & 1, (xy.y >> 1) & 1, 1);
+        }
+    )";
+    ComPtr<ID3D11Device> device;
+    ComPtr<ID3D11DeviceContext> context;
+    TRY(create11(adapter, wanted, D3D_FEATURE_LEVEL_10_0, device, context));
+    ComPtr<ID3DBlob> vs_code, ps_code;
+    TRY(compile(source, "vs", "vs_4_0", vs_code));
+    TRY(compile(source, "ps", "ps_4_0", ps_code));
+    ComPtr<ID3D11VertexShader> vs;
+    ComPtr<ID3D11PixelShader> ps;
+    TRY(device->CreateVertexShader(vs_code->GetBufferPointer(), vs_code->GetBufferSize(), nullptr, &vs));
+    TRY(device->CreatePixelShader(ps_code->GetBufferPointer(), ps_code->GetBufferSize(), nullptr, &ps));
+    D3D11_TEXTURE2D_DESC tex{};
+    tex.Width = width;
+    tex.Height = height;
+    tex.MipLevels = tex.ArraySize = tex.SampleDesc.Count = 1;
+    tex.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    tex.BindFlags = D3D11_BIND_RENDER_TARGET;
+    ComPtr<ID3D11Texture2D> target, readback;
+    TRY(device->CreateTexture2D(&tex, nullptr, &target));
+    tex.Usage = D3D11_USAGE_STAGING;
+    tex.BindFlags = 0;
+    tex.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    TRY(device->CreateTexture2D(&tex, nullptr, &readback));
+    ComPtr<ID3D11RenderTargetView> view;
+    TRY(device->CreateRenderTargetView(target.Get(), nullptr, &view));
+    D3D11_BUFFER_DESC buf{};
+    buf.ByteWidth = 16;
+    buf.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    ComPtr<ID3D11Buffer> params;
+    TRY(device->CreateBuffer(&buf, nullptr, &params));
+    D3D11_RASTERIZER_DESC raster{};
+    raster.FillMode = D3D11_FILL_SOLID;
+    raster.CullMode = D3D11_CULL_NONE;
+    raster.DepthClipEnable = TRUE;
+    ComPtr<ID3D11RasterizerState> state;
+    TRY(device->CreateRasterizerState(&raster, &state));
+    D3D11_QUERY_DESC event{D3D11_QUERY_EVENT, 0};
+    ComPtr<ID3D11Query> query;
+    TRY(device->CreateQuery(&event, &query));
+    const D3D11_VIEWPORT viewport{0, 0, static_cast<float>(width), static_cast<float>(height), 0, 1};
+    context->RSSetViewports(1, &viewport);
+    context->RSSetState(state.Get());
+    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    context->VSSetShader(vs.Get(), nullptr, 0);
+    context->PSSetShader(ps.Get(), nullptr, 0);
+    context->PSSetConstantBuffers(0, 1, params.GetAddressOf());
+    for (UINT phase = 0; phase != 2; ++phase) {
+        const UINT values[]{phase, 0, 0, 0};
+        context->UpdateSubresource(params.Get(), 0, nullptr, values, 0, 0);
+        context->OMSetRenderTargets(1, view.GetAddressOf(), nullptr);
+        const float clear[]{0, 0, 0, 0};
+        context->ClearRenderTargetView(view.Get(), clear);
+        context->Draw(3, 0);
+        context->OMSetRenderTargets(0, nullptr, nullptr);
+        context->CopyResource(readback.Get(), target.Get());
+        TRY(wait11(context.Get(), query.Get()));
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        TRY(context->Map(readback.Get(), 0, D3D11_MAP_READ, 0, &mapped));
+        bool ok = mapped.RowPitch >= width * 4;
+        for (UINT y = 0; ok && y < height; ++y) {
+            const auto *row = static_cast<const uint8_t *>(mapped.pData) + y * mapped.RowPitch;
+            for (UINT x = 0; x < width; ++x) {
+                const uint8_t rgba[]{static_cast<uint8_t>(255 * ((x ^ y ^ phase) & 1)),
+                                     static_cast<uint8_t>(255 * (((x >> 1) ^ phase) & 1)),
+                                     static_cast<uint8_t>(255 * ((y >> 1) & 1)), 255};
+                if (std::memcmp(row + x * 4, rgba, sizeof(rgba))) {
+                    std::fprintf(stderr, "D3D11 FL10 frame %u: pixel (%u,%u) differs\n", phase, x, y);
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        context->Unmap(readback.Get(), 0);
+        if (!ok) return E_FAIL;
+    }
+    return check(device->GetDeviceRemovedReason(), "D3D11 raster device status");
+}
+
+HRESULT run11(IDXGIAdapter1 *adapter, LUID wanted, ID3DBlob *code)
+{
+    ComPtr<ID3D11Device> device;
+    ComPtr<ID3D11DeviceContext> context;
+    TRY(create11(adapter, wanted, D3D_FEATURE_LEVEL_11_0, device, context));
     ComPtr<ID3D11ComputeShader> shader;
     TRY(device->CreateComputeShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr, &shader));
     D3D11_BUFFER_DESC desc{};
@@ -116,21 +230,7 @@ HRESULT run11(IDXGIAdapter1 *adapter, LUID wanted, ID3DBlob *code)
         ID3D11UnorderedAccessView *empty = nullptr;
         context->CSSetUnorderedAccessViews(0, 1, &empty, nullptr);
         context->CopyResource(readback.Get(), gpu.Get());
-        context->End(query.Get());
-        context->Flush();
-        ULONGLONG start = GetTickCount64();
-        for (;;) {
-            BOOL completed = FALSE;
-            HRESULT hr = context->GetData(query.Get(), &completed, sizeof(completed),
-                                          D3D11_ASYNC_GETDATA_DONOTFLUSH);
-            if (FAILED(hr))
-                return check(hr, "D3D11 GetData");
-            if (hr == S_OK && completed)
-                break;
-            if (GetTickCount64() - start >= timeout_ms)
-                return check(HRESULT_FROM_WIN32(ERROR_TIMEOUT), "D3D11 queue completion");
-            Sleep(1);
-        }
+        TRY(wait11(context.Get(), query.Get()));
         D3D11_MAPPED_SUBRESOURCE mapped{};
         TRY(context->Map(readback.Get(), 0, D3D11_MAP_READ, 0, &mapped));
         bool ok = matches(static_cast<const uint32_t *>(mapped.pData), seed);
@@ -248,7 +348,7 @@ HRESULT run12(IDXGIAdapter1 *adapter, LUID wanted, ID3DBlob *code)
 
 int main(int argc, char **argv)
 {
-    bool list = false, warp = false, use11 = true, use12 = true;
+    bool list = false, warp = false, raster = true, use11 = true, use12 = true;
     const char *requested = nullptr;
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--list")) list = true;
@@ -258,9 +358,10 @@ int main(int argc, char **argv)
             ++i;
             use11 = !std::strcmp(argv[i], "11");
             use12 = !std::strcmp(argv[i], "12");
-            if (!use11 && !use12) return 2;
+            raster = use11 || !std::strcmp(argv[i], "11-fl10");
+            if (!raster && !use12) return 2;
         } else {
-            std::fprintf(stderr, "Usage: graphics-readback [--list | --warp | --luid HIGH:LOW] [--api 11|12]\n");
+            std::fprintf(stderr, "Usage: graphics-readback [--list | --warp | --luid HIGH:LOW] [--api 11-fl10|11|12]\n");
             return 2;
         }
     }
@@ -301,12 +402,17 @@ int main(int argc, char **argv)
         std::fprintf(stderr, "Matching local hardware adapters: %u; select one with --luid.\n", candidates);
         return 1;
     }
-    ComPtr<ID3DBlob> code;
-    if (FAILED(compile(code))) return 1;
     std::printf("Test adapter: %ls, LUID %08lx:%08lx, %s\n", desc.Description,
                 static_cast<unsigned long>(desc.AdapterLuid.HighPart), desc.AdapterLuid.LowPart,
                 warp ? "WARP CONTROL (not hardware)" : "hardware");
     bool passed = true;
+    if (raster) {
+        bool ok = SUCCEEDED(draw10(selected.Get(), desc.AdapterLuid));
+        std::printf("D3D11 FL10_0 draw/event/RGBA readback: %s\n", ok ? "PASS" : "FAIL");
+        passed &= ok;
+    }
+    ComPtr<ID3DBlob> code;
+    if ((use11 || use12) && FAILED(compile(shader_source, "main", "cs_5_0", code))) return 1;
     if (use11) {
         bool ok = SUCCEEDED(run11(selected.Get(), desc.AdapterLuid, code.Get()));
         std::printf("D3D11 shader/event/readback: %s\n", ok ? "PASS" : "FAIL");
