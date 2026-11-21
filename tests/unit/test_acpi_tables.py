@@ -81,7 +81,8 @@ class AcpiTablesTests(unittest.TestCase):
                            capture_output=True, check=True)
             output = subprocess.check_output([acpiexec, '-b', rf'evaluate \_SB.{device}._CRS',
                                               prefix.with_suffix('.aml')], stderr=subprocess.STDOUT, text=True)
-        resource = bytes.fromhex(' '.join(re.findall(r'^\s+[\da-f]+: ([\da-f ]+)//', output, re.I | re.M)))
+        # ACPICA prints small buffers on the same line as their heading.
+        resource = bytes.fromhex(' '.join(re.findall(r'\b[\da-f]+: ([\da-f ]+)//', output, re.I)))
         windows, irqs = [], []
         offset = 0
         while offset < len(resource) and resource[offset] != 0x79:  # EndTag
@@ -119,6 +120,16 @@ class AcpiTablesTests(unittest.TestCase):
         kgsl, gmu_reg = registers(gpu), registers(gmu)
         gpucc = self.board['/soc/clock-controller@3d90000']
         gpucc_base, gpucc_bytes = struct.unpack('>II', gpucc['reg'])
+        self.assertEqual(self.mmio_and_irqs('GCLK'), ([(gpucc_base, gpucc_bytes)], []))
+        # GPUCC supplies four clocks; the two memory bus clocks have a different owner.
+        providers = {n['phandle']: path for path, n in self.board.items() if 'phandle' in n}
+        names = gmu['clock-names'].rstrip(b'\0').decode().split('\0')
+        clocks = {name: (providers[handle], index) for name, (handle, index) in
+                  zip(names, struct.iter_unpack('>4sI', gmu['clocks']), strict=True)}
+        gcc_node, gpucc_node = '/soc/clock-controller@100000', '/soc/clock-controller@3d90000'
+        self.assertEqual(clocks, {'gmu_clk': (gpucc_node, 4), 'cxo_clk': (gpucc_node, 6),
+                                 'axi_clk': (gcc_node, 13), 'memnoc_clk': (gcc_node, 34),
+                                 'ahb_clk': (gpucc_node, 0), 'hub_clk': (gpucc_node, 20)})
         gbase, gbytes = gmu_reg[b'gmu']
         self.assertEqual({kgsl[b'kgsl_3d0_reg_memory'], kgsl[b'rscc'], kgsl[b'cx_misc'],
                           gmu_reg[b'gmu_ao_blk_dec0']}, set(windows) - {windows[1]})

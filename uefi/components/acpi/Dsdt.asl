@@ -100,6 +100,23 @@ DefinitionBlock ("", "DSDT", 2, "SUNUEF", "PIANO   ", 1)
             }
         }
 
+        // The display and render engines do not own the GPU clock controller.
+        Device (GCLK)
+        {
+            Name (_HID, "PRP0001")
+            Name (_UID, Zero)
+            Name (_DDN, "Qualcomm GPU clock controller")
+            Name (_DSD, Package ()
+            {
+                ToUUID ("daffd814-6eba-4d8c-8a91-bc9bbf4aa301"),
+                Package () { Package () { "compatible", "qcom,sm8750-gpucc" } }
+            })
+            Name (_CRS, ResourceTemplate ()
+            {
+                Memory32Fixed (ReadWrite, 0x03D90000, 0x00009800)
+            })
+        }
+
         // The render engine and its GMU share one requester namespace. The
         // display controller, GPU clock controller and SMMU have separate MMIO.
         Device (GPU0)

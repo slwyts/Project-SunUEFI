@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #pragma once
-#include "cx_power.h"
+#include "gpu_clocks.h"
 #include "gmu_memory.h"
 #include "hfi.h"
 #include "hfi_bandwidth.h"
@@ -10,14 +10,13 @@ struct ADRENO_RENDER_DEVICE;
 /* The platform driver owns GPUCC and arbitrates the shared rails, bus and
  * clocks with the SMMU and other clients. Enable requests are synchronous;
  * disable must also retire a partially applied request after an error.
- * EnableRailsAndBus may succeed only after firmware relinquishes the GPU.
- * EnableClocks prepares the six GMU clocks with their board-specific rates.
+ * SetRailsAndBus may succeed only after firmware relinquishes the GPU. It
+ * holds CX/MX, XO and GPU interconnect for the factory clock configuration.
  * Tables and provider references remain valid throughout PnP start/stop. */
 typedef struct {
     void *context;
-    ADRENO_CX_DOMAIN *cx;
+    ADRENO_GPU_CLOCKS *clocks;
     NTSTATUS (*SetRailsAndBus)(void *context, BOOLEAN enable);
-    NTSTATUS (*SetClocks)(void *context, BOOLEAN enable);
     /* Optional GX clock controller recovery, only if RSC left GX powered. */
     NTSTATUS (*PowerOffGx)(void *context);
     struct adreno_perf_config perf;
@@ -26,10 +25,10 @@ typedef struct {
 } ADRENO_GMU_PLATFORM;
 
 typedef struct {
-    ADRENO_CX_REFERENCE cx;
+    ADRENO_CLOCK_REFERENCE clock_ref;
     ADRENO_GMU_MEMORY memory;
     ADRENO_HFI hfi;
-    BOOLEAN rails, clocks, wake_pending, rsc_awake, reset_pending, reset_released, hfi_running, slumber_requested;
+    BOOLEAN rails, wake_pending, rsc_awake, reset_pending, reset_released, hfi_running, slumber_requested;
     BOOLEAN rsc_sleeping, gbif_pending;
 } ADRENO_GMU_DEVICE;
 

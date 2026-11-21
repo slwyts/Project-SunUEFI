@@ -31,11 +31,13 @@
   <ItemGroup>
     <ClCompile Include="cx_power.c" />
     <ClCompile Include="firmware.c" />
+    <ClCompile Include="gcc_pll.c" />
     <ClCompile Include="gmu_firmware.c" />
     <ClCompile Include="gmu_memory.c" />
     <ClCompile Include="gmu_memory_layout.c" />
     <ClCompile Include="gmu_resources.c" />
     <ClCompile Include="gmu_start.c" />
+    <ClCompile Include="gpu_clocks.c" />
     <ClCompile Include="hfi_bandwidth.c" />
     <ClCompile Include="hfi_queue.c" />
     <ClCompile Include="hfi_perf_table.c" />
@@ -44,12 +46,15 @@
     <ClCompile Include="wddm_clock.c" />
     <ClCompile Include="wddm_pnp.c" />
     <ClInclude Include="cx_power.h" />
+    <ClInclude Include="clock_registers.h" />
+    <ClInclude Include="gcc_pll.h" />
     <ClInclude Include="firmware.h" />
     <ClInclude Include="gmu_firmware.h" />
     <ClInclude Include="gmu_memory.h" />
     <ClInclude Include="gmu_memory_layout.h" />
     <ClInclude Include="gmu_resources.h" />
     <ClInclude Include="gmu_start.h" />
+    <ClInclude Include="gpu_clocks.h" />
     <ClInclude Include="hfi_bandwidth.h" />
     <ClInclude Include="hfi_queue.h" />
     <ClInclude Include="hfi_perf_table.h" />

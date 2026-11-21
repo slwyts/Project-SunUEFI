@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "cx_power.h"
+#include "clock_registers.h"
 
 enum { CX_CONTROL = 0x9080, CX_STATUS = 0x9094, SW_COLLAPSE = 1, HW_CONTROL = 2,
        SW_OVERRIDE = 4, RETAIN_FF = 1u << 11, WAIT_MASK = 0xfffu << 12,
@@ -15,17 +16,6 @@ NTSTATUS AdrenoCxInitialize(ADRENO_CX_DOMAIN *d, void *gpucc, SIZE_T bytes)
     d->control = (volatile ULONG *)((PUCHAR)gpucc + CX_CONTROL);
     d->status = (volatile ULONG *)((PUCHAR)gpucc + CX_STATUS);
     return STATUS_SUCCESS;
-}
-
-static NTSTATUS update(volatile ULONG *reg, ULONG mask, ULONG value)
-{
-    ULONG before = READ_REGISTER_ULONG(reg);
-    if (before == MAXULONG) return STATUS_DEVICE_NOT_CONNECTED;
-    if ((before & mask) == value) return STATUS_SUCCESS;
-    WRITE_REGISTER_ULONG(reg, (before & ~mask) | value);
-    ULONG applied = READ_REGISTER_ULONG(reg);
-    if (applied == MAXULONG) return STATUS_DEVICE_NOT_CONNECTED;
-    return (applied & mask) == value ? STATUS_SUCCESS : STATUS_DEVICE_HARDWARE_ERROR;
 }
 
 static NTSTATUS wait_on(ADRENO_CX_DOMAIN *d)
