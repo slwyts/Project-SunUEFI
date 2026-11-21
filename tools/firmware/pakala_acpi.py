@@ -1,6 +1,8 @@
 """Prepare the Piano tables from mu_wide_platforms for EDK2's ACPI table driver."""
 import struct
 
+from . import pakala_debug
+
 
 def architected_timer_irqs(table, board):
     """Set the architected timer PPIs; leave the donor's unused MMIO frames disabled."""
@@ -28,6 +30,8 @@ def prepare(source, output, board):
             raise ValueError(f'Invalid {name} input')
         if name == 'GTDT':
             architected_timer_irqs(data, board)
+        elif name in ('DBG2', 'SPCR'):
+            data = bytearray(pakala_debug.prepare(data, board))
         if name != 'FACS':
             data[9] = 0
             data[9] = -sum(data) & 255

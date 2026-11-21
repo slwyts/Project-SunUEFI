@@ -146,7 +146,9 @@ systemd-boot、Linux 睡眠唤醒和返回 Android；安装 Windows 只使用明
 八个 CPU 的低功耗状态、UFS、USB 主机与设备模式、物理接口及供驱动调用的方法；
 GPU 和 IORT 保留 Piano 本机的设备与 DMA 映射。公共 MCFG 描述七个 PCI ECAM 段，
 本机原厂只描述一个使用地址转换窗口的 PCIe 控制器，因此不向 Windows 发布这些段。
-表中有低功耗状态、串口调试或高通 HAL 资源，不等于 Windows 驱动已经接管硬件。
+调试表保留同一 USB-C 控制器的高速与超速配置；串口使用本机 GENI UART，GSI 为 611。
+公开基线的 CSRT 随固件提供，本版 WinPE 和专业版镜像没有为其中两个资源组注册
+Qualcomm HAL 扩展。表中有低功耗状态、串口调试或 HAL 资源，不等于 Windows 驱动已经接管硬件。
 
 平板已用这份带 ACPI 的固件经 systemd-boot 启动 Debian。EFI 系统表
 给出 ACPI 2.0 指针，从设备读回的 XSDT、FADT、DSDT、MADT、GTDT 和 PPTT

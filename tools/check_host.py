@@ -39,6 +39,8 @@ PORTABLE = (
 )
 CI_UNIT = (
     'test_acpi_tables.py',
+    'test_pakala_debug.py',
+    'test_piano_dsdt.py',
     'test_smbios_memory.py',
     'test_boot_options.py',
     'test_bulk_idle_pipeline.py',
@@ -50,6 +52,7 @@ CI_UNIT = (
     'test_nv_runtime_guard.py',
     'test_reset.py',
     'test_rtc_offset.py',
+    'test_rtc_clock.py',
     'test_usb_ram_boot_controller.py',
     'test_gt9764.py',
     'test_build_libcamera_packages.py',
