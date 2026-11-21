@@ -1,6 +1,11 @@
 {
+  "glslang_windows_host": {
+    "url": "https://github.com/KhronosGroup/glslang/releases/download/16.6.0/glslang-16.6.0-windows-x86_64-release.zip",
+    "sha256": "82bf434e69b9bb4829de7e2b4bc2c5e7a7861e53d66cf75e5cc70f5f694a8d9b"
+  },
   "mesa": {
     "version": "26.2.4",
+    "commit": "96cb43121031992b85767f9c1be8f3f48e22b1d2",
     "url": "https://archive.mesa3d.org/mesa-26.2.4.tar.xz",
     "sha256": "bce5f7fbebb934373b86c999a064d52fb5065878dc57f287f95346648ec832e9"
   },
@@ -8,5 +13,10 @@
     "version": "1.14",
     "url": "https://dl.winehq.org/vkd3d/source/vkd3d-1.14.tar.xz",
     "sha256": "c94015d59ebe8ae72c4d802af5ca1517d9744548842a4e776534612a8d905485"
+  },
+  "directx_headers": {
+    "tag": "v1.619.1",
+    "commit": "9e393d6d8a3b30dcc6f2806ef604ec16a27b0d7e",
+    "sha256": "5b9ab816a4eebea0261e59b4f1e2885f901d7df629c41c7d6b5f8770c52283b1"
   }
 }

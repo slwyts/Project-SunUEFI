@@ -9,6 +9,7 @@ on:
       - 'windows/**'
       - 'tools/build/windows.py'
       - 'tools/build/windows_umd.py'
+      - 'tools/build/windows_turnip.py'
       - 'config/windows-graphics.json'
       - 'tests/unit/test_windows.py'
       - '.github/workflows/windows.yml'

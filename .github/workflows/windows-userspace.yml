@@ -7,8 +7,11 @@ on:
       - 'upstream/woa_oneplus_ace5_pro'
       - 'config/windows-graphics.json'
       - 'tools/build/windows_umd.py'
+      - 'tools/build/windows_turnip.py'
       - 'tools/build/windows.py'
+      - 'sources.lock.json'
       - 'windows/drivers/packages.config'
+      - 'windows/drivers/adreno/requirements-build.txt'
       - 'build.sh'
       - '.github/workflows/windows-userspace.yml'
   pull_request:
@@ -37,6 +40,7 @@ jobs:
           $source = (Get-Content sources.lock.json -Raw | ConvertFrom-Json).woa_oneplus_ace5_pro
           "repo=$(([Uri]$source.url).AbsolutePath.Trim('/').Replace('.git',''))" >> $env:GITHUB_OUTPUT
           "commit=$(git rev-parse HEAD:upstream/woa_oneplus_ace5_pro)" >> $env:GITHUB_OUTPUT
+          "image=$env:ImageVersion" >> $env:GITHUB_OUTPUT
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ steps.donor.outputs.repo }}
@@ -53,7 +57,14 @@ jobs:
             build/windows/nuget/Microsoft.Windows.WDK.arm64.*/c/Include/*/um
             build/windows/nuget/Microsoft.Windows.WDK.arm64.*/c/Include/*/shared
           key: arm64-umd-inputs-${{ hashFiles('config/windows-graphics.json', 'windows/drivers/packages.config') }}
-      - name: Build and load the native ARM64 Direct3D front end
+      - name: Restore graphics libraries built with the same sources and toolchain
+        id: libraries
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: artifacts/windows/drivers/adreno/Release
+          key: win-arm64-graphics-${{ steps.donor.outputs.image }}-${{ steps.donor.outputs.commit }}-${{ hashFiles('build.sh', 'tools/build/windows*.py', 'windows/drivers/packages.config', 'windows/drivers/adreno/requirements-build.txt', 'config/windows-graphics.json', '.github/workflows/windows-userspace.yml') }}
+      - name: Build the native ARM64 Direct3D and Vulkan drivers
+        if: steps.libraries.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           if (!(Get-Command win_bison,bison -ErrorAction SilentlyContinue) -or
@@ -75,12 +86,44 @@ jobs:
           $sdk = Get-ChildItem "$sdkRoot/Include" -Directory | Where-Object { Test-Path "$($_.FullName)/um/windows.h" } |
             Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
           if (!$wdk -or !$vc -or !$sdk) { throw 'Missing ARM64 VC libraries or SDK/WDK user-mode headers.' }
-          bash ./build.sh windows graphics-umd --vc-tools $vc.FullName --kit-include $wdk.FullName --kit-include $sdk.FullName
+          Import-Module "$vs/Common7/Tools/Microsoft.VisualStudio.DevShell.dll"
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=arm64 -host_arch=arm64'
+          python -m pip install --disable-pip-version-check -r windows/drivers/adreno/requirements-build.txt
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          $dll = (Resolve-Path artifacts/windows/drivers/adreno/Release/a830_umd_arm64.dll).Path
-          $handle = [System.Runtime.InteropServices.NativeLibrary]::Load($dll)
-          try {
-            foreach ($name in 'OpenAdapter10','OpenAdapter10_2') {
-              [void][System.Runtime.InteropServices.NativeLibrary]::GetExport($handle, $name)
+          if (!(Get-Command glslangValidator -ErrorAction SilentlyContinue)) {
+            $spec = (Get-Content config/windows-graphics.json -Raw | ConvertFrom-Json).glslang_windows_host
+            $cache = New-Item -Force -ItemType Directory build/source-cache/windows-graphics
+            $zip = Join-Path $cache.FullName (([Uri]$spec.url).Segments[-1])
+            if (!(Test-Path $zip)) { Invoke-WebRequest $spec.url -OutFile $zip }
+            if ((Get-FileHash $zip).Hash -ne $spec.sha256) { throw 'glslang archive checksum mismatch' }
+            Expand-Archive -Force $zip build/windows/glslang
+            $glslang = Get-ChildItem build/windows/glslang -Recurse -Filter glslang.exe | Select-Object -First 1
+            if (!$glslang) { throw 'Missing glslang host tool' }
+            if (!(Test-Path "$($glslang.DirectoryName)/glslangValidator.exe")) {
+              Copy-Item $glslang.FullName "$($glslang.DirectoryName)/glslangValidator.exe"
             }
-          } finally { [System.Runtime.InteropServices.NativeLibrary]::Free($handle) }
+            $env:PATH = "$($glslang.DirectoryName);$env:PATH"
+          }
+          $rc = Get-Command llvm-windres -ErrorAction SilentlyContinue
+          if ($rc) { $resourceCompiler = $rc.Source }
+          else { $resourceCompiler = Join-Path $sdkRoot "bin/$($sdk.Name)/arm64/rc.exe" }
+          $env:INCLUDE = "$($sdk.FullName)/um;$($sdk.FullName)/shared;$($sdk.FullName)/ucrt;$env:INCLUDE"
+          bash ./build.sh windows graphics-umd --component all --windres $resourceCompiler --vc-tools $vc.FullName --kit-include $wdk.FullName --kit-include $sdk.FullName
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Load both graphics drivers on ARM64 Windows
+        shell: pwsh
+        run: |
+          $dir = (Resolve-Path artifacts/windows/drivers/adreno/Release).Path
+          $icd = (Get-Content "$dir/freedreno_icd.json" -Raw | ConvertFrom-Json).ICD.library_path
+          $drivers = @{
+            'a830_umd_arm64.dll' = @('OpenAdapter10','OpenAdapter10_2');
+            $icd = @('vk_icdNegotiateLoaderICDInterfaceVersion','vk_icdGetInstanceProcAddr','A830SetHost')
+          }
+          foreach ($driver in $drivers.Keys) {
+            $handle = [System.Runtime.InteropServices.NativeLibrary]::Load((Join-Path $dir $driver))
+            try {
+              foreach ($name in $drivers[$driver]) {
+                [void][System.Runtime.InteropServices.NativeLibrary]::GetExport($handle, $name)
+              }
+            } finally { [System.Runtime.InteropServices.NativeLibrary]::Free($handle) }
+          }

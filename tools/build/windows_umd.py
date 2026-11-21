@@ -1,4 +1,4 @@
-"""Build the ARM64 Direct3D 10/11 user-mode driver for the Adreno WDDM stack."""
+"""Build the ARM64 Direct3D front end and its matching Turnip Vulkan ICD."""
 import hashlib
 import json
 import os
@@ -16,6 +16,8 @@ DRIVER = ROOT / 'upstream/woa_oneplus_ace5_pro'
 OUTPUT = ROOT / 'artifacts/windows/drivers/adreno/Release'
 WORK = ROOT / 'build/windows/graphics-umd'
 DLL = 'a830_umd_arm64.dll'
+MESA_HEADERS = tuple(map(PurePosixPath, ('include/vulkan', 'include/vk_video',
+                         'src/compiler/spirv/spirv.h', 'src/compiler/spirv/GLSL.std.450.h')))
 
 
 def write_changed(path, contents):
@@ -31,21 +33,41 @@ def sha(path):
         return hashlib.file_digest(source, 'sha256').hexdigest()
 
 
-def sources(name, spec, cache, keep):
-    """Verify even cached archives and restore the selected source files from them."""
-    filename = spec['url'].rsplit('/', 1)[1]
+def selected_files(root, keep):
+    files = {}
+    for name in keep:
+        start = root / name
+        for path in start.rglob('*') if start.is_dir() else (start,):
+            if path.is_file() and not path.is_symlink():
+                files[path.relative_to(root).as_posix()] = sha(path)
+    return files
+
+
+def source_receipt(root, digest, keep, files):
+    write_changed(root / '.sources.json', json.dumps({
+        'sha256': digest, 'selection': sorted(map(str, keep)), 'files': files}, sort_keys=True))
+
+
+def download(cache, url, digest, filename=None):
+    filename = filename or url.rsplit('/', 1)[1]
     archive = cache / filename
     if not archive.is_file():
         cache.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=cache) as tmp:
             part = Path(tmp) / filename
-            with urllib.request.urlopen(spec['url'], timeout=120) as response, part.open('wb') as stream:
+            with urllib.request.urlopen(url, timeout=120) as response, part.open('wb') as stream:
                 shutil.copyfileobj(response, stream)
-            if sha(part) != spec['sha256']:
+            if sha(part) != digest:
                 raise ValueError(f'SHA-256 mismatch downloading {filename}')
             part.replace(archive)
-    elif sha(archive) != spec['sha256']:
+    elif sha(archive) != digest:
         raise ValueError(f'SHA-256 mismatch in {archive}')
+    return archive
+
+
+def sources(name, spec, cache, keep):
+    """Verify even cached archives and restore the selected source files from them."""
+    archive = download(cache, spec['url'], spec['sha256'])
 
     top = f"{name}-{spec['version']}"
     output = WORK / 'sources' / f"{top}-{spec['sha256'][:12]}"
@@ -57,8 +79,9 @@ def sources(name, spec, cache, keep):
         except ValueError:
             previous = {}
         if previous.get('sha256') == spec['sha256'] and previous.get('selection') == selection:
-            files = {p.relative_to(output).as_posix(): sha(p) for p in output.rglob('*')
-                     if p != receipt and p.is_file() and not p.is_symlink()}
+            # Mesa's Vulkan headers share one source tree with the ICD build;
+            # only this named subset is read or managed by the D3D front end.
+            files = selected_files(output, keep)
             if files and files == previous.get('files'):
                 return output, files
     files = {}
@@ -73,7 +96,7 @@ def sources(name, spec, cache, keep):
                     contents = stream.read()
                 write_changed(output / relative, contents)
                 files[relative.as_posix()] = hashlib.sha256(contents).hexdigest()
-    write_changed(receipt, json.dumps({'sha256': spec['sha256'], 'selection': selection, 'files': files}, sort_keys=True))
+    source_receipt(output, spec['sha256'], keep, files)
     return output, files
 
 
@@ -95,7 +118,7 @@ def kits(args):
         include = [Path(os.environ['WindowsSdkDir']) / 'Include' / os.environ['WindowsSDKVersion'].strip('/\\')]
     headers = [vc / 'include', *(p / part for part in ('ucrt', 'shared', 'um', 'winrt')
                                   for p in include if (p / part).is_dir())]
-    if not any((p / 'd3d10umddi.h').is_file() for p in headers):
+    if args.component != 'vulkan' and not any((p / 'd3d10umddi.h').is_file() for p in headers):
         raise ValueError('Provide --kit-include for the WDK with um/d3d10umddi.h and the matching Windows SDK')
     libraries = [vc / 'lib/arm64', *(p.resolve() for p in (args.kit_lib or []))]
     for p in include:
@@ -125,12 +148,21 @@ def build(args):
     pin = json.loads((ROOT / 'sources.lock.json').read_text())['woa_oneplus_ace5_pro']['commit']
     if subprocess.check_output(['git', '-C', DRIVER, 'rev-parse', 'HEAD'], text=True).strip() != pin:
         raise ValueError('The Adreno sources differ from sources.lock.json; run ./build.sh sources --group windows')
+    spec = json.loads((ROOT / 'config/windows-graphics.json').read_text())
+    headers, libraries = kits(args)
+    mesa = None
+    if args.component in ('vulkan', 'all'):
+        if __package__:
+            from . import windows_turnip
+        else:
+            import windows_turnip
+        mesa = windows_turnip.build(args, spec, headers, libraries, clang_kit_includes)
+        if args.component == 'vulkan':
+            return
     cc, ld, ninja = tool('clang-cl'), tool('lld-link'), tool('ninja')
     bison, flex = tool('bison', 'win_bison'), tool('flex', 'win_flex')
-    headers, libraries = kits(args)
-    spec = json.loads((ROOT / 'config/windows-graphics.json').read_text())
-    mesa, _ = sources('mesa', spec['mesa'], args.source_cache, (PurePosixPath('include'),
-                   PurePosixPath('src/compiler/spirv/spirv.h'), PurePosixPath('src/compiler/spirv/GLSL.std.450.h')))
+    if mesa is None:
+        mesa, _ = sources('mesa', spec['mesa'], args.source_cache, MESA_HEADERS)
     vkd3d, vkd3d_files = sources('vkd3d', spec['vkd3d'], args.source_cache, tuple(map(PurePosixPath, (
         'include', 'libs/vkd3d-shader', 'libs/vkd3d-common', 'COPYING', 'LICENSE'))))
     shader = vkd3d / 'libs/vkd3d-shader'
@@ -210,10 +242,13 @@ def build(args):
 
 
 def add_parser(subparsers):
-    cmd = subparsers.add_parser('graphics-umd', help='Build the ARM64 Adreno Direct3D user-mode front end')
+    cmd = subparsers.add_parser('graphics-umd', help='Build the ARM64 Adreno Direct3D front end and Vulkan ICD')
+    cmd.add_argument('--component', choices=('direct3d', 'vulkan', 'all'), default='all',
+                     help='Graphics components to build (default: all)')
     cmd.add_argument('--vc-tools', type=Path, help='VC/Tools/MSVC/<version> with ARM64 C++ libraries (default: VCToolsInstallDir)')
     cmd.add_argument('--kit-include', type=Path, action='append', help='Windows SDK or WDK Include/<version> (repeat for split kits)')
     cmd.add_argument('--kit-lib', type=Path, action='append', help='Separate ARM64 SDK library directory (repeat for um and ucrt)')
+    cmd.add_argument('--windres', type=Path, help='ARM64 Windows resource compiler for Mesa (e.g. aarch64-w64-mingw32-windres)')
     cmd.add_argument('--source-cache', type=Path, default=ROOT / 'build/source-cache/windows-graphics',
                      help='Directory for the checksum-verified Mesa and vkd3d source archives')
     cmd.add_argument('--jobs', type=int, default=min(os.cpu_count() or 1, 4), help='Number of parallel C/C++ compilations')

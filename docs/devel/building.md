@@ -69,17 +69,22 @@ docker run --rm -v "$PWD:/workspace" -w /workspace sunuefi-builder bash -euc '
 
 ## Windows ARM64 显卡驱动
 
-`./build.sh windows graphics-umd` 直接编译固定版本的 Ace 5 Pro Adreno 用户态前端，
-输出 `artifacts/windows/drivers/adreno/Release/a830_umd_arm64.dll`。它把 Direct3D 绘图
-交给 Turnip；单独一个 DLL 不能驱动平板显卡，还需要匹配的 Vulkan 和内核驱动。
+`./build.sh windows graphics-umd --component all` 用固定版本的 Ace 5 Pro
+源码构建配套的 ARM64 Direct3D 前端和 Mesa Turnip Vulkan 驱动。产物在
+`artifacts/windows/drivers/adreno/Release/`。前者把绘图交给后者，两者都
+需要平板上实际工作的 WDDM 内核驱动。只改一端时可以用 `--component direct3d`
+或 `--component vulkan` 单独构建。
 
 先运行 `./build.sh sources --group windows`。构建需要 LLVM（`clang-cl`、`lld-link`）、
 Ninja、Bison、Flex，以及带 ARM64 库的 Visual C++、Windows SDK 和 WDK。
+Turnip 的 Meson 和 Python 构建依赖可用
+`python -m pip install -r windows/drivers/adreno/requirements-build.txt` 安装；
+还需 `glslangValidator` 和能处理 ARM64 Windows 资源的编译器（用 `--windres` 指定）。
 在配置好这些工具的 Visual Studio 开发者终端运行上述命令即可；
 在 Linux 上或 SDK 与 WDK 分开安装时，显式传入相应目录：
 
 ```sh
-./build.sh windows graphics-umd --vc-tools "$VC_TOOLS" \
+./build.sh windows graphics-umd --component all --vc-tools "$VC_TOOLS" \
   --kit-include "$WDK_INCLUDE" --kit-include "$SDK_INCLUDE"
 ```
 

@@ -40,7 +40,7 @@ TARGETS = ('uefi', 'linux', *DISTROS)
 NON_PRODUCT_FILES = {'.github/workflows/host-checks.yml', '.github/workflows/windows.yml',
                      '.github/workflows/windows-graphics.yml', '.github/workflows/windows-userspace.yml',
                      'tools/check_host.py', 'tools/build/check_patch_series.py',
-                     'tools/build/windows.py', 'tools/build/windows_umd.py',
+                     'tools/build/windows.py', 'tools/build/windows_umd.py', 'tools/build/windows_turnip.py',
                      'config/windows-graphics.json', 'upstream/woa_oneplus_ace5_pro'}
 
 

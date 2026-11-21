@@ -26,6 +26,7 @@ on:
       - '!tools/build/check_patch_series.py'
       - '!tools/build/windows.py'
       - '!tools/build/windows_umd.py'
+      - '!tools/build/windows_turnip.py'
       - 'upstream/**'
       - '!upstream/woa_oneplus_ace5_pro'
       - 'android/**'

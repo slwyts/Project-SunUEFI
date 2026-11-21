@@ -1,0 +1,5 @@
+Mako==1.4.3
+meson==1.12.1
+packaging==26.3
+ply==3.11
+PyYAML==6.0.4
