@@ -6,10 +6,12 @@ on:
     paths: &graphics_paths
       - 'windows/drivers/**'
       - 'vendor/firmware/piano-qcom/gen80000_gmu.bin'
+      - 'vendor/firmware/piano-keyboard/MCU_Upgrade.bin'
       - 'tests/unit/test_gmu_firmware.py'
       - 'tests/unit/test_gmu_memory_layout.py'
       - 'tests/unit/test_hfi_queue.py'
       - 'tests/unit/test_wn8030_input.py'
+      - 'tests/unit/test_wn8030_boot.py'
       - 'tests/native/Wn8030ReportsTest.c'
       - 'tools/build/windows.py'
       - 'build.sh'
@@ -33,7 +35,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - run: ./build.sh check --group python-all --no-skips --pattern test_gmu_firmware.py --pattern test_gmu_memory_layout.py --pattern test_hfi_queue.py --pattern test_wn8030_input.py
+      - run: >-
+          ./build.sh check --group python-all --no-skips --pattern test_gmu_firmware.py
+          --pattern test_gmu_memory_layout.py --pattern test_hfi_queue.py
+          --pattern test_wn8030_input.py --pattern test_wn8030_boot.py
   readback:
     runs-on: windows-11-arm
     steps:

@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 #include "input.h"
+#include "firmware.h"
 #define RESHUB_USE_HELPER_ROUTINES
 #include <reshub.h>
 #include <spb.h>
@@ -206,6 +207,7 @@ NTSTATUS Wn8030InputCreate(PDEVICE_OBJECT fdo, const CM_PARTIAL_RESOURCE_DESCRIP
     in->fdo = fdo;
     in->brightness = 80;
     NTSTATUS status = spb_open(connection, &in->spb);
+    if (NT_SUCCESS(status)) status = Wn8030BootFirmware(fdo->DriverObject, in->spb);
     if (NT_SUCCESS(status)) {
         VHF_CONFIG cfg;
         VHF_CONFIG_INIT(&cfg, fdo, (USHORT)wn8030_descriptor_length, (PUCHAR)wn8030_descriptor);

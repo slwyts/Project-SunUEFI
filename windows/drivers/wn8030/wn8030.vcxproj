@@ -28,8 +28,12 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="boot.c" />
+    <ClCompile Include="firmware.c" />
     <ClCompile Include="input.c" />
     <ClCompile Include="reports.c" />
+    <ClInclude Include="boot.h" />
+    <ClInclude Include="firmware.h" />
     <ClInclude Include="input.h" />
     <ClInclude Include="reports.h" />
   </ItemGroup>
