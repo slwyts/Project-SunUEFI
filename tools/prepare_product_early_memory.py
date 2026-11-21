@@ -46,6 +46,7 @@ def sec_inf(text):
     text=text.replace('9AFFB503-E643-4141-8B90-17E8588B1D35','892BCA3B-55ED-4F2B-8750-534543504941')
     text=text.replace('  Sec.c','  Sec.c\n  PianoEarlyMemory.c\n  PianoSmemRam.c\n  PianoSmemDescriptor.c\n  PianoColdBootObjects.c\n  PianoColdBootObjectsContract.c\n  PianoMemoryLayout.c\n  PianoColdMemory.c\n  PianoPlatformMemoryContract.c',1)
     text=text.replace('[LibraryClasses]\n','[LibraryClasses]\n  FdtLib\n  BaseLib\n  MemoryMapLib\n',1)
+    text=text.replace('[Guids]\n','[Guids]\n  gDxeMemoryProtectionSettingsGuid ## PRODUCES ## HOB\n',1)
     return text.replace('  AArch64/ArchSec.c','  PianoSecRead32.S\n  PianoColdSecRead256.S\n  AArch64/ArchSec.c',1)+tail
 
 
@@ -54,7 +55,18 @@ def sec_source(text):
     text,tail=split_source_tail(text)
     if hashlib.sha256(text.encode()).hexdigest()!=SEC_SOURCE:
         raise ValueError('SEC source drift: re-audit first MemoryPeim ordering')
+    text=text.replace('#include <Library/HobLib.h>', '#include <Library/HobLib.h>\n#include <Guid/DxeMemoryProtectionSettings.h>', 1)
     text=text.replace('#include "Sec.h"','#include "Sec.h"\n#include "PianoEarlyMemory.h"\n#include "PianoColdBootObjects.h"\n#include "PianoColdMemory.h"',1)
+    text=text.replace('  // Build CPU HOB', '''  // Let ArmCpuDxe expose the native page attributes to EFI loaders.
+  DXE_MEMORY_PROTECTION_SETTINGS DxeSettings = {
+    .StructVersion                  = DXE_MEMORY_PROTECTION_SETTINGS_CURRENT_VERSION,
+    .InstallMemoryAttributeProtocol = TRUE,
+  };
+  if (BuildGuidDataHob (&gDxeMemoryProtectionSettingsGuid, &DxeSettings, sizeof (DxeSettings)) == NULL) {
+    DEBUG ((DEBUG_WARN, "Could not publish DXE memory protection settings\\n"));
+  }
+
+  // Build CPU HOB''',1)
     anchor='  // Locate "DXE Heap" Memory Region'
     if text.count(anchor)!=1:
         raise ValueError('SEC first memory boundary ambiguous')
