@@ -141,6 +141,9 @@ int main(int Argc,char **Argv){
     char TouchFailure[1024];snprintf(TouchFailure,sizeof(TouchFailure),"%s-touch.ppm",Argv[1]);Preview(TouchFailure);
     assert(PianoProductBootLogMessage(L"未能启动系统",L"键盘驱动未能安全退出",EFI_DEVICE_ERROR,TRUE)==EFI_SUCCESS);
     char KeyboardFailure[1024];snprintf(KeyboardFailure,sizeof(KeyboardFailure),"%s-keyboard.ppm",Argv[1]);Preview(KeyboardFailure);
+    assert(PianoProductBootLogMessage(L"未能启动系统",L"系统引导程序未响应",EFI_TIMEOUT,PianoBootMessageReturnMenu)==EFI_SUCCESS);
+    ExpectTextAt(X,Y+140*Scale,Scale,"0X8000000000000012");
+    char Recoverable[1024];snprintf(Recoverable,sizeof(Recoverable),"%s-loader.ppm",Argv[1]);Preview(Recoverable);
   }
   CONST UINT32 Sizes[][2]={{480,320},{800,600},{3200,320},{480,2136}};
   for(UINTN I=0;I<ARRAY_SIZE(Sizes);++I){

@@ -228,7 +228,7 @@ STATIC EFI_STATUS MessageText(CONST CHAR16 *String,UINT32 X,UINT32 Y,UINT32 Scal
   }
   return EFI_SUCCESS;
 }
-EFI_STATUS PianoProductBootLogMessage(CONST CHAR16 *Title,CONST CHAR16 *Detail,EFI_STATUS Status,BOOLEAN Failed){
+EFI_STATUS PianoProductBootLogMessage(CONST CHAR16 *Title,CONST CHAR16 *Detail,EFI_STATUS Status,PIANO_BOOT_MESSAGE_ACTION Action){
   if(!mCanvas.Gop||!mCanvas.Alive||!Title)return EFI_NOT_STARTED;
   UINT32 Scale=MIN(mCanvas.Width,mCanvas.Height)/440;if(!Scale)Scale=1;
   UINT32 X=mCanvas.Width*7/100,Y=mCanvas.Height*26/100;
@@ -236,9 +236,14 @@ EFI_STATUS PianoProductBootLogMessage(CONST CHAR16 *Title,CONST CHAR16 *Detail,E
   S=Rect(Color(238,121,0),X,Y-10*Scale,20*Scale,2*Scale);if(S!=EFI_SUCCESS)return S;
   S=MessageText(Title,X,Y,Scale+1,Color(40,44,50));if(S!=EFI_SUCCESS)return S;
   S=MessageText(Detail,X,Y+34*Scale,Scale,Color(80,84,90));if(S!=EFI_SUCCESS)return S;
-  if(!Failed)return MessageText(L"请稍候",X,Y+64*Scale,Scale,Color(110,114,120));
-  S=MessageText(L"长按电源重启",X,Y+72*Scale,Scale,Color(50,54,60));if(S!=EFI_SUCCESS)return S;
-  S=MessageText(L"在选择画面按音量上进入 Android",X,Y+100*Scale,Scale,Color(50,54,60));if(S!=EFI_SUCCESS)return S;
+  if(Action==PianoBootMessageWait)return MessageText(L"请稍候",X,Y+64*Scale,Scale,Color(110,114,120));
+  if(Action==PianoBootMessageReturnMenu){
+    S=MessageText(L"按音量键返回启动菜单",X,Y+72*Scale,Scale,Color(50,54,60));
+  }else{
+    S=MessageText(L"长按电源重启",X,Y+72*Scale,Scale,Color(50,54,60));if(S!=EFI_SUCCESS)return S;
+    S=MessageText(L"在选择画面按音量上进入 Android",X,Y+100*Scale,Scale,Color(50,54,60));
+  }
+  if(S!=EFI_SUCCESS)return S;
   CHAR8 Code[19];Hex(Status,Code);UINT32 Saved=mCanvas.Scale;mCanvas.Scale=Scale;
   UINT32 CodeY=Y+140*Scale;
   // The failure page replaces the progress panel. Carry its matching failed

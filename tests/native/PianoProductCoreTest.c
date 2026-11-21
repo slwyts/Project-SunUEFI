@@ -44,6 +44,7 @@ STATIC BOOLEAN UsbHostActive;
 STATIC EFI_DEVICE_PATH_PROTOCOL BootPath;
 STATIC BOOLEAN MenuLaunch,CheckFallback;
 STATIC UINTN HostLeaves,BootCancels,Disarms;
+STATIC BOOLEAN MenuAfterCancel;
 STATIC PIANO_USB_SERVICE_ACTION BootUsbAction;
 STATIC EFI_STATUS CodeStatus;
 STATIC struct {MEMMAP_DEVICE_PATH Memory;EFI_DEVICE_PATH_PROTOCOL End;} KernelPath;
@@ -99,7 +100,9 @@ EFI_STATUS PianoUsbControllerServicePrepareBoot(CONST EFI_DEVICE_PATH_PROTOCOL *
   assert(Path==&BootPath);++HostLeaves;return EFI_SUCCESS;
 }
 VOID PianoUsbControllerServiceFinishBoot(VOID){}
-EFI_STATUS PianoBootPolicyCancelExit(VOID){++BootCancels;return EFI_SUCCESS;}
+EFI_STATUS PianoBootPolicyCancelExit(BOOLEAN OpenMenu){
+  ++BootCancels;MenuAfterCancel=OpenMenu;Policy.RequestedCoreAction=PianoUsbServiceActionNone;return EFI_SUCCESS;
+}
 EFI_STATUS PianoStartBootOption(EFI_HANDLE Parent,EFI_HANDLE *Device,PIANO_FV_APPLICATION *Application,
   PIANO_BOOT_DISPATCH *Dispatch){
   assert(Parent==CORE&&Device==&mLinuxBootDevice&&Application==&mLinuxApplication&&!mLinuxActive);
@@ -172,8 +175,8 @@ UINT64 EFIAPI GetTimeInNanoSecond(UINT64 Ticks){(VOID)Ticks;return 0;}
 EFI_STATUS PianoProductBootLogStage(CONST CHAR8 *Name,EFI_STATUS Status,UINT64 Elapsed){
   (VOID)Name;(VOID)Status;(VOID)Elapsed;assert(!"boot log is disabled");return EFI_SUCCESS;
 }
-EFI_STATUS PianoProductBootLogMessage(CONST CHAR16 *Title,CONST CHAR16 *Detail,EFI_STATUS Status,BOOLEAN Failed){
-  assert(Title&&Detail);if(Failed){FailureStatus=Status;FailureDetail=Detail;}return EFI_SUCCESS;
+EFI_STATUS PianoProductBootLogMessage(CONST CHAR16 *Title,CONST CHAR16 *Detail,EFI_STATUS Status,PIANO_BOOT_MESSAGE_ACTION Action){
+  assert(Title&&Detail);if(Action!=PianoBootMessageWait){FailureStatus=Status;FailureDetail=Detail;}return EFI_SUCCESS;
 }
 VOID EFIAPI CpuDeadLoop(VOID){longjmp(Escape,1);}
 
@@ -203,7 +206,7 @@ STATIC VOID Reset(VOID){
   FailureStatus=EFI_NOT_STARTED;
   FailureDetail=NULL;
   EspStatus=LoadStatus=EFI_SUCCESS;HostStatus=EFI_NOT_READY;FileLoads=0;
-  MenuLaunch=CheckFallback=FALSE;HostLeaves=BootCancels=Disarms=0;
+  MenuLaunch=CheckFallback=MenuAfterCancel=FALSE;HostLeaves=BootCancels=Disarms=0;
   DisarmStatus=EFI_SUCCESS;BootUsbAction=PianoUsbServiceActionNone;UsbHostActive=FALSE;
   mHandoffFailure=NULL;mHandoffStage="not-started";
   Restricts=DiagnosticPumps=DiagnosticStalls=RuntimePumps=RetainedObservers=0;
@@ -364,6 +367,46 @@ STATIC VOID PrepareErrorDiagnostics(VOID){
   mOwners.Report.Initialized=TRUE;mOwners.Report.Phase=PianoProductOwnersRunning;
   mOwners.Config.StartedOwnerMask=PIANO_OWNER_USB|PIANO_OWNER_UFS;
 }
+STATIC UINT32 RecoveryAction;
+STATIC EFI_SIMPLE_TEXT_INPUT_PROTOCOL ConsoleIn;
+STATIC EFI_STATUS EFIAPI RecoveryPump(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Reason,UINTN BudgetUs){
+  assert(This==&Runtime && Reason==PIANO_PRODUCT_PUMP_GUI && BudgetUs==1000);
+  assert(BootCancels==1 && !MenuAfterCancel && !Restricts && !mFailureDiagnostics &&
+         !mLinuxActive && !mLinuxApplication.Busy && !mLateHandoff.RetireCalls);
+  ++RuntimePumps;
+  if(RuntimePumps==3 && RecoveryAction)Policy.PendingAction=RecoveryAction;
+  return EFI_SUCCESS;
+}
+STATIC EFI_STATUS EFIAPI RecoveryPending(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 *Action,UINT64 *Sequence){
+  assert(This==&Runtime);*Action=Policy.PendingAction;*Sequence=RuntimePumps;return EFI_SUCCESS;
+}
+STATIC EFI_STATUS EFIAPI RecoveryRequest(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Action){
+  assert(This==&Runtime && Action==PIANO_PRODUCT_ACTION_SIMPLEINIT && !Policy.PendingAction);
+  Policy.PendingAction=Action;return EFI_SUCCESS;
+}
+STATIC EFI_STATUS EFIAPI RecoveryKey(EFI_SIMPLE_TEXT_INPUT_PROTOCOL *This,EFI_INPUT_KEY *Key){
+  assert(This==&ConsoleIn);
+  if(RuntimePumps!=3)return EFI_NOT_READY;
+  Key->ScanCode=SCAN_UP;Key->UnicodeChar=0;return EFI_SUCCESS;
+}
+STATIC EFI_STATUS EFIAPI RecoveryStall(UINTN Usec){
+  assert(Usec==1000 && RuntimePumps<3 && !mFailureDiagnostics);return EFI_SUCCESS;
+}
+STATIC VOID BootErrorRecovery(VOID){
+  for(UINTN I=0;I<2;++I){
+    PrepareErrorDiagnostics();mLateHandoff.Env.ParentImage=CORE;
+    mLinuxActive=FALSE;mLinuxApplication.Busy=FALSE;
+    Policy.BootSelection=I?PianoBootSelected:PianoBootFile;
+    RecoveryAction=I?0:PIANO_PRODUCT_ACTION_RETURN_CORE;
+    Runtime.Pump=RecoveryPump;Runtime.GetPendingAction=RecoveryPending;Runtime.RequestAction=RecoveryRequest;
+    ConsoleIn.ReadKeyStroke=RecoveryKey;System.ConIn=&ConsoleIn;Services.Stall=RecoveryStall;
+    LoadStatus=EFI_TIMEOUT;
+    assert(StartInstalledLinux(CORE)==EFI_NOT_READY);
+    assert(FailureStatus==EFI_TIMEOUT && !MenuAfterCancel && BootCancels==1 && RuntimePumps==3);
+    assert(Policy.PendingAction==(RecoveryAction?RecoveryAction:PIANO_PRODUCT_ACTION_SIMPLEINIT));
+    assert(!Restricts && !Retires && !Disarms && !mFailureDiagnostics);
+  }
+}
 STATIC VOID ErrorDiagnostics(VOID){
   PrepareErrorDiagnostics();
   InstalledSystemWatchdogExpired(3000000000ULL);
@@ -447,6 +490,7 @@ int main(int Argc,char **Argv){
   else if(!strcmp(Argv[1],"uki-load-failure"))UkiLoadFailure();
   else if(!strcmp(Argv[1],"boot-fallback"))BootFallback();
   else if(!strcmp(Argv[1],"error-diagnostics"))ErrorDiagnostics();
+  else if(!strcmp(Argv[1],"boot-error-recovery"))BootErrorRecovery();
   else assert(!"unknown test case");
   puts("Actual resident Core UKI admission and failure diagnostics passed");return 0;
 }

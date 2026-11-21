@@ -468,6 +468,13 @@ int main(int argc,char **argv){
       assert(PianoBootPolicyRun()==EFI_END_OF_FILE && starts==1 && !simple_runs);
       assert(PianoBootPolicyReport()->BootSelection==(scenario==157?PianoBootSelected:PianoBootAutomatic));
       assert(PianoBootPolicyReport()->BootOptionNumber==(scenario==157?19:0));
+      // The resident error page must not restart the same countdown.
+      UINT32 Next;UINT64 Seq;
+      if(scenario==158)assert(runtime->RequestAction(runtime,PIANO_PRODUCT_ACTION_SHELL)==EFI_SUCCESS);
+      assert(PianoBootPolicyCancelExit(FALSE)==EFI_SUCCESS);
+      assert(runtime->GetPendingAction(runtime,&Next,&Seq)==EFI_SUCCESS &&
+             Next==(scenario==157?PIANO_PRODUCT_ACTION_NONE:PIANO_PRODUCT_ACTION_SHELL));
+      assert(PianoBootPolicyReport()->RequestedCoreAction==PianoUsbServiceActionNone);
     }
     assert(PianoBootPolicyStop()==EFI_SUCCESS && !runtime && !stops);goto Done;
   }

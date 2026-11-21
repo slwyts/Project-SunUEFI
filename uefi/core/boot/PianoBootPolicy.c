@@ -653,15 +653,16 @@ EFI_STATUS PianoBootPolicyCancelStable(VOID) {
   PianoBootFileDiscard();
   return Request(&mRuntime,PIANO_PRODUCT_ACTION_SIMPLEINIT);
 }
-EFI_STATUS PianoBootPolicyCancelExit(VOID) {
+EFI_STATUS PianoBootPolicyCancelExit(BOOLEAN OpenMenu) {
   EFI_STATUS S=AtApp();if(S!=EFI_SUCCESS)return S;
   PIANO_USB_SERVICE_ACTION A=mReport.RequestedCoreAction;
   if(mReport.Retained||mReport.Pumping||mReport.Dispatching||mReport.ActiveAction!=PIANO_PRODUCT_ACTION_NONE||
      (A!=PianoUsbServiceActionBoot&&A!=PianoUsbServiceActionReboot&&A!=PianoUsbServiceActionContinue)||
-     mReport.PendingAction!=PIANO_PRODUCT_ACTION_NONE)return EFI_ACCESS_DENIED;
+     (mReport.PendingAction!=PIANO_PRODUCT_ACTION_NONE &&
+      (OpenMenu || !UiAction(mReport.PendingAction))))return EFI_ACCESS_DENIED;
   mReport.RequestedCoreAction=PianoUsbServiceActionNone;mReport.RequestedResetTarget=0;
   PianoBootFileDiscard();
-  return Request(&mRuntime,PIANO_PRODUCT_ACTION_SIMPLEINIT);
+  return OpenMenu?Request(&mRuntime,PIANO_PRODUCT_ACTION_SIMPLEINIT):EFI_SUCCESS;
 }
 EFI_STATUS PianoBootPolicyStop(VOID) {
   if(!mReport.Initialized)return EFI_NOT_STARTED;

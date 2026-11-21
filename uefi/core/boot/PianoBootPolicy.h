@@ -46,8 +46,9 @@ EFI_STATUS PianoBootPolicyRun(VOID);
 EFI_STATUS PianoBootPolicyDispatchPending(VOID);
 // Core may return to the existing menu after a clean failed ESP read.
 EFI_STATUS PianoBootPolicyCancelStable(VOID);
-// Back to the menu when an exit cannot start yet (USB host still in use)
-EFI_STATUS PianoBootPolicyCancelExit(VOID);
+// Clear an exit request. The error screen can receive new commands without
+// automatically starting the menu's countdown.
+EFI_STATUS PianoBootPolicyCancelExit(BOOLEAN OpenMenu);
 // Parent must keep code/state alive while installed, or Stop before returning.
 // This stops policy notifications only, never shared device/service owners.
 EFI_STATUS PianoBootPolicyStop(VOID);

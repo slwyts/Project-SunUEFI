@@ -21,6 +21,7 @@ class ProductBootLogLifecycleTests(unittest.TestCase):
                     ROOT / 'uefi/components/guarded-read',
                     ROOT / 'uefi/components/product-handoff/Mu_Basecore/MdePkg/Include',
                     ROOT / 'uefi/components/nv',
+                    ROOT / 'uefi/components/ext4',
                     ROOT / 'uefi/components/reset',
                     ROOT / 'uefi/components/pogo-product',
                     ROOT / 'uefi/components/touch-product',

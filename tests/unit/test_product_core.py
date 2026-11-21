@@ -70,3 +70,6 @@ class ProductCoreTests(unittest.TestCase):
 
     def test_error_screen_keeps_usb_and_retires_owners_before_reset(self):
         self.run_case('error-diagnostics')
+
+    def test_returned_loader_keeps_normal_fastboot_and_accepts_local_menu_selection(self):
+        self.run_case('boot-error-recovery')

@@ -30,8 +30,8 @@ CONST CHAR8 *PianoUfsStartupDiagnostic(VOID){return NULL;}
 INTN EFIAPI AsciiStrCmp(CONST CHAR8 *A,CONST CHAR8 *B){return strcmp(A,B);}
 INTN EFIAPI AsciiStrnCmp(CONST CHAR8 *A,CONST CHAR8 *B,UINTN N){return strncmp(A,B,N);}
 EFI_STATUS PianoProductDisplayCheckpoint(CONST CHAR8 *Name,UINT32 Stage){(VOID)Name;(VOID)Stage;return EFI_SUCCESS;}
-EFI_STATUS PianoProductBootLogMessage(CONST CHAR16 *Title,CONST CHAR16 *Detail,EFI_STATUS Status,BOOLEAN Failed){
-  (VOID)Title;(VOID)Detail;(VOID)Status;(VOID)Failed;assert(!"retained display must not draw failure messages");return EFI_SUCCESS;
+EFI_STATUS PianoProductBootLogMessage(CONST CHAR16 *Title,CONST CHAR16 *Detail,EFI_STATUS Status,PIANO_BOOT_MESSAGE_ACTION Action){
+  (VOID)Title;(VOID)Detail;(VOID)Status;(VOID)Action;assert(!"retained display must not draw failure messages");return EFI_SUCCESS;
 }
 unsigned PianoProductPayloadBootTarget(VOID){return 0;}
 BOOLEAN PianoDisplaySmmuRetained(VOID){return RetainedSmmu;}
