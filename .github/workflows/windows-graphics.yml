@@ -122,6 +122,10 @@ jobs:
               !(Test-Path "$storage/sunufs.inf") -or !(Test-Path "$storage/sunufs.cat")) {
             throw 'Expected an ARM64 Storport miniport, its INF and its WDK catalog.'
           }
+          $sections = llvm-readobj --sections "$storage/sunufs.sys" | Out-String
+          if ($LASTEXITCODE -ne 0 -or $sections -notmatch 'Name: \.text \([^}]*IMAGE_SCN_MEM_NOT_PAGED') {
+            throw 'The Storport interrupt handler must be linked into resident kernel code.'
+          }
           python tests/native/test_windows_driver_catalog.py "$storage/sunufs.cat" "$storage/sunufs.inf" "$storage/sunufs.sys"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Check Direct3D readback using the software adapter

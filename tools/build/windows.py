@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import shutil
 import struct
 import subprocess
@@ -313,6 +314,33 @@ def clang_kit_includes(directories, work, *, external_names=False):
         flags.extend(['/clang:-ivfsoverlay', f'/clang:{overlay}'])
     return flags
 
+
+def msvc_arm64_linker():
+    # Git for Windows also ships a link.exe; resolve the target tool from VS.
+    roots = []
+    if configured := os.environ.get('VCToolsInstallDir'):
+        roots.append(Path(configured))
+    locator = Path(os.environ['ProgramFiles(x86)']) / 'Microsoft Visual Studio/Installer/vswhere.exe'
+    if locator.is_file():
+        vs = subprocess.check_output([locator, '-latest', '-products', '*', '-requires',
+                                      'Microsoft.VisualStudio.Component.VC.Tools.ARM64',
+                                      '-property', 'installationPath'], text=True).strip()
+        if vs:
+            vc = Path(vs) / 'VC'
+            default_version = vc / 'Auxiliary/Build/Microsoft.VCToolsVersion.default.txt'
+            if default_version.is_file():
+                roots.append(vc / 'Tools/MSVC' / default_version.read_text().strip())
+    hosts = ['Hostx64', 'Hostx86']
+    if platform.machine().lower() in ('arm64', 'aarch64'):
+        hosts.insert(0, 'Hostarm64')
+    for root in roots:
+        for host in hosts:
+            path = root / 'bin' / host / 'arm64/link.exe'
+            if path.is_file():
+                return path
+    raise ValueError('Install the Visual Studio ARM64 C++ tools or set VCToolsInstallDir to their version directory')
+
+
 def llvm_driver(project, kits):
     work = ROOT / 'build/windows' / project.stem / 'Release'
     output = ROOT / 'artifacts/windows/drivers' / project.stem / 'Release'
@@ -346,7 +374,8 @@ def llvm_driver(project, kits):
         return library
     target = description.findtext('.//{*}TargetName') or project.stem
     driver = output / (target + '.sys')
-    subprocess.run([required_tool('lld-link'), '/nologo', '/driver', '/machine:arm64', '/subsystem:native,10.0',
+    linker = [msvc_arm64_linker(), '/kernel'] if os.name == 'nt' else [required_tool('lld-link')]
+    subprocess.run([*linker, '/nologo', '/driver', '/machine:arm64', '/subsystem:native,10.0',
                     f'/entry:{entry}', '/nodefaultlib', '/opt:ref', '/opt:icf', '/integritycheck', '/dynamicbase',
                     '/nxcompat', '/release', '/Brepro', f'/out:{driver}', *objects, *libraries], check=True)
     for item in description.findall('.//{*}Inf[@Include]'):

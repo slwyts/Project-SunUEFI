@@ -123,7 +123,9 @@ INF、签名目录（CAT）及其引用的所有文件。安装器把驱动放�
 没有对应硬件的包可以预装，不代表该设备已工作。不指定驱动目录时普通介质保留原版 WIM。
 
 构建项目自己的驱动包时，在装有 WDK 的 Windows 开发者终端运行
-`./build.sh windows drivers --catalogs`。WDK 的 Inf2Cat 检查每个带 INF 的 ARM64 包，
+`./build.sh windows drivers --catalogs`。在 Windows 上，即使选用 Clang 编译，
+内核驱动也由 Visual Studio 的 ARM64 `link.exe /kernel` 链接。
+WDK 的 Inf2Cat 检查每个带 INF 的 ARM64 包，
 生成列出包内文件哈希的 `.cat`，放在 `artifacts/windows/drivers/<项目>/Release/`。
 Windows driver checks 的 `Windows-ARM64-UFS-unsigned` 下载项包含同一次构建、经过校验的
 `sunufs.inf`、`sunufs.sys` 和 `sunufs.cat`。新生成的目录文件没有签名；按 Windows
