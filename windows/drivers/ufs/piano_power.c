@@ -54,47 +54,55 @@ static int power_up(struct piano_ufs_bus_power *p, enum piano_ufs_domain d)
     return 1;
 }
 
+static int retain_domain(struct piano_ufs_bus_power *p, enum piano_ufs_domain d)
+{
+    if (!(p->drop_mask & (1u << d))) return 1;
+    uint32_t ctrl = p->io.read(p->io.context, d, GDSCR);
+    if (ctrl == UINT32_MAX || (ctrl & (HW_CONTROL | SW_OVERRIDE))) return 0;
+    if (ctrl & (RETAIN_FF | COLLAPSE)) return 1;
+    uint32_t status = p->io.read(p->io.context, d, CFG_GDSCR);
+    if (status == UINT32_MAX) return 0;
+    if (!(status & UP_COMPLETE)) {
+        /* A failed power-up request may never have reached the running state. */
+        if (!p->ready && !p->owns_inherited) return 1;
+        if (!wait_state(p, d, UP_COMPLETE)) return 0;
+    }
+    p->io.wait_us(p->io.context, 1);
+    return update(p, d, RETAIN_FF, RETAIN_FF);
+}
+
+static int collapse_domain(struct piano_ufs_bus_power *p, enum piano_ufs_domain d)
+{
+    if (!(p->drop_mask & (1u << d))) return 1;
+    if (!update(p, d, COLLAPSE, COLLAPSE)) return 0;
+    if (d == PIANO_UFS_HBA_DOMAIN) {
+        /* Other masters can keep this votable domain on. */
+        p->io.wait_us(p->io.context, VOTE_RELEASE_US);
+    } else if (!wait_state(p, d, DOWN_COMPLETE)) return 0;
+    p->drop_mask &= ~(1u << d);
+    return 1;
+}
+
+int piano_ufs_collapse_phy(struct piano_ufs_bus_power *p)
+{
+    /* The PHY power-control sequence has already put both lanes into
+     * retention. Do not drop a domain still borrowed from the firmware. */
+    if (!p || !retain_domain(p,PIANO_UFS_PHY_DOMAIN)) return 0;
+    p->ready = 0;
+    return collapse_domain(p,PIANO_UFS_PHY_DOMAIN);
+}
+
 static int release_power(struct piano_ufs_bus_power *p)
 {
-    /* Program a borrowed domain only after it has been claimed. Check every
-     * required retention bit before switching off clocks or collapsing either
-     * domain; do not strand the device halfway through a failed D3 request.
-     */
-    for (unsigned i = 0; i < PIANO_UFS_DOMAINS; ++i) {
-        enum piano_ufs_domain d = (enum piano_ufs_domain)i;
-        if (!(p->drop_mask & (1u << i))) continue;
-        uint32_t ctrl = p->io.read(p->io.context, d, GDSCR);
-        if (ctrl == UINT32_MAX || (ctrl & (HW_CONTROL | SW_OVERRIDE))) return 0;
-        if (ctrl & (RETAIN_FF | COLLAPSE)) continue;
-        uint32_t status = p->io.read(p->io.context, d, CFG_GDSCR);
-        if (status == UINT32_MAX) return 0;
-        if (!(status & UP_COMPLETE)) {
-            /* The request to power up may itself have failed. Undo that
-             * vote even if the domain never reached its running state.
-             */
-            if (!p->ready) continue;
-            if (!wait_state(p, d, UP_COMPLETE)) return 0;
-        }
-        p->io.wait_us(p->io.context, 1);
-        if (!update(p, d, RETAIN_FF, RETAIN_FF)) return 0;
-    }
+    for (unsigned i = 0; i < PIANO_UFS_DOMAINS; ++i)
+        if (!retain_domain(p,(enum piano_ufs_domain)i)) return 0;
     p->ready = 0;
     if (p->clocks_held) {
         if (!p->inputs.base_clocks(p->inputs.context, 0)) return 0;
         p->clocks_held = 0;
     }
     for (unsigned n = PIANO_UFS_DOMAINS; n; --n) {
-        enum piano_ufs_domain d = (enum piano_ufs_domain)(n-1);
-        unsigned bit = 1u << d;
-        if (!(p->drop_mask & bit)) continue;
-        if (!update(p, d, COLLAPSE, COLLAPSE)) return 0;
-        if (d == PIANO_UFS_HBA_DOMAIN) {
-            /* Other masters can keep this votable domain on. */
-            p->io.wait_us(p->io.context, VOTE_RELEASE_US);
-        } else if (!wait_state(p, d, DOWN_COMPLETE)) {
-            return 0;
-        }
-        p->drop_mask &= ~bit;
+        if (!collapse_domain(p,(enum piano_ufs_domain)(n-1))) return 0;
     }
     if (p->inputs_held) {
         if (!p->inputs.rails_and_paths(p->inputs.context, 0)) return 0;

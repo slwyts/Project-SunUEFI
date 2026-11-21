@@ -53,7 +53,7 @@ static void check(const struct mock *m, unsigned index, uint32_t addr, uint32_t 
 }
 
 struct aux_hw {
-    uint32_t reg[4][3];
+    uint32_t reg[RPMH_UFS_SUPPLY_COUNT][3];
     unsigned messages, fail_next, first[20];
 };
 
@@ -62,7 +62,7 @@ static int write_aux(void *context, const struct rpmh_rsc_command *cmd, unsigned
     struct aux_hw *h = context;
     assert(n && n <= 3 && wait == (1u << n)-1);
     unsigned rail = (cmd[0].address - 0x40000)/0x10;
-    assert(rail < 4);
+    assert(rail < RPMH_UFS_SUPPLY_COUNT);
     if (h->messages < 20) h->first[h->messages] = rail;
     ++h->messages;
     for (unsigned j = 0; j < n; ++j) {
@@ -77,10 +77,10 @@ static int write_aux(void *context, const struct rpmh_rsc_command *cmd, unsigned
 static void check_boot_supplies(void)
 {
     const enum rpmh_ufs_supply REF = RPMH_UFS_REFCLK, PARENT = RPMH_UFS_VCCQ_PARENT;
-    uint8_t b[HEADER+4*ENTRY] = {0};
-    const char *const names[] = {"ldob17","ldod1","ldoi2","smpi7"};
-    u32(b+4,0x0c0330db); u16(b+8,RPMH_VRM); u16(b+12,4*ENTRY); u16(b+14,4);
-    for (unsigned i = 0; i < 4; ++i) {
+    uint8_t b[HEADER+RPMH_UFS_SUPPLY_COUNT*ENTRY] = {0};
+    const char *const names[] = {"ldob17","ldod1","ldoi2","smpi7","ldoi3","ldof1","ldoj1","ldog3"};
+    u32(b+4,0x0c0330db); u16(b+8,RPMH_VRM); u16(b+12,RPMH_UFS_SUPPLY_COUNT*ENTRY); u16(b+14,RPMH_UFS_SUPPLY_COUNT);
+    for (unsigned i = 0; i < RPMH_UFS_SUPPLY_COUNT; ++i) {
         memcpy(b+HEADER+i*ENTRY,names[i],strlen(names[i]));
         u32(b+HEADER+i*ENTRY+16,0x40000+i*0x10);
     }
@@ -139,6 +139,42 @@ static void check_boot_supplies(void)
     assert(rpmh_client_open(&p,&disk));
     assert(rpmh_set_aux_supply(&p,&disk,PARENT,&storage_parent) && h.reg[PARENT][0] == 1224);
     assert(rpmh_client_close(&p,&disk) && h.reg[PARENT][0] == 1224 && h.reg[PARENT][1]);
+
+    /* Display/USB put exact constraints on rails where the M-PHY accepts
+     * a range. Do not use the board regulator's permissible MAX as a vote. */
+    const enum rpmh_ufs_supply Q=RPMH_UFS_PHY_QREF, R=RPMH_UFS_PHY_REFGEN,
+        A=RPMH_UFS_PHY_ANALOG, L=RPMH_UFS_PHY_PLL;
+    unsigned phy = ((1u<<RPMH_UFS_SUPPLY_COUNT)-1) & ~15u;
+    struct rpmh_client display,usb;
+    const struct rpmh_supply_request qref={64500,880,912,1}, refgen={206000,880,920,1};
+    const struct rpmh_supply_request analog={213000,912,920,1}, pll={18300,1200,1256,1};
+    const struct rpmh_supply_request dsi={98000,880,880,1}, usb_pll={30000,1200,1200,1}, usb_ref={7000,880,880,1};
+    assert(rpmh_provider_boot(&p,0,0,phy,1) && rpmh_client_open(&p,&disk));
+    assert(h.reg[Q][0]==880 && h.reg[R][0]==880 && h.reg[A][0]==912 && h.reg[L][0]==1200);
+    assert(rpmh_set_aux_supply(&p,&disk,Q,&qref) && rpmh_set_aux_supply(&p,&disk,R,&refgen) &&
+           rpmh_set_aux_supply(&p,&disk,A,&analog) && rpmh_set_aux_supply(&p,&disk,L,&pll));
+    assert(rpmh_client_open(&p,&usb) && rpmh_client_open(&p,&display));
+    assert(rpmh_set_aux_supply(&p,&display,Q,&dsi) && rpmh_set_aux_supply(&p,&usb,L,&usb_pll) &&
+           rpmh_set_aux_supply(&p,&usb,R,&usb_ref));
+    assert(rpmh_provider_boot(&p,0,0,phy,0) && h.reg[L][2]==7);
+    struct rpmh_supply_request too_high={18300,1248,1256,1};
+    unsigned previous=h.messages;
+    assert(!rpmh_set_aux_supply(&p,&disk,L,&too_high) && h.messages==previous);
+    assert(rpmh_client_close(&p,&disk) && !h.reg[A][1] && h.reg[Q][1] && h.reg[R][1] && h.reg[L][1]);
+    assert(h.reg[Q][2]==7 && h.reg[R][2]==4 && h.reg[L][2]==7);
+
+    /* Learning an old PLL vote after unexpected D3 is not permission to
+     * reissue a USB/M-PHY request before its power sequence reaches PLL. */
+    rpmh_provider_power_lost(&p);
+    unsigned pllbit=1u<<L;
+    const struct rpmh_vrm_votes read_back={.mask=pllbit,.vote[RPMH_UFS_PHY_PLL]={1200,1,4}};
+    assert(rpmh_vrm_adopt(&p.vrm,&read_back));
+    previous=h.messages;
+    assert(!rpmh_provider_can_reconcile(&p) && !rpmh_provider_reconcile(&p) && h.messages==previous);
+    assert(rpmh_provider_boot(&p,0,0,(1u<<Q)|(1u<<R),1) && (p.vrm.deferred&pllbit));
+    assert(h.reg[L][2]==7 && p.vrm.applied[L].mode==4);
+    assert(rpmh_provider_boot(&p,0,0,pllbit,1) && !p.vrm.deferred && p.vrm.applied[L].mode==7);
+    assert(rpmh_client_close(&p,&display) && rpmh_client_close(&p,&usb));
 }
 
 int main(void)

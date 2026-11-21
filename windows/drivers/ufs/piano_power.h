@@ -34,4 +34,5 @@ struct piano_ufs_bus_power {
  * at the next normal power-down. Never claim another OS driver's registers.
  */
 int piano_ufs_set_bus_power(void *context, int enable);
+int piano_ufs_collapse_phy(struct piano_ufs_bus_power *power);
 void piano_ufs_claim_domains(struct piano_ufs_bus_power *power);

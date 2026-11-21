@@ -78,6 +78,7 @@ void rpmh_provider_power_lost(struct rpmh_provider *p)
     }
     p->vrm.floor = (struct rpmh_vrm_votes){0};
     p->vrm.boot_holds = p->vrm.managed = 0;
+    p->vrm.deferred = p->vrm.restore & ~(BIT(RPMH_UFS_PHY_QREF)-1);
     p->restore_bcms |= rpmh_fabric_bcm_mask(&p->fabric, p->touched_paths);
     p->floor = (struct rpmh_boot_votes){0};
     p->applied = (struct rpmh_boot_votes){0};
@@ -155,7 +156,7 @@ int rpmh_provider_can_reconcile(const struct rpmh_provider *p)
     if (!p) return 0;
     int platform_pending = p->restore_rails || p->restore_bcms;
     return (!platform_pending && !p->vrm.restore) || (platform_pending && platform_floor_ready(p)) ||
-        (p->vrm.restore && !(p->vrm.restore & ~p->vrm.floor.mask));
+        rpmh_vrm_pending(&p->vrm);
 }
 
 int rpmh_provider_reconcile(struct rpmh_provider *p)
@@ -164,9 +165,8 @@ int rpmh_provider_reconcile(struct rpmh_provider *p)
     int platform_ok = reconcile_platform(p);
     /* A missing boot value for a separate PMIC supply must not keep an
      * otherwise known interconnect/clock request from being restored. */
-    if (p->vrm.restore && ((p->vrm.restore & ~p->vrm.floor.mask) ||
-                            !rpmh_vrm_sync(p, p->vrm.restore))) return 0;
-    return platform_ok;
+    if (!rpmh_vrm_sync(p, rpmh_vrm_pending(&p->vrm))) return 0;
+    return platform_ok && !p->vrm.restore;
 }
 
 int rpmh_provider_boot(struct rpmh_provider *p, unsigned rails, unsigned paths, unsigned supplies, int hold)
@@ -180,7 +180,9 @@ int rpmh_provider_boot(struct rpmh_provider *p, unsigned rails, unsigned paths, 
          * paths or wait for siblings to probe a second time. */
         rails |= p->restore_rails;
         if (p->restore_bcms) paths |= p->touched_paths;
-        supplies |= p->vrm.restore;
+        /* The PHY owner restores its analog supplies at their respective
+         * hardware stages. In particular do not enable its PLL before PCS. */
+        supplies |= p->vrm.restore & (BIT(RPMH_UFS_PHY_QREF)-1);
     }
     for (unsigned i = 0; i < RPMH_RAIL_COUNT; ++i)
         if ((rails & BIT(i)) && !p->rail[i].address) return 0;
@@ -283,8 +285,7 @@ int rpmh_set_ufs_supplies(struct rpmh_provider *p, struct rpmh_client *c,
     enum rpmh_supply_load old_vcc = c->ufs[RPMH_UFS_VCC], old_vccq = c->ufs[RPMH_UFS_VCCQ];
     unsigned mask = (old_vcc != vcc ? BIT(RPMH_UFS_VCC) : 0u) |
                     (old_vccq != vccq ? BIT(RPMH_UFS_VCCQ) : 0u);
-    if ((mask & ~p->vrm.floor.mask) || (p->vrm.restore &&
-        ((p->vrm.restore & ~p->vrm.floor.mask) || !rpmh_vrm_sync(p, p->vrm.restore)))) return 0;
+    if ((mask & ~p->vrm.floor.mask) || !rpmh_vrm_sync(p,rpmh_vrm_pending(&p->vrm))) return 0;
     c->ufs[RPMH_UFS_VCC] = vcc;
     c->ufs[RPMH_UFS_VCCQ] = vccq;
     if (rpmh_vrm_sync(p, mask)) return 1;
@@ -293,7 +294,7 @@ int rpmh_set_ufs_supplies(struct rpmh_provider *p, struct rpmh_client *c,
     /* Restore any confirmed earlier rail too, not only the TCS whose
      * reply was lost. Leave failed restores pending for the D0 worker. */
     rpmh_vrm_restore_demands(p, mask);
-    (void)rpmh_vrm_sync(p, p->vrm.restore);
+    (void)rpmh_vrm_sync(p, rpmh_vrm_pending(&p->vrm));
     return 0;
 }
 

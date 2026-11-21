@@ -5,12 +5,18 @@
  * discovered by name on every D0, not by their PMIC bus addresses. */
 static const struct {
     const char *name;
-    unsigned min_mv, max_mv, init_mv, high_ua, threshold_ua, low_mode;
+    unsigned min_mv, max_mv, init_mv, high_ua, threshold_ua, low_mode, boot_mv;
 } supplies[] = {
-    [RPMH_UFS_VCC]         = {"ldob17", 2504, 2504, 2504, 1300000, 10000, 4},
-    [RPMH_UFS_VCCQ]        = {"ldod1",  1200, 1200, 1200, 1200000, 30000, 4},
-    [RPMH_UFS_REFCLK]      = {"ldoi2",  1200, 1200, 1200,       0, 30000, 3},
-    [RPMH_UFS_VCCQ_PARENT] = {"smpi7",  1224, 1340, 1256,       0,200000, 3},
+    [RPMH_UFS_VCC]         = {"ldob17", 2504, 2504, 2504, 1300000, 10000, 4, 2504},
+    [RPMH_UFS_VCCQ]        = {"ldod1",  1200, 1200, 1200, 1200000, 30000, 4, 1200},
+    [RPMH_UFS_REFCLK]      = {"ldoi2",  1200, 1200, 1200,       0, 30000, 3, 1200},
+    [RPMH_UFS_VCCQ_PARENT] = {"smpi7",  1224, 1340, 1256,       0,200000, 3, 1340},
+    /* DSI and USB can require precisely 880 or 1200 mV on the shared
+     * analog rails. Their maximum regulator voltage is not a boot vote. */
+    [RPMH_UFS_PHY_QREF]    = {"ldoi3",   880,  912,  880,       0, 30000, 4,  880},
+    [RPMH_UFS_PHY_REFGEN]  = {"ldof1",   880,  920,  880,       0, 30000, 4,  880},
+    [RPMH_UFS_PHY_ANALOG]  = {"ldoj1",   880,  920,  912,       0, 30000, 4,  912},
+    [RPMH_UFS_PHY_PLL]     = {"ldog3",  1200, 1256, 1200,       0, 30000, 4, 1200},
 };
 enum { MV = 0, ENABLE = 4, MODE = 8, UFS_LPM_UA = 1000, HIGH_MODE = 7 };
 
@@ -77,6 +83,10 @@ static int required(const struct rpmh_provider *p, unsigned supply, struct rpmh_
         else ua += load;
     }
     if (min_mv > max_mv) return 0;
+    /* Before all users register, do not exceed the board's common boot
+     * voltage. After a forced D3 the recorded clients constrain that vote. */
+    if ((p->vrm.boot_holds & (1u << supply)) && supply >= RPMH_UFS_PHY_QREF &&
+        p->vrm.floor.vote[supply].mv < min_mv) return 0;
     if (v.mv > max_mv) {
         /* A boot hold is our new request, not an immutable firmware
          * floor. Choose the highest voltage still permitted by all of
@@ -135,7 +145,8 @@ static int apply(struct rpmh_provider *p, unsigned i)
 
 int rpmh_vrm_sync(struct rpmh_provider *p, unsigned mask)
 {
-    enum rpmh_ufs_supply order[] = { RPMH_UFS_REFCLK, RPMH_UFS_VCCQ_PARENT, RPMH_UFS_VCC, RPMH_UFS_VCCQ };
+    enum rpmh_ufs_supply order[] = { RPMH_UFS_REFCLK, RPMH_UFS_VCCQ_PARENT, RPMH_UFS_VCC, RPMH_UFS_VCCQ,
+        RPMH_UFS_PHY_QREF, RPMH_UFS_PHY_REFGEN, RPMH_UFS_PHY_ANALOG, RPMH_UFS_PHY_PLL };
     struct rpmh_vrm_vote to[RPMH_UFS_SUPPLY_COUNT];
     for (unsigned i = 0; i < RPMH_UFS_SUPPLY_COUNT; ++i)
         if ((mask & (1u << i)) && !required(p,i,&to[i])) return 0;
@@ -175,13 +186,14 @@ int rpmh_vrm_set_aux(struct rpmh_provider *p, struct rpmh_client *c, enum rpmh_u
         (r->min_mv && (r->min_mv < supplies[i].min_mv || r->max_mv > supplies[i].max_mv ||
                         r->min_mv > r->max_mv))) return 0;
     unsigned bit = 1u << i;
-    if (!(p->vrm.floor.mask & bit) || (p->vrm.restore && !rpmh_vrm_sync(p, p->vrm.restore))) return 0;
+    if (!(p->vrm.floor.mask & bit) || (p->vrm.deferred & bit) ||
+        !rpmh_vrm_sync(p, rpmh_vrm_pending(&p->vrm))) return 0;
     struct rpmh_supply_request *entry = &c->aux[i - RPMH_UFS_REFCLK], old = *entry;
     *entry = *r;
     if (rpmh_vrm_sync(p, bit)) return 1;
     *entry = old;
     rpmh_vrm_restore_demands(p, bit);
-    (void)rpmh_vrm_sync(p, p->vrm.restore);
+    (void)rpmh_vrm_sync(p, rpmh_vrm_pending(&p->vrm));
     return 0;
 }
 
@@ -193,35 +205,41 @@ int rpmh_vrm_hold_boot(struct rpmh_provider *p, unsigned mask)
     unsigned add = mask & ~p->vrm.floor.mask;
     for (unsigned i = 0; i < RPMH_UFS_SUPPLY_COUNT; ++i) {
         if (!(add & (1u << i))) continue;
-        /* A temporary OS request, not a claim to know the old AP vote.
-         * All board consumers of these rails accept this voltage. Keep
-         * them powered during enumeration until their owners synchronize. */
-        p->vrm.floor.vote[i] = (struct rpmh_vrm_vote){(uint16_t)supplies[i].max_mv, 1, HIGH_MODE};
+        /* A temporary OS request, not an estimate of the old AP vote.
+         * Surviving clients may have legitimately negotiated a different
+         * voltage before D3; the regulator must honor their bounds too. */
+        uint16_t mv = (uint16_t)supplies[i].boot_mv;
+        if (i >= RPMH_UFS_PHY_QREF)
+            for (const struct rpmh_client *c = p->clients; c; c = c->next)
+                if (c->aux[i-RPMH_UFS_REFCLK].min_mv > mv) mv = c->aux[i-RPMH_UFS_REFCLK].min_mv;
+        p->vrm.floor.vote[i] = (struct rpmh_vrm_vote){mv, 1, HIGH_MODE};
     }
     p->vrm.floor.mask |= add;
     p->vrm.boot_holds |= add;
     p->vrm.restore |= add;  /* Never mark the new request applied without a hardware reply. */
+    p->vrm.deferred &= ~mask;
     return rpmh_vrm_sync(p, mask & p->vrm.restore);
 }
 
 int rpmh_vrm_finish_boot(struct rpmh_provider *p, unsigned mask)
 {
-    if (!p || !mask || (mask & ~p->vrm.floor.mask)) return 0;
+    if (!p || !mask || (mask & (~p->vrm.floor.mask | p->vrm.deferred))) return 0;
     unsigned drop = mask & p->vrm.boot_holds;
     if (!drop) return 1;
-    if (p->vrm.restore && !rpmh_vrm_sync(p, p->vrm.restore)) return 0;
+    if (!rpmh_vrm_sync(p, rpmh_vrm_pending(&p->vrm))) return 0;
     struct rpmh_vrm_votes old = p->vrm.floor;
     unsigned old_managed = p->vrm.managed;
     p->vrm.managed |= drop;
+    p->vrm.boot_holds &= ~drop;
     for (unsigned i = 0; i < RPMH_UFS_SUPPLY_COUNT; ++i)
         if (drop & (1u << i)) p->vrm.floor.vote[i] = (struct rpmh_vrm_vote){0};
     if (!rpmh_vrm_sync(p, drop)) {
         p->vrm.floor = old;
         p->vrm.managed = old_managed;
+        p->vrm.boot_holds |= drop;
         rpmh_vrm_restore_demands(p, drop);
-        (void)rpmh_vrm_sync(p, p->vrm.restore);
+        (void)rpmh_vrm_sync(p, rpmh_vrm_pending(&p->vrm));
         return 0;
     }
-    p->vrm.boot_holds &= ~drop;
     return 1;
 }

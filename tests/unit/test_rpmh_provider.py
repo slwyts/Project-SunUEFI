@@ -86,6 +86,37 @@ class RpmhProviderTest(unittest.TestCase):
             self.assertEqual(int.from_bytes(hba[supply+'-max-microamp'],'big'),load)
         self.assertEqual(hba['qcom,vccq-parent-supply'],tree['/soc/qcom,cnss-peach@b0000000']['vdd-wlan-rfa2-supply'])
 
+    def test_phy_supplies_and_shared_voltage_limits(self):
+        tree = read_fdt((ROOT/'vendor/piano/dtb/piano.dtb').read_bytes())['tree']
+        phy = tree['/soc/ufsphy_mem@1d80000']
+        self.assertEqual(int.from_bytes(phy['vdda-phy-min-microvolt'],'big'),912000)
+        for supply, resource, load, voltages in (
+            ('vdda-phy','ldoj1',213000,(880000,920000,912000)),
+            ('vdda-pll','ldog3',18300,(1200000,1256000,1200000)),
+            ('vdda-qref','ldoi3',64500,(880000,912000,880000)),
+            ('vdda-refgen','ldof1',206000,(880000,920000,880000)),
+        ):
+            key, = (k for k,v in tree.items() if v.get('phandle')==phy[supply+'-supply'])
+            rail,pmic=tree[key],tree[key.rsplit('/',1)[0]]
+            self.assertEqual(pmic['qcom,resource-name'].rstrip(b'\0').decode(),resource)
+            self.assertEqual(pmic['qcom,regulator-type'],b'pmic5-ldo\0')
+            self.assertEqual(struct.unpack('>II',pmic['qcom,supported-modes']),(2,4))
+            self.assertEqual(struct.unpack('>II',pmic['qcom,mode-threshold-currents']),(0,30000))
+            self.assertEqual(tuple(int.from_bytes(rail[p],'big') for p in
+                                   ('regulator-min-microvolt','regulator-max-microvolt','qcom,init-voltage')),voltages)
+            self.assertEqual(int.from_bytes(phy[supply+'-max-microamp'],'big'),load)
+        for device, s, pin, uv in (
+            ('/soc/qcom,mdss_dsi_ctrl0@ae94000','vdda-pll','vdda-1p2',1200000),
+            ('/soc/qcom,mdss_dsi_phy0@ae95500','vdda-qref','vdda-0p9',880000),
+        ):
+            self.assertEqual(phy[s+'-supply'],tree[device][pin+'-supply'])
+            constraint, = (n for k,n in tree.items() if k.startswith(device+'/') and
+                           n.get('qcom,supply-name') == pin.encode()+b'\0')
+            self.assertEqual([int.from_bytes(constraint['qcom,supply-'+limit+'-voltage'],'big')
+                              for limit in ('min','max')],[uv,uv])
+        self.assertEqual(phy['vdda-refgen-supply'],tree['/soc/hsphy@88e3000']['vdd_refgen-supply'])
+        self.assertEqual(phy['vdda-pll-supply'],tree['/soc/ssphy@88e8000']['core-supply'])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -3,7 +3,8 @@
 #include "cmd_db.h"
 
 enum rpmh_ufs_supply {
-    RPMH_UFS_VCC, RPMH_UFS_VCCQ, RPMH_UFS_REFCLK, RPMH_UFS_VCCQ_PARENT, RPMH_UFS_SUPPLY_COUNT
+    RPMH_UFS_VCC, RPMH_UFS_VCCQ, RPMH_UFS_REFCLK, RPMH_UFS_VCCQ_PARENT,
+    RPMH_UFS_PHY_QREF, RPMH_UFS_PHY_REFGEN, RPMH_UFS_PHY_ANALOG, RPMH_UFS_PHY_PLL, RPMH_UFS_SUPPLY_COUNT
 };
 enum rpmh_supply_load { RPMH_SUPPLY_OFF, RPMH_SUPPLY_LOW, RPMH_SUPPLY_HIGH };
 
@@ -19,8 +20,13 @@ struct rpmh_vrm {
     uint32_t address[RPMH_UFS_SUPPLY_COUNT];
     struct rpmh_vrm_votes floor;
     struct rpmh_vrm_vote applied[RPMH_UFS_SUPPLY_COUNT];
-    unsigned restore, rollback, boot_holds, managed;
+    unsigned restore, rollback, boot_holds, managed, deferred;
 };
+
+static inline unsigned rpmh_vrm_pending(const struct rpmh_vrm *v)
+{
+    return v->restore & v->floor.mask & ~v->deferred;
+}
 
 struct rpmh_provider;
 struct rpmh_client;

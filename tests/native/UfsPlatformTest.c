@@ -6,9 +6,51 @@
 
 struct hardware {
     uint32_t host[0x3000 / 4], phy[0x2000 / 4];
-    unsigned writes, resets, lanes;
-    int core_asserted, deny_reset_release, deny_lanes, dump;
+    unsigned writes, resets, lanes, rails, refclocks, domain_down, log_count, log[64];
+    int core_asserted, deny_reset_release, deny_lanes, dump, deny;
 };
+
+enum { RAIL_ON = 1, REFCLOCK_ON = 5, DOMAIN_OFF, REFCLOCK_OFF, RAIL_OFF };
+static int event(struct hardware *h,unsigned id)
+{
+    if ((int)id==h->deny) return 0;
+    assert(h->log_count<64);
+    h->log[h->log_count++]=id;
+    return 1;
+}
+static int supply(void *ctx, enum ufs_phy_supply id, int on)
+{
+    struct hardware *h=ctx;
+    unsigned bit=1u<<id;
+    assert(!!(h->rails&bit)!=on);
+    if (on) {
+        assert(!h->domain_down && !h->refclocks);
+        assert(h->rails==bit-1);
+        if (id==UFS_PHY_PLL) assert(h->phy[0x404/4]&1);
+    } else {
+        assert(!h->refclocks);
+        if (id==UFS_PHY_ANALOG) assert(!(h->rails & (1u<<UFS_PHY_PLL)));
+        if (id==UFS_PHY_QREF || id==UFS_PHY_REFGEN) assert(!(h->rails & (1u<<UFS_PHY_ANALOG)));
+    }
+    if (!event(h,(on?RAIL_ON:RAIL_OFF)+id)) return 0;
+    h->rails ^= bit;
+    return 1;
+}
+static int phy_clocks(void *ctx,int on)
+{
+    struct hardware *h=ctx;
+    assert(h->rails==15 && !h->lanes && h->refclocks!=(unsigned)on);
+    if (!event(h,on?REFCLOCK_ON:REFCLOCK_OFF)) return 0;
+    h->refclocks=(unsigned)on;return 1;
+}
+static int domain_off(void *ctx)
+{
+    struct hardware *h=ctx;
+    assert(!h->lanes && !(h->phy[0x404/4]&1) && !h->domain_down);
+    assert((h->phy[0x13f0/4]&64) && (h->phy[0x1bf0/4]&64));
+    if (!event(h,DOMAIN_OFF)) return 0;
+    h->domain_down=1;return 1;
+}
 
 static uint32_t *reg(struct hardware *hw, enum ufs_platform_window window, unsigned offset)
 {
@@ -46,7 +88,7 @@ static int lanes(void *ctx, int on)
 {
     struct hardware *hw = ctx;
     if (on) {
-        assert(!hw->lanes && !hw->core_asserted);
+        assert(!hw->lanes && !hw->core_asserted && hw->refclocks && hw->rails==15);
         assert((rd(hw, UFS_PHY, 0x5a8) & 1) && (rd(hw, UFS_HOST, 0xdc) & 3) == 1);
         if (hw->deny_lanes) return 0;
         hw->lanes = 1;
@@ -70,7 +112,7 @@ static enum ufs_platform_error begin(struct ufs_platform *p, struct hardware *h,
 {
     const struct ufs_platform_io io = { .context = h, .read = rd, .write = wr };
     const struct ufs_platform_power power = { .context = h, .set_lane_clocks = lanes,
-                                              .set_core_reset = cold_reset ? core_reset : NULL };
+        .set_core_reset = cold_reset ? core_reset : NULL, .phy={h,supply,phy_clocks,domain_off} };
     return ufs_platform_begin(p, &io, &power, 0);
 }
 
@@ -127,6 +169,9 @@ static void warm(void)
     h.host[0x34 / 4] = 0;
     assert(ufs_platform_stop(&p, 200) && !h.lanes && !h.writes);
     assert(rd(&h, UFS_PHY, 0x404) == 1);
+    assert(begin(&p,&h,0)==UFS_PLATFORM_OK && !h.writes);
+    ufs_platform_claim_phy(&p);
+    assert(ufs_platform_stop(&p,300) && !rd(&h,UFS_PHY,0x404) && h.domain_down && !h.rails && !h.refclocks);
 }
 
 static void conflicts(void)
@@ -184,11 +229,47 @@ static void recovery(void)
     assert(!h.lanes && ufs_platform_stop(&p, 3500) && !rd(&h, UFS_PHY, 0x404));
 }
 
+static void supply_failures(void)
+{
+    for (unsigned stage=RAIL_ON;stage<RAIL_OFF+UFS_PHY_SUPPLY_COUNT;++stage) {
+        struct ufs_platform p={0};struct hardware h;
+        init(&h);h.deny=(int)stage;
+        if (stage<RAIL_ON+UFS_PHY_PLL) {
+            assert(begin(&p,&h,1)==UFS_PLATFORM_POWER);
+        } else {
+            assert(begin(&p,&h,1)==UFS_PLATFORM_OK && ufs_platform_poll(&p,200)==UFS_CORE_SETTLE);
+            if (stage<=REFCLOCK_ON) assert(ufs_platform_poll(&p,1200)==UFS_PLATFORM_FAILED);
+            else {
+                assert(ufs_platform_poll(&p,1200)==UFS_PHY_RESET && ufs_platform_poll(&p,2200)==UFS_PHY_SETTLE &&
+                       ufs_platform_poll(&p,3200)==UFS_PHY_START);
+                h.phy[0x5a8/4]=1;
+                assert(ufs_platform_poll(&p,3500)==UFS_PLATFORM_READY);
+                assert(!ufs_platform_stop(&p,3600));
+                if (stage==DOMAIN_OFF) assert(!h.domain_down && h.refclocks && h.rails==15);
+                else assert(h.domain_down && h.rails);
+            }
+        }
+        h.deny=0;
+        assert(ufs_platform_stop(&p,4000) && !h.rails && !h.refclocks && !h.lanes);
+    }
+    struct ufs_platform p={0};struct hardware h;
+    init(&h);h.phy[0x13f0/4]=0xa5c0;h.phy[0x1bf0/4]=0x5ac1;
+    assert(begin(&p,&h,1)==UFS_PLATFORM_OK && ufs_platform_poll(&p,200)==UFS_CORE_SETTLE);
+    assert(ufs_platform_poll(&p,1200)==UFS_PHY_RESET);
+    assert(h.phy[0x13f0/4]==0xa580 && h.phy[0x1bf0/4]==0x5a81);
+    assert(ufs_platform_stop(&p,3000) && h.phy[0x13f0/4]==0xa5c0 && h.phy[0x1bf0/4]==0x5ac1);
+    const unsigned expected[]={RAIL_ON+UFS_PHY_QREF,RAIL_ON+UFS_PHY_REFGEN,RAIL_ON+UFS_PHY_ANALOG,
+        RAIL_ON+UFS_PHY_PLL,REFCLOCK_ON,DOMAIN_OFF,REFCLOCK_OFF,RAIL_OFF+UFS_PHY_PLL,RAIL_OFF+UFS_PHY_ANALOG,
+        RAIL_OFF+UFS_PHY_QREF,RAIL_OFF+UFS_PHY_REFGEN};
+    assert(h.log_count==sizeof(expected)/sizeof(*expected) && !memcmp(h.log,expected,sizeof(expected)));
+}
+
 int main(int argc, char **argv)
 {
     cold(argc == 2 && !strcmp(argv[1], "calibration"));
     warm();
     conflicts();
     recovery();
+    supply_failures();
     return 0;
 }

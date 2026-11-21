@@ -51,11 +51,13 @@ static void unmap_controls(PIANO_UFS_CLOCK_DEVICE *c)
 static void link_power_ready(PVOID context, const uint8_t *p)
 {
     PIANO_UFS_CLOCK_DEVICE *c = context;
-    /* VCC and VCCQ (including the UFS proxy) belong to the initialized
-     * storage device. Audio, radio and the other AP users still own the
-     * decision to release their shared platform boot votes. */
+    /* Now that the handed-over link has actually served the device, it can
+     * be powered down on media shutdown just like a cold-initialized link. */
+    ufs_platform_claim_phy(&c->adapter->platform.phy);
+    /* Only release the boot votes for exclusive UFS supplies. The display,
+     * cameras, USB, audio and radio synchronize their shared rails separately. */
     (void)c->rpmh.api.FinishBootResources(c->rpmh.api.Header.Context,0,0,
-                                          (1u << RPMH_UFS_VCC) | (1u << RPMH_UFS_VCCQ));
+        (1u << RPMH_UFS_VCC) | (1u << RPMH_UFS_VCCQ) | (1u << RPMH_UFS_PHY_ANALOG));
     if (!p) return;
     unsigned tx = p[UfsPaPowerMode] & 15, rx = p[UfsPaPowerMode] >> 4;
     if ((tx != 1 && tx != 2 && tx != 4 && tx != 5) ||
@@ -66,6 +68,24 @@ static void link_power_ready(PVOID context, const uint8_t *p)
         mode = p[UfsPaHsSeries] == 2 ? PianoUfsHsB : PianoUfsHsA;
     }
     (void)UfsPianoSetLinkBandwidth(&c->rpmh,mode,p[UfsPaTxGear],p[UfsPaRxGear],p[UfsPaTxLanes],p[UfsPaRxLanes]);
+}
+
+static int set_phy_supply(void *context, enum ufs_phy_supply supply, int enable)
+{
+    PIANO_UFS_CLOCK_DEVICE *c = context;
+    return UfsPianoSetPhySupply(&c->rpmh,supply,enable);
+}
+
+static int set_phy_clocks(void *context, int enable)
+{
+    PIANO_UFS_CLOCK_DEVICE *c = context;
+    return c->rpmh.parent.phy_clocks(c->rpmh.parent.context,enable);
+}
+
+static int collapse_phy(void *context)
+{
+    PIANO_UFS_CLOCK_DEVICE *c = context;
+    return piano_ufs_collapse_phy(&c->power);
 }
 
 static PULONG map_resource(UFS_ADAPTER *a, PPORT_CONFIGURATION_INFORMATION cfg, uint32_t address, ULONG bytes)
@@ -103,6 +123,7 @@ ULONG UfsPianoFindAdapter(PIANO_UFS_CLOCK_DEVICE *c, UFS_ADAPTER *a, PPORT_CONFI
         if (!c->domain[i]) goto failed;
     }
     if (!UfsPianoOpenRpmh(&c->rpmh,rpmh,parent,&c->power.inputs)) goto failed;
+    power.phy = (struct ufs_phy_power){c,set_phy_supply,set_phy_clocks,collapse_phy};
     ULONG result = UfsMiniportFindPiano(a, cfg, &power);
     if (result == SP_RETURN_FOUND) {
         piano_ufs_claim_domains(&c->power);

@@ -4,8 +4,8 @@
 /* MiCode gcc-sun: the 403 MHz AXI/UniPro/ICE clock configuration requires
  * RPMH_REGULATOR_LEVEL_NOM on both rails. ufs-qcom requests its maximum
  * fabric bandwidth for discovery, then uses the negotiated link parameters. */
-enum { NOM = 256, DDR_INIT = 7643136, CFG_INIT = 819200, ALL_SUPPLIES = (1u << RPMH_UFS_SUPPLY_COUNT) - 1 };
-enum step { Xo, Mx, Cx, Ddr, Cpu, RefClk, Parent, DeviceRails, PhyRails, Count };
+enum { NOM = 256, DDR_INIT = 7643136, CFG_INIT = 819200, HBA_SUPPLIES = (1u << RPMH_UFS_PHY_QREF) - 1 };
+enum step { Xo, Mx, Cx, Ddr, Cpu, RefClk, Parent, DeviceRails, Count };
 
 static int change(PIANO_UFS_RPMH *r, enum step step, int on)
 {
@@ -31,7 +31,6 @@ static int change(PIANO_UFS_RPMH *r, enum step step, int on)
         s = a->SetUfsSupplies(ctx,c,load,load);
         break;
     }
-    case PhyRails: return r->parent.phy_supplies(r->parent.context,on);
     default: return 0;
     }
     return NT_SUCCESS(s);
@@ -41,6 +40,7 @@ static int set_rails(void *context, int on)
 {
     PIANO_UFS_RPMH *r = context;
     if (!r->client) return 0;
+    if (!on && r->phy_held) return 0;
     if (!on && r->owns_media && (r->held & (1u << DeviceRails)) &&
         !r->parent.media_may_power_off(r->parent.context)) return 0;
     if (on) {
@@ -50,7 +50,7 @@ static int set_rails(void *context, int on)
         }
         unsigned rails = (1u << RPMH_XO) | (1u << RPMH_CX) | (1u << RPMH_MX);
         unsigned paths = (1u << RPMH_UFS_DDR) | (1u << RPMH_CPU_UFS);
-        if (!NT_SUCCESS(r->api.HoldBootResources(r->api.Header.Context,rails,paths,ALL_SUPPLIES))) return 0;
+        if (!NT_SUCCESS(r->api.HoldBootResources(r->api.Header.Context,rails,paths,HBA_SUPPLIES))) return 0;
         for (unsigned i = 0; i < Count; ++i) {
             if (r->held & (1u << i)) continue;
             if (!change(r,(enum step)i,1)) break;
@@ -75,10 +75,35 @@ static int base_clocks(void *context, int on)
     return r->parent.base_clocks(r->parent.context,on);
 }
 
+int UfsPianoSetPhySupply(PIANO_UFS_RPMH *r, enum ufs_phy_supply supply, int on)
+{
+    /* Intersect the UFS PHY's voltage limits with the Piano regulator
+     * constraints; do not program a USB or display voltage on their behalf. */
+    static const struct {
+        enum rpmh_ufs_supply id;
+        struct rpmh_supply_request active;
+    } phy[] = {
+        [UFS_PHY_QREF]   = {RPMH_UFS_PHY_QREF,   {64500,  880,  912, 1}},
+        [UFS_PHY_REFGEN] = {RPMH_UFS_PHY_REFGEN, {206000, 880,  920, 1}},
+        [UFS_PHY_ANALOG] = {RPMH_UFS_PHY_ANALOG, {213000, 912,  920, 1}},
+        [UFS_PHY_PLL]    = {RPMH_UFS_PHY_PLL,    {18300, 1200, 1256, 1}},
+    };
+    if (!r || !r->client || (unsigned)supply >= UFS_PHY_SUPPLY_COUNT || r->held != (1u << Count)-1)
+        return 0;
+    enum rpmh_ufs_supply id = phy[supply].id;
+    PVOID context = r->api.Header.Context;
+    if (on && !NT_SUCCESS(r->api.HoldBootResources(context,0,0,1u << id))) return 0;
+    const struct rpmh_supply_request off = {0};
+    if (!NT_SUCCESS(r->api.SetAuxSupply(context,r->client,id,on ? &phy[supply].active : &off))) return 0;
+    if (on) r->phy_held |= 1u << supply;
+    else r->phy_held &= ~(1u << supply);
+    return 1;
+}
+
 BOOLEAN UfsPianoOpenRpmh(PIANO_UFS_RPMH *r, const PIANO_RPMH_INTERFACE *a,
                          const struct piano_ufs_parent *parent, struct piano_ufs_bus_inputs *inputs)
 {
-    if (!r || r->client || !parent || !parent->base_clocks || !parent->phy_supplies ||
+    if (!r || r->client || !parent || !parent->base_clocks || !parent->phy_clocks ||
         !parent->media_may_power_off || !inputs ||
         !a || a->Header.Size < sizeof(*a) || a->Header.Version != PIANO_RPMH_INTERFACE_VERSION ||
         !a->Header.InterfaceReference || !a->Header.InterfaceDereference ||

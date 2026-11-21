@@ -8,7 +8,7 @@ struct hw {
     uint32_t ctrl[2], status[2];
     unsigned writes[2], elapsed, reads;
     int rails, clocks, peer, freeze_up, freeze_down, bad_domain, fail_readback;
-    int rail_error, clock_error;
+    int rail_error, clock_error, phy_quiesced;
 };
 
 static uint32_t read_reg(void *ctx, enum piano_ufs_domain d, unsigned offset)
@@ -24,7 +24,11 @@ static void write_control(void *ctx, enum piano_ufs_domain d, uint32_t value)
 {
     struct hw *h=ctx;
     assert(h->rails && d<PIANO_UFS_DOMAINS);
-    if (h->clocks) assert((value ^ h->ctrl[d]) == RETAIN && (value & RETAIN));
+    if (h->clocks) {
+        unsigned changed=value ^ h->ctrl[d];
+        assert((changed==RETAIN && (value&RETAIN)) ||
+               (d==PIANO_UFS_PHY_DOMAIN && h->phy_quiesced && changed==1 && (value&1)));
+    }
     /* Never request collapse of a completed, running domain without having
      * enabled retention first. Failed cold starts can still unwind their vote.
      */
@@ -55,7 +59,9 @@ static int clocks(void *ctx, int on)
 {
     struct hw *h=ctx;
     assert(h->rails && on!=h->clocks);
-    assert(h->status[HBA]==UP && h->status[PHY]==UP && !(h->ctrl[HBA]&1) && !(h->ctrl[PHY]&1));
+    assert(h->status[HBA]==UP && !(h->ctrl[HBA]&1));
+    if (!on && h->phy_quiesced) assert(h->status[PHY]==DOWN && (h->ctrl[PHY]&1));
+    else assert(h->status[PHY]==UP && !(h->ctrl[PHY]&1));
     if (h->clock_error) return 0;
     h->clocks=on;
     return 1;
@@ -133,6 +139,15 @@ int main(void)
     assert(!piano_ufs_set_bus_power(&p,0) && !p.drop_mask && h.rails);
     h.rail_error=0;
     assert(piano_ufs_set_bus_power(&p,0) && !h.rails);
+    setup(&h,&p,1);
+    assert(piano_ufs_set_bus_power(&p,1));
+    piano_ufs_claim_domains(&p);
+    h.freeze_down=PHY;h.phy_quiesced=1;
+    assert(!piano_ufs_collapse_phy(&p) && h.clocks && p.drop_mask==3 && !(h.ctrl[HBA]&1));
+    assert(!piano_ufs_collapse_phy(&p) && h.clocks && p.drop_mask==3);
+    h.freeze_down=-1;h.status[PHY]=DOWN;
+    assert(piano_ufs_collapse_phy(&p) && p.drop_mask==1 && h.clocks && h.rails);
+    assert(piano_ufs_set_bus_power(&p,0) && !h.clocks && !h.rails);
     for (unsigned d=0; d<PIANO_UFS_DOMAINS; ++d) printf("%x\n",piano_ufs_domain_address[d]);
     return 0;
 }

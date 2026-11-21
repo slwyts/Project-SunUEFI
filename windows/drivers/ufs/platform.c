@@ -9,6 +9,7 @@ enum {
     DEVICE_PRESENT = 1, QUNIPRO = 1, PHY_SOFT_RESET = 2, QUNIPRO_G4 = 0x20,
     PCS_START = 0x400, PCS_POWER = 0x404, PCS_SW_RESET = 0x408, PCS_READY = 0x5a8,
     PCS_MULTI_LANE = 0x5fc, LANE0 = 0x1000, LANE1 = 0x1800,
+    RX_INTERFACE_MODE = 0x3f0, RX_CLOCK_EDGE = 1u << 6,
     CORE_PULSE_US = 200, RESET_SETTLE_US = 1000, PCS_TIMEOUT_US = 10000
 };
 
@@ -109,10 +110,43 @@ static void enable_lanes(struct ufs_platform *p)
     }
 }
 
+static int phy_supply(struct ufs_platform *p, enum ufs_phy_supply supply, int enable)
+{
+    unsigned bit = 1u << supply;
+    if (!!(p->phy_supplies & bit) == enable) return 1;
+    if (!p->power.phy.set_supply(p->power.phy.context,supply,enable)) return 0;
+    p->phy_supplies ^= bit;
+    return 1;
+}
+
+static int phy_pll_clocks(struct ufs_platform *p)
+{
+    if (!phy_supply(p,UFS_PHY_PLL,1) || !p->power.phy.set_clocks(p->power.phy.context,1)) return 0;
+    p->phy_clocks = 1;
+    return 1;
+}
+
+static int analog_power(struct ufs_platform *p, int enable)
+{
+    /* SM8750 uses the RX interface clock-edge bit on both lanes to retain
+     * the link state through analog power collapse. Each RMW is ordered
+     * and read back before operating the next register or power domain. */
+    if (!enable && !set_bits(p,UFS_PHY,PCS_POWER,1,0)) return 0;
+    for (unsigned i = 0; i < 2; ++i) {
+        unsigned reg = (i ? LANE1 : LANE0) + RX_INTERFACE_MODE;
+        uint32_t current = read_reg(p,UFS_PHY,reg);
+        if (current == UINT32_MAX) return 0;
+        if (!!(current & RX_CLOCK_EDGE) == enable &&
+            !set_bits(p,UFS_PHY,reg,RX_CLOCK_EDGE,enable ? 0 : RX_CLOCK_EDGE)) return 0;
+    }
+    return !enable || set_bits(p,UFS_PHY,PCS_POWER,1,1);
+}
+
 enum ufs_platform_error ufs_platform_begin(struct ufs_platform *p, const struct ufs_platform_io *io,
                                           const struct ufs_platform_power *power, uint64_t now)
 {
-    if (!p || !io || !io->read || !io->write || !power || !power->set_lane_clocks)
+    if (!p || !io || !io->read || !io->write || !power || !power->set_lane_clocks ||
+        !power->phy.set_supply || !power->phy.set_clocks || !power->phy.release_domain)
         return UFS_PLATFORM_RESOURCES;
     if (p->phase != UFS_PLATFORM_IDLE) return UFS_PLATFORM_IN_USE;
     *p = (struct ufs_platform){ .io = *io, .power = *power };
@@ -123,13 +157,17 @@ enum ufs_platform_error ufs_platform_begin(struct ufs_platform *p, const struct 
 
     uint32_t hce = read_reg(p, UFS_HOST, HCI_ENABLE), hcs = read_reg(p, UFS_HOST, HCI_STATUS);
     uint32_t cfg0 = read_reg(p, UFS_HOST, HOST_CFG0), cfg1 = read_reg(p, UFS_HOST, HOST_CFG1);
+    if (hce == UINT32_MAX || hcs == UINT32_MAX || cfg0 == UINT32_MAX || cfg1 == UINT32_MAX)
+        return fail(p, UFS_PLATFORM_HARDWARE);
+    if (!phy_supply(p,UFS_PHY_QREF,1) || !phy_supply(p,UFS_PHY_REFGEN,1) || !phy_supply(p,UFS_PHY_ANALOG,1))
+        return fail(p, UFS_PLATFORM_POWER);
     uint32_t start = read_reg(p, UFS_PHY, PCS_START), powered = read_reg(p, UFS_PHY, PCS_POWER);
     uint32_t reset = read_reg(p, UFS_PHY, PCS_SW_RESET), ready = read_reg(p, UFS_PHY, PCS_READY);
-    if (hce == UINT32_MAX || hcs == UINT32_MAX || cfg0 == UINT32_MAX || cfg1 == UINT32_MAX ||
-        start == UINT32_MAX || powered == UINT32_MAX || reset == UINT32_MAX || ready == UINT32_MAX)
+    if (start == UINT32_MAX || powered == UINT32_MAX || reset == UINT32_MAX || ready == UINT32_MAX)
         return fail(p, UFS_PLATFORM_HARDWARE);
     if ((start & powered & ready & 1) && !(reset & 1) && !(cfg0 & QUNIPRO_G4) &&
         (cfg1 & (QUNIPRO | PHY_SOFT_RESET)) == QUNIPRO) {
+        if (!phy_pll_clocks(p)) return fail(p, UFS_PLATFORM_POWER);
         enable_lanes(p);
         return p->error;
     }
@@ -165,8 +203,12 @@ enum ufs_platform_phase ufs_platform_poll(struct ufs_platform *p, uint64_t now)
             break;
         }
         p->owns_pcs = 1;
-        if (!set_bits(p, UFS_PHY, PCS_POWER, 1, 1)) {
+        if (!analog_power(p,1)) {
             fail(p, UFS_PLATFORM_HARDWARE);
+            break;
+        }
+        if (!phy_pll_clocks(p)) {
+            fail(p, UFS_PLATFORM_POWER);
             break;
         }
         p->phy_asserted = 1;
@@ -223,6 +265,11 @@ enum ufs_platform_phase ufs_platform_poll(struct ufs_platform *p, uint64_t now)
     return p->phase;
 }
 
+void ufs_platform_claim_phy(struct ufs_platform *p)
+{
+    if (p && p->phase == UFS_PLATFORM_READY && !p->stopping) p->owns_pcs = 1;
+}
+
 int ufs_platform_stop(struct ufs_platform *p, uint64_t now)
 {
     if (!p) return 0;
@@ -244,8 +291,20 @@ int ufs_platform_stop(struct ufs_platform *p, uint64_t now)
     if (p->owns_pcs) {
         if (p->phy_asserted && !set_bits(p, UFS_HOST, HOST_CFG1, PHY_SOFT_RESET, 0)) return 0;
         p->phy_asserted = 0;
-        if (!set_bits(p, UFS_PHY, PCS_POWER, 1, 0)) return 0;
+        if (!analog_power(p,0)) return 0;
+        p->owns_pcs = 0;
+        p->release_phy_domain = 1;
     }
+    if (p->release_phy_domain) {
+        if (!p->power.phy.release_domain(p->power.phy.context)) return 0;
+        p->release_phy_domain = 0;
+    }
+    if (p->phy_clocks) {
+        if (!p->power.phy.set_clocks(p->power.phy.context,0)) return 0;
+        p->phy_clocks = 0;
+    }
+    if (!phy_supply(p,UFS_PHY_PLL,0) || !phy_supply(p,UFS_PHY_ANALOG,0) ||
+        !phy_supply(p,UFS_PHY_QREF,0) || !phy_supply(p,UFS_PHY_REFGEN,0)) return 0;
     *p = (struct ufs_platform){0};
     return 1;
 }

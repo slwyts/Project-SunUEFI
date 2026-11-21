@@ -26,7 +26,7 @@ struct rpmh_client {
     uint32_t corner[RPMH_RAIL_COUNT];
     uint32_t avg[RPMH_FABRIC_PATH_COUNT], peak[RPMH_FABRIC_PATH_COUNT];
     enum rpmh_supply_load ufs[2]; /* Device VCC and VCCQ, in the UFS core's load modes. */
-    struct rpmh_supply_request aux[2]; /* Reference clock and VCCQ parent, shared with other devices. */
+    struct rpmh_supply_request aux[RPMH_UFS_SUPPLY_COUNT - RPMH_UFS_REFCLK];
 };
 
 struct rpmh_provider {
