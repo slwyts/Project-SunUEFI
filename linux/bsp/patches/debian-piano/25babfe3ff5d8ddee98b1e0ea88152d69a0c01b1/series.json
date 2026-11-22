@@ -11,7 +11,7 @@
   "patches": [
     {
       "file": "../../0001-ucm-piano-microphone-and-speakers.patch",
-      "sha256": "078e3f8a45de49dabb7d620c510f7ee2bba8a761efc8bcb0b99d686a03d55a6f",
+      "sha256": "580059664918d3620a99f8696b98e94ae21ccff068c5dfc075a51e8d622d7be8",
       "license": "MIT; retain debian-piano source notices",
       "upstream": {
         "status": "downstream",

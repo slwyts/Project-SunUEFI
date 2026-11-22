@@ -3,6 +3,7 @@
   "versions": [
     "51.0"
   ],
+  "targets": ["debian-gnome", "nyarch-gnome"],
   "patches": [
     {
       "file": "0001-users-wait-for-verification-before-enrolling.patch",
