@@ -5,7 +5,6 @@
 #include <Library/BaseMemoryLib.h>
 #include <Library/DebugLib.h>
 #define PRODUCT_SIGNATURE SIGNATURE_32('P','V','O','L')
-#define DISK_LAST 378879ULL
 STATIC UINT32 Le32(CONST UINT8 *P){return P[0]|((UINT32)P[1]<<8)|((UINT32)P[2]<<16)|((UINT32)P[3]<<24);}
 STATIC UINT64 Le64(CONST UINT8 *P){return Le32(P)|((UINT64)Le32(P+4)<<32);}
 STATIC VOID Put32(UINT8 *P,UINT32 V){for(UINTN I=0;I<4;++I)P[I]=(UINT8)(V>>(8*I));}
@@ -29,36 +28,56 @@ STATIC EFI_STATUS Quiet(PIANO_UFS_PRODUCT_VOLUME *D){BOOLEAN Q=FALSE;EFI_STATUS 
 STATIC EFI_STATUS ReadExact(PIANO_UFS_PRODUCT_VOLUME *D,EFI_LBA Lba,UINTN Bytes,VOID *Buffer){
   SetMem(Buffer,Bytes,0xCC);UINTN Got=0;EFI_STATUS S=Exact(D->Transport.Io.Read(D->Transport.Io.Context,4,Lba,Bytes,Buffer,&Got));if(S==EFI_SUCCESS && Got!=Bytes)S=EFI_BAD_BUFFER_SIZE;EFI_STATUS Q=Quiet(D);return Q!=EFI_SUCCESS?Q:S;
 }
-STATIC EFI_STATUS CheckGpt(PIANO_UFS_PRODUCT_VOLUME *D){
-  PIANO_GPT_HEADER H;EFI_STATUS S=PianoGptParseHeader(D->Primary,4096,DISK_LAST,4096,&H);if(S!=EFI_SUCCESS){DEBUG((DEBUG_WARN,"SUNUEFI_PRODUCT_GPT_PRIMARY revision=%08x header_bytes=%u header_crc=%08x current_lba=%lx backup_lba=%lx\n",Le32(D->Primary+8),Le32(D->Primary+12),Le32(D->Primary+16),Le64(D->Primary+24),Le64(D->Primary+32)));return GptReject(D,"primary-header-parse",Exact(S),MAX_UINTN,MAX_UINTN);}
-  UINTN Active=0;S=PianoGptCheckEntries(D->Entries,12288,&H,&Active);if(S!=EFI_SUCCESS){
-    DEBUG((DEBUG_WARN,"SUNUEFI_PRODUCT_GPT_ARRAY expected_crc=%08x current_crc=%08x active=%lu\n",H.ArrayCrc,PianoGptCrc32(D->Entries,12288),(UINT64)Active));
+STATIC EFI_STATUS ReadAndCheckGpt(PIANO_UFS_PRODUCT_VOLUME *D){
+  EFI_LBA Last=D->Transport.DiskLastLba;
+  EFI_STATUS S=ReadExact(D,1,sizeof(D->Primary),D->Primary);
+  if(S!=EFI_SUCCESS)return S;
+  PIANO_GPT_HEADER H;
+  S=PianoGptParseHeader(D->Primary,sizeof(D->Primary),Last,D->Transport.DiskBlockBytes,&H);
+  if(S!=EFI_SUCCESS){
+    DEBUG((DEBUG_WARN,"SUNUEFI_PRODUCT_GPT_PRIMARY revision=%08x header_bytes=%u header_crc=%08x current_lba=%lx backup_lba=%lx\n",Le32(D->Primary+8),Le32(D->Primary+12),Le32(D->Primary+16),Le64(D->Primary+24),Le64(D->Primary+32)));
+    return GptReject(D,"primary-header-parse",Exact(S),MAX_UINTN,MAX_UINTN);
+  }
+  if(H.Entries!=96 || H.EntryBytes!=128 || H.ArrayBytes!=sizeof(D->Entries) || H.EntryLba!=2){
+    DEBUG((DEBUG_WARN,"SUNUEFI_PRODUCT_GPT_LAYOUT entries=%u entry_bytes=%u array_bytes=%lu entry_lba=%lx\n",H.Entries,H.EntryBytes,(UINT64)H.ArrayBytes,H.EntryLba));
+    return GptReject(D,"entries-layout",EFI_COMPROMISED_DATA,MAX_UINTN,MAX_UINTN);
+  }
+  S=ReadExact(D,H.EntryLba,sizeof(D->Entries),D->Entries);
+  if(S!=EFI_SUCCESS)return S;
+  UINTN Active=0;
+  S=PianoGptCheckEntries(D->Entries,sizeof(D->Entries),&H,&Active);
+  if(S!=EFI_SUCCESS){
+    DEBUG((DEBUG_WARN,"SUNUEFI_PRODUCT_GPT_ARRAY expected_crc=%08x current_crc=%08x active=%lu\n",H.ArrayCrc,PianoGptCrc32(D->Entries,sizeof(D->Entries)),(UINT64)Active));
     return GptReject(D,"entries-parse",Exact(S),MAX_UINTN,MAX_UINTN);
   }
-  if(H.Entries!=96 || H.EntryBytes!=128 || H.ArrayBytes!=12288 || H.EntryLba!=2 ||
-     CompareMem(D->Entries,D->BackupEntries,12288)){
-    if(H.Entries!=96 || H.EntryBytes!=128 || H.ArrayBytes!=12288 || H.EntryLba!=2){
-      DEBUG((DEBUG_WARN,"SUNUEFI_PRODUCT_GPT_LAYOUT entries=%u entry_bytes=%u array_bytes=%lu entry_lba=%lx\n",H.Entries,H.EntryBytes,(UINT64)H.ArrayBytes,H.EntryLba));return GptReject(D,"entries-layout",EFI_COMPROMISED_DATA,MAX_UINTN,MAX_UINTN);
-    }
-    UINTN I=FirstDifference(D->Entries,D->BackupEntries,12288);return GptDifference(D,"entries-mirror",EFI_COMPROMISED_DATA,D->Entries,D->BackupEntries,12288,I/128,0);
-  }
-  // Validate the live backup GPT independently before deciding whether this
-  // disk contains our writable volume. An ordinary valid GPT needs no match
-  // against the factory snapshot and no device write capabilities.
+  // Verify the backup header before using its entry-array address.
+  S=ReadExact(D,Last,sizeof(D->Backup),D->Backup);
+  if(S!=EFI_SUCCESS)return S;
   UINT8 B[4096];UINT32 BackupSize=Le32(D->Backup+12);
   if(CompareMem(D->Backup,"EFI PART",8) || Le32(D->Backup+8)!=0x10000 ||
      BackupSize<92 || BackupSize>4096 || Le32(D->Backup+20)!=0 ||
-     Le64(D->Backup+24)!=DISK_LAST || Le64(D->Backup+32)!=1)
+     Le64(D->Backup+24)!=Last || Le64(D->Backup+32)!=1)
     return GptReject(D,"backup-header-parse",EFI_COMPROMISED_DATA,MAX_UINTN,MAX_UINTN);
   CopyMem(B,D->Backup,4096);Put32(B+16,0);
   if(PianoGptCrc32(B,BackupSize)!=Le32(D->Backup+16)){
     DEBUG((DEBUG_WARN,"SUNUEFI_PRODUCT_GPT_BACKUP expected_crc=%08x current_crc=%08x\n",Le32(D->Backup+16),PianoGptCrc32(B,BackupSize)));return GptReject(D,"backup-header-crc",EFI_CRC_ERROR,MAX_UINTN,16);
   }
-  if(BackupSize!=Le32(D->Primary+12) || Le64(D->Backup+72)!=378873 ||
-     Le64(D->Backup+72)<=H.LastUsable || H.ArrayBytes/4096+(H.ArrayBytes%4096!=0)>DISK_LAST-Le64(D->Backup+72) ||
+  EFI_LBA BackupEntry=Le64(D->Backup+72);
+  UINTN BackupBlocks=sizeof(D->BackupEntries)/D->Transport.DiskBlockBytes;
+  // The backup array only has to start outside usable space and end before the
+  // backup header. The factory layout and the on-device GPT repair place it at
+  // different offsets, so a captured LBA is not a valid expectation here.
+  if(BackupSize!=Le32(D->Primary+12) ||
+     BackupEntry<=H.LastUsable || Last<BackupBlocks || BackupEntry>Last-BackupBlocks ||
      CompareMem(D->Backup+40,D->Primary+40,32) || CompareMem(D->Backup+80,D->Primary+80,12)){
     DEBUG((DEBUG_WARN,"SUNUEFI_PRODUCT_GPT_BACKUP header_bytes=%u expected_bytes=%u entry_lba=%lx first_usable=%lx last_usable=%lx entries=%u entry_bytes=%u array_crc=%08x\n",BackupSize,Le32(D->Primary+12),Le64(D->Backup+72),Le64(D->Backup+40),Le64(D->Backup+48),Le32(D->Backup+80),Le32(D->Backup+84),Le32(D->Backup+88)));
     return GptReject(D,"backup-header-shared-fields",EFI_COMPROMISED_DATA,MAX_UINTN,MAX_UINTN);
+  }
+  S=ReadExact(D,BackupEntry,sizeof(D->BackupEntries),D->BackupEntries);
+  if(S!=EFI_SUCCESS)return S;
+  if(CompareMem(D->Entries,D->BackupEntries,sizeof(D->Entries))){
+    UINTN I=FirstDifference(D->Entries,D->BackupEntries,sizeof(D->Entries));
+    return GptDifference(D,"entries-mirror",EFI_COMPROMISED_DATA,D->Entries,D->BackupEntries,sizeof(D->Entries),I/128,0);
   }
   CONST UINT8 *E=D->Entries+PIANO_PRODUCT_VOLUME_GPT_INDEX*128;EFI_GUID Type=PIANO_PRODUCT_STORAGE_TYPE_GUID;
   if(CompareMem(E,&Type,16))return GptReject(D,"owned-entry-absent",EFI_NOT_FOUND,PIANO_PRODUCT_VOLUME_GPT_INDEX,PIANO_PRODUCT_VOLUME_GPT_INDEX*128);
@@ -87,12 +106,11 @@ STATIC EFI_STATUS CheckHeader(PIANO_UFS_PRODUCT_VOLUME *D){
   UINT8 Copy[4096];CopyMem(Copy,H,4096);Put32(Copy+24,0);return PianoGptCrc32(Copy,4096)==Le32(H+24)?EFI_SUCCESS:EFI_CRC_ERROR;
 }
 STATIC EFI_STATUS Gate(PIANO_UFS_PRODUCT_VOLUME *D){
-  ZeroMem(&D->LastGuard,sizeof(D->LastGuard));EFI_STATUS S;
-  VOID *Buffers[]={D->Primary,D->Entries,D->Backup,D->BackupEntries};CONST EFI_LBA Lba[]={1,2,378879,378873};CONST UINTN Bytes[]={4096,12288,4096,12288};
-  for(UINTN I=0;I<4;++I){S=ReadExact(D,Lba[I],Bytes[I],Buffers[I]);if(S!=EFI_SUCCESS)return S;}
-  S=CheckGpt(D);if(S!=EFI_SUCCESS)return S;
+  ZeroMem(&D->LastGuard,sizeof(D->LastGuard));
+  EFI_STATUS S=ReadAndCheckGpt(D);
+  if(S!=EFI_SUCCESS)return S;
   S=Exact(D->Transport.Io.ReadGuard(D->Transport.Io.Context,4,&D->LastGuard));
-  if(S==EFI_SUCCESS)S=PianoUfsWriteGuardCheck(&D->LastGuard);EFI_STATUS Q=Quiet(D);if(Q!=EFI_SUCCESS)return Q;if(S!=EFI_SUCCESS)return S;
+  if(S==EFI_SUCCESS)S=PianoUfsWriteGuardCheck(&D->LastGuard,(D->Transport.DiskLastLba+1)*D->Transport.DiskBlockBytes);EFI_STATUS Q=Quiet(D);if(Q!=EFI_SUCCESS)return Q;if(S!=EFI_SUCCESS)return S;
   S=ReadExact(D,375040,4096,D->Header);if(S==EFI_SUCCESS)S=ReadExact(D,375041,4096,D->HeaderCopy);if(S!=EFI_SUCCESS)return S;
   S=CheckHeader(D);if(S==EFI_SUCCESS && D->State.Provisioned && CompareMem(D->NvIo.VolumeUuid,D->Header+32,16))S=EFI_MEDIA_CHANGED;
   D->State.LastGuardStatus=S;return S;
@@ -159,7 +177,8 @@ STATIC EFI_STATUS WriteNv(VOID *C,UINT32 Slot,UINT32 Block,UINTN Bytes,CONST VOI
 STATIC EFI_STATUS FlushNv(VOID *C){PIANO_UFS_PRODUCT_VOLUME *D=FromNv(C);return D?Flush(D,PianoProductIoNv):EFI_INVALID_PARAMETER;}
 CONST PIANO_UFS_PRODUCT_NV_IO *PianoUfsProductVolumeNvIo(PIANO_UFS_PRODUCT_VOLUME *D){return D && D->Signature==PRODUCT_SIGNATURE && D->State.Provisioned && !D->State.Closed && !D->State.Quarantined?&D->NvIo:NULL;}
 EFI_STATUS PianoUfsProductVolumeOpen(PIANO_UFS_PRODUCT_VOLUME *D,CONST PIANO_UFS_WINDOW_IO *T){
-  if(!D || !T || !T->Acquire || !T->Release || !T->Io.Read || !T->Io.WriteFua || !T->Io.Sync || !T->Io.ReadGuard || !T->Io.Quiesced)return EFI_INVALID_PARAMETER;
+  if(!D || !T || !T->Acquire || !T->Release || !T->Io.Read || !T->Io.WriteFua || !T->Io.Sync || !T->Io.ReadGuard || !T->Io.Quiesced ||
+     !T->DiskLastLba || T->DiskBlockBytes!=4096)return EFI_INVALID_PARAMETER;
   if(D->Signature)return EFI_ALREADY_STARTED;
   ZeroMem(D,sizeof(*D));D->Signature=PRODUCT_SIGNATURE;D->Transport=*T;
   D->Media=(EFI_BLOCK_IO_MEDIA){.MediaId=1,.MediaPresent=FALSE,.ReadOnly=TRUE,.BlockSize=4096,.IoAlign=1,.LastBlock=2045,.LogicalPartition=TRUE,.LogicalBlocksPerPhysicalBlock=1};

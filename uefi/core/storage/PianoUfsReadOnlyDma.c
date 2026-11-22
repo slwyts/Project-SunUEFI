@@ -651,7 +651,12 @@ STATIC EFI_STATUS FreshWriteGuard(UINT8 Lun,PIANO_UFS_WRITE_GUARD *G) {
   UINT8 *Response=(UINT8 *)mUcd.Cpu+PIANO_UFS_RESPONSE_OFFSET;
   if(!EFI_ERROR(S) && (mTransferred!=32 || Response[2]!=4 || (Response[1]&0x60) || EngineBe32(Response+12)))S=EFI_COMPROMISED_DATA;
   if(!EFI_ERROR(S))S=PianoUfsParseCapacity(mData.Cpu,mTransferred,&Last,&Block);
-  if(!EFI_ERROR(S) && (Block!=4096 || Last!=PIANO_UFS_WRITE_TEST_CAPACITY/4096-1))S=EFI_COMPROMISED_DATA;
+  // The guard must describe the LUN the probe actually reported. A captured
+  // capacity from another unit is not an expectation for this disk.
+  UINT64 ProbeLast=0;UINT32 ProbeBlock=0;
+  for(UINTN I=0;I<mLunCount;++I)if(mLuns[I].Id==Lun){ProbeLast=mLuns[I].Last;ProbeBlock=mLuns[I].Block;break;}
+  // Both the product and diagnostics use 4 KiB blocks and WRITE(10).
+  if(!EFI_ERROR(S) && (Last>MAX_UINT32 || Block!=4096 || Block!=ProbeBlock || Last!=ProbeLast))S=EFI_COMPROMISED_DATA;
   G->CapacityStatus=S;if(EFI_ERROR(S))return S;G->CapacityBytes=(Last+1)*Block;G->Collected|=1;
   S=ReadScsi("WRITE_TEST_FRESH_MODE_SENSE",mServiceTag++,4,PianoUfsModeSense10,0,4096);
   if(!EFI_ERROR(S) && Response[2]!=4)S=EFI_COMPROMISED_DATA;

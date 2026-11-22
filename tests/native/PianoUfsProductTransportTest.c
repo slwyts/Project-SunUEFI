@@ -19,6 +19,7 @@ static EFI_TPL CurrentTpl;static UINTN CaptureCalls,Doorbells,DmaBegins,DmaCompl
 static UINTN Freed,Disconnected,Uninstalled,ClockStops;
 static UINTN NativeReads,LastReadBytes,LastWriteBytes,LargestRead,LargestWrite;
 static UINTN CorruptCapture;static UINT64 CorruptPage;
+static UINT32 CapacityBlockBytes;
 static BOOLEAN TranslateBad,PartialWrite,PartialRead,WrongReadLun,RetainOnRead,ResetAttempted;
 static UINT64 FakeUs,ReadDelay,WriteDelay,SyncDelay,DoorbellReadyUs;
 BOOLEAN EFIAPI DebugPrintEnabled(VOID){return FALSE;}BOOLEAN EFIAPI DebugPrintLevelEnabled(UINTN Level){(void)Level;return FALSE;}VOID EFIAPI DebugPrint(UINTN Level,CONST CHAR8 *Format,...){(void)Level;(void)Format;}
@@ -61,8 +62,8 @@ UINT32 EFIAPI MmioRead32(UINTN Address){
 static VOID physical_read(UINT32 Lba,UINT8 *Destination){
   if(Lba==1)memcpy(Destination,primary,4096);
   else if(Lba>=2 && Lba<=4)memcpy(Destination,entries+(Lba-2)*4096,4096);
-  else if(Lba==378879)memcpy(Destination,backup,4096);
-  else if(Lba>=378873 && Lba<=378875)memcpy(Destination,backup_entries+(Lba-378873)*4096,4096);
+  else if(Lba==disk_last)memcpy(Destination,backup,4096);
+  else if(Lba>=backup_entry_lba && Lba-backup_entry_lba<3)memcpy(Destination,backup_entries+(Lba-backup_entry_lba)*4096,4096);
   else{assert(Lba>=375040 && Lba<=378623);memcpy(Destination,disk+(Lba-375040)*4096,4096);}
 }
 static UINTN block_command_bytes(VOID){
@@ -98,7 +99,7 @@ UINT32 EFIAPI MmioWrite32(UINTN Address,UINT32 Value){
     else{assert(Ucd[12]==1 && Ucd[13]==2 && Ucd[14]==4);R[12]=1;R[13]=2;R[14]=4;R[11]=32;R[32]=32;R[33]=2;R[34]=4;R[37]=1;}
   }else{
     assert(Ucd[0]==1 && Ucd[2]==4);
-    if(Ucd[16]==0x9e){Be32(Data,0);Be32(Data+4,378879);Be32(Data+8,4096);}
+    if(Ucd[16]==0x9e){Be32(Data,(UINT32)(disk_last>>32));Be32(Data+4,(UINT32)disk_last);Be32(Data+8,CapacityBlockBytes);}
     else if(Ucd[16]==0x5a){Data[1]=26;Data[3]=0x10;Data[8]=8;Data[9]=0x12;Data[10]=4;R[1]=0x20;Be32(R+12,4096-28);}
     else if(Ucd[16]==0x28){
       UINT32 Lba=ReadBe32(Ucd+18);
@@ -143,12 +144,14 @@ static EFI_STATUS EFIAPI uninstall(EFI_HANDLE Handle,...){assert(CurrentTpl==TPL
   va_list A;va_start(A,Handle);EFI_GUID *Guid=va_arg(A,EFI_GUID *);VOID *Interface=va_arg(A,VOID *);
   if(Handle==(VOID *)0x888){assert(Guid==&gEfiBlockIoProtocolGuid && Interface==&volume.Block);assert(va_arg(A,EFI_GUID *)==&gEfiDevicePathProtocolGuid && va_arg(A,VOID *)==&mProductPath && va_arg(A,VOID *)==NULL);}
   va_end(A);return EFI_SUCCESS;}
-static VOID native_fresh(BOOLEAN Provisioned){
-  fresh(Provisioned);memset(Regs,0,sizeof(Regs));memset(Trl,0,sizeof(Trl));memset(Ucd,0,sizeof(Ucd));memset(Data,0,sizeof(Data));memset(&mContext,0,sizeof(mContext));memset(&Hardware,0,sizeof(Hardware));memset(&mResetReport,0,sizeof(mResetReport));memset(mBlockHandles,0,sizeof(mBlockHandles));
+static VOID native_fresh_layout(BOOLEAN Provisioned,EFI_LBA Last,UINTN BackupOffset){
+  fresh_layout(Provisioned,Last,BackupOffset);
+  memset(Regs,0,sizeof(Regs));memset(Trl,0,sizeof(Trl));memset(Ucd,0,sizeof(Ucd));memset(Data,0,sizeof(Data));memset(&mContext,0,sizeof(mContext));memset(&Hardware,0,sizeof(Hardware));memset(&mResetReport,0,sizeof(mResetReport));memset(mBlockHandles,0,sizeof(mBlockHandles));
   CaptureCalls=Doorbells=DmaBegins=DmaCompletes=Allocations=Installs=Connects=NativeWrites=NativeSyncs=Freed=Disconnected=Uninstalled=ClockStops=0;CorruptCapture=0;TranslateBad=PartialWrite=ResetAttempted=FALSE;CurrentTpl=TPL_APPLICATION;
   NativeReads=LastReadBytes=LastWriteBytes=LargestRead=LargestWrite=0;
   CorruptPage=0;PartialRead=WrongReadLun=RetainOnRead=mPartitionExecuting=mPartitionFailed=FALSE;
   FakeUs=ReadDelay=WriteDelay=SyncDelay=DoorbellReadyUs=0;
+  CapacityBlockBytes=4096;
   mStorageIoTiming=NULL;
   mProductVolume=NULL;mProductExecuting=mProductRetained=mProductPublished=mBlockBusy=mExitRetained=FALSE;mBlockLive=mInstalled=mEverInstalled=TRUE;mLunCount=6;mShutdownHandle=mExitBootEvent=NULL;mSavedBase=0x12345000;mSavedUpper=0;
   mDevice=(PIANO_DMA_DEVICE){.Name="ufs",.Context=&mContext,.StreamId=0x60};
@@ -161,7 +164,7 @@ static VOID native_fresh(BOOLEAN Provisioned){
   Hardware.Device[0]=(PIANO_SMMU_DEVICE){.Present=TRUE,.Enabled=TRUE,.Sid=0x60,.Smr=0x80000060,.Sctlr=0x1e5,.Ttbr0=0x81200000};Hardware.RawSmr[0]=Hardware.Device[0].Smr;
   Hardware.Device[1]=(PIANO_SMMU_DEVICE){.Present=TRUE,.Enabled=TRUE,.Sid=0x40,.StreamIndex=1,.ContextBank=1,.Smr=0x80000040,.S2cr=1,.Sctlr=0x1e5,.Ttbr0=0x81210000};Hardware.RawSmr[1]=Hardware.Device[1].Smr;Hardware.RawS2cr[1]=1;
   mContext.Attached=mContext.Verified=TRUE;mContext.Domain=(VOID *)0x777;mContext.Fdt=(VOID *)0x123;mContext.TableMemory.Signature=1;mContext.TableMemory.Physical=0x81200000;mContext.AttachedSnapshot=Hardware;
-  mLuns[4].Id=4;mLuns[4].Last=378879;mLuns[4].Block=4096;
+  mLuns[4].Id=4;mLuns[4].Last=Last;mLuns[4].Block=4096;
   mPermanentWpStatus=mPowerOnWpStatus=mCapabilities[4].CacheStatus=mCapabilities[4].UnitStatus=EFI_SUCCESS;
   mPermanentWp=mPowerOnWp=mCapabilities[4].WriteProtected=FALSE;
   mCapabilities[4].Fua=TRUE;mCapabilities[4].UnitWriteProtect=0;
@@ -169,6 +172,7 @@ static VOID native_fresh(BOOLEAN Provisioned){
   memset(&Bs,0,sizeof(Bs));Bs.RaiseTPL=raise_tpl;Bs.RestoreTPL=restore_tpl;Bs.Stall=stall;Bs.InstallMultipleProtocolInterfaces=install;Bs.ConnectController=connect;Bs.DisconnectController=disconnect;Bs.UninstallMultipleProtocolInterfaces=uninstall;gBS=&Bs;Rt.ResetSystem=reset;gRT=&Rt;
   assert(PianoUfsProductTransportIo(&volume,&io)==EFI_SUCCESS);
 }
+static VOID native_fresh(BOOLEAN Provisioned){native_fresh_layout(Provisioned,378879,6);}
 static VOID native_open(void){assert(PianoUfsProductVolumeOpen(&volume,&io)==EFI_SUCCESS && !NativeWrites && !NativeSyncs && !Allocations && CurrentTpl==TPL_APPLICATION && DmaBegins==DmaCompletes);}
 static EFI_SIMPLE_FILE_SYSTEM_PROTOCOL TestFilesystem;
 static EFI_HANDLE TargetMount=(VOID *)0x1234,OtherMount=(VOID *)0x1235,FilesystemDriver=(VOID *)0xabcd;
@@ -299,6 +303,23 @@ int main(void){
   filesystem_write_preparation();
   partition_batches();
   assert(PIANO_SMMU_FSR_FORMAT_MASK==0x600 && PIANO_SMMU_FSR_FAULT_MASK==0xC00001FE);
+  CONST EFI_LBA Last[]={378879,504831};
+  CONST UINTN BackupOffset[]={6,4};
+  for(UINTN I=0;I<ARRAY_SIZE(Last);++I)for(UINTN J=0;J<ARRAY_SIZE(BackupOffset);++J){
+    native_fresh_layout(TRUE,Last[I],BackupOffset[J]);
+    assert(io.DiskLastLba==Last[I] && io.DiskBlockBytes==4096);
+    native_open();
+    // One header and three array blocks per GPT, plus both container headers.
+    assert(NativeReads==10 && volume.LastGuard.CapacityBytes==(Last[I]+1)*4096);
+    assert(volume.Block.WriteBlocks(&volume.Block,1,0,4096,pattern)==EFI_SUCCESS &&
+      NativeWrites==1 && NativeSyncs==1 && volume.State.LastPhysical==375042);
+  }
+  puts("Both LUN4 capacities and backup array offsets passed the actual UFS product transport.");
+  native_fresh(FALSE);mProductVolume=NULL;mLuns[4].Last=(UINT64)MAX_UINT32+1;
+  assert(PianoUfsProductTransportIo(&volume,&io)==EFI_UNSUPPORTED && !mProductVolume && !Doorbells);
+  native_fresh(TRUE);native_open();CapacityBlockBytes=mLuns[4].Block=512;
+  assert(volume.Block.WriteBlocks(&volume.Block,1,0,4096,pattern)==EFI_COMPROMISED_DATA &&
+    volume.LastGuard.CapacityStatus==EFI_COMPROMISED_DATA && !NativeWrites && !NativeSyncs);
   native_fresh(FALSE);assert(PianoUfsProductVolumeOpen(&volume,&io)==EFI_NOT_FOUND && !NativeWrites && !NativeSyncs && !Allocations && !Installs && !mProductRetained && CurrentTpl==TPL_APPLICATION);
   native_fresh(TRUE);Hardware.Device[0].Fsr=0x400;mContext.AttachedSnapshot.Device[0].Fsr=0x400;native_open();
   assert(volume.Block.WriteBlocks(&volume.Block,1,0,4096,pattern)==EFI_SUCCESS && NativeWrites==1 && Hardware.Device[0].Fsr==0x400);

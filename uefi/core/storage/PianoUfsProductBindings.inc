@@ -70,7 +70,11 @@ STATIC EFI_STATUS ProductRelease(VOID *Context,BOOLEAN Quarantined){
 }
 STATIC EFI_STATUS ProductRead(VOID *Context,UINT8 Lun,EFI_LBA Lba,UINTN Bytes,VOID *Buffer,UINTN *Got){
   if(!Got)return EFI_INVALID_PARAMETER;*Got=0;if(!ProductContext(Context) || Lun!=4 || !Buffer || !Bytes || Bytes%4096)return EFI_ACCESS_DENIED;
-  BOOLEAN Metadata=(Lba==1 && Bytes==4096)||(Lba==2 && Bytes==12288)||(Lba==378879 && Bytes==4096)||(Lba==378873 && Bytes==12288);
+  UINT64 Last=mProductVolume==NULL?0:mProductVolume->Transport.DiskLastLba;
+  // GPT metadata lives in the reserved area at the end of this LUN; the exact
+  // LBA depends on the disk, so allow the whole reserved range.
+  BOOLEAN Metadata=(Lba==1 && Bytes==4096)||(Lba==2 && Bytes==12288)||
+    (Last>64 && Lba>=Last-64 && Lba<=Last && Bytes/4096<=Last+1-Lba);
   if(!Metadata && (Lba<375040 || Lba>378623 || Bytes/4096>378624-Lba))return EFI_ACCESS_DENIED;
   for(UINTN O=0;O<Bytes;O+=4096){EFI_STATUS S=ReadScsi("PRODUCT_VOLUME_READ10",mServiceTag++,4,PianoUfsReadLba10,(UINT32)(Lba+O/4096),4096);
     UINT8 *R=(UINT8 *)mUcd.Cpu+PIANO_UFS_RESPONSE_OFFSET;if(S!=EFI_SUCCESS)return ProductRetain(S);
@@ -98,7 +102,11 @@ EFI_STATUS PianoUfsProductTransportIo(PIANO_UFS_PRODUCT_VOLUME *D,PIANO_UFS_WIND
   if(!gBS || !gBS->RaiseTPL || !gBS->RestoreTPL)return EFI_UNSUPPORTED;
   EFI_TPL Tpl=gBS->RaiseTPL(TPL_HIGH_LEVEL);gBS->RestoreTPL(Tpl);if(Tpl!=TPL_APPLICATION)return EFI_UNSUPPORTED;
   if(!D || !Io || D->Signature || mProductVolume || mProductExecuting || mProductRetained || !mBlockLive || !mInstalled || mExitRetained || mData.Direction!=PianoDmaBidirectional)return EFI_NOT_READY;
-  mProductVolume=D;*Io=(PIANO_UFS_WINDOW_IO){.Io={D,ProductRead,ProductWriteFua,ProductSync,ProductGuard,ProductQuiet},.Acquire=ProductAcquire,.Release=ProductRelease};return EFI_SUCCESS;
+  UINT64 Last=0;UINT32 Block=0;
+  for(UINTN I=0;I<mLunCount;++I)if(mLuns[I].Id==4){Last=mLuns[I].Last;Block=mLuns[I].Block;break;}
+  // The metadata reader issues READ(10), including for the last LBA.
+  if(!Last || Last>MAX_UINT32 || Block!=4096)return EFI_UNSUPPORTED;
+  mProductVolume=D;*Io=(PIANO_UFS_WINDOW_IO){.Io={D,ProductRead,ProductWriteFua,ProductSync,ProductGuard,ProductQuiet},.Acquire=ProductAcquire,.Release=ProductRelease,.DiskLastLba=Last,.DiskBlockBytes=Block};return EFI_SUCCESS;
 }
 EFI_STATUS PianoUfsProductTransportPublish(PIANO_UFS_PRODUCT_VOLUME *D){
   EFI_TPL Tpl=gBS->RaiseTPL(TPL_HIGH_LEVEL);gBS->RestoreTPL(Tpl);if(Tpl!=TPL_APPLICATION)return EFI_UNSUPPORTED;
