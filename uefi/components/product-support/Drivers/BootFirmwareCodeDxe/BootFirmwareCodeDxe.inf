@@ -1,0 +1,33 @@
+## @file
+# Preserve the code used by resident boot firmware services until OS handoff.
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+[Defines]
+  INF_VERSION  = 0x00010005
+  BASE_NAME    = BootFirmwareCodeDxe
+  FILE_GUID    = A35B5FE6-ACCB-41C9-8715-B1308D82FA30
+  MODULE_TYPE  = DXE_DRIVER
+  VERSION_STRING = 1.0
+  ENTRY_POINT  = BootFirmwareCodeEntry
+
+[Sources]
+  BootFirmwareCode.c
+  FirmwareVolume.c
+  FirmwareVolume.h
+
+[Packages]
+  MdePkg/MdePkg.dec
+  SiliciumPkg/SiliciumPkg.dec
+
+[LibraryClasses]
+  BaseLib
+  DebugLib
+  MemoryMapHelperLib
+  UefiBootServicesTableLib
+  UefiDriverEntryPoint
+
+[Protocols]
+  gEfiMemoryAttributeProtocolGuid ## CONSUMES
+
+[Depex]
+  gEfiMemoryAttributeProtocolGuid

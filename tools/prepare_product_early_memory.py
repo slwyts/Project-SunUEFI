@@ -57,11 +57,15 @@ def sec_source(text):
         raise ValueError('SEC source drift: re-audit first MemoryPeim ordering')
     text=text.replace('#include <Library/HobLib.h>', '#include <Library/HobLib.h>\n#include <Guid/DxeMemoryProtectionSettings.h>', 1)
     text=text.replace('#include "Sec.h"','#include "Sec.h"\n#include "PianoEarlyMemory.h"\n#include "PianoColdBootObjects.h"\n#include "PianoColdMemory.h"',1)
-    text=text.replace('  // Build CPU HOB', '''  // Let ArmCpuDxe expose the native page attributes to EFI loaders.
+    text=text.replace('  // Build CPU HOB', '''  // Use Mu's shipping permissions for images and memory allocations. Leave
+  // unrelated heap, NULL-page and stack guard policies at the board defaults.
+  CONST DXE_MEMORY_PROTECTION_SETTINGS Shipping = DXE_MEMORY_PROTECTION_SETTINGS_SHIP_MODE_NO_PAGE_GUARDS;
   DXE_MEMORY_PROTECTION_SETTINGS DxeSettings = {
     .StructVersion                  = DXE_MEMORY_PROTECTION_SETTINGS_CURRENT_VERSION,
     .InstallMemoryAttributeProtocol = TRUE,
   };
+  DxeSettings.NxProtectionPolicy = Shipping.NxProtectionPolicy;
+  DxeSettings.ImageProtectionPolicy = Shipping.ImageProtectionPolicy;
   if (BuildGuidDataHob (&gDxeMemoryProtectionSettingsGuid, &DxeSettings, sizeof (DxeSettings)) == NULL) {
     DEBUG ((DEBUG_WARN, "Could not publish DXE memory protection settings\\n"));
   }

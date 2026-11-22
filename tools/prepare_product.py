@@ -77,6 +77,22 @@ ACPI_MODULES=('MdeModulePkg/Universal/Acpi/AcpiTableDxe/AcpiTableDxe.inf',
               'MdeModulePkg/Universal/Acpi/AcpiPlatformDxe/AcpiPlatformDxe.inf')
 ACPI_TABLES='pianoProductPkg/AcpiTables/AcpiTables.inf'
 RNG_DXE='SecurityPkg/RandomNumberGenerator/RngDxe/RngDxe.inf'
+BOOT_FIRMWARE_CODE='pianoProductPkg/Drivers/BootFirmwareCodeDxe/BootFirmwareCodeDxe.inf'
+
+
+def bind_boot_firmware_code(target):
+    """Install resident SEC code permissions immediately after ArmCpuDxe applies its memory policy."""
+    dsc=Path(target)/'pianoProduct.dsc'
+    dsc.write_text(dsc.read_text()+'\n[Components]\n  '+BOOT_FIRMWARE_CODE+'\n')
+    fdf=Path(target)/'pianoProduct.fdf'
+    text=fdf.read_text()
+    native='ArmPkg/Drivers/CpuDxe/CpuDxe.inf'
+    for indent in ('    ','  '):
+        entry=f'\n{indent}INF {native}\n'
+        if text.count(entry)!=1:
+            raise ValueError('Expected ArmCpuDxe in the DXE dispatch list and firmware volume')
+        text=text.replace(entry,entry+f'{indent}INF {BOOT_FIRMWARE_CODE}\n',1)
+    fdf.write_text(text)
 
 
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -567,6 +583,7 @@ def prepare(root=ROOT):
     shutil.rmtree(target/'Library/Stage0BootManagerLib')
     shutil.rmtree(target/'Library/RamLogSerialPortLib')
     shutil.copytree(root/'uefi/components/product-support',target,dirs_exist_ok=True)
+    bind_boot_firmware_code(target)
     shutil.copytree(root/'uefi/components/acpi',target/'AcpiTables')
     app=target/'Applications/ProductCore';app.mkdir(parents=True)
     for name in SOURCE_NAMES:shutil.copyfile(core_source(name, root),app/name)
