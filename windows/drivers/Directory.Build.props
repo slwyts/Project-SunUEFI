@@ -1,0 +1,9 @@
+<Project>
+  <ItemDefinitionGroup>
+    <!-- StampInf still expands WDK tokens; the package revision belongs to the INF. -->
+    <Inf>
+      <SpecifyDriverVerDirectiveDate>false</SpecifyDriverVerDirectiveDate>
+      <SpecifyDriverVerDirectiveVersion>false</SpecifyDriverVerDirectiveVersion>
+    </Inf>
+  </ItemDefinitionGroup>
+</Project>

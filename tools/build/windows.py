@@ -447,8 +447,15 @@ def drivers(args):
             msbuild = next(iter(hits), None)
     if not msbuild:
         raise ValueError('Use a Visual Studio/WDK developer shell, or pass --kit-include for LLVM.')
+    # These StampInf development overrides take precedence over the project's
+    # literal DriverVer. Leave the developer shell unchanged.
+    env = {name: value for name, value in os.environ.items()
+           if name.upper() not in ('PRIVATE_DRIVER_PACKAGE', 'STAMPINF_DATE', 'STAMPINF_VERSION')}
     for project in projects:
-        subprocess.run([msbuild, project, '/m', '/p:Platform=ARM64', '/p:Configuration=Release'], check=True)
+        package = ROOT / 'artifacts/windows/drivers' / project.stem / 'Release'
+        subprocess.run([msbuild, project, '/m', '/p:Platform=ARM64', '/p:Configuration=Release',
+                        f'/p:PackageDir={package}', '/p:EnableInf2cat=false', '/p:SignMode=Off'],
+                       env=env, check=True)
     if args.catalogs:
         make_driver_catalogs(projects, [])
 

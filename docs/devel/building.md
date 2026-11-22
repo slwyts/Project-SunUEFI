@@ -132,6 +132,14 @@ Windows driver checks 的 `Windows-ARM64-UFS-unsigned` 下载项包含同一次�
 `sunufs.inf`、`sunufs.sys` 和 `sunufs.cat`。新生成的目录文件没有签名；按 Windows
 驱动签名流程签署后再交给安装介质。目前这个包匹配的是 QEMU 的 PCI UFS 控制器。
 
+发布有改动的驱动包时，更新该包源 INF 中的
+[`DriverVer`](https://learn.microsoft.com/windows-hardware/drivers/install/inf-driverver-directive)：
+日期取包内文件最近一次变更的日期（UTC），并递增四段版本号。同一天发布多个修订也要递增版本号。
+重建相同内容不改日期或版本。
+Windows 先比较设备匹配和签名等级，同等级再按日期、版本选包。将新签名包用
+`pnputil /add-driver sunufs.inf /install` 安装，保留旧包；系统记录了先前驱动时，
+可在设备管理器的“驱动程序”页回退。仅重新添加旧 INF 不会覆盖匹配等级相同的新版。
+
 在已创建独立分区的平板上，从有 root 的 Android 连接 ADB。Linux 主机还需要
 Android platform-tools、`dosfstools`、`mtools`，完整安装另需 `ntfs-3g`、
 `img2simg` 和 `wimlib-imagex`。先查看分区和介质选择：

@@ -132,6 +132,14 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $sections -notmatch 'Name: \.text \([^}]*IMAGE_SCN_MEM_NOT_PAGED') {
             throw 'The Storport interrupt handler must be linked into resident kernel code.'
           }
+          $versions = foreach ($inf in @('windows/drivers/ufs/sunufs.inf', "$storage/sunufs.inf")) {
+            $line = @(Select-String -LiteralPath $inf -Pattern '^\s*DriverVer\s*=\s*([^;]+)')
+            if ($line.Count -ne 1) { throw "Expected one DriverVer in $inf." }
+            $line[0].Matches[0].Groups[1].Value -replace '\s', ''
+          }
+          if ($versions[0] -ne $versions[1]) {
+            throw "The package changed DriverVer from $($versions[0]) to $($versions[1])."
+          }
           python tests/native/test_windows_driver_catalog.py "$storage/sunufs.cat" "$storage/sunufs.inf" "$storage/sunufs.sys"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Check Direct3D readback using the software adapter
