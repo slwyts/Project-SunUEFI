@@ -7,8 +7,8 @@ SunUEFI 不替换原厂引导程序。正常扫描和启动不会改写 Android 
 | 在 Linux 里想回 Android | 保存的启动路线是 Linux | 运行 `piano-next-boot android --reboot`，或点桌面上的“返回 Android” |
 | 在 Android 里想改回 Linux 或 Android | 路线保存在 BOOT 分区的记录区 | 在助手的 **启动** 页重新选择；没有助手时见下文“用命令改启动路线” |
 | 屏幕停在原厂 Fastboot | 没有选到系统，或刷写后没有重启 | 电脑上运行 `fastboot reboot` |
-| 电脑能看到 `SunUEFI-piano` | 固件还在运行 | 运行 `fastboot -s SunUEFI-piano reboot`，固件保存设置、同步存储后重启。看到开机选择页时，可用音量键选择 Android |
-| 完全没有反应 | 死机或卡在早期启动 | 长按电源键强制重启，直到出现开机画面。按多久因机器而异，用你已知的原厂强制重启方式 |
+| `fastboot -s SunUEFI-piano getvar product` 能读到 `piano-sunuefi` | 固件仍能回复 USB 命令 | 运行 `fastboot -s SunUEFI-piano reboot`。如果提示正在等待引导程序退出，平板还没有重启 |
+| 黑屏或停在启动标志，电脑也收不到命令回复 | 电脑可能仍列着 `SunUEFI-piano`；这个名字不能说明固件仍能接收命令 | 长按电源键，直到平板重新开机。松开电源键，在启动选择页按音量上返回 Android |
 | 想进小米原厂 Recovery | 需要原厂恢复功能 | 在 Android 里运行 `reboot recovery`，或用系统的重启菜单。不会触发 SunUEFI，也不改变保存的启动路线 |
 
 强制重启后仍然回不到 Android 时，先不要继续刷写，记下屏幕状态和电脑上 `fastboot devices` 的输出再求助。
