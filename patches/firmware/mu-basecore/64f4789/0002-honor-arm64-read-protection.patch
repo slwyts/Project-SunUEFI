@@ -1,0 +1,22 @@
+diff --git a/UefiCpuPkg/Library/ArmMmuLib/AArch64/ArmMmuLibCore.c b/UefiCpuPkg/Library/ArmMmuLib/AArch64/ArmMmuLibCore.c
+--- a/UefiCpuPkg/Library/ArmMmuLib/AArch64/ArmMmuLibCore.c
++++ b/UefiCpuPkg/Library/ArmMmuLib/AArch64/ArmMmuLibCore.c
+@@ -686,9 +686,16 @@ ArmSetMemoryAttributes (
+         return EFI_INVALID_PARAMETER;
+       }
+ 
+-      // Add attributes omitted from AttributeMask to the set of attributes to preserve
++      // Preserve permission fields omitted from AttributeMask.
+       PageAttributeMask |= GcdAttributeToPageAttribute (~AttributeMask) &
+-                           (TT_AP_MASK | TT_UXN_MASK | TT_PXN_MASK | TT_AF);
++                           (TT_AP_MASK | TT_UXN_MASK | TT_PXN_MASK);
++
++      // Read protection clears AF. If RP was omitted, retain the old
++      // access flag instead of supplying the default AF for readable pages.
++      if ((AttributeMask & EFI_MEMORY_RP) == 0) {
++        PageAttributeMask |= TT_AF;
++        PageAttributes    &= ~TT_AF;
++      }
+     }
+   } else {
+     ASSERT (AttributeMask == 0);

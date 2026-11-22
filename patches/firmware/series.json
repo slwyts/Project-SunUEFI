@@ -86,6 +86,17 @@
       }
     },
     {
+      "repository": "upstream/Mu-Silicium/Mu_Basecore",
+      "base_commit": "64f478939955e45faa632c160ae2a75a5ff7ef7f",
+      "patch": "mu-basecore/64f4789/0002-honor-arm64-read-protection.patch",
+      "sha256": "2632bc584c0023bd03bb0c0830422a687e94bc78e12f8bee2f0ca42180c0b73a",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/microsoft/mu_basecore",
+        "drop_when": "Remove when ArmMmuLib can set and clear EFI_MEMORY_RP and retains existing read protection when modifying only RO or XP."
+      }
+    },
+    {
       "repository": "upstream/Mu-Silicium",
       "base_commit": "8471e47f5248ebbffc2e6196b683204163efe155",
       "patch": "mu-silicium.patch",
