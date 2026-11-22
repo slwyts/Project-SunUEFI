@@ -227,13 +227,11 @@ SimpleInit/LVGL 处理，物理显示模式保持原样；实机已确认横屏�
 UKI 内含内核、initramfs、DTB 和参数，systemd-stub 调用 Linux EFI stub；
 固件提供完整内存描述、设备树修正与安全退出。
 
-## 内置菜单与自动保存
+## 内置菜单与启动选择
 
 [`config/simpleinit.static.uefi.cfg`](../../../config/simpleinit.static.uefi.cfg)
-原样内置在 SimpleInit 的 rootfs 中，先作为静态配置加载，再加载
-`persist/sunuefi/simpleinit.uefi.cfg` 中的用户设置。首次使用不需要复制
-任何文件：目录由固件创建，修改后的设置由 SimpleInit 自动保存。
-静态配置里的默认值不会整份复制到用户文件。
+原样内置在 SimpleInit 的 rootfs 中。菜单里的临时设置只在本次启动中生效，
+配置工具仍可把配置另存到可写的位置。要调整持久的启动顺序，请使用固件设置。
 
 默认中文、横屏、DPI 600，开启动画；菜单显示后无操作五秒自动启动，
 按键、触摸或滚动取消自动启动。“启动 Linux”排在
@@ -243,18 +241,18 @@ UKI 内含内核、initramfs、DTB 和参数，systemd-stub 调用 Linux EFI stu
 不会为每个页面重新创建 USB 或存储服务。
 
 菜单顺序使用 `boot.configs.<入口>.order` 整数。
-`tools/prepare_simpleinit.py` 负责配置与保存路径，
+点选系统只决定本次启动；菜单诊断信息保留在 RAM 日志中，不刷到屏幕上。
+`tools/prepare_simpleinit.py` 负责载入内置配置，
 `tools/prepare_product_ui.py` 负责动作分发和上游 EFI 文件扫描适配。
 文件系统 URL 使用完整设备路径，查找对应 SimpleFileSystem，不把父磁盘
 误当成分区文件系统。
 
 ## persist 中的 UEFI 变量
 
-SimpleInit 设置与 UEFI 变量分开保存：
+固件将普通非易失 UEFI 变量保存到两个文件：
 
 ```text
 persist/sunuefi/
-├── simpleinit.uefi.cfg
 ├── nvram-a.bin
 └── nvram-b.bin
 ```
@@ -290,7 +288,7 @@ lwext4 的固定来源在 [`config/uefi-ext4.json`](../../../config/uefi-ext4.js
 ## 电源动作与退出
 
 “电源与重启”提供关机、普通重启、Recovery、Bootloader 和 EDL（9008）。
-动作先在菜单中登记。界面退出后，驻留核心保存设置、关闭文件系统，并完成存储、
+动作先在菜单中登记。界面退出后，驻留核心保存 UEFI 变量、关闭文件系统，并完成存储、
 输入、USB 和显示资源的安全退出。`ExitBootServices` 成功后才调用 `ResetSystem`。
 Shell 的 `reset` 和 `drvcfg` 发出的重启请求也交给驻留核心。固件拒绝在交接前直接调用
 `ResetSystem` 的请求，退出启动服务后的系统重启继续使用标准接口。

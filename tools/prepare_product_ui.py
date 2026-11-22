@@ -249,10 +249,93 @@ hook(SI+'src/lib/reboot.c', 'int adv_reboot(enum reboot_cmd cmd,char*data){\n\tU
       '\t\tEFI_STATUS status=PianoProductRequestReset(target);\n'
      '\t\tif(status!=EFI_SUCCESS)ERET(EIO);\n'
      '\t\treturn 0;\n\t}\n\tUINTN s=0;')
-hook(SI+'src/boot/reboot_uefi.c', '#include<string.h>\n', '#include<string.h>\n#include<stdlib.h>\n')
-hook(SI+'src/boot/reboot_uefi.c', '\tadv_reboot(cmd,data);\n\ttlog_warn("reset system failed");',
+reboot_boot = SI+'src/boot/reboot_uefi.c'
+hook(reboot_boot, '#include<string.h>\n', '#include<string.h>\n#include<stdlib.h>\n')
+include(reboot_boot, '#include"defines.h"\n')
+hook(reboot_boot, '\tconfd_save_file(NULL);\n',
+     '\tif(!PianoProductRebootManaged())confd_save_file(NULL);\n')
+hook(reboot_boot, '\tadv_reboot(cmd,data);\n\ttlog_warn("reset system failed");',
      '\tif(adv_reboot(cmd,data)==0){\n\t\tif(data)free(data);\n\t\treturn 0;\n\t}\n'
      '\ttlog_warn("reset system failed");')
+
+# The product does not have a default settings file. Leave explicit Save As,
+# the native UEFI controls and the diagnostic application's config intact.
+diagnostic_only = '#if !defined(PIANO_PRODUCT_GUI_PUMP) || !PIANO_PRODUCT_GUI_PUMP\n'
+product_only = '#if defined(PIANO_PRODUCT_GUI_PUMP) && PIANO_PRODUCT_GUI_PUMP\n'
+gui_init = SI+'src/gui/gui_init.c'
+hook(gui_init, 'extern bool conf_store_changed;\n', diagnostic_only+'extern bool conf_store_changed;\n')
+hook(gui_init, '\tconf_store_changed=false;\n}\n', '\tconf_store_changed=false;\n}\n#endif\n')
+autosave_timer = '''	lv_timer_create(
+		conf_save_cb,
+		confd_get_integer("confd.save_interval",10)*1000,
+		NULL
+	);
+'''
+hook(gui_init, autosave_timer, diagnostic_only+autosave_timer+'#endif\n')
+hook(gui_init, '\t#ifdef ENABLE_UEFI\n\tconf_save_cb(NULL);\n\t#endif\n',
+     '\t#ifdef ENABLE_UEFI\n'+diagnostic_only+'\tconf_save_cb(NULL);\n#endif\n\t#endif\n')
+
+logger_client = SI+'src/loggerd/client.c'
+hook(logger_client, 'static int logger_init_out(){\n', diagnostic_only+'static int logger_init_out(){\n')
+hook(logger_client, '\nvoid logger_init(){\n', '\n#endif\n\nvoid logger_init(){\n')
+logger_outputs = '''	logger_init_out();
+	console_output=confd_get_boolean(
+		"logger.use_console",
+		console_output
+	);
+'''
+hook(logger_client, logger_outputs, diagnostic_only+logger_outputs+'#endif\n')
+logger_forward = '''	if(console_output){
+		AsciiPrint("%a",print_buff);
+		AsciiPrint("\\n");
+	}
+	logger_out_write(print_buff);
+'''
+hook(logger_client, logger_forward, diagnostic_only+logger_forward+'#endif\n')
+
+boot_manager = SI+'src/gui/interface/bootmgr/bootmgr.c'
+hook(boot_manager, 'static bool default_cb(', diagnostic_only+'static bool default_cb(')
+hook(boot_manager, '\nstatic bool delete_cb(', '\n#endif\n\nstatic bool delete_cb(')
+default_confirm = '''		msgbox_set_user_data(msgbox_create_yesno(
+			default_cb,
+			"Are you sure you want to set boot item '%s' (%s) as default?",
+			sel->cfg.desc[0]?sel->cfg.desc:sel->cfg.ident,sel->cfg.ident
+		),bm);
+'''
+hook(boot_manager, default_confirm,
+     product_only+'\t\tmsgbox_alert("无法保存默认启动项。可在固件设置中调整启动顺序。");\n'
+     '#else\n'+default_confirm+'#endif\n')
+
+boot_item = SI+'src/gui/interface/bootmgr/bootitem.c'
+hook(boot_item, '\tbool save=lv_obj_is_checked(bi->chk_save);\n',
+     '\tbool save=lv_obj_is_checked(bi->chk_save);\n'+product_only+
+     '\tif(save){\n'
+     '\t\tmsgbox_alert("无法永久保存启动项。取消勾选“永久启动项”后，可在本次启动使用。");\n'
+     '\t\treturn false;\n'
+     '\t}\n#endif\n')
+hook(boot_item, '\t\tbool save=confd_get_save_base(bootmgr_base,name);\n',
+     product_only+'\t\tbool save=false;\n#else\n'
+     '\t\tbool save=confd_get_save_base(bootmgr_base,name);\n#endif\n')
+persist_checkbox = '\tbi->chk_save=lv_draw_checkbox(bi->box,_("Persist boot item"),true,NULL,NULL);\n'
+hook(boot_item, persist_checkbox,
+     product_only+persist_checkbox.replace(',true,', ',false,')+'#else\n'+persist_checkbox+'#endif\n')
+hook(boot_item, '\tconfd_set_save_base(bootmgr_base,bi->name,save);\n',
+     diagnostic_only+'\tconfd_set_save_base(bootmgr_base,bi->name,save);\n#endif\n')
+
+config_save = SI+'src/gui/interface/conftool/confsave.c'
+save_alert = '''		if(r<0)r=-r;
+		if(r!=0)msgbox_alert(
+			"Save config failed: %s",
+			strerror(r)
+		);
+'''
+hook(config_save, save_alert,
+     product_only+
+     '\t\tif(r!=0){\n'
+     '\t\t\tmsgbox_alert("无法保存配置。请检查所选位置是否可写。");\n'
+     '\t\t\treturn true;\n'
+     '\t\t}\n'
+     '#else\n'+save_alert+'#endif\n')
 
 # Menu content comes from config/simpleinit.static.uefi.cfg. These hooks only
 # dispatch product actions and expose upstream's generic file/tool activities.
@@ -404,7 +487,10 @@ hook(efi_file,'''	if(options){
 		li->LoadOptionsSize=(UINT32)option_bytes;
 	}
 ''')
-hook(efi_file,'\tst=gBS->LoadImage(\n','''	if(options){
+efi_load = '\t\tERET(ENOENT);\n\t}\n\tst=gBS->LoadImage(\n'
+hook(efi_file,efi_load,'''		ERET(ENOENT);
+	}
+	if(options){
 		option_bytes=AsciiStrLen(options);
 		if(option_bytes>MAX_UINT32 || (wc&&option_bytes>=MAX_UINT32/sizeof(CHAR16)))
 			EDONE(tlog_error("load options too long"));
@@ -418,12 +504,18 @@ hook(efi_file,'\tst=gBS->LoadImage(\n','''	if(options){
 	if(file&&PianoProductRebootManaged()){
 		st=PianoProductSelectBootFile(dp,option_data,(UINT32)option_bytes);
 		if(EFI_ERROR(st))EDONE(tlog_error("select EFI file failed: %s",efi_status_to_string(st)));
-		confd_save_file(NULL);
 		r=0;
 		goto done;
 	}
 	st=gBS->LoadImage(
 ''')
+hook(efi_file, '\tconfd_save_file(NULL);\n',
+     '\tif(!PianoProductRebootManaged())confd_save_file(NULL);\n')
+
+boot_dispatch = SI+'src/boot/boot.c'
+include(boot_dispatch, '#include<Library/UefiBootServicesTableLib.h>\n')
+hook(boot_dispatch, '\tgBS->Stall(10*1000*1000);\n',
+     '\tif(r!=0||!PianoProductUiReturnRequested())gBS->Stall(10*1000*1000);\n')
 hook(SI+'src/gui/interface/core/bootmenu.c','\tboot_name(target_boot_name);\n',
      '\tboot_name(target_boot_name);\n\tif(PianoProductUiReturnRequested())return 0;\n')
 start_file=SI+'src/gui/interface/apps/uefi_start.c'

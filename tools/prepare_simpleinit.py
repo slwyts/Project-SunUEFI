@@ -59,7 +59,8 @@ def prepare_filesystem(si):
 
 
 def prepare_defaults(root, si):
-    """Load built-in defaults before external static/user configuration."""
+    """Use embedded settings for the product and preserve diagnostic defaults."""
+    from prepare_product_pump import transform
     main_c = si / 'src/main/uefimain.c'
     text = main_c.read_text()
     begin = text.index('\tconfd_init();\n')
@@ -84,50 +85,59 @@ def prepare_defaults(root, si):
 
     config_c = si / 'src/confd/uefi.c'
     text = config_c.read_text()
-    defaults = '''	// The product's real static config is embedded in the application rootfs.
+    text = transform(text, '\nstatic void set_default(fsh*fp,char*path,...){\n',
+                     '\n#if !defined(PIANO_PRODUCT_GUI_PUMP) || !PIANO_PRODUCT_GUI_PUMP\n'
+                     'static void set_default(fsh*fp,char*path,...){\n', str(config_c))
+    opening = '''int confd_init(){
+	fsh*f=NULL;
+	size_t i,x;
+	bool c=true;
+	fsvol_info**vs=NULL;
+	char**exts,path[1024],fn[256];
+	if(!(exts=conf_get_supported_exts()))
+		EDONE(tlog_warn("get supported exts failed"));
+	if(def_fp)fs_close(&def_fp);
+	if(def_path)free(def_path);
+	def_fp=NULL,def_path=NULL;
+	load_default();
+'''
+    replacement = '''#endif
+
+int confd_init(){
+	if(def_fp)fs_close(&def_fp);
+	if(def_path)free(def_path);
+	def_fp=NULL,def_path=NULL;
 #if defined(PIANO_PRODUCT_GUI_PUMP) && PIANO_PRODUCT_GUI_PUMP
-	if(conf_include_file(NULL,"rootfs:///etc/simpleinit.static.uefi.cfg")!=0)
-		EDONE(tlog_warn("load built-in product config failed"));
+	int r=conf_include_file(NULL,"rootfs:///etc/simpleinit.static.uefi.cfg");
+	if(r!=0)tlog_warn("load built-in product config failed");
+	return r;
 #else
+	fsh*f=NULL;
+	size_t i,x;
+	bool c=true;
+	fsvol_info**vs=NULL;
+	char**exts,path[1024],fn[256];
+	if(!(exts=conf_get_supported_exts()))
+		EDONE(tlog_warn("get supported exts failed"));
 	char *language=strdup("zh_CN.UTF-8");
 	if(!language)EDONE(tlog_warn("allocate default language failed"));
 	if(conf_set_string_inc("language",language,0,0,true)!=0)free(language);
 	conf_set_integer_inc("boot.timeout",150,0,0,true);
 	conf_set_boolean_inc("gui.driver.pointer.use_first",false,0,0,true);
-#endif
+	load_default();
 '''
-    anchor = '\tdef_fp=NULL,def_path=NULL;\n\tload_default();'
-    replacement = '\tdef_fp=NULL,def_path=NULL;\n' + defaults + '\tload_default();'
-    if replacement not in text:
-        if text.count(anchor) != 1:
-            raise ValueError('Unexpected SimpleInit config initialization')
-        config_c.write_text(text.replace(anchor, replacement, 1))
-    text = config_c.read_text()
-    # Product settings belong only to our directory on persist. Do not scan
-    # factory partitions or pick an arbitrary writable filesystem for saving.
-    begin = text.index('\tload_default();', text.index('int confd_init()'))
-    end = text.index('\tif(!def_fp||!def_path)', begin)
-    existing = text[begin:end]
-    if '#if defined(PIANO_PRODUCT_GUI_PUMP)' not in existing:
-        product = '''#if defined(PIANO_PRODUCT_GUI_PUMP) && PIANO_PRODUCT_GUI_PUMP
-	fsvol_info *persist=fsvol_lookup_by_part_label("persist");
-	if(persist&&fsvol_open_volume(persist,&f)==0){
-		fsh *directory=NULL;
-		if(fs_open(f,&directory,"sunuefi",FILE_FLAG_FOLDER|FILE_FLAG_CREATE|0700)==0){
-			fs_close(&directory);
-			conf_load_file(f,"/sunuefi/simpleinit.uefi.cfg");
-			set_default(f,"/sunuefi/simpleinit.uefi.cfg");
-			f=NULL;
-		}
-		if(f)fs_close(&f);
-	}
-#else
-'''
-        text = text[:begin] + product + existing + '#endif\n' + text[end:]
-        config_c.write_text(text)
-    text=config_c.read_text()
-    text=text.replace('int confd_quit(){\n\treturn -1;\n}',
-        'int confd_quit(){\n\tif(def_fp)fs_close(&def_fp);\n\tif(def_path)free(def_path);\n\tdef_path=NULL;\n\treturn 0;\n}')
+    text = transform(text, opening, replacement, str(config_c))
+    text = transform(text, '\tif(exts)free(exts);\n\treturn 0;\n}\n\nint open_confd_socket(',
+                     '\tif(exts)free(exts);\n\treturn 0;\n#endif\n}\n\nint open_confd_socket(',
+                     str(config_c))
+    text = transform(text, 'int confd_save_file(const char*file){\n',
+                     'int confd_save_file(const char*file){\n'
+                     '#if defined(PIANO_PRODUCT_GUI_PUMP) && PIANO_PRODUCT_GUI_PUMP\n'
+                     '\tif(!file)ERET(EROFS);\n'
+                     '#endif\n', str(config_c))
+    text = transform(text, 'int confd_quit(){\n\treturn -1;\n}',
+                     'int confd_quit(){\n\tif(def_fp)fs_close(&def_fp);\n'
+                     '\tif(def_path)free(def_path);\n\tdef_path=NULL;\n\treturn 0;\n}', str(config_c))
     config_c.write_text(text)
     source = root / 'config/simpleinit.static.uefi.cfg'
     shutil.copyfile(source, si / 'root/etc/simpleinit.static.uefi.cfg')

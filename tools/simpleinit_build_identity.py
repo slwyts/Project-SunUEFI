@@ -9,7 +9,14 @@ from prepare_product_pump import ROOT, prepare
 
 PRODUCT_NAVIGATION_SOURCES = (
     'upstream/simple-init/src/boot/bootdef.c',
+    'upstream/simple-init/src/boot/boot.c',
+    'upstream/simple-init/src/boot/efi.c',
+    'upstream/simple-init/src/boot/reboot_uefi.c',
     'upstream/simple-init/src/boot/SimpleInitBoot.inf',
+    'upstream/simple-init/src/gui/gui_init.c',
+    'upstream/simple-init/src/gui/interface/bootmgr/bootitem.c',
+    'upstream/simple-init/src/gui/interface/bootmgr/bootmgr.c',
+    'upstream/simple-init/src/gui/interface/conftool/confsave.c',
     'upstream/simple-init/src/gui/interface/core/bootmenu.c',
     'upstream/simple-init/src/gui/interface/apps/uefi_shell.c',
     'upstream/simple-init/src/boot/prober.c',
@@ -20,6 +27,7 @@ PRODUCT_NAVIGATION_SOURCES = (
     'upstream/simple-init/root/etc/simpleinit.static.uefi.cfg',
     'upstream/simple-init/src/confd/uefi.c',
     'upstream/simple-init/src/confd/file.c',
+    'upstream/simple-init/src/loggerd/client.c',
     'upstream/simple-init/src/filesystem/volume/uefi.c',
     'upstream/simple-init/src/filesystem/layer/uefi.c',
     'upstream/simple-init/src/gui/drivers/uefi_keyboard.c',

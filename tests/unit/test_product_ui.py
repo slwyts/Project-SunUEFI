@@ -14,10 +14,11 @@ ROOT=Path(__file__).resolve().parents[2]
 HOST_PROCESSOR_BIND='AArch64' if platform.machine() in ('aarch64','arm64') else 'X64'
 sys.path.insert(0,str(ROOT/'tools'))
 import prepare_product_ui as prepare
+from prepare_simpleinit import prepare_defaults
 BASE=ROOT/prepare.BASE
 
 def function(text,name):
-    m=re.search(r'(?m)^(?:(?:static|STATIC)\s+)?(?:EFI_STATUS|SHELL_STATUS|VOID|UI_EVENT_TYPE|void|int)\s+(?:EFIAPI\s+)?'+name+r'\s*\(',text)
+    m=re.search(r'(?m)^(?:(?:static|STATIC)\s+)?(?:EFI_STATUS|SHELL_STATUS|VOID|UI_EVENT_TYPE|bool|void|int)\s+(?:EFIAPI\s+)?'+name+r'\s*\(',text)
     if not m:raise ValueError('missing actual function '+name)
     begin=text.index('{',m.start());depth=1;end=begin+1
     while depth:
@@ -35,6 +36,8 @@ def generated(root):
     console=(root/(prepare.UEFI_LIB+'Console.c')).read_text()
     simple=(root/(prepare.SI+'src/lib/reboot.c')).read_text()
     boot=(root/(prepare.SI+'src/boot/reboot_uefi.c')).read_text()
+    dispatch=(root/(prepare.SI+'src/boot/boot.c')).read_text()
+    efi=(root/(prepare.SI+'src/boot/efi.c')).read_text()
     bootdef=(root/(prepare.SI+'src/boot/bootdef.c')).read_text()
     bootmenu=(root/(prepare.SI+'src/gui/interface/core/bootmenu.c')).read_text()
     reset=(root/(prepare.RESET_LIB+'Reset.c')).read_text()
@@ -77,16 +80,67 @@ for (;;) {switch(ControlFlag){
     input_end=browser.index('\n}\n',input_begin)
     input_branch='EFI_STATUS ActualInputBranch(USER_INPUT UserInput) {EFI_STATUS Status;\n'+browser[input_begin:input_end]+'\n}\n'
     reboot_boot=boot[boot.index('int run_boot_reboot('):boot.index('\n}\n',boot.index('int run_boot_reboot('))+2]
+    managed_start=efi.index('\tif(file&&PianoProductRebootManaged()){')
+    managed_end=efi.index('\tst=gBS->LoadImage(',managed_start)
+    managed_efi='''int ActualManagedBootFile(EFI_DEVICE_PATH_PROTOCOL *dp,VOID *option_data,UINT32 option_bytes){
+    bool file=true;
+    int r=-1;
+    EFI_STATUS st;
+'''+efi[managed_start:managed_end]+'''    return 1;
+    done:
+    return r;
+}
+'''
     countdown=bootmenu[bootmenu.index('static void bootmenu_auto_boot_cb('):bootmenu.index('static void bootmenu_add(')]
-    return '\n\n'.join((function(display,'UiWaitForEvent'),function(cdl,'WaitForKeyStroke'),readline,function(shell,'DoShellPrompt'),menu,close,input_branch,popup,function(ui,'UiEntry'),function(ui,'SetupResetReminder'),function(picker,'BootFromSelectOption'),main,reboot_types,simple[reboot_begin:reboot_end],reboot_boot,function(bootdef,'boot_init_configs'),*[function(bootmenu,name) for name in ('bootmenu_boot','bootmenu_remove_auto_boot','bootmenu_remove_auto_boot_cb','bootmenu_click')],countdown,reset_params,function(reset,'MainCmdReset'),function(reset,'ShellCommandRunReset')))
+    return '\n\n'.join((function(display,'UiWaitForEvent'),function(cdl,'WaitForKeyStroke'),readline,function(shell,'DoShellPrompt'),menu,close,input_branch,popup,function(ui,'UiEntry'),function(ui,'SetupResetReminder'),function(picker,'BootFromSelectOption'),main,reboot_types,simple[reboot_begin:reboot_end],reboot_boot,managed_efi,function(dispatch,'boot'),function(bootdef,'boot_init_configs'),*[function(bootmenu,name) for name in ('bootmenu_boot','bootmenu_remove_auto_boot','bootmenu_remove_auto_boot_cb','bootmenu_click')],countdown,reset_params,function(reset,'MainCmdReset'),function(reset,'ShellCommandRunReset')))
+
+
+def settings_source(si):
+    config = (si/'src/confd/uefi.c').read_text()
+    gui = (si/'src/gui/gui_init.c').read_text()
+    logger = (si/'src/loggerd/client.c').read_text()
+    save_ui = (si/'src/gui/interface/conftool/confsave.c').read_text()
+    bootmgr = (si/'src/gui/interface/bootmgr/bootmgr.c').read_text()
+    bootitem = (si/'src/gui/interface/bootmgr/bootitem.c').read_text()
+
+    def section(text, start, end, offset=0):
+        at = text.index(start, offset)
+        return text[at:text.index(end, at)]
+
+    callback = section(gui, prepare.diagnostic_only+'extern bool conf_store_changed;', 'static void gui_enter_sleep')
+    install_timer = section(gui, prepare.diagnostic_only, '\n\t#else\n\tsem_init(', gui.index('gBS->SetWatchdogTimer(0,0,0,NULL);'))
+    exit_timer = section(gui, '\t#ifdef ENABLE_UEFI\n', '\treturn run_exit?', gui.rindex('\tgui_do_quit();'))
+    default_button = section(bootmgr, '\tif(e->target==bm->btn_default){', '\t}else if(e->target==bm->btn_open){')
+    persist_item = section(bootitem, '\tbool save=lv_obj_is_checked(bi->chk_save);', '\tif(!name||!icon||!desc)')
+    return '\n'.join((
+        '#if PIANO_PRODUCT_GUI_PUMP\n'+function(config,'confd_init')+'\n#endif',
+        function(config,'confd_save_file'),
+        callback.replace('conf_save_cb', 'autosave_cb'),
+        'static void install_timer(void){\n'+install_timer.replace('conf_save_cb','autosave_cb')+'\n}',
+        'static void exit_timer(void){\n'+exit_timer.replace('conf_save_cb','autosave_cb')+'\n}',
+        function(save_ui,'conf_save_cb'),
+        '#if PIANO_PRODUCT_GUI_PUMP\n'
+        'static void choose_default(lv_event_t *e,struct bootmgr *bm){\n'
+        '    struct bootmgr_item *sel=bm->selected;\n'+default_button+'\t}\n}\n'
+        'static bool edit_boot_item(struct bootitem *bi){\n'+persist_item+
+        '    ++item_edits;\n    return true;\n}\n#endif',
+        function(logger,'logger_init'),
+        function(logger,'logger_write'),
+    ))
+
 
 class ProductUiTests(unittest.TestCase):
     def fixture(self,directory):
         root=Path(directory)
-        from prepare_product_console import SOURCE,PKG,STRINGS
+        from prepare_product_console import BOOT_SOURCES,SOURCE,PKG,STRINGS
         for folder in (SOURCE,Path('uefi/components/simple-init')):
             shutil.copytree(ROOT/folder,root/folder)
-        for relative in (*[PKG/name for name in STRINGS],Path(prepare.SI)/'src/boot/bootdef.c'):
+        for relative in (*BOOT_SOURCES, Path('config/simpleinit.static.uefi.cfg')):
+            (root/relative).parent.mkdir(parents=True,exist_ok=True)
+            shutil.copy2(ROOT/relative, root/relative)
+        for relative in (*[PKG/name for name in STRINGS],
+                         *(Path(prepare.SI)/name for name in (
+                             'src/boot/bootdef.c', 'src/main/uefimain.c', 'src/confd/uefi.c'))):
             path=root/relative;path.parent.mkdir(parents=True,exist_ok=True)
             repo=BASE if str(relative).startswith(prepare.BASE)else ROOT/prepare.SI
             prefix=prepare.BASE if str(relative).startswith(prepare.BASE)else prepare.SI
@@ -134,4 +188,27 @@ class ProductUiTests(unittest.TestCase):
             self.assertEqual(build.returncode,0,build.stdout+build.stderr)
             run=subprocess.run([str(exe)],capture_output=True,text=True)
             self.assertEqual(run.returncode,0,run.stdout+run.stderr);print(run.stdout.strip())
+
+    def test_generated_settings_product_and_diagnostic(self):
+        with tempfile.TemporaryDirectory(prefix='piano-menu-settings-') as directory:
+            out = Path(directory)
+            root = self.fixture(out/'fixture')
+            si = root/prepare.SI
+            (si/'root/etc').mkdir(parents=True)
+            config = prepare_defaults(root, si)
+            first = config.read_bytes()
+            self.assertEqual(first, prepare_defaults(root, si).read_bytes())
+            prepare.prepare(root, apply=True, check_pins=False)
+            (out/'PianoActualSimpleInitSettings.h').write_text(settings_source(si))
+            for mode in (0, 1):
+                with self.subTest(product=bool(mode)):
+                    exe = out/f'settings-{mode}'
+                    build = subprocess.run([
+                        'cc', '-std=c11', '-DENABLE_UEFI', f'-DPIANO_PRODUCT_GUI_PUMP={mode}',
+                        '-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter',
+                        '-I'+str(out), str(ROOT/'tests/native/PianoSimpleInitSettingsTest.c'), '-o', str(exe),
+                    ], capture_output=True, text=True)
+                    self.assertEqual(build.returncode, 0, build.stdout+build.stderr)
+                    test = subprocess.run([str(exe)], capture_output=True, text=True)
+                    self.assertEqual(test.returncode, 0, test.stdout+test.stderr)
 if __name__=='__main__':unittest.main()

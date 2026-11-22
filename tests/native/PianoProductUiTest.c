@@ -10,6 +10,7 @@
 #include <stdint.h>
 #undef NULL
 #include <Uefi.h>
+#include <Protocol/DevicePath.h>
 #include <Protocol/SimpleTextIn.h>
 #include <Protocol/SimpleTextOut.h>
 #define ASSERT(x) assert(x)
@@ -65,6 +66,7 @@ static UINTN processed_input,checked_config;
 static UINTN reboot_requests,native_resets,config_saves,reboot_warnings,navigation_requests,navigation_action,gui_exits,legacy_boots,entry_count;
 static UINTN reset_option,reset_packages;
 static UINTN continue_requests,message_errors;
+static UINTN selected_files,boot_delays,console_clears;
 static UINT32 reset_target;
 static VOID *display_buffer;
 static UINT32 action;
@@ -189,14 +191,41 @@ static EFI_STATUS PianoProductRequestContinue(VOID){++continue_requests;if(!enab
 static VOID msgbox_alert(CONST char *message,...){assert(!strcmp(message,"未能重启，请稍后重试。"));++message_errors;}
 #define MAX_STRING_LEN 100
 #define ERET(e) do{errno=(e);return -1;}while(0)
+#define EDONE(e) do{e;goto done;}while(0)
 enum reboot_cmd{REBOOT_HALT,REBOOT_POWEROFF,REBOOT_RESTART,REBOOT_COLD,REBOOT_WARM,REBOOT_RECOVERY,REBOOT_FASTBOOT,REBOOT_EDL,REBOOT_DATA};
-enum{BOOT_REBOOT,BOOT_HALT,BOOT_POWEROFF,BOOT_EXIT,BOOT_SIMPLE_INIT};
-typedef struct{UINTN mode;CHAR8 key[256],ident[64],desc[256];bool save,replace,show,enabled;}boot_config;
+enum{BOOT_REBOOT,BOOT_HALT,BOOT_POWEROFF,BOOT_EXIT,BOOT_SIMPLE_INIT,BOOT_EFI};
+typedef struct{UINTN mode;CHAR8 key[256],ident[64],desc[256],splash[256];bool save,replace,show,enabled;}boot_config;
 static int AsciiStriCmp(CONST char *a,CONST char *b){while(*a&&*b&&tolower((unsigned char)*a)==tolower((unsigned char)*b)){++a;++b;}return tolower((unsigned char)*a)-tolower((unsigned char)*b);}
 static UINTN AsciiStrLen(CONST char *s){return strlen(s);}
 static char *confd_get_string_base(CONST char *key,CONST char *item,VOID *fallback){return NULL;}
 static VOID confd_save_file(VOID *path){++config_saves;}
 static VOID tlog_warn(CONST char *message){++reboot_warnings;}
+static VOID tlog_info(CONST char *message,...){}
+static VOID tlog_error(CONST char *message,...){}
+static VOID telog_error(CONST char *message,...){}
+typedef int boot_main(boot_config*);
+enum log_level{LEVEL_NOTICE};
+static boot_config*boot_get_config(CONST char *name){return NULL;}
+static bool confd_get_boolean(CONST char *name,bool fallback){return fallback;}
+static VOID logger_set_console(bool output_enabled){}
+static VOID boot_draw_splash(boot_config *config){}
+static VOID dump_boot_config(CONST char *tag,enum log_level level,boot_config *config){}
+static EFI_STATUS EFIAPI BootDelay(UINTN usec){assert(usec==10000000);++boot_delays;return EFI_SUCCESS;}
+static EFI_STATUS EFIAPI ClearScreen(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *self){++console_clears;return EFI_SUCCESS;}
+static EFI_STATUS PianoProductSelectBootFile(EFI_DEVICE_PATH_PROTOCOL *path,VOID *options,UINT32 bytes){
+  assert(path&&options==path&&bytes==sizeof(*path));++selected_files;
+  if(request_failure)return EFI_ACCESS_DENIED;
+  pending=TRUE;return EFI_SUCCESS;
+}
+static CONST char*efi_status_to_string(EFI_STATUS status){return "selection failed";}
+static int ActualManagedBootFile(EFI_DEVICE_PATH_PROTOCOL *path,VOID *options,UINT32 bytes);
+static int boot_file(boot_config *config){
+  EFI_DEVICE_PATH_PROTOCOL path={0};
+  int r=ActualManagedBootFile(&path,&path,sizeof(path));
+  if(r==1){++legacy_boots;return 0;}
+  return r;
+}
+static boot_main *boot_main_func[]={[BOOT_EFI]=boot_file};
 static EFI_STATUS PianoProductRequestNavigation(UINT32 a){assert((a>=1&&a<=3)||a==PIANO_PRODUCT_ACTION_REQUEST_BOOT_STABLE);++navigation_requests;navigation_action=a;if(request_failure)return EFI_ACCESS_DENIED;pending=TRUE;return EFI_SUCCESS;}
 static struct initial_cfg{bool valid;boot_config cfg;VOID *args;}initial_cfgs[]={{.valid=false}};
 static boot_config created_entries[4];
@@ -269,6 +298,7 @@ static VOID reset(BOOLEAN on){
   picker_selections=selected_boot_number=0;
   reset_option=reset_packages=0;
   continue_requests=message_errors=0;
+  selected_files=boot_delays=console_clears=0;
   reset_target=0;
   ZeroMem(&ShellInfoObject,sizeof(ShellInfoObject));
   ShellInfoObject.NewEfiShellProtocol=&template;
@@ -309,10 +339,10 @@ static VOID test_autoboot(VOID){
   assert(label.hidden&&!countdown_timer.callback&&!navigation_requests);
 }
 int main(VOID){
-  bs=(EFI_BOOT_SERVICES){.WaitForEvent=Wait,.CreateEvent=Create,.SetTimer=SetTimer,.CloseEvent=Close,.CheckEvent=Check,.LocateProtocol=Locate};gBS=&bs;
+  bs=(EFI_BOOT_SERVICES){.WaitForEvent=Wait,.CreateEvent=Create,.SetTimer=SetTimer,.CloseEvent=Close,.CheckEvent=Check,.LocateProtocol=Locate,.Stall=BootDelay};gBS=&bs;
   rt=(EFI_RUNTIME_SERVICES){.ResetSystem=ResetSystem};gRT=&rt;
   input=(EFI_SIMPLE_TEXT_INPUT_PROTOCOL){.ReadKeyStroke=KeyRead,.WaitForKey=(VOID *)3};
-  output=(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL){.QueryMode=Query,.SetCursorPosition=Cursor,.SetAttribute=Attribute,.Mode=&output_mode};
+  output=(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL){.QueryMode=Query,.SetCursorPosition=Cursor,.SetAttribute=Attribute,.ClearScreen=ClearScreen,.Mode=&output_mode};
   st=(EFI_SYSTEM_TABLE){.ConIn=&input,.ConOut=&output,.BootServices=&bs};gST=&st;
   for(action=1;action<=3;++action){
     reset(TRUE);assert(UiWaitForEvent((VOID *)3)==UIEventReturnCore&&event_close==1&&reads==0&&waits==1);
@@ -345,7 +375,12 @@ int main(VOID){
   reset(TRUE);assert(adv_reboot(REBOOT_DATA,"recovery")==0&&reset_target==PIANO_PRODUCT_RESET_RECOVERY);
   reset(TRUE);assert(adv_reboot(REBOOT_DATA,NULL)==-1&&errno==EOPNOTSUPP&&!reboot_requests&&!native_resets);
   reset(FALSE);allow_native_reset=TRUE;assert(adv_reboot(REBOOT_COLD,NULL)==-1&&native_resets==1&&!reboot_requests);
-  reset(TRUE);boot_config boot={.mode=BOOT_REBOOT};assert(run_boot_reboot(&boot)==0&&pending&&reboot_requests==1&&config_saves==1&&!reboot_warnings&&!native_resets);
+  reset(TRUE);boot_config reboot={.mode=BOOT_REBOOT};assert(run_boot_reboot(&reboot)==0&&pending&&reboot_requests==1&&!config_saves&&!reboot_warnings&&!native_resets);
+  reset(FALSE);allow_native_reset=TRUE;assert(run_boot_reboot(&reboot)==-1&&config_saves==1&&native_resets==1&&!pending);
+  boot_config file={.mode=BOOT_EFI,.ident="prober-0",.desc="启动 Windows"};
+  reset(TRUE);assert(boot(&file)==0&&selected_files==1&&pending&&!boot_delays&&!config_saves&&!legacy_boots&&console_clears==2);
+  reset(TRUE);request_failure=TRUE;assert(boot(&file)==-1&&selected_files==1&&!pending&&boot_delays==1&&!config_saves&&!legacy_boots);
+  reset(FALSE);assert(boot(&file)==0&&!selected_files&&!pending&&boot_delays==1&&legacy_boots==1);
   reset(TRUE);boot_init_configs();assert(!entry_count); // Entries now come from the built-in static config.
   struct bootmenu_item item={.cfg={.mode=BOOT_EXIT,.ident="linux"}};struct bootmenu bm={.selected=&item};bootmenu_boot(&bm);assert(navigation_action==7&&navigation_requests==1&&gui_exits==1&&!legacy_boots&&!native_resets);
   strcpy(item.cfg.ident,"setup");bootmenu_boot(&bm);assert(navigation_action==2&&navigation_requests==2&&gui_exits==2&&!legacy_boots&&!native_resets);
