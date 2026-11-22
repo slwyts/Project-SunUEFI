@@ -163,7 +163,8 @@ ESP 卷标、卷 ID 和其他系统的引导文件。WinPE 和正式 Windows 使
 选择“启动 Windows”（`\EFI\Microsoft\Boot\bootmgfw.efi`）。WinPE 启动后，DISM 只向此次标记的
 NTFS 系统卷展开选定映像，BCDBoot 生成的微软启动文件放入共享 ESP，不
 覆盖 `EFI/BOOT/BOOTAA64.EFI` 或重排固件启动顺序。WinPE 不会给整盘重新分区。
-进度与失败原因在 ESP 的 `SunUEFI/Deployment/install.log`。如果写 ESP 时连接中断，
+安装窗口会显示映像展开的百分比。ESP 的 `SunUEFI/Deployment/install.log` 记录各阶段的结果；
+若 DISM 展开失败，同目录的 `dism.log` 保留微软工具报告的详细原因。如果写 ESP 时连接中断，
 提示中的本地 FAT 镜像保留了原有引导文件；重新刷到 `sunuefi_esp` 即可恢复。
 WinPE 重启后仍遵从原来保存的默认系统；再次选择“启动 Windows”即可进入
 刚部署的 Windows，不会重新运行安装步骤。正式 Windows 首次启动时可能自行注册

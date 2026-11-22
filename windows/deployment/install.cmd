@@ -45,9 +45,15 @@ set "scratch=%dest%\%SUNUEFI_MARKER%.scratch"
 md "%scratch%" || goto failed
 set "split="
 if /i "%SUNUEFI_IMAGE:~-4%"==".swm" set "split=/SWMFile:%dest%\SunUEFI-install*.swm"
-echo 正在安装 Windows。详细进度记录在 %log%。
-dism /Apply-Image /ImageFile:"%dest%\%SUNUEFI_IMAGE%" %split% /Index:%SUNUEFI_INDEX% /ApplyDir:%dest%\ /ScratchDir:"%scratch%" /CheckIntegrity /Verify >>"%log%" 2>&1
-if errorlevel 1 goto failed
+echo 正在安装 Windows。
+>>"%log%" echo Applying Windows image %SUNUEFI_INDEX%.
+dism /Apply-Image /ImageFile:"%dest%\%SUNUEFI_IMAGE%" %split% /Index:%SUNUEFI_INDEX% /ApplyDir:%dest%\ /ScratchDir:"%scratch%" /CheckIntegrity /Verify /LogPath:"%scratch%\dism.log"
+if not "%errorlevel%"=="0" (
+    >>"%log%" echo DISM /Apply-Image returned %errorlevel%.
+    if exist "%scratch%\dism.log" copy /y "%scratch%\dism.log" "%work%\dism.log" >nul
+    goto failed
+)
+>>"%log%" echo Windows image applied successfully.
 if exist "%drivers%" (
     echo 正在将选定的驱动加入新系统。
     call "%drivers%" offline %dest% "%scratch%" >>"%log%" 2>&1
