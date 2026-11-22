@@ -128,6 +128,14 @@ class CiBuildTargetsTests(unittest.TestCase):
         self.assertEqual(targets.select([*check_files, '.github/workflows/_rootfs.yml']), PRODUCTS)
         self.assertEqual(targets.select([*check_files, 'tools/package/camera.py']), PRODUCTS)
 
+    def test_manual_release_workflow_does_not_expand_product_builds(self):
+        release = '.github/workflows/publish-release-images.yml'
+        self.assertEqual(targets.select([release]), [])
+        self.assertEqual(targets.select([release, 'config/denial.json']),
+                         ['debian-denial', 'arch-denial'])
+        self.assertEqual(targets.select(['.github/scripts/publish_build_downloads.py']), PRODUCTS)
+        self.assertEqual(targets.select(['.github/scripts/publish_release_images.py']), PRODUCTS)
+
 
 if __name__ == '__main__':
     unittest.main()

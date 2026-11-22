@@ -14,8 +14,9 @@ FULL_FILES = {'.github/workflows/build-products.yml', '.gitmodules',
               'uefi/handoff/bootselect/BootRequest.c',
               'uefi/handoff/bootselect/BootRequest.h',
               'docs/user/install-from-artifact.md'}
-FULL_PREFIXES = ('.github/workflows/', '.github/actions/', 'tools/', 'config/', 'containers/', 'linux/',
-                 'vendor/piano-linux/', 'vendor/firmware/', 'patches/', 'upstream/')
+FULL_PREFIXES = ('.github/workflows/', '.github/actions/', '.github/scripts/',
+                 'tools/', 'config/', 'containers/', 'linux/', 'vendor/piano-linux/',
+                 'vendor/firmware/', 'patches/', 'upstream/')
 UEFI_FILES = {'requirements-build.txt', 'tools/build_android_product_module.py',
               'tools/build_android_module.py', 'tools/build_boot_repack.py',
               'tools/build_boot_request.py', 'tools/build_storage.py',
@@ -37,8 +38,9 @@ DENIAL_FILES = {'config/denial.json', 'config/keys/denial-repo-key.asc',
                 'tools/build/denial_manifest.py', 'tools/build/denial_overlay.py',
                 'tools/desktop/build_denial.py', 'tools/desktop/denial_packages.py'}
 TARGETS = ('uefi', 'linux', *DISTROS)
-CHECK_ONLY_FILES = {'.github/workflows/host-checks.yml', 'tools/check_host.py',
-                    'tools/build/check_patch_series.py'}
+NON_PRODUCT_FILES = {'.github/workflows/host-checks.yml',
+                     '.github/workflows/publish-release-images.yml',
+                     'tools/check_host.py', 'tools/build/check_patch_series.py'}
 
 
 def shared_kinds(targets):
@@ -73,7 +75,7 @@ def select(files, manual=None):
     uefi = False
     denial = False
     for name in files:
-        if name in CHECK_ONLY_FILES:
+        if name in NON_PRODUCT_FILES:
             continue
         if name in DENIAL_FILES or name.startswith('patches/denial/'):
             denial = True
