@@ -264,6 +264,12 @@ CRC32 和两个交替副本；刷新后独立读回比较，再使用新的序�
 Services 后不再访问 UFS，NV 写入返回不支持；带认证属性的 Secure Boot
 变量不通过这个普通文件后端持久化。
 
+在同样禁止运行时写入 EFI 变量的 ARM64 虚拟机中，Windows 11 `26300.9457`
+从虚拟 NVMe 系统盘进入首次设置。`BCDBoot` 重建了微软启动文件和 BCD，
+保留 systemd-boot 后备文件，但没有注册 Windows 的 `Boot####` 项。
+固件菜单直接查找微软的 EFI 文件，不依赖 Windows 注册启动项。
+这项测试没有覆盖平板上的 Windows 启动。
+
 ext4 驱动用固定的 lwext4 源码读取变量文件、`persist/bluetooth/.bt_nv.bin`
 和 `persist/time/ats_2`。只允许创建项目目录并写入两个变量文件，写入还会更新
 必要的 ext4 元数据。发现卷需要恢复时只读挂载，变量修改留在内存中，日志由
