@@ -43,6 +43,7 @@ CI_UNIT = (
     'test_droidloom.py',
     'test_product_core.py',
     'test_late_handoff.py',
+    'test_ufs_product_volume.py',
     'test_nv_journal.py',
     'test_nv_runtime_guard.py',
     'test_reset.py',
