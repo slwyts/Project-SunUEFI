@@ -148,6 +148,7 @@ jobs:
             build/distros/overlays/${{ matrix.target }}/packages/*/SOURCE.json
             artifacts/packages/overlays/${{ matrix.target }}/manifest.json
           if-no-files-found: ignore
+          overwrite: true
           retention-days: 7
           compression-level: 0
       - name: Check for an updated overlay compiler cache

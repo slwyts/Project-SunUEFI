@@ -7,11 +7,13 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 from types import SimpleNamespace
 
 from publish import (KERNEL_META_PACKAGES, KERNEL_META_VERSION, PACMAN_V4L2_LEGACY,
                      REPOSITORIES, ROOT, Store, check_kernel_epoch, pacman_metadata,
                      prepare_pacman_v4l2_withdrawal, prepare_publication, sha, upload_publication)
+from retention import History
 from verify_public import PublicIndexError, published_kernel_versions, verify_public
 
 sys.path.insert(0, str(ROOT / 'tools'))
@@ -174,9 +176,11 @@ def publication_batches(root, *, kernel, overlays):
             for repository in PUBLICATION_ORDER if groups[repository]}
 
 
-def publish_products(batches, key, output, store):
+def publish_products(batches, key, output, store, *, publication_id=None):
     """Verify every selected repository before switching any public index."""
     publications = {}
+    histories = {}
+    started_at = int(time.time())
     for repository in PUBLICATION_ORDER:
         if repository not in batches:
             continue
@@ -184,7 +188,10 @@ def publish_products(batches, key, output, store):
         options = SimpleNamespace(repo=repository, key=key, output=output / repository,
                                   packages=packages)
         digests = {path.name: digest for path, digest in packages.items()}
-        publications[repository] = prepare_publication(options, store, digests=digests)
+        if publication_id is not None:
+            histories[repository] = History(repository, store, publication_id, started_at, digests)
+        publications[repository] = prepare_publication(
+            options, store, digests=digests, history=histories.get(repository))
 
     withdrawal = None
     if 'sunuefi-steamos' in publications and 'sunuefi' in publications:
@@ -212,6 +219,16 @@ def publish_products(batches, key, output, store):
             else:
                 verify_public(PUBLIC_REPOSITORY_URL, withdrawal.repo, withdrawal.output)
         upload_and_check(publication)
+
+    # A run that stopped partway through publishing cannot age out a verified
+    # generation, even if one of its repositories is already visible.
+    for repository, history in histories.items():
+        history.record(publications[repository].output)
+    for repository, history in histories.items():
+        removed = history.prune()
+        if removed:
+            print(f'Removed {removed} expired package and index objects from {repository}.',
+                  flush=True)
 
 
 def main():
@@ -270,7 +287,8 @@ def main():
             keys = [line.split(':')[9] for line in record.splitlines() if line.startswith('fpr:')]
             if not keys:
                 raise ValueError('No signing subkey was imported')
-            publish_products(batches, keys[0], args.output, Store())
+            publish_products(batches, keys[0], args.output, Store(),
+                             publication_id=os.environ.get('GITHUB_RUN_ID'))
         finally:
             subprocess.run(['gpgconf', '--kill', 'gpg-agent'], check=False)
             if previous is None:

@@ -127,6 +127,7 @@ jobs:
           name: SunUEFI-ESP
           path: artifacts/downloads/esp/
           if-no-files-found: error
+          overwrite: true
           retention-days: 7
           compression-level: 1
       - name: Distribution sparse root
@@ -135,6 +136,7 @@ jobs:
           name: SunUEFI-Root-${{ matrix.target }}
           path: artifacts/downloads/root/
           if-no-files-found: error
+          overwrite: true
           retention-days: 7
           compression-level: 1
       - name: Stage build logs and manifests
@@ -158,5 +160,6 @@ jobs:
             artifacts/fastboot-sparse/manifest.json
             artifacts/fastboot-sparse/SHA256SUMS
           if-no-files-found: ignore
+          overwrite: true
           retention-days: 7
           compression-level: 0

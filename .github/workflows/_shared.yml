@@ -328,6 +328,7 @@ jobs:
           name: SunUEFI-Module
           path: artifacts/downloads/module/
           if-no-files-found: error
+          overwrite: true
           retention-days: 7
           compression-level: 0
       - name: UEFI for fastboot boot
@@ -337,6 +338,7 @@ jobs:
           name: SunUEFI-UEFI-Fastboot
           path: artifacts/downloads/uefi/
           if-no-files-found: error
+          overwrite: true
           retention-days: 7
           compression-level: 0
       - name: Stage shared build logs
@@ -346,5 +348,6 @@ jobs:
           name: build-logs-shared-${{ matrix.kind }}
           path: build/logs/
           if-no-files-found: ignore
+          overwrite: true
           retention-days: 7
           compression-level: 0

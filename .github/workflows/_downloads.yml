@@ -1,0 +1,88 @@
+name: Mirror product downloads
+
+on:
+  workflow_call:
+    inputs:
+      rootfs_matrix:
+        required: true
+        type: string
+      log_artifact_id:
+        required: true
+        type: string
+    secrets:
+      R2_ACCESS_KEY_ID:
+        required: true
+      R2_SECRET_ACCESS_KEY:
+        required: true
+
+env:
+  R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+  R2_BUCKET: ${{ vars.R2_BUCKET }}
+
+jobs:
+  publish:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      published_attempt: ${{ steps.index.outputs.attempt }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install the shared R2 client
+        run: |
+          python3 -m venv "$RUNNER_TEMP/r2"
+          "$RUNNER_TEMP/r2/bin/pip" install "$(awk '/^boto3==/ { print }' requirements-build.txt)"
+      - name: Check download indexes and retention
+        run: |
+          PATH="$RUNNER_TEMP/r2/bin:$PATH" ./build.sh check --group python-all \
+            --no-skips --pattern test_publish_build_downloads.py
+      - name: Verify and upload this build’s ZIP archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ROOTFS_MATRIX: ${{ inputs.rootfs_matrix }}
+          LOG_ARTIFACT_ID: ${{ inputs.log_artifact_id }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          "$RUNNER_TEMP/r2/bin/python" .github/scripts/publish_build_downloads.py stage
+      - name: Save the download list
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: downloads.json
+          path: ${{ runner.temp }}/downloads.json
+          if-no-files-found: error
+          overwrite: true
+      - id: index
+        name: Publish and verify the public download list
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          "$RUNNER_TEMP/r2/bin/python" .github/scripts/publish_build_downloads.py publish-index
+
+  prune:
+    needs: publish
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install the shared R2 client
+        run: |
+          python3 -m venv "$RUNNER_TEMP/r2"
+          "$RUNNER_TEMP/r2/bin/pip" install "$(awk '/^boto3==/ { print }' requirements-build.txt)"
+      - name: Keep three download sets and remove this run’s temporary archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISHED_ATTEMPT: ${{ needs.publish.outputs.published_attempt }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          "$RUNNER_TEMP/r2/bin/python" .github/scripts/publish_build_downloads.py prune

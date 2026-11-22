@@ -89,7 +89,7 @@ jobs:
           mkdir -p build/logs
           docker run --rm -v "$PWD:/workspace" -w /workspace \
             -e SUNUEFI_REPO_GPG_KEY -e R2_ACCESS_KEY_ID -e R2_SECRET_ACCESS_KEY \
-            -e R2_ENDPOINT -e R2_BUCKET -e OVERLAYS \
+            -e R2_ENDPOINT -e R2_BUCKET -e OVERLAYS -e GITHUB_RUN_ID \
             -e SUNUEFI_BUILD_ENVIRONMENT_ID -e SUNUEFI_CACHE_WORKSPACE sunuefi-builder bash -euc '
               git config --global --add safe.directory /workspace
               git config --global --add safe.directory /workspace/build/kernel-sources/linux-piano.git
@@ -124,5 +124,6 @@ jobs:
           name: build-logs-repository
           path: build/logs/
           if-no-files-found: ignore
+          overwrite: true
           retention-days: 7
           compression-level: 0

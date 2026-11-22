@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build signed APT/pacman indexes and publish packages to R2 without deleting archives."""
+"""Build signed APT/pacman indexes and publish native packages to R2."""
 import argparse
 import gzip
 import hashlib
@@ -17,6 +17,8 @@ ROOT = Path(__file__).resolve().parents[2]
 REPOSITORIES = ('apt', 'sunuefi', 'sunuefi-steamos')
 APT_INDEXES = ('main/binary-arm64/Packages', 'main/binary-arm64/Packages.gz')
 APT_INDEX_HASHES = ('SHA512', 'SHA256')
+DEBIAN_ARCHIVE = re.compile(r'[A-Za-z0-9_.+~:%-]+\.deb')
+PACMAN_ARCHIVE = re.compile(r'[A-Za-z0-9_.+~:%-]+\.pkg\.tar\.(zst|xz|gz)')
 PACMAN_V4L2_OWNERS = {'sunuefi': 'libpipewire', 'sunuefi-steamos': 'pipewire'}
 PACMAN_V4L2_LEGACY = 'pipewire-v4l2-source'
 KERNEL_META_PACKAGES = {'apt': 'linux-image-piano', 'sunuefi': 'linux-piano'}
@@ -144,6 +146,23 @@ class Store:
                         'PreconditionFailed', '412') or not already_published()):
                     raise
 
+    def list_objects(self, prefix):
+        paginator = self.client.get_paginator('list_objects_v2')
+        for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+            for row in page.get('Contents', ()):
+                yield row['Key'], row['LastModified'].timestamp()
+
+    def delete(self, keys):
+        keys = sorted(keys)
+        for start in range(0, len(keys), 1000):
+            batch = keys[start:start + 1000]
+            result = self.client.delete_objects(
+                Bucket=self.bucket,
+                Delete={'Objects': [{'Key': key} for key in batch], 'Quiet': True})
+            if errors := result.get('Errors'):
+                error = errors[0]
+                raise ValueError(f'R2 could not delete {error["Key"]}: {error["Code"]}')
+
 
 def copy_package(package, destination, digests):
     shutil.copyfile(package, destination)
@@ -151,8 +170,8 @@ def copy_package(package, destination, digests):
         raise ValueError('Package changed while preparing publication: ' + package.name)
 
 
-def apt_index(work, packages, key, store=None, *, digests=None):
-    """Retain old package entries; publish by-hash indexes before InRelease."""
+def apt_index(work, packages, key, store=None, *, digests=None, history=None):
+    """Merge the previous signed package list and publish by-hash before InRelease."""
     prefix = 'apt'
     keyring = ROOT / 'config/keys/sunuefi-archive-keyring.gpg'
     pool = work / 'pool/main'
@@ -170,6 +189,8 @@ def apt_index(work, packages, key, store=None, *, digests=None):
             if sha(index) != digest or index.stat().st_size != size:
                 raise ValueError('Published APT Packages digest differs')
             old = stanzas(index.read_text())
+            if history is not None:
+                history.observe_apt(old, release)
     for package in packages:
         architecture = run('dpkg-deb', '-f', package, 'Architecture',
                            capture_output=True, text=True).stdout.strip()
@@ -191,6 +212,8 @@ def apt_index(work, packages, key, store=None, *, digests=None):
         if identity in entries and field(entries[identity], 'SHA256') != field(row, 'SHA256'):
             raise ValueError('Package version was rebuilt with different bytes: ' + str(identity))
         entries[identity] = row
+    if history is not None:
+        entries = history.apt_entries(entries)
     target = work / 'dists/sid'
     binary = target / 'main/binary-arm64'
     binary.mkdir(parents=True)
@@ -241,7 +264,7 @@ def pacman_has_relation(record, field, name, version):
     return False
 
 
-def pacman_metadata(database):
+def pacman_metadata(database, *, records=None):
     # The builder's Python tarfile cannot read this zstd archive directly.
     data = run('bsdtar', '-cf', '-', '@' + str(database), capture_output=True).stdout
     owner = PACMAN_V4L2_OWNERS.get(database.name.split('.', 1)[0])
@@ -264,6 +287,8 @@ def pacman_metadata(database):
             if name in selected:
                 raise ValueError(f'{database.name}: multiple entries for {name}')
             selected[name] = (version, filename, digest)
+            if records is not None:
+                records[name] = record
             if name == owner:
                 replacement = record
     retired = set()
@@ -347,10 +372,11 @@ def seal_pacman_index(work, name, immutable, store):
     return 'pacman/' + name + '/os/aarch64', immutable, [*mutable, committed]
 
 
-def pacman_index(work, packages, name, key, store=None, *, digests=None):
+def pacman_index(work, packages, name, key, store=None, *, digests=None, history=None):
     db = work / (name + '.db.tar.zst')
     keyring = ROOT / 'config/keys/sunuefi-archive-keyring.gpg'
-    load_pacman_index(work, name, store)
+    if load_pacman_index(work, name, store) and history is not None:
+        history.observe_pacman(work)
     prefix = 'pacman/' + name + '/os/aarch64'
     immutable, expected = [], {}
     for package in packages:
@@ -381,7 +407,10 @@ def pacman_index(work, packages, name, key, store=None, *, digests=None):
             check_kernel_epoch(kernel_meta, expected[kernel_meta][0], [indexed[0]])
     run('repo-add', '--prevent-downgrade', '--include-sigs', '--sign', '--key', key, db,
         *[work / package.name for package in packages])
-    selected, retired = pacman_metadata(db)
+    records = {} if history is not None else None
+    selected, retired = pacman_metadata(db, records=records)
+    if history is not None:
+        retired.update(history.pacman_retired_kernels(selected, records))
     # Arch users upgrade to the distribution's fprintd. Leaving the older
     # package here would shadow [extra]. SteamOS still ships its own daemon.
     if (name == 'sunuefi' and 'libfprint' in expected and
@@ -414,7 +443,7 @@ def prepare_pacman_v4l2_withdrawal(work, key, store, *, check_existing):
                            mutable=mutable if changed else (), packages={})
 
 
-def prepare_publication(args, store=None, *, digests=None):
+def prepare_publication(args, store=None, *, digests=None, history=None):
     """Build and verify local indexes before making any repository writes."""
     if args.repo not in REPOSITORIES:
         raise ValueError('Unknown package repository: ' + args.repo)
@@ -424,10 +453,9 @@ def prepare_publication(args, store=None, *, digests=None):
         raise ValueError('Pass a nonempty package list with unique filenames')
     if digests is not None and set(digests) != names:
         raise ValueError('Package checksums do not match the files selected for publication')
+    pattern = DEBIAN_ARCHIVE if args.repo == 'apt' else PACMAN_ARCHIVE
     for path in packages:
-        pattern = r'[A-Za-z0-9_.+~:%-]+\.deb' if args.repo == 'apt' else (
-            r'[A-Za-z0-9_.+~:%-]+\.pkg\.tar\.(zst|xz|gz)')
-        if not path.is_file() or not re.fullmatch(pattern, path.name):
+        if not path.is_file() or not pattern.fullmatch(path.name):
             raise ValueError('Invalid package filename: ' + path.name)
     if args.output.exists():
         raise ValueError('Use a fresh output directory')
@@ -435,10 +463,11 @@ def prepare_publication(args, store=None, *, digests=None):
     work = args.output.resolve()
     retired = set()
     if args.repo == 'apt':
-        prefix, immutable, mutable = apt_index(work, packages, args.key, store, digests=digests)
+        prefix, immutable, mutable = apt_index(
+            work, packages, args.key, store, digests=digests, history=history)
     else:
         prefix, immutable, mutable, retired = pacman_index(
-            work, packages, args.repo, args.key, store, digests=digests)
+            work, packages, args.repo, args.key, store, digests=digests, history=history)
     if digests is None:
         digests = {path.name: sha(path) for path in packages}
     return SimpleNamespace(repo=args.repo, output=work, prefix=prefix, immutable=immutable,

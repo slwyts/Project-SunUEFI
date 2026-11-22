@@ -169,6 +169,8 @@ jobs:
     runs-on: ubuntu-26.04
     permissions:
       actions: write
+    outputs:
+      archive_id: ${{ steps.merge.outputs.artifact-id }}
     steps:
       - id: build-logs
         name: Check which build tasks produced logs
@@ -180,28 +182,49 @@ jobs:
           if [[ -n "$logs" ]]; then
             echo 'present=true' >> "$GITHUB_OUTPUT"
           fi
-      - name: Publish one logs.zip and remove intermediate log artifacts
+      - id: merge
+        name: Collect this build’s logs
         if: steps.build-logs.outputs.present == 'true'
         uses: actions/upload-artifact/merge@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: logs
+          name: logs-${{ github.run_attempt }}
           pattern: build-logs-*
           separate-directories: true
-          delete-merged: true
+          delete-merged: false
           retention-days: 7
           compression-level: 6
-      - name: Remove this run's intermediate archives after success
+      - name: Remove temporary inputs from successful builds without mirrored images
         if: >-
           success() && !contains(needs.*.result, 'failure') &&
-          !contains(needs.*.result, 'cancelled')
+          !contains(needs.*.result, 'cancelled') &&
+          (github.ref != 'refs/heads/main' || !contains(needs.select.outputs.shared_matrix, 'firmware'))
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           ids=$(gh api --paginate "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
-            --jq '.artifacts[] | select(.name | startswith("build-input-")) | .id')
+            --jq '.artifacts[] | select(.name | startswith("build-input-") or startswith("build-logs-")) | .id')
           while IFS= read -r id; do
             if [[ -n "$id" ]]; then
               [[ "$id" =~ ^[0-9]+$ ]]
               gh api --method DELETE "/repos/$GITHUB_REPOSITORY/actions/artifacts/$id"
             fi
           done <<< "$ids"
+
+  downloads:
+    needs: [select, environment, shared, overlays, repository, build, logs]
+    if: >-
+      !cancelled() && github.ref == 'refs/heads/main' &&
+      needs.shared.result == 'success' && needs.logs.result == 'success' &&
+      !contains(needs.*.result, 'failure') &&
+      contains(needs.select.outputs.shared_matrix, 'firmware') &&
+      (needs.select.outputs.has_rootfs == 'false' || needs.build.result == 'success')
+    permissions:
+      actions: write
+      contents: read
+    uses: ./.github/workflows/_downloads.yml
+    with:
+      rootfs_matrix: ${{ needs.select.outputs.rootfs_matrix }}
+      log_artifact_id: ${{ needs.logs.outputs.archive_id }}
+    secrets:
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}

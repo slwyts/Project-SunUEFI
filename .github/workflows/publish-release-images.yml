@@ -1,0 +1,60 @@
+name: Publish release images
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (for example v1.0.0)
+        required: true
+        type: string
+      run_id:
+        description: Successful Build products run ID
+        required: true
+        type: string
+      source_sha:
+        description: Full source commit SHA of that build
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  # Copy a build before another run can expire its downloads.
+  group: build-products-${{ github.ref }}
+  queue: max
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install the shared R2 client
+        run: |
+          python3 -m venv "$RUNNER_TEMP/r2"
+          "$RUNNER_TEMP/r2/bin/pip" install "$(awk '/^boto3==/ { print }' requirements-build.txt)"
+      - name: Upload verified system images and check their public downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          SOURCE_RUN: ${{ inputs.run_id }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+        run: |
+          "$RUNNER_TEMP/r2/bin/python" .github/scripts/publish_release_images.py
+      - name: Save the release download list
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: downloads.json
+          path: ${{ runner.temp }}/downloads.json
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
