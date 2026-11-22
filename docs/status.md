@@ -4,9 +4,9 @@
 
 ## 测试设备
 
-维护者使用小米平板 8 Pro（`piano`，型号 `25091RP04C`，SM8750P，16 GB 内存），原厂系统为 Android 17／HyperOS 4（`OS4.0.5.0.XPYCNXM`），Bootloader 已解锁。Linux 按原厂引导程序传来的标识选择 BOE／CSOT 面板，见[面板选择](devel/hardware/panel-selection.md)。合体 BOOT 支持国行和国际版 Piano。
+维护者使用小米平板 8 Pro（`piano`，型号 `25091RP04C`，SM8750P，16 GB 内存），原厂系统为 Android 17／HyperOS 4（`OS4.0.6.0.XPYCNXM`），Bootloader 已解锁。Linux 按原厂引导程序传来的标识选择 BOE／CSOT 面板，见[面板选择](devel/hardware/panel-selection.md)。合体 BOOT 支持国行和国际版 Piano。
 
-这台机器划出了 `sunuefi_esp`（512 MiB FAT32，4 KiB 扇区，与 UFS 逻辑扇区一致）和 `sunuefi_root`（256 GiB ext4），已运行 Debian 13 / GNOME、Nyarch / GNOME 和 SteamOS 0.6.0。默认内核为 `7.3.3-piano-sunuefi-cachy`，从合体 BOOT 经 UEFI 启动，支持来回切换 Android 与 Linux。四个发行版共用内核、BSP 和原厂 DSP 固件；root 镜像首次启动会自动扩展到分区容量。
+Linux 使用独立的 `sunuefi_esp`（FAT32 启动分区）和 `sunuefi_root`（ext4 系统分区）。镜像共用 Linux 7.3.3、设备支持包和固件；系统分区首次启动会自动扩展到分区容量。系统和桌面选项见[快速上手](user/getting-started.md#选一个系统)。
 
 ## 启动与安装
 
@@ -14,13 +14,13 @@
 | --- | --- |
 | 合体 BOOT：Android 直通 | 可用。普通开机进入原厂 Android |
 | 合体 BOOT：保存 Linux 路线并重启 | 可用。路线在 Android 侧保存，重启后经 UEFI 进入内部磁盘 Linux |
-| 标准 EFI 启动 | 产品使用标准 UKI，由驻留核心加载，未安装 systemd-boot；通用启动项、BootNext 与任意分区发现尚未实现，见[开发清单](devel/release.md#标准-uefi-启动与存储) |
+| 标准 EFI 启动 | 默认通过 systemd-boot 启动分离的内核、initramfs 和设备树，也支持标准 UKI。固件处理 EFI 启动项和一次性启动请求，详见[标准 UEFI 启动与存储](devel/release.md#标准-uefi-启动与存储) |
 | Linux 返回 Android | 可用。`piano-next-boot android --reboot`，见[Linux 下次启动入口](devel/boot/linux-next-boot.md) |
 | 原厂 Recovery | 保留。`reboot recovery` 进入 Mi Recovery。持久 Linux 偏好与 Recovery 同时存在时的行为还没有在设备上试过 |
 | 独立 Recovery 安装 | 不可用。ABL 对“Recovery 自带内核”的分支不加载 vendor_boot 和 pvmfw，启动停在 Fastboot；合体 BOOT 走普通启动路径，绕开了这个问题。安装器拒绝 `--recovery` |
 | 启动路线管理 | 模块保存 Android／UEFI 路线，普通开机沿用；前置选择页显示约三秒，音量键可临时改选，电源键确认。临时选择不改保存的路线 |
 | 合体 BOOT 在线安装 | 模块从当前 BOOT 提取 Android 内核并安装或更新同一份 UEFI 核心；HyperOS 更新后可点击“重新安装引导”。已有核心升级已在设备上完成，所有 OTA 场景尚未覆盖。见[原生 BOOT 重打包](devel/boot/combined-boot.md) |
-| 一键安装器 | 更新已有的 `sunuefi_esp` 与 `sunuefi_root`；UEFI 只读原厂蓝牙地址并通过标准设备树属性传给 Linux，不依赖安装阶段配置。新平板首次分区返回 `NEW_INSTALL_NOT_READY` |
+| 镜像安装 | Android 引导助手可创建独立分区并安装镜像；电脑安装器可更新已有分区。使用方法见[安装指南](user/install-from-artifact.md) |
 | Android Root 模块 | 提供可安装 ZIP，包含启动选择、引导检查、重新安装和独立存储管理。SukiSU 安装和 WebUI 可用；删除后的空间归还已通过早期离线 F2FS 扩容完成。新设备首次分区、root 容量调整仍需实机验证，见[引导助手](devel/boot/android-module.md) |
 
 ## UEFI
@@ -58,7 +58,7 @@
 | 传感器 | 自动旋转、光线、距离、罗盘及标准 SensorProxy 接口 | 实现见[传感器](devel/hardware/sensors.md) |
 | 自动亮度 | 桌面联动可用，GNOME 策略沿用原厂 lux 阈值与延迟，传感器数据不做修改 | 见[自动亮度](devel/hardware/auto-brightness.md) |
 | 夜灯 / 色温 | GNOME 夜灯可用，自动生成内置屏幕的颜色配置 | 通用 sRGB 配置，不是原厂校准 |
-| 电源 | 双电池、PD 与小米快充、拓展坞充电和 OTG、UPower、合盖恢复、挂起及 RTC／电源键唤醒；2 分钟熄屏，电池 5 分钟、外接电源 10 分钟自动挂起 | 不启用磁盘休眠。见[电源键](devel/hardware/power-button.md) |
+| 电源 | 双电池、PD 与小米快充、拓展坞充电和 OTG、UPower、合盖恢复及 RTC／电源键唤醒。用电池时可以挂起；插电时熄屏并继续充电 | 不启用磁盘休眠。见[桌面电源管理与睡眠](devel/hardware/sleep.md) |
 | GNOME 电源模式 | 节能／平衡／性能三档可用，默认平衡，由 TuneD 与 tuned-ppd 提供 | 档位调整 CPU／GPU 上限，不改变待机功耗，见[电源模式](devel/hardware/power-profiles.md) |
 | 视频编解码 | ✅ | Iris 硬件加速与 V4L2 编解码可用，提供适配的 FFmpeg 软件包 |
 | SteamOS / Proton / FEX | ✅ | 游戏模式和桌面模式正常运行，ARM64 Proton 与 FEX 支持良好（个别游戏需自身参数，与项目本身无关） |
@@ -67,8 +67,8 @@
 | 默认桌面 | 中文界面、拼音输入法、Chromium 浏览器，GNOME 动画开启 | — |
 | Windows / WinPE | 目标 | 未启动 |
 
-### 其它发行版
+### 系统镜像
 
-CI 提供 Debian / GNOME、Debian / KDE、Nyarch / GNOME 和 SteamOS，生成模块、ESP、各发行版 root 稀疏镜像、临时启动 UEFI 及日志。Debian / GNOME、Nyarch / GNOME 和 SteamOS 已在设备上运行；Debian / KDE 的完整实机体验仍需验证。各发行版使用同一套内核和 BSP。
+CI 提供 Debian GNOME、Debian KDE、Nyarch GNOME、SteamOS、Debian Denial 和 Arch Denial。引导助手模块、启动镜像和临时启动 UEFI 各只有一份；安装时只选一套系统镜像。见[安装指南](user/install-from-artifact.md)。
 
-120 Hz 的默认选择由内核面板驱动补丁提供，并在 `config/release.json` 中记录；不是登录桌面后才切换刷新率。BOE／CSOT 仍按设备标识选择，不固定面板供应商，也不移除其他显示模式。挂起通过标准 systemd／logind 接口启用，GNOME 按上述空闲时间触发。休眠、混合睡眠和先挂起后休眠保持关闭。
+120 Hz 的默认选择由内核面板驱动提供，不需要登录后切换。BOE／CSOT 按设备标识选择，仍保留面板支持的其他刷新率。
