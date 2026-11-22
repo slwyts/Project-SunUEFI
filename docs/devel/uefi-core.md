@@ -181,6 +181,10 @@ EDK2 的 RNG 驱动：默认取自 CPU 的 RNDR，也支持显式请求 Arm 固�
 提供时间服务，并在 `EFI_RT_PROPERTIES_TABLE` 中如实声明。Linux 继续通过 PMIC RTC 和
 NVMEM 读取相同的时间，见 [RTC 与原厂时间](hardware/sleep.md#rtc-与原厂时间)。
 
+固件不处理 UEFI 胶囊更新（Capsule Update）。运行时能力表不声明
+`UpdateCapsule()` 和 `QueryCapsuleCapabilities()`，这两个入口返回 `EFI_UNSUPPORTED`。
+这指的是固件更新，不是 Windows 或 Linux 的系统软件包更新。
+
 ## UEFI 核心代码结构
 
 | 目录 | 职责 |

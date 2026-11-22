@@ -66,8 +66,6 @@ STATIC EFI_RT_PROPERTIES_TABLE  mRuntimeProperties = {
   EFI_RT_SUPPORTED_CONVERT_POINTER |
   EFI_RT_SUPPORTED_GET_NEXT_HIGH_MONOTONIC_COUNT |
   EFI_RT_SUPPORTED_RESET_SYSTEM |
-  EFI_RT_SUPPORTED_UPDATE_CAPSULE |
-  EFI_RT_SUPPORTED_QUERY_CAPSULE_CAPABILITIES |
   EFI_RT_SUPPORTED_QUERY_VARIABLE_INFO
 };
 
@@ -157,12 +155,14 @@ LibRtcInitialize (
     mRuntimeProperties.RuntimeServicesSupported = Properties->RuntimeServicesSupported;
   }
 
-  // These bits describe availability after ExitBootServices. Both SPMI and
-  // the persistent variable write path belong to the OS at that point.
+  // After ExitBootServices the OS owns SPMI and UFS. The capsule driver
+  // publishes the architectural protocol but does not process capsules.
   mRuntimeProperties.RuntimeServicesSupported &= ~(EFI_RT_SUPPORTED_GET_TIME |
                                                   EFI_RT_SUPPORTED_SET_TIME |
                                                   EFI_RT_SUPPORTED_GET_WAKEUP_TIME |
                                                   EFI_RT_SUPPORTED_SET_WAKEUP_TIME |
-                                                  EFI_RT_SUPPORTED_SET_VARIABLE);
+                                                  EFI_RT_SUPPORTED_SET_VARIABLE |
+                                                  EFI_RT_SUPPORTED_UPDATE_CAPSULE |
+                                                  EFI_RT_SUPPORTED_QUERY_CAPSULE_CAPABILITIES);
   return gBS->InstallConfigurationTable (&gEfiRtPropertiesTableGuid, &mRuntimeProperties);
 }

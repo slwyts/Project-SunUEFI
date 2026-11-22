@@ -79,14 +79,18 @@ int main(int argc, char **argv) {
   gBS = &services;
   UINT32 readers = EFI_RT_SUPPORTED_GET_VARIABLE | EFI_RT_SUPPORTED_GET_NEXT_VARIABLE_NAME |
                    EFI_RT_SUPPORTED_QUERY_VARIABLE_INFO;
+  UINT32 capsules = EFI_RT_SUPPORTED_UPDATE_CAPSULE | EFI_RT_SUPPORTED_QUERY_CAPSULE_CAPABILITIES;
   assert(LibRtcInitialize(NULL,NULL) == EFI_SUCCESS);
   assert(Installed->Length == sizeof(*Installed) && (Installed->RuntimeServicesSupported & readers) == readers);
-  assert(!(Installed->RuntimeServicesSupported & EFI_RT_SUPPORTED_SET_VARIABLE));
+  assert(!(Installed->RuntimeServicesSupported & (EFI_RT_SUPPORTED_SET_VARIABLE | capsules)));
   Existing = (EFI_RT_PROPERTIES_TABLE){EFI_RT_PROPERTIES_TABLE_VERSION,sizeof(Existing),0x3fff};
   assert(LibRtcInitialize(NULL,NULL) == EFI_SUCCESS);
   assert(Installed->RuntimeServicesSupported == (Existing.RuntimeServicesSupported &
          ~(EFI_RT_SUPPORTED_GET_TIME|EFI_RT_SUPPORTED_SET_TIME|EFI_RT_SUPPORTED_GET_WAKEUP_TIME|
-           EFI_RT_SUPPORTED_SET_WAKEUP_TIME|EFI_RT_SUPPORTED_SET_VARIABLE)));
+           EFI_RT_SUPPORTED_SET_WAKEUP_TIME|EFI_RT_SUPPORTED_SET_VARIABLE|capsules)));
+  Existing.RuntimeServicesSupported = EFI_RT_SUPPORTED_GET_VARIABLE | capsules;
+  assert(LibRtcInitialize(NULL,NULL) == EFI_SUCCESS);
+  assert(Installed->RuntimeServicesSupported == EFI_RT_SUPPORTED_GET_VARIABLE);
   --Existing.Length;
   assert(LibRtcInitialize(NULL,NULL) == EFI_COMPROMISED_DATA);
 
