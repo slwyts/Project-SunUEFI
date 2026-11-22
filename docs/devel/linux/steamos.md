@@ -16,7 +16,9 @@ Proton/FEX 的兼容性仍按游戏区分，不能据此认为所有 Windows 游
 
 ## 下载与安装
 
-在 GitHub Actions 的 **Build products → Run workflow** 中选择 `steamos`。构建完成后下载 `SunUEFI-Module`、`SunUEFI-ESP` 和 `SunUEFI-Root-steamos`。ESP 与其他发行版共用。助手里的安装顺序与 Debian 相同：创建独立存储分区，选择 ESP 和 root 镜像，刷写并启动。
+在 GitHub Actions 的 **Build products → Run workflow** 中选择 `steamos`。成功后打开
+`downloads.json`，下载 `SunUEFI-Module.zip`、`SunUEFI-ESP.zip` 和 `SunUEFI-Root-steamos.zip`。
+ESP 与其他发行版共用。助手里的安装顺序与 Debian 相同：创建独立存储分区，选择 ESP 和 root 镜像，刷写并启动。
 
 root 镜像容量为 16 GiB，独立 root 分区至少需要相同容量。账户为 `piano`，密码为 `piano123456`。首次启动 Steam 需要联网检查客户端更新并登录。
 

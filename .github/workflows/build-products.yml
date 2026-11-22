@@ -1,32 +1,10 @@
 name: Build products
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
-    paths:
-      - '.github/workflows/build-products.yml'
-      - '.github/workflows/_*.yml'
-      - '.github/actions/**'
-      - '.github/scripts/**'
-      - 'build.sh'
-      - 'Makefile'
-      - 'requirements-build.txt'
-      - 'containers/**'
-      - 'config/**'
-      - 'sources.lock.json'
-      - '.gitmodules'
-      - 'patches/**'
-      - 'uefi/**'
-      - 'vendor/piano/**'
-      - 'vendor/piano-linux/**'
-      - 'vendor/firmware/**'
-      - 'linux/**'
-      - 'tools/**'
-      - '!tools/check_host.py'
-      - '!tools/build/check_patch_series.py'
-      - 'upstream/**'
-      - 'android/**'
-      - 'docs/user/install-from-artifact.md'
   workflow_dispatch:
     inputs:
       target:
@@ -45,7 +23,12 @@ concurrency:
   queue: max
 
 jobs:
+  checks:
+    uses: ./.github/workflows/_checks.yml
+
   select:
+    needs: checks
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-26.04
     outputs:
       has_build: ${{ steps.targets.outputs.has_build }}
@@ -60,11 +43,6 @@ jobs:
           fetch-depth: 0
           submodules: false
           persist-credentials: false
-      - name: Check patch series and build rules
-        run: |
-          ./build.sh check --pattern test_check_patch_series.py \
-            --pattern test_prepare_sources.py \
-            --pattern test_shared_products.py --pattern test_ci_container.py
       - id: targets
         env:
           PUSH_BEFORE: ${{ github.event.before }}

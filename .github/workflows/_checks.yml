@@ -1,17 +1,10 @@
 name: Host checks
 
 on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [main]
+  workflow_call:
 
 permissions:
   contents: read
-
-concurrency:
-  group: host-checks-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   check:

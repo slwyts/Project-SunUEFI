@@ -524,18 +524,23 @@ pacman 数据库和分离签名是不同对象，发布期间可能短暂验签�
 
 ## CI 下载
 
-GitHub Actions 的 **Build products** 在 `main` 上有相关改动时自动运行，也可以手动选择 `all`、`uefi`、`linux` 或任一发行版。只改文档不会触发构建，唯一的例外是 `docs/user/install-from-artifact.md`，改动它会触发整套产品构建。选择规则在 `tools/ci_build_targets.py`。
+GitHub Actions 的 **Build products** 先做[主机检查](testing.md#ci-检查)。发往 `main` 的 PR
+到此结束；合入后只构建受改动影响的产品。也可以手动选择 `all`、`uefi`、`linux` 或任一发行版。
+只改文档会检查，但不编译，安装指南 `docs/user/install-from-artifact.md` 除外。选择规则在
+`tools/ci_build_targets.py`。
 同一分支的产品任务排队串行执行。后一次提交不会顶掉等待中的任务，也不会在前一轮镜像安装软件包时更新软件源索引。
 
 | 下载名称 | 内容 |
 | --- | --- |
-| `SunUEFI-Module` | Android 引导助手模块 ZIP |
-| `SunUEFI-UEFI-Fastboot` | 用于 `fastboot boot` 的独立 UEFI 镜像 |
-| `SunUEFI-ESP` | 各发行版共用的稀疏 ESP 镜像 |
-| `SunUEFI-Root-发行版` | 对应[构建目标](#完整系统)的稀疏 root 镜像 |
-| `logs` | 合并的构建日志、来源清单和校验记录 |
+| `SunUEFI-Module.zip` | Android 引导助手模块 ZIP |
+| `SunUEFI-UEFI-Fastboot.zip` | 用于 `fastboot boot` 的独立 UEFI 镜像 |
+| `SunUEFI-ESP.zip` | 各发行版共用的稀疏 ESP 镜像 |
+| `SunUEFI-Root-发行版.zip` | 对应[构建目标](#完整系统)的稀疏 root 镜像 |
+| `logs.zip` | 合并的构建日志、来源清单和校验记录 |
 
-模块、UEFI 镜像和 ESP 每次只上传一份，root 镜像按发行版分别上传。安装时把所选发行版的 root 镜像和同一次构建的 ESP 配套使用，步骤见[安装指南](../user/install-from-artifact.md)。
+成功构建在 Actions 留下 `downloads.json`，以上 ZIP 由 Cloudflare R2 提供下载。模块、UEFI
+镜像和 ESP 每次只上传一份，root 镜像按发行版分别上传。安装时使用同一次构建的 root 和 ESP，
+见[安装指南](../user/install-from-artifact.md)。
 
 ## 安装器
 

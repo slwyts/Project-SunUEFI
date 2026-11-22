@@ -61,15 +61,14 @@
 
 ## CI 检查
 
-GitHub Actions 的 **Host checks** 在发往 `main` 的 PR 和 `main` 更新时运行
-`./build.sh check --group ci`。它用固定的公开源码检查启动回退、Fastboot、NVRAM 掉电恢复、
-运行时变量、整机重启、相机运行和原生打包。检查不使用发布密钥，选中的测试
-如果跳过也会报错。只改测试不会触发产品构建。
+GitHub Actions 的 **Build products** 首先运行 `./build.sh check --group ci`。
+它用固定的公开源码检查启动回退、Fastboot、NVRAM 掉电恢复、运行时变量、
+整机重启、相机运行和原生打包。发往 `main` 的 PR 只跑这一步，不使用发布密钥，
+不构建镜像。
 
-**Build products** 在 `main` 上有相关产品源码变动时自动运行，覆盖 `uefi`、`linux`
-以及四个发行版。构建前用 CI 主机的 `kernel-install` 在临时目录检查启动项更新和失败后的旧项保留，
+`main` 上有产品相关改动才继续。构建前用 `kernel-install` 检查启动项更新和出错时旧项保留，
 再用断网的构建容器检查 APT／pacman 签名发布，以及 pacman 升级、卸载时保留管理员配置。
-这两组测试都不使用发布密钥，有测试跳过也会阻止构建。两个工作流都不连接物理设备。
-工作流启动后，构建选择器检查改名的新旧路径，文件移出产品目录也按移除构建输入处理。
+这些检查不连接平板，测试跳过也会报错。选择构建时同时检查改名前后的路径，移出产品目录也算改动。
 
-选择目标前会运行补丁系列检查；它核对全部系列的产品目标、补丁来源、删除条件、文件摘要和重复引用，不需要完整 Git 历史。单独运行 `./build.sh check --pattern test_check_patch_series.py`，规则见[补丁管理](patches.md#软件包补丁与产品目标)。
+开头的检查也会核对补丁目标、来源、删除条件、文件摘要和重复引用。可单独运行
+`./build.sh check --pattern test_check_patch_series.py`，规则见[补丁管理](patches.md#软件包补丁与产品目标)。

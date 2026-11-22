@@ -6,7 +6,7 @@ SunUEFI 引导助手在 Android 中安装和维护合体 BOOT，提供 Android�
 
 ## 使用
 
-1. 从 **Build products** 的 `SunUEFI-Module` 下载并解压模块包，将里面的 `SunUEFI-Piano-版本.zip` 传到平板。
+1. 按[下载说明](../../user/install-from-artifact.md#下载)获取并解压 `SunUEFI-Module.zip`，将里面的 `SunUEFI-Piano-版本.zip` 传到平板。
 2. 在正常运行的 Android 中，用 SukiSU 的模块页面安装 ZIP。相同核心只读取、不重写 BOOT；其余情况提示音量＋安装或更新引导，音量－只安装助手。30 秒未选择时只安装助手，可稍后在维护页安装引导。
 3. 正常重启，点击模块卡片上的 **打开 WebUI**。
 

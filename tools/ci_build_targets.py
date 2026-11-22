@@ -14,7 +14,7 @@ FULL_FILES = {'.github/workflows/build-products.yml', '.gitmodules',
               'uefi/handoff/bootselect/BootRequest.c',
               'uefi/handoff/bootselect/BootRequest.h',
               'docs/user/install-from-artifact.md'}
-FULL_PREFIXES = ('.github/workflows/', '.github/actions/', '.github/scripts/',
+FULL_PREFIXES = ('.github/workflows/_', '.github/actions/', '.github/scripts/',
                  'tools/', 'config/', 'containers/', 'linux/', 'vendor/piano-linux/',
                  'vendor/firmware/', 'patches/', 'upstream/')
 UEFI_FILES = {'requirements-build.txt', 'tools/build_android_product_module.py',
@@ -38,8 +38,7 @@ DENIAL_FILES = {'config/denial.json', 'config/keys/denial-repo-key.asc',
                 'tools/build/denial_manifest.py', 'tools/build/denial_overlay.py',
                 'tools/desktop/build_denial.py', 'tools/desktop/denial_packages.py'}
 TARGETS = ('uefi', 'linux', *DISTROS)
-NON_PRODUCT_FILES = {'.github/workflows/host-checks.yml',
-                     '.github/workflows/publish-release-images.yml',
+NON_PRODUCT_FILES = {'.github/workflows/_checks.yml',
                      'tools/check_host.py', 'tools/build/check_patch_series.py'}
 
 
