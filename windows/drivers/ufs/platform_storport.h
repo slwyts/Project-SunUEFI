@@ -10,8 +10,9 @@ typedef struct {
     PVOID extension;
     PUCHAR phy_registers;
     BOOLEAN bus_vote;
-    void *release_context;
-    int (*media_may_power_off)(void *);
+    volatile LONG *media_off;
+    PVOID worker;
+    volatile LONG worker_active;
 } UFS_PLATFORM_DEVICE;
 
 /* Normal PnP discovery at PASSIVE_LEVEL. The first two ACPI memory ranges

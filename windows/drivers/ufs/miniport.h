@@ -4,18 +4,29 @@
 #include "storport_link.h"
 
 enum ufs_adapter_state {
-    UfsAbsent, UfsMapped, UfsStarting, UfsOnline, UfsStopped, UfsFault,
+    UfsAbsent, UfsMapped, UfsStarting, UfsPrepared, UfsOnline, UfsPoweringDown, UfsAsleep,
+    UfsStopped, UfsRecovering, UfsFault,
 };
 
 typedef struct {
     UFS_IO_QUEUE io;
     UFS_PLATFORM_DEVICE platform;
     struct ufs_link link;
+    struct ufs_media_settings media;
+    enum ufs_link_operation power_operation;
     enum ufs_adapter_state state;
     ULONGLONG frequency, retire_since;
+    ULONGLONG power_since, power_timeout, worker_since;
+    PVOID power_srb;
+    volatile LONG media_off;
+    volatile LONG sequence;
     BOOLEAN start_timer;
+    BOOLEAN prepare_only;
+    BOOLEAN power_touched;
     BOOLEAN needs_reset;
     PVOID link_power_context;
+    BOOLEAN (*link_power_begin)(PVOID);
+    BOOLEAN (*can_retain_s0)(PVOID);
     void (*link_power_ready)(PVOID, const uint8_t *);
 } UFS_ADAPTER;
 

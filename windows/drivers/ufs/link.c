@@ -3,19 +3,22 @@
 #include <string.h>
 
 enum {
-    CAP = 0, VER = 8, IS = 0x20, IE = 0x24, HCS = 0x30, HCE = 0x34,
+    CAP = 0, VER = 8, AHIT = 0x18, IS = 0x20, IE = 0x24, HCS = 0x30, HCE = 0x34,
     UTRLBA = 0x50, UTRLBAU = 0x54, UTRLDBR = 0x58, UTRLCLR = 0x5c, UTRLRSR = 0x60,
     UTMRLDBR = 0x78, UTMRLRSR = 0x80, UICCMD = 0x90, UICARG1 = 0x94, UICARG2 = 0x98,
     UICARG3 = 0x9c, MEM_CFG = 0x300, UTR_COMPLETE = 1, UIC_COMPLETE = 0x400,
     LINK_FATAL = 0x80 | 0x800 | 0x1000 | 0x10000 | 0x20000 | 0x40000,
     UIC_TIMEOUT_US = 500000, DEVICE_INIT_US = 1500000, QUERY_TIMEOUT_US = 1500000,
-    POLL_INIT_US = 1000, NOP_TIMEOUT_US = 50000, REPORT_LUNS_WLUN = 0x81
+    POLL_INIT_US = 1000, NOP_TIMEOUT_US = 50000, REPORT_LUNS_WLUN = 0x81, DEVICE_WLUN = 0xd0,
+    HIBERN8_ENTERED = 0x40, HIBERN8_EXITED = 0x20, CAP_AUTO_HIBERN8 = 1u << 23, SCSI_POWER_TIMEOUT_US = 10000000,
+    RAIL_SETTLE_US = 2000
 };
 
 static uint32_t read_reg(const struct ufs_link *l, unsigned reg) { return l->io.read(l->io.context, reg); }
 static void write_reg(const struct ufs_link *l, unsigned reg, uint32_t v) { l->io.write(l->io.context, reg, v); }
 
 static uint16_t be16(const uint8_t *p) { return (uint16_t)((uint16_t)p[0] << 8 | p[1]); }
+static uint32_t be32(const uint8_t *p) { return (uint32_t)be16(p) << 16 | be16(p + 2); }
 static void le16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
 
 int ufs_scsi_lun(uint32_t enabled, uint8_t requested, const uint8_t *cdb, size_t bytes, uint8_t *wire_lun)
@@ -38,7 +41,7 @@ static enum ufs_link_phase fail(struct ufs_link *l, enum ufs_link_error e)
     return l->phase;
 }
 
-enum ufs_link_error ufs_link_begin(struct ufs_link *l, const struct ufs_link_io *io, uint64_t now)
+static enum ufs_link_error claim(struct ufs_link *l, const struct ufs_link_io *io, uint64_t now, int power_down)
 {
     if (!l || !io || !io->read || !io->write || !io->publish || !io->consume || !io->list || !io->ucd ||
         io->list_dma % 1024 || io->ucd_dma % UFS_UCD_ALIGNMENT ||
@@ -56,12 +59,60 @@ enum ufs_link_error ufs_link_begin(struct ufs_link *l, const struct ufs_link_io 
         fail(l, UFS_LINK_OWNED);
         return l->error;
     }
-    l->cold = !(read_reg(l, HCE) & 1);
+    uint32_t hce = read_reg(l, HCE), status = read_reg(l, HCS);
     l->previous_ie = read_reg(l, IE);
+    if (hce == UINT32_MAX || status == UINT32_MAX || l->previous_ie == UINT32_MAX ||
+        (power_down && (!(hce & 1) || (status & 3) != 3))) {
+        fail(l, UFS_LINK_CONTROLLER);
+        return l->error;
+    }
+    l->cold = !(hce & 1);
     l->owns_controller = 1;
-    write_reg(l, IE, l->previous_ie & ~(uint32_t)(UTR_COMPLETE | UIC_COMPLETE));
+    write_reg(l, IE, power_down ? 0 : l->previous_ie & ~(uint32_t)(UTR_COMPLETE | UIC_COMPLETE));
     if (l->cold) write_reg(l, HCE, 1);
     l->phase = UFS_LINK_WAIT_HCE;
+    return UFS_LINK_OK;
+}
+
+enum ufs_link_error ufs_link_begin(struct ufs_link *l, const struct ufs_link_io *io, uint64_t now)
+{
+    return claim(l, io, now, 0);
+}
+
+enum ufs_link_error ufs_link_media(struct ufs_link *l, const struct ufs_link_io *io,
+                                  struct ufs_media_settings *media, uint32_t enabled_luns,
+                                  enum ufs_link_operation operation, uint64_t now)
+{
+    if (!media || !enabled_luns || operation < UFS_POWER_OFF || operation > UFS_WAKE) return UFS_LINK_RESOURCES;
+    /* Never enable or reset a host in order to declare it safe to power off. */
+    enum ufs_link_error error = claim(l, io, now, 1);
+    if (error != UFS_LINK_OK) return error;
+    l->media = media;
+    l->operation = operation;
+    l->enabled_luns = enabled_luns;
+    if (operation == UFS_WAKE) {
+        l->enabled_luns = 0; /* Re-read LU descriptors after the device is Active. */
+        l->command = UFS_MGMT_ACTIVE;
+        l->command_since = now;
+        l->phase = UFS_LINK_EXIT_HIBERN8;
+        return UFS_LINK_OK;
+    }
+    l->flush_luns = enabled_luns;
+    l->command = UFS_MGMT_FLUSH;
+    l->command_since = now;
+    if (read_reg(l, IE)) fail(l, UFS_LINK_CONTROLLER);
+    else if (read_reg(l, CAP) & CAP_AUTO_HIBERN8) {
+        uint32_t timer = read_reg(l, AHIT);
+        if (timer == UINT32_MAX) fail(l, UFS_LINK_CONTROLLER);
+        else if (timer) {
+            media->ahit = timer;
+            media->restore_ahit = 1;
+            write_reg(l, AHIT, 0);
+            if (read_reg(l, AHIT)) fail(l, UFS_LINK_CONTROLLER);
+        }
+    }
+    if (l->phase != UFS_LINK_FAILED) l->phase = UFS_LINK_WAIT_PRESENT;
+    /* Even on a posted-write failure the caller must retire this owner. */
     return UFS_LINK_OK;
 }
 
@@ -104,14 +155,44 @@ static void submit(struct ufs_link *l, uint64_t now)
             !ufs_transfer_add_dma(&x, l->io.ucd_dma + offsetof(struct ufs_management_ucd, lun_list), bytes) ||
             !ufs_transfer_ready(&x)) { fail(l, UFS_LINK_RESOURCES); return; }
         le16(d + 30, offsetof(struct ufs_management_ucd, report_prd) / 4);
+    } else if (l->command == UFS_MGMT_FLUSH || l->command == UFS_MGMT_POWER_DOWN ||
+               l->command == UFS_MGMT_ACTIVE) {
+        uint8_t cdb[10] = {0}, lun = DEVICE_WLUN;
+        size_t bytes;
+        if (l->command == UFS_MGMT_FLUSH) {
+            for (lun = 0; !(l->flush_luns & (UINT32_C(1) << lun)); ++lun) {}
+            cdb[0] = 0x35; /* SYNCHRONIZE CACHE(10), IMMED=0, whole LU */
+            bytes = 10;
+        } else {
+            cdb[0] = 0x1b; /* START STOP UNIT, IMMED=0 */
+            cdb[4] = l->command == UFS_MGMT_ACTIVE ? 0x10 : l->operation == UFS_SLEEP ? 0x20 : 0x30;
+            bytes = 6;
+        }
+        struct ufs_transfer x;
+        if (!ufs_transfer_init(&x, l->io.list, &u->scsi, NULL, 0, l->io.ucd_dma, UINT64_MAX,
+                               lun, 0, UFS_ORDERED, UFS_NO_DATA, cdb, bytes, 0)) {
+            fail(l, UFS_LINK_RESOURCES);
+            return;
+        }
     } else if (l->command == UFS_MGMT_NOP) {
         ++l->nop_attempts;
     } else {
         r[0] = 0x16;
-        r[5] = l->command == UFS_MGMT_SET_INIT ? 0x81 : 0x01;
+        r[5] = 0x01;
         if (l->command == UFS_MGMT_SET_INIT || l->command == UFS_MGMT_READ_INIT) {
             r[12] = l->command == UFS_MGMT_SET_INIT ? 6 : 5;
+            if (l->command == UFS_MGMT_SET_INIT) r[5] = 0x81;
             r[13] = 1; /* fDeviceInit */
+        } else if (l->command == UFS_MGMT_CHECK_DOWN || l->command == UFS_MGMT_CHECK_ACTIVE ||
+                   l->command == UFS_MGMT_READ_MODE) {
+            r[12] = 3; r[13] = 2; /* READ ATTRIBUTE bCurrentPowerMode */
+        } else if (l->command == UFS_MGMT_CHECK_POWER_ON_WP || l->command == UFS_MGMT_VERIFY_POWER_ON_WP) {
+            r[12] = 5; r[13] = 3; /* READ FLAG fPowerOnWPEn; never change it. */
+        } else if (l->command >= UFS_MGMT_READ_BKOPS) {
+            r[13] = 4; /* fBackgroundOpsEn */
+            if (l->command == UFS_MGMT_CLEAR_BKOPS) { r[5] = 0x81; r[12] = 7; }
+            else if (l->command == UFS_MGMT_RESTORE_BKOPS) { r[5] = 0x81; r[12] = 6; }
+            else r[12] = 5;
         } else {
             r[12] = 1; /* READ_DESCRIPTOR */
             r[13] = l->command == UFS_MGMT_DEVICE ? 0 : l->command == UFS_MGMT_GEOMETRY ? 7 : 2;
@@ -139,16 +220,18 @@ static enum ufs_link_phase next_unit(struct ufs_link *l, uint64_t now)
     return l->phase = UFS_LINK_SEND;
 }
 
+static int unit_attention(const struct ufs_completion *c)
+{
+    if (c->result != UFS_RESULT_SCSI || c->scsi_status != 2 || !c->sense || c->sense_bytes < 3) return 0;
+    unsigned format = c->sense[0] & 0x7f;
+    return (format == 0x70 || format == 0x71) ? (c->sense[2] & 15) == 6 :
+           (format == 0x72 || format == 0x73) && (c->sense[1] & 15) == 6;
+}
+
 static enum ufs_link_phase report_luns(struct ufs_link *l, uint64_t now)
 {
     struct ufs_completion c = ufs_transfer_complete(l->io.list, &l->io.ucd->scsi);
-    if (c.result == UFS_RESULT_SCSI && c.scsi_status == 2 && c.sense && c.sense_bytes >= 3) {
-        unsigned format = c.sense[0] & 0x7f;
-        unsigned key = format == 0x70 || format == 0x71 ? c.sense[2] & 15 :
-                       format == 0x72 || format == 0x73 ? c.sense[1] & 15 : 0;
-        /* The first SCSI access following a reset can report UNIT ATTENTION. */
-        if (key == 6 && now - l->init_since < QUERY_TIMEOUT_US) return l->phase = UFS_LINK_SEND;
-    }
+    if (unit_attention(&c) && now - l->init_since < QUERY_TIMEOUT_US) return l->phase = UFS_LINK_SEND;
     if ((c.result != UFS_RESULT_GOOD && c.result != UFS_RESULT_LENGTH) || c.bytes < 8)
         return fail(l, UFS_LINK_PROTOCOL);
     const uint8_t *p = l->io.ucd->lun_list;
@@ -167,6 +250,77 @@ static enum ufs_link_phase report_luns(struct ufs_link *l, uint64_t now)
     return next_unit(l,now);
 }
 
+static enum ufs_link_phase send_next(struct ufs_link *l, enum ufs_management_command command, uint64_t now)
+{
+    l->command = command;
+    l->command_since = now;
+    return l->phase = UFS_LINK_SEND;
+}
+
+static enum ufs_link_phase media_scsi_reply(struct ufs_link *l, uint64_t now)
+{
+    const struct ufs_upius *u = &l->io.ucd->scsi;
+    struct ufs_completion c = ufs_transfer_complete(l->io.list, u);
+    if (unit_attention(&c) && now - l->command_since < SCSI_POWER_TIMEOUT_US)
+        return l->phase = UFS_LINK_SEND;
+    if (c.result != UFS_RESULT_GOOD || (u->response[1] & 0x60) || c.bytes || c.sense_bytes ||
+        be16(u->response + 10) || be32(u->response + 12)) return fail(l, UFS_LINK_PROTOCOL);
+    if (l->command == UFS_MGMT_FLUSH) {
+        l->flush_luns &= ~(UINT32_C(1) << u->command[2]);
+        return send_next(l, l->flush_luns ? UFS_MGMT_FLUSH :
+                         l->media->check_power_on_wp ? UFS_MGMT_CHECK_POWER_ON_WP : UFS_MGMT_READ_BKOPS, now);
+    }
+    return send_next(l, l->command == UFS_MGMT_ACTIVE ? UFS_MGMT_CHECK_ACTIVE : UFS_MGMT_CHECK_DOWN, now);
+}
+
+static enum ufs_link_phase media_query_reply(struct ufs_link *l, uint32_t value, uint64_t now)
+{
+    switch (l->command) {
+    case UFS_MGMT_CHECK_POWER_ON_WP:
+        if (value && l->operation != UFS_SLEEP) return l->phase = UFS_LINK_KEEP_POWER;
+        l->media->verify_power_on_wp = (value == 1);
+        return send_next(l, UFS_MGMT_READ_BKOPS, now);
+    case UFS_MGMT_VERIFY_POWER_ON_WP:
+        if (value != 1) break;
+        l->media->verify_power_on_wp = 0;
+        return send_next(l, l->media->restore_bkops ? UFS_MGMT_RESTORE_BKOPS : UFS_MGMT_DEVICE, now);
+    case UFS_MGMT_READ_BKOPS:
+        if (value > 1) break;
+        if (value) l->media->restore_bkops = 1;
+        return send_next(l, value ? UFS_MGMT_CLEAR_BKOPS : UFS_MGMT_POWER_DOWN, now);
+    case UFS_MGMT_CLEAR_BKOPS: return send_next(l, UFS_MGMT_CHECK_BKOPS, now);
+    case UFS_MGMT_CHECK_BKOPS:
+        if (value) break;
+        return send_next(l, UFS_MGMT_POWER_DOWN, now);
+    case UFS_MGMT_READ_MODE:
+    case UFS_MGMT_CHECK_ACTIVE:
+    case UFS_MGMT_CHECK_DOWN:
+        if (value == 0x10 || value == 0x20 || value == 0x30) {
+            /* A transient Pre-* state is not confirmation of the requested mode. */
+            if (now - l->command_since >= SCSI_POWER_TIMEOUT_US) return fail(l, UFS_LINK_TIMEOUT);
+            l->since = now;
+            return l->phase = UFS_LINK_INIT_POLL;
+        }
+        if (l->command == UFS_MGMT_CHECK_DOWN) {
+            if (value != (l->operation == UFS_SLEEP ? 0x22u : 0x33u)) break;
+            l->since = now;
+            return l->phase = UFS_LINK_ENTER_HIBERN8;
+        }
+        if (l->command == UFS_MGMT_READ_MODE && (value == 0x22 || value == 0x33))
+            return send_next(l, UFS_MGMT_ACTIVE, now);
+        if (value != 0x11 && (value || l->operation == UFS_WAKE)) break; /* Idle is valid after reset only. */
+        if (l->media->verify_power_on_wp) return send_next(l, UFS_MGMT_VERIFY_POWER_ON_WP, now);
+        return send_next(l, l->media->restore_bkops ? UFS_MGMT_RESTORE_BKOPS : UFS_MGMT_DEVICE, now);
+    case UFS_MGMT_RESTORE_BKOPS: return send_next(l, UFS_MGMT_CHECK_RESTORED, now);
+    case UFS_MGMT_CHECK_RESTORED:
+        if (value != 1) break;
+        l->media->restore_bkops = 0;
+        return send_next(l, UFS_MGMT_DEVICE, now);
+    default: break;
+    }
+    return fail(l, UFS_LINK_PROTOCOL);
+}
+
 static enum ufs_link_phase complete(struct ufs_link *l, uint64_t now)
 {
     const uint8_t *rsp = l->io.ucd->response, *cmd = l->io.ucd->request;
@@ -182,6 +336,8 @@ static enum ufs_link_phase complete(struct ufs_link *l, uint64_t now)
         return fail(l, UFS_LINK_OCS);
     }
     if (l->command == UFS_MGMT_REPORT_LUNS) return report_luns(l, now);
+    if (l->command == UFS_MGMT_FLUSH || l->command == UFS_MGMT_POWER_DOWN || l->command == UFS_MGMT_ACTIVE)
+        return media_scsi_reply(l, now);
     if (rsp[3] != cmd[3] || rsp[8]) return fail(l, UFS_LINK_PROTOCOL);
     unsigned data = be16(rsp + 10);
     if (l->command == UFS_MGMT_NOP) {
@@ -193,15 +349,20 @@ static enum ufs_link_phase complete(struct ufs_link *l, uint64_t now)
     if ((rsp[0] & 0x3f) != 0x36 || rsp[5] != cmd[5] || memcmp(rsp + 12, cmd + 12, 4))
         return fail(l, UFS_LINK_PROTOCOL);
     l->query_status = rsp[6];
+    if (l->query_status && l->command == UFS_MGMT_CHECK_POWER_ON_WP)
+        return l->operation == UFS_SLEEP ? send_next(l, UFS_MGMT_READ_BKOPS, now) : (l->phase = UFS_LINK_KEEP_POWER);
     if (l->query_status) return fail(l, UFS_LINK_REJECTED);
+    if (l->command >= UFS_MGMT_READ_BKOPS) {
+        if (data || rsp[2] != cmd[2]) return fail(l, UFS_LINK_PROTOCOL);
+        return media_query_reply(l, be32(rsp + 20), now);
+    }
     if (l->command == UFS_MGMT_SET_INIT || l->command == UFS_MGMT_READ_INIT) {
         if (data) return fail(l, UFS_LINK_PROTOCOL);
         if (l->command == UFS_MGMT_SET_INIT) {
             l->command = UFS_MGMT_READ_INIT;
             l->init_since = now;
         } else if (!(rsp[23] & 1)) {
-            l->command = UFS_MGMT_DEVICE;
-            return l->phase = UFS_LINK_SEND;
+            return send_next(l, l->media ? UFS_MGMT_READ_MODE : UFS_MGMT_DEVICE, now);
         } else if (now - l->init_since >= DEVICE_INIT_US) {
             return fail(l, UFS_LINK_TIMEOUT);
         }
@@ -221,21 +382,44 @@ static enum ufs_link_phase complete(struct ufs_link *l, uint64_t now)
     } else if (l->command == UFS_MGMT_GEOMETRY) {
         if (desc[0] < 13 || desc[12] > 1) return fail(l, UFS_LINK_PROTOCOL);
         l->lun_capacity = desc[12] ? 32 : 8;
+        if (l->media) l->media->check_power_on_wp = 0;
         if (l->lun_count > l->lun_capacity) return fail(l, UFS_LINK_PROTOCOL);
         if (!l->lun_count) return l->phase = UFS_LINK_READY;
         l->command = UFS_MGMT_REPORT_LUNS;
         l->init_since = now;
     } else {
         if (desc[0] < 4 || desc[2] != l->unit || !desc[3]) return fail(l, UFS_LINK_PROTOCOL);
+        /* A power cycle clears power-on write protection. If the descriptor
+         * omits the field, also require proof that the device flag is clear. */
+        if (l->media && (desc[0] <= 5 || desc[5] == 1 || desc[5] > 2)) l->media->check_power_on_wp = 1;
         l->enabled_luns |= UINT32_C(1) << l->unit;
         return next_unit(l,now);
     }
     return l->phase = UFS_LINK_SEND;
 }
 
+/* Keep the common buffers until both the list and all doorbells are idle.
+ * Only cancel a descriptor when retiring an unsuccessful or interrupted owner. */
+static int stop_list(struct ufs_link *l)
+{
+    if (!l->owns_list) return 1;
+    if (!l->list_stop_issued) {
+        write_reg(l, UTRLRSR, 0);
+        if (l->transfer_inflight && (read_reg(l, UTRLDBR) & 1)) write_reg(l, UTRLCLR, ~UINT32_C(1));
+        l->list_stop_issued = 1;
+    }
+    if (read_reg(l, UTRLRSR) || read_reg(l, UTRLDBR)) return 0;
+    l->io.consume(l->io.context);
+    write_reg(l, IS, UTR_COMPLETE);
+    write_reg(l, UTRLBA, 0); write_reg(l, UTRLBAU, 0);
+    l->owns_list = l->transfer_inflight = 0;
+    return 1;
+}
+
 enum ufs_link_phase ufs_link_poll(struct ufs_link *l, uint64_t now)
 {
-    if (!l->owns_controller || l->stopping || l->phase == UFS_LINK_FAILED || l->phase == UFS_LINK_READY)
+    if (!l->owns_controller || l->stopping || l->phase == UFS_LINK_FAILED || l->phase == UFS_LINK_READY ||
+        l->phase == UFS_LINK_KEEP_POWER)
         return l->phase;
     l->fault_interrupts = read_reg(l, IS) & LINK_FATAL;
     if (l->fault_interrupts) return fail(l, UFS_LINK_CONTROLLER);
@@ -253,7 +437,7 @@ enum ufs_link_phase ufs_link_poll(struct ufs_link *l, uint64_t now)
         } else if (read_reg(l, HCS) & 8) {
             write_reg(l, IS, UIC_COMPLETE);
             write_reg(l, UICARG1, 0); write_reg(l, UICARG2, 0); write_reg(l, UICARG3, 0);
-            l->uic_inflight = 1;
+            l->uic_inflight = UIC_COMPLETE;
             write_reg(l, UICCMD, 0x16); /* DME_LINK_STARTUP */
             l->phase = UFS_LINK_WAIT_STARTUP;
             l->since = now;
@@ -276,7 +460,9 @@ enum ufs_link_phase ufs_link_poll(struct ufs_link *l, uint64_t now)
     case UFS_LINK_SEND: submit(l, now); break;
     case UFS_LINK_WAIT_REPLY:
         if (!(read_reg(l, UTRLDBR) & 1)) return complete(l, now);
-        if (now - l->since >= (l->command == UFS_MGMT_NOP ? NOP_TIMEOUT_US : QUERY_TIMEOUT_US))
+        if (now - l->since >= (l->command == UFS_MGMT_NOP ? NOP_TIMEOUT_US :
+                               l->command == UFS_MGMT_FLUSH || l->command == UFS_MGMT_POWER_DOWN ||
+                               l->command == UFS_MGMT_ACTIVE ? SCSI_POWER_TIMEOUT_US : QUERY_TIMEOUT_US))
             return fail(l, UFS_LINK_TIMEOUT);
         break;
     case UFS_LINK_INIT_POLL:
@@ -292,7 +478,7 @@ enum ufs_link_phase ufs_link_poll(struct ufs_link *l, uint64_t now)
             write_reg(l,UICARG1,(uint32_t)attr[l->parameter_count] << 16);
             write_reg(l,UICARG2,0);
             write_reg(l,UICARG3,0);
-            l->uic_inflight = 1;
+            l->uic_inflight = UIC_COMPLETE;
             write_reg(l,UICCMD,0x01); /* DME_GET a local PA attribute. */
             l->phase = UFS_LINK_WAIT_PARAMETER;
             l->since = now;
@@ -313,34 +499,101 @@ enum ufs_link_phase ufs_link_poll(struct ufs_link *l, uint64_t now)
         }
         if (now-l->since >= UIC_TIMEOUT_US) return fail(l,UFS_LINK_TIMEOUT);
         break;
+    case UFS_LINK_ENTER_HIBERN8:
+    case UFS_LINK_EXIT_HIBERN8:
+        if (read_reg(l, HCS) & 8) {
+            l->uic_inflight = l->phase == UFS_LINK_EXIT_HIBERN8 ? HIBERN8_EXITED : HIBERN8_ENTERED;
+            write_reg(l, IS, UIC_COMPLETE | HIBERN8_ENTERED | HIBERN8_EXITED);
+            write_reg(l, UICARG1, 0); write_reg(l, UICARG2, 0); write_reg(l, UICARG3, 0);
+            write_reg(l, UICCMD, l->phase == UFS_LINK_EXIT_HIBERN8 ? 0x18 : 0x17);
+            l->since = now;
+            l->phase = UFS_LINK_WAIT_HIBERN8;
+        } else if (now - l->since >= UIC_TIMEOUT_US) return fail(l, UFS_LINK_TIMEOUT);
+        break;
+    case UFS_LINK_WAIT_HIBERN8: {
+        uint32_t status = read_reg(l, IS);
+        if (status & l->uic_inflight) {
+            /* UHES/UHXS and UPMCRS acknowledge the physical transition.
+             * The normal UIC command-complete event can be masked. */
+            write_reg(l, IS, l->uic_inflight | (status & UIC_COMPLETE));
+            l->uic_inflight = 0;
+            l->uic_result = (status & UIC_COMPLETE) ? (uint8_t)read_reg(l, UICARG2) : 0;
+            if (l->uic_result || ((read_reg(l, HCS) >> 8) & 7) != 1) return fail(l, UFS_LINK_UIC);
+            l->since = now;
+            l->phase = l->operation == UFS_WAKE ? UFS_LINK_WAIT_PRESENT : UFS_LINK_STOP_HOST;
+        } else if (now - l->since >= UIC_TIMEOUT_US) return fail(l, UFS_LINK_TIMEOUT);
+        break;
+    }
+    case UFS_LINK_STOP_HOST:
+        if (read_reg(l, UTMRLRSR) || read_reg(l, UTMRLDBR)) return fail(l, UFS_LINK_OWNED);
+        if (stop_list(l)) {
+            if (l->operation == UFS_SLEEP) {
+                uint32_t hce = read_reg(l, HCE);
+                if (hce == UINT32_MAX || !(hce & 1)) return fail(l, UFS_LINK_CONTROLLER);
+                l->owns_controller = 0;
+                return l->phase = UFS_LINK_ASLEEP;
+            }
+            write_reg(l, HCE, 0);
+            l->since = now;
+            l->phase = UFS_LINK_WAIT_OFF;
+        } else if (now - l->since >= UIC_TIMEOUT_US) return fail(l, UFS_LINK_TIMEOUT);
+        break;
+    case UFS_LINK_WAIT_OFF: {
+        uint32_t hce = read_reg(l, HCE);
+        if (hce != UINT32_MAX && !(hce & 1) && !read_reg(l, UTRLRSR) && !read_reg(l, UTRLDBR) &&
+            !read_reg(l, UTMRLRSR) && !read_reg(l, UTMRLDBR)) {
+            /* Piano's supported media may require 2 ms of inactive link
+             * before the regulator votes can be dropped. Do not busy-wait. */
+            if (now - l->since < RAIL_SETTLE_US) break;
+            l->io.consume(l->io.context);
+            l->owns_controller = 0;
+            return l->phase = UFS_LINK_OFF;
+        }
+        if (now - l->since >= UIC_TIMEOUT_US) return fail(l, UFS_LINK_TIMEOUT);
+        break;
+    }
     default: return fail(l, UFS_LINK_PROTOCOL);
     }
     return l->phase;
 }
 
+int ufs_link_reset(struct ufs_link *l)
+{
+    if (!l->owns_controller) return 0;
+    if (l->phase != UFS_LINK_RESETTING) {
+        write_reg(l, IE, 0);
+        write_reg(l, HCE, 0);
+        l->stopping = 1;
+        l->phase = UFS_LINK_RESETTING;
+    }
+    uint32_t hce = read_reg(l, HCE);
+    if (hce == UINT32_MAX || (hce & 1) || read_reg(l, UTRLRSR) || read_reg(l, UTRLDBR) ||
+        read_reg(l, UTMRLRSR) || read_reg(l, UTMRLDBR)) return 0;
+    l->io.consume(l->io.context);
+    l->owns_controller = l->owns_list = l->uic_inflight = l->transfer_inflight = 0;
+    l->phase = UFS_LINK_STOPPED;
+    return 1;
+}
+
 int ufs_link_stop(struct ufs_link *l)
 {
     if (!l->owns_controller) return 1;
+    if (l->phase == UFS_LINK_RESETTING) return ufs_link_reset(l);
     l->stopping = 1;
     if (l->uic_inflight) {
-        if (!(read_reg(l, IS) & UIC_COMPLETE)) return 0;
+        if ((read_reg(l, IS) & l->uic_inflight) != l->uic_inflight) return 0;
+        write_reg(l, IS, l->uic_inflight);
         l->uic_inflight = 0;
-        write_reg(l, IS, UIC_COMPLETE);
     }
-    if (l->owns_list) {
-        if (!l->list_stop_issued) {
-            write_reg(l, UTRLRSR, 0);
-            if (l->transfer_inflight && (read_reg(l, UTRLDBR) & 1)) write_reg(l, UTRLCLR, ~UINT32_C(1));
-            l->list_stop_issued = 1;
-        }
-        if (read_reg(l, UTRLRSR) || read_reg(l, UTRLDBR)) return 0;
-        l->io.consume(l->io.context);
-        write_reg(l, IS, UTR_COMPLETE);
-        write_reg(l, UTRLBA, 0); write_reg(l, UTRLBAU, 0);
-        l->owns_list = l->transfer_inflight = 0;
+    if (!stop_list(l)) return 0;
+    if ((l->phase == UFS_LINK_READY || l->phase == UFS_LINK_KEEP_POWER) && l->media && l->media->restore_ahit) {
+        write_reg(l, AHIT, l->media->ahit);
+        if (read_reg(l, AHIT) != l->media->ahit) fail(l, UFS_LINK_CONTROLLER);
+        else l->media->restore_ahit = 0;
     }
     write_reg(l, IE, l->previous_ie);
     l->owns_controller = 0;
-    if (l->phase != UFS_LINK_READY && l->phase != UFS_LINK_FAILED) l->phase = UFS_LINK_STOPPED;
+    if (l->phase != UFS_LINK_READY && l->phase != UFS_LINK_FAILED && l->phase != UFS_LINK_KEEP_POWER)
+        l->phase = UFS_LINK_STOPPED;
     return 1;
 }

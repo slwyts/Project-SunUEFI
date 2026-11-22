@@ -4,21 +4,13 @@
 #include "piano_power.h"
 #include "platform.h"
 
-struct piano_ufs_parent {
-    void *context;
-    /* Storage PM has flushed the medium, completed its device power-down
-     * command, stopped background operations and placed the link OFF.
-     * Return the confirmed storage PM state, including after clock gating;
-     * HCI stopped, PHY stopped or system D3 by themselves are insufficient. */
-    int (*media_may_power_off)(void *);
-};
-
 typedef struct {
     PIANO_RPMH_INTERFACE api;
     struct rpmh_client *client;
-    struct piano_ufs_parent parent;
+    volatile LONG *media_off;
     unsigned held, phy_held;
     BOOLEAN owns_media, device_clock;
+    BOOLEAN s0_reference;
     ULONG ddr_kBps, cfg_kBps;
 } PIANO_UFS_RPMH;
 
@@ -26,7 +18,7 @@ typedef struct {
  * board's APPS RPMh channel. Take a separate reference for the adapter. */
 _IRQL_requires_(PASSIVE_LEVEL)
 BOOLEAN UfsPianoOpenRpmh(PIANO_UFS_RPMH *, const PIANO_RPMH_INTERFACE *,
-                         const struct piano_ufs_parent *);
+                         volatile LONG *media_off);
 _IRQL_requires_(PASSIVE_LEVEL)
 int UfsPianoSetRailsAndPaths(PIANO_UFS_RPMH *, int enable);
 _IRQL_requires_(PASSIVE_LEVEL)
@@ -41,3 +33,5 @@ enum piano_ufs_link_mode { PianoUfsPwm, PianoUfsHsA, PianoUfsHsB };
 _IRQL_requires_(PASSIVE_LEVEL)
 BOOLEAN UfsPianoSetLinkBandwidth(PIANO_UFS_RPMH *, enum piano_ufs_link_mode,
                                  unsigned tx_gear, unsigned rx_gear, unsigned tx_lanes, unsigned rx_lanes);
+BOOLEAN UfsPianoDiscoveryBandwidth(PIANO_UFS_RPMH *);
+BOOLEAN UfsPianoHasS0Power(const PIANO_UFS_RPMH *);

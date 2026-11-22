@@ -28,6 +28,6 @@ typedef struct {
 _IRQL_requires_(PASSIVE_LEVEL)
 ULONG UfsPianoFindAdapter(PIANO_UFS_CLOCK_DEVICE *controller, UFS_ADAPTER *adapter,
                           PPORT_CONFIGURATION_INFORMATION config, const PIANO_RPMH_INTERFACE *rpmh,
-                          const SM8750_GCC_INTERFACE *gcc, const struct piano_ufs_parent *parent);
+                          const SM8750_GCC_INTERFACE *gcc);
 _IRQL_requires_(PASSIVE_LEVEL)
 BOOLEAN UfsPianoRelease(PIANO_UFS_CLOCK_DEVICE *controller, ULONGLONG now_us);

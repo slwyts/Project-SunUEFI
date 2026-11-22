@@ -41,7 +41,7 @@ int UfsPianoSetRailsAndPaths(PIANO_UFS_RPMH *r, int on)
     if (!r || !r->client) return 0;
     if (!on && (r->phy_held || r->device_clock)) return 0;
     if (!on && r->owns_media && (r->held & (1u << DeviceRails)) &&
-        !r->parent.media_may_power_off(r->parent.context)) return 0;
+        !InterlockedCompareExchange(r->media_off, 0, 0)) return 0;
     if (on) {
         if (!r->held) {
             r->ddr_kBps = DDR_INIT;
@@ -105,21 +105,22 @@ int UfsPianoSetPhySupply(PIANO_UFS_RPMH *r, enum ufs_phy_supply supply, int on)
 }
 
 BOOLEAN UfsPianoOpenRpmh(PIANO_UFS_RPMH *r, const PIANO_RPMH_INTERFACE *a,
-                         const struct piano_ufs_parent *parent)
+                         volatile LONG *media_off)
 {
-    if (!r || r->client || !parent || !parent->media_may_power_off ||
+    if (!r || r->client || !media_off ||
         !a || a->Header.Size < sizeof(*a) || a->Header.Version != PIANO_RPMH_INTERFACE_VERSION ||
         !a->Header.InterfaceReference || !a->Header.InterfaceDereference ||
         !a->Open || !a->Close || !a->SetLevel || !a->SetBandwidth || !a->SetUfsSupplies ||
-        !a->SetAuxSupply || !a->HoldBootResources || !a->FinishBootResources) return FALSE;
+        !a->SetAuxSupply || !a->HoldBootResources || !a->FinishBootResources || !a->HoldS0Power) return FALSE;
     a->Header.InterfaceReference(a->Header.Context);
     struct rpmh_client *client = NULL;
     if (!NT_SUCCESS(a->Open(a->Header.Context,&client)) || !client) {
         a->Header.InterfaceDereference(a->Header.Context);
         return FALSE;
     }
-    *r = (PIANO_UFS_RPMH){.api = *a, .client = client, .parent = *parent,
+    *r = (PIANO_UFS_RPMH){.api = *a, .client = client, .media_off = media_off,
                           .ddr_kBps = DDR_INIT, .cfg_kBps = CFG_INIT};
+    r->s0_reference = NT_SUCCESS(a->HoldS0Power(a->Header.Context, client));
     return TRUE;
 }
 
@@ -130,6 +131,32 @@ BOOLEAN UfsPianoCloseRpmh(PIANO_UFS_RPMH *r)
     r->api.Header.InterfaceDereference(r->api.Header.Context);
     *r = (PIANO_UFS_RPMH){0};
     return TRUE;
+}
+
+BOOLEAN UfsPianoHasS0Power(const PIANO_UFS_RPMH *r)
+{
+    return r->s0_reference && r->client && r->held == (1u << Count) - 1 && r->device_clock &&
+           r->phy_held == (1u << UFS_PHY_SUPPLY_COUNT) - 1;
+}
+
+static BOOLEAN set_bandwidth(PIANO_UFS_RPMH *r, ULONG ddr, ULONG cfg)
+{
+    PVOID ctx = r->api.Header.Context;
+    ULONG old_ddr = r->ddr_kBps;
+    if (!NT_SUCCESS(r->api.SetBandwidth(ctx,r->client,RPMH_UFS_DDR,0,ddr))) return FALSE;
+    r->ddr_kBps = ddr;
+    if (!NT_SUCCESS(r->api.SetBandwidth(ctx,r->client,RPMH_CPU_UFS,0,cfg))) {
+        if (ddr < old_ddr && NT_SUCCESS(r->api.SetBandwidth(ctx,r->client,RPMH_UFS_DDR,0,old_ddr)))
+            r->ddr_kBps = old_ddr;
+        return FALSE;
+    }
+    r->cfg_kBps = cfg;
+    return TRUE;
+}
+
+BOOLEAN UfsPianoDiscoveryBandwidth(PIANO_UFS_RPMH *r)
+{
+    return r && r->client && r->held == (1u << Count) - 1 && set_bandwidth(r, DDR_INIT, CFG_INIT);
 }
 
 BOOLEAN UfsPianoSetLinkBandwidth(PIANO_UFS_RPMH *r, enum piano_ufs_link_mode mode,
@@ -148,17 +175,5 @@ BOOLEAN UfsPianoSetLinkBandwidth(PIANO_UFS_RPMH *r, enum piano_ufs_link_mode mod
     unsigned g = max(tx_gear,rx_gear)-1, l = max(tx_lanes,rx_lanes)-1;
     ULONG ddr = mode == PianoUfsPwm ? (922u << (g+l)) : hs_ddr[mode-PianoUfsHsA][g][l];
     ULONG cfg = mode == PianoUfsPwm ? 1000 : hs_cfg[g][l];
-    PVOID ctx = r->api.Header.Context;
-    ULONG old_ddr = r->ddr_kBps;
-    if (!NT_SUCCESS(r->api.SetBandwidth(ctx,r->client,RPMH_UFS_DDR,0,ddr))) return FALSE;
-    r->ddr_kBps = ddr;
-    if (!NT_SUCCESS(r->api.SetBandwidth(ctx,r->client,RPMH_CPU_UFS,0,cfg))) {
-        /* Keep discovery bandwidth when the new pair was not accepted.
-         * An already granted increase is sufficient for both modes. */
-        if (ddr < old_ddr && NT_SUCCESS(r->api.SetBandwidth(ctx,r->client,RPMH_UFS_DDR,0,old_ddr)))
-            r->ddr_kBps = old_ddr;
-        return FALSE;
-    }
-    r->cfg_kBps = cfg;
-    return TRUE;
+    return set_bandwidth(r, ddr, cfg);
 }

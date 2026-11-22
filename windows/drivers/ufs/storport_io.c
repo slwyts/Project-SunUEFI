@@ -106,7 +106,7 @@ fail:
 
 VOID UfsIoRelease(UFS_IO_QUEUE *q)
 {
-    if (!q->running && !q->owns_list && !q->active && !q->managing && q->registers) {
+    if (!q->running && !q->owns_list && !q->active && !q->managing && !q->resetting && q->registers) {
         StorPortFreeDeviceBase(q->extension, q->registers);
         RtlZeroMemory(q, sizeof(*q));
     }
@@ -115,7 +115,8 @@ VOID UfsIoRelease(UFS_IO_QUEUE *q)
 BOOLEAN UfsIoStart(UFS_IO_QUEUE *q)
 {
     if (!q || !q->extension || !q->registers || !q->list || !q->slot_count || q->slot_count > UFS_SDB_MAX_SLOTS ||
-        !q->prds_per_command || q->running || q->owns_list || q->managing || !q->device_ready || q->active || q->faults)
+        !q->prds_per_command || q->running || q->owns_list || q->managing || q->resetting ||
+        !q->device_ready || q->active || q->faults)
         return FALSE;
     ULONG caps = rd(q, HCI_CAP), version = rd(q, HCI_VER);
     if (version < 0x200 || version == MAXULONG || caps == MAXULONG || q->slot_count > 1 + (caps & 31) ||
@@ -177,14 +178,14 @@ BOOLEAN UfsIoBuildRequest(PVOID extension, PSCSI_REQUEST_BLOCK srb)
     return TRUE;
 }
 
-BOOLEAN UfsIoStartRequest(UFS_IO_QUEUE *q, PVOID srb)
+static BOOLEAN start_request(UFS_IO_QUEUE *q, PVOID srb, BOOLEAN power_flush)
 {
-    if (!q->running || q->faults) {
+    if (!q->running || q->faults || q->resetting) {
         finish(q, srb, SRB_STATUS_BUSY, 0, 0);
         return TRUE;
     }
     ULONG function = SrbGetSrbFunction(srb);
-    BOOLEAN flush = function == SRB_FUNCTION_FLUSH || function == SRB_FUNCTION_SHUTDOWN;
+    BOOLEAN flush = function == SRB_FUNCTION_FLUSH || function == SRB_FUNCTION_SHUTDOWN || power_flush;
     if ((!flush && function != SRB_FUNCTION_EXECUTE_SCSI) || SrbGetPathId(srb) || SrbGetTargetId(srb)) {
         finish(q, srb, SRB_STATUS_INVALID_REQUEST, 0, 0);
         return TRUE;
@@ -196,6 +197,13 @@ BOOLEAN UfsIoStartRequest(UFS_IO_QUEUE *q, PVOID srb)
     if (!ufs_scsi_lun(q->enabled_luns, SrbGetLun(srb), cdb, cdb_bytes, &lun)) {
         finish(q, srb, SRB_STATUS_NO_DEVICE, 0, 0);
         return TRUE;
+    }
+    if (lun < UFS_MAX_UNIT_NUMBERS) {
+        ULONG bit = 1u << lun;
+        if ((q->flushing_luns | q->sleeping_luns) & bit) {
+            finish(q, srb, flush && (q->sleeping_luns & bit) ? SRB_STATUS_SUCCESS : SRB_STATUS_BUSY, 0, 0);
+            return TRUE;
+        }
     }
     ULONG flags = flush ? 0 : SrbGetSrbFlags(srb), size = flush ? 0 : SrbGetDataTransferLength(srb);
     ULONG slot;
@@ -247,12 +255,35 @@ BOOLEAN UfsIoStartRequest(UFS_IO_QUEUE *q, PVOID srb)
     ULONG bit = 1u << slot;
     s->srb = srb;
     q->active |= bit;
+    if (power_flush) q->flushing_luns |= 1u << lun;
     SrbSetSrbStatus(srb, SRB_STATUS_PENDING);
     __dmb(_ARM64_BARRIER_OSHST);
     wr(q, HCI_UTRLDBR, bit);
     return TRUE;
 bad_mapping:
     finish(q, srb, SRB_STATUS_INVALID_REQUEST, 0, 0);
+    return TRUE;
+}
+
+BOOLEAN UfsIoStartRequest(UFS_IO_QUEUE *q, PVOID srb)
+{
+    return start_request(q, srb, FALSE);
+}
+
+BOOLEAN UfsIoPowerUnit(UFS_IO_QUEUE *q, PVOID srb, STOR_DEVICE_POWER_STATE state)
+{
+    UCHAR lun = SrbGetLun(srb);
+    if (SrbGetPathId(srb) || SrbGetTargetId(srb) || lun >= UFS_MAX_UNIT_NUMBERS ||
+        !(q->enabled_luns & (1u << lun))) {
+        finish(q, srb, SRB_STATUS_NO_DEVICE, 0, 0);
+    } else if (state == StorPowerDeviceD3) {
+        return start_request(q, srb, TRUE);
+    } else if (state == StorPowerDeviceD0 && q->running && !q->faults && !(q->flushing_luns & (1u << lun))) {
+        q->sleeping_luns &= ~(1u << lun);
+        finish(q, srb, SRB_STATUS_SUCCESS, 0, 0);
+    } else {
+        finish(q, srb, SRB_STATUS_BUSY, 0, 0);
+    }
     return TRUE;
 }
 
@@ -277,6 +308,11 @@ ULONG UfsIoInterrupt(UFS_IO_QUEUE *q)
         else if (c.result == UFS_RESULT_ABORTED) status = SRB_STATUS_ABORTED;
         else if (c.result == UFS_RESULT_SCSI && c.scsi_status == SCSISTAT_BUSY) status = SRB_STATUS_BUSY;
         PVOID srb = s->srb;
+        if (SrbGetSrbFunction(srb) == SRB_FUNCTION_POWER) {
+            ULONG bit_lun = 1u << SrbGetLun(srb);
+            q->flushing_luns &= ~bit_lun;
+            if (status == SRB_STATUS_SUCCESS) q->sleeping_luns |= bit_lun;
+        }
         if (s->tail_destination) {
             ULONG head = SrbGetDataTransferLength(srb) & ~3u;
             if (c.bytes > head) {
@@ -306,7 +342,7 @@ ULONG UfsIoInterrupt(UFS_IO_QUEUE *q)
 
 BOOLEAN UfsIoStop(UFS_IO_QUEUE *q)
 {
-    if (q->managing) return FALSE;
+    if (q->managing || q->resetting) return FALSE;
     if (!q->registers) return !q->active && !q->running && !q->owns_list;
     if (rd(q, HCI_UTMRLDBR) || rd(q, HCI_UTMRLRSR)) return FALSE;
     if (!q->owns_list) return !q->running && !q->active && !rd(q, HCI_UTRLDBR) && !rd(q, HCI_UTRLRSR);
@@ -323,15 +359,18 @@ BOOLEAN UfsIoStop(UFS_IO_QUEUE *q)
 BOOLEAN UfsIoReset(UFS_IO_QUEUE *q)
 {
     if (!q || !q->registers || q->managing) return FALSE;
-    wr(q, HCI_IE, 0);
-    wr(q, HCI_HCE, 0);
+    if (!q->resetting) {
+        wr(q, HCI_IE, 0);
+        wr(q, HCI_HCE, 0);
+        q->resetting = TRUE;
+    }
     /* Do not busy-wait through a slow reset from the StartIo/interrupt lock. */
     ULONG hce = rd(q, HCI_HCE);
     if (hce == MAXULONG || (hce & 1) || rd(q, HCI_UTRLRSR) || rd(q, HCI_UTRLDBR) ||
         rd(q, HCI_UTMRLRSR) || rd(q, HCI_UTMRLDBR)) return FALSE;
     __dmb(_ARM64_BARRIER_OSH);
-    q->owns_list = q->running = q->device_ready = FALSE;
-    q->faults = q->enabled_luns = 0;
+    q->owns_list = q->running = q->device_ready = q->resetting = FALSE;
+    q->faults = q->enabled_luns = q->flushing_luns = 0;
     for (ULONG i = 0; i < q->slot_count; ++i) {
         PVOID srb = q->slot[i].srb;
         q->slot[i].srb = NULL;

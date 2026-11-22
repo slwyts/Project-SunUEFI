@@ -72,12 +72,27 @@ static void unmap_controls(PIANO_UFS_CLOCK_DEVICE *c)
 {
     if (c->adapter && c->adapter->link_power_context == c) {
         c->adapter->link_power_ready = NULL;
+        c->adapter->link_power_begin = NULL;
+        c->adapter->can_retain_s0 = NULL;
         c->adapter->link_power_context = NULL;
     }
     if (c->bus_reg[PIANO_QREF]) StorPortFreeDeviceBase(c->adapter,c->bus_reg[PIANO_QREF]);
     if (c->windows.clocks) c->gcc.CloseUfs(c->gcc.Header.Context,&c->windows);
     if (c->gcc.Header.InterfaceDereference) c->gcc.Header.InterfaceDereference(c->gcc.Header.Context);
     RtlZeroMemory(c, sizeof(*c));
+}
+
+static BOOLEAN begin_link_power(PVOID context)
+{
+    PIANO_UFS_CLOCK_DEVICE *c = context;
+    return UfsPianoDiscoveryBandwidth(&c->rpmh);
+}
+
+static BOOLEAN can_retain_s0(PVOID context)
+{
+    PIANO_UFS_CLOCK_DEVICE *c = context;
+    return c->adapter->platform.bus_vote && c->adapter->platform.phy.lane_vote && c->power.ready &&
+           UfsPianoHasS0Power(&c->rpmh);
 }
 
 static void link_power_ready(PVOID context, const uint8_t *p)
@@ -136,13 +151,13 @@ static PULONG map_resource(UFS_ADAPTER *a, PPORT_CONFIGURATION_INFORMATION cfg, 
 }
 
 ULONG UfsPianoFindAdapter(PIANO_UFS_CLOCK_DEVICE *c, UFS_ADAPTER *a, PPORT_CONFIGURATION_INFORMATION cfg,
-                          const PIANO_RPMH_INTERFACE *rpmh, const SM8750_GCC_INTERFACE *gcc,
-                          const struct piano_ufs_parent *parent)
+                          const PIANO_RPMH_INTERFACE *rpmh, const SM8750_GCC_INTERFACE *gcc)
 {
     if (!c || !a || c->adapter || !gcc || gcc->Header.Size<sizeof(*gcc) ||
         gcc->Header.Version!=SM8750_GCC_INTERFACE_VERSION || !gcc->Header.InterfaceReference ||
         !gcc->Header.InterfaceDereference || !gcc->Set || !gcc->OpenUfs || !gcc->CloseUfs ||
-        !cfg || !cfg->AccessRanges || cfg->NumberOfAccessRanges < 3)
+        !cfg || cfg->Length < RTL_SIZEOF_THROUGH_FIELD(PORT_CONFIGURATION_INFORMATION, DumpMode) || cfg->DumpMode ||
+        !cfg->AccessRanges || cfg->NumberOfAccessRanges < 3)
         return SP_RETURN_BAD_CONFIG;
     struct piano_ufs_clock_io io = { .context = c, .read = read_clock, .write = write_clock, .wait_us = wait_us };
     struct ufs_platform_power power;
@@ -160,7 +175,7 @@ ULONG UfsPianoFindAdapter(PIANO_UFS_CLOCK_DEVICE *c, UFS_ADAPTER *a, PPORT_CONFI
     for (unsigned i=0;i<PIANO_QREF;++i) c->bus_reg[i]=c->windows.clocks+(piano_ufs_base_address[i]-bcr)/4;
     c->bus_reg[PIANO_QREF]=map_resource(a,cfg,piano_ufs_base_address[PIANO_QREF],sizeof(ULONG));
     if (!c->bus_reg[PIANO_QREF]) goto failed;
-    if (!UfsPianoOpenRpmh(&c->rpmh,rpmh,parent)) goto failed;
+    if (!UfsPianoOpenRpmh(&c->rpmh,rpmh,&a->media_off)) goto failed;
     c->base.io=(struct piano_ufs_base_io){c,read_base,write_base,wait_us,set_parent,device_reference};
     c->power.inputs=(struct piano_ufs_bus_inputs){c,set_rails_and_paths,set_bus_clocks};
     power.phy = (struct ufs_phy_power){c,set_phy_supply,set_phy_clocks,collapse_phy};
@@ -168,10 +183,11 @@ ULONG UfsPianoFindAdapter(PIANO_UFS_CLOCK_DEVICE *c, UFS_ADAPTER *a, PPORT_CONFI
     if (result == SP_RETURN_FOUND) {
         piano_ufs_claim_domains(&c->power);
         c->rpmh.owns_media = TRUE;
-        a->platform.release_context = parent->context;
-        a->platform.media_may_power_off = parent->media_may_power_off;
+        a->platform.media_off = &a->media_off;
         a->link_power_context = c;
         a->link_power_ready = link_power_ready;
+        a->link_power_begin = begin_link_power;
+        a->can_retain_s0 = can_retain_s0;
     } else if (!a->platform.extension && piano_ufs_set_bus_power(&c->power, 0) && UfsPianoCloseRpmh(&c->rpmh))
         unmap_controls(c);
     return result;

@@ -25,8 +25,9 @@ typedef struct {
     ULONGLONG dma_limit;  /* Minimum of the HCI and platform DMA masks. */
     UFS_IO_SLOT slot[UFS_SDB_MAX_SLOTS];
     ULONG slot_count, active, faults, enabled_luns;
+    ULONG sleeping_luns, flushing_luns;
     USHORT prds_per_command;
-    BOOLEAN running, owns_list, managing, device_ready;
+    BOOLEAN running, owns_list, managing, device_ready, resetting;
 } UFS_IO_QUEUE;
 
 /* Map the bus-relative ACCESS_RANGE with its reported bus interface.
@@ -43,6 +44,9 @@ BOOLEAN UfsIoStart(UFS_IO_QUEUE *queue);
  */
 BOOLEAN UfsIoBuildRequest(PVOID extension, PSCSI_REQUEST_BLOCK srb);
 BOOLEAN UfsIoStartRequest(UFS_IO_QUEUE *queue, PVOID srb);
+/* An individual LU D3 flushes and blocks only that LU; other LUs keep using
+ * the powered device. Adapter D3 has its own device-wide sequence. */
+BOOLEAN UfsIoPowerUnit(UFS_IO_QUEUE *queue, PVOID srb, STOR_DEVICE_POWER_STATE state);
 ULONG UfsIoInterrupt(UFS_IO_QUEUE *queue);
 /* Call Stop and release DMA only after every outstanding request completed.
  * After a controller fault the platform error handler must stop the engine

@@ -23,6 +23,11 @@ typedef struct {
 } RPMH_DEVICE;
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(RPMH_DEVICE, rpmh_device)
 
+typedef struct {
+    struct rpmh_client client;
+    BOOLEAN s0_reference;
+} RPMH_DEVICE_CLIENT;
+
 DRIVER_INITIALIZE DriverEntry;
 static EVT_WDF_DRIVER_DEVICE_ADD add_device;
 static EVT_WDF_DEVICE_PREPARE_HARDWARE prepare_hardware;
@@ -382,7 +387,7 @@ static NTSTATUS client_open(PVOID context, struct rpmh_client **out)
     NTSTATUS status = STATUS_DEVICE_NOT_READY;
     if (gone(d)) status = STATUS_DEVICE_REMOVED;
     else if (d->online) {
-        struct rpmh_client *client = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*client), RPMH_TAG);
+        struct rpmh_client *client = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(RPMH_DEVICE_CLIENT), RPMH_TAG);
         if (!client) status = STATUS_INSUFFICIENT_RESOURCES;
         else if (!rpmh_client_open(&d->provider, client)) {
             ExFreePoolWithTag(client, RPMH_TAG);
@@ -410,11 +415,38 @@ static NTSTATUS client_close(PVOID context, struct rpmh_client *client)
         status = STATUS_SUCCESS;
     } else if (rpmh_client_close(&d->provider, client)) status = STATUS_SUCCESS;
     else if (d->online) status = STATUS_IO_DEVICE_ERROR;
-    if (NT_SUCCESS(status)) ExFreePoolWithTag(client, RPMH_TAG);
+    BOOLEAN release = FALSE;
+    if (NT_SUCCESS(status)) {
+        release = CONTAINING_RECORD(client, RPMH_DEVICE_CLIENT, client)->s0_reference;
+        ExFreePoolWithTag(client, RPMH_TAG);
+    }
     update_retry(d);
     unlock_device(d);
+    if (release) WdfDeviceResumeIdle(d->device);
     if (NT_SUCCESS(status)) interface_dereference(context);
     return status;
+}
+
+static NTSTATUS hold_client_s0(PVOID context, struct rpmh_client *client)
+{
+    RPMH_DEVICE *d = rpmh_device((WDFDEVICE)context);
+    /* Waiting can itself enter D0 and run our callbacks: do not hold their lock. */
+    NTSTATUS status = WdfDeviceStopIdle(d->device, TRUE);
+    if (!NT_SUCCESS(status)) return status;
+    BOOLEAN keep = FALSE;
+    lock_device(d);
+    struct rpmh_client *it = d->provider.clients;
+    while (it && it != client) it = it->next;
+    if (!it) status = STATUS_INVALID_HANDLE;
+    else if (gone(d) || !d->online) status = STATUS_DEVICE_NOT_READY;
+    else {
+        RPMH_DEVICE_CLIENT *c = CONTAINING_RECORD(it, RPMH_DEVICE_CLIENT, client);
+        keep = !c->s0_reference;
+        c->s0_reference = TRUE;
+    }
+    unlock_device(d);
+    if (!keep) WdfDeviceResumeIdle(d->device);
+    return status; /* The successful Close releases this client's reference. */
 }
 
 static NTSTATUS set_level(PVOID context, struct rpmh_client *client, enum rpmh_rail rail, ULONG level)
@@ -576,6 +608,7 @@ static NTSTATUS add_device(WDFDRIVER driver, PWDFDEVICE_INIT init)
     api.SetAuxSupply = set_aux_supply;
     api.HoldBootResources = hold_boot;
     api.FinishBootResources = finish_boot;
+    api.HoldS0Power = hold_client_s0;
     WDF_QUERY_INTERFACE_CONFIG query;
     WDF_QUERY_INTERFACE_CONFIG_INIT(&query, &api.Header, &GUID_PIANO_RPMH_INTERFACE, NULL);
     return WdfDeviceAddQueryInterface(device, &query);

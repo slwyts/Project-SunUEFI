@@ -30,7 +30,8 @@ enum ufs_platform_error UfsPlatformPrepare(UFS_PLATFORM_DEVICE *d, UFS_IO_QUEUE 
                                           USHORT prds_per_command, ULONGLONG now_us)
 {
     if (!d || !q || !extension || !config || !power || !power->set_bus_power ||
-        !power->set_lane_clocks || !config->AccessRanges || config->NumberOfAccessRanges < 2)
+        !power->set_lane_clocks || config->Length < RTL_SIZEOF_THROUGH_FIELD(PORT_CONFIGURATION_INFORMATION, DumpMode) ||
+        config->DumpMode || !config->AccessRanges || config->NumberOfAccessRanges < 2)
         return UFS_PLATFORM_RESOURCES;
     if (d->extension || q->extension || q->registers) return UFS_PLATFORM_IN_USE;
     const ACCESS_RANGE *host = &(*config->AccessRanges)[0], *phy = &(*config->AccessRanges)[1];
@@ -47,7 +48,8 @@ enum ufs_platform_error UfsPlatformPrepare(UFS_PLATFORM_DEVICE *d, UFS_IO_QUEUE 
     d->phy_registers = StorPortGetDeviceBase(extension, config->AdapterInterfaceType, config->SystemIoBusNumber,
                                              phy->RangeStart, PHY_BYTES, FALSE);
     enum ufs_platform_error error = UFS_PLATFORM_RESOURCES;
-    if (d->phy_registers && UfsIoPrepare(q, extension, config, host, dma_bits, prds_per_command)) {
+    if (d->phy_registers && StorPortInitializeWorker(extension, &d->worker) == STOR_STATUS_SUCCESS &&
+        UfsIoPrepare(q, extension, config, host, dma_bits, prds_per_command)) {
         struct ufs_platform_io io = { .context = d, .read = read_register, .write = write_register };
         error = ufs_platform_begin(&d->phy, &io, power, now_us);
         if (error == UFS_PLATFORM_OK) return error;
@@ -59,9 +61,15 @@ BOOLEAN UfsPlatformRelease(UFS_PLATFORM_DEVICE *d, ULONGLONG now_us)
 {
     if (!d) return FALSE;
     if (!d->extension) return TRUE;
-    if (d->media_may_power_off && !d->media_may_power_off(d->release_context)) return FALSE;
+    if (d->media_off && !InterlockedCompareExchange(d->media_off, 0, 0)) return FALSE;
+    if (d->worker_active) return FALSE;
     UFS_IO_QUEUE *q = d->queue;
-    if (q->running || q->owns_list || q->active || q->managing || !ufs_platform_stop(&d->phy, now_us)) return FALSE;
+    if (q->running || q->owns_list || q->active || q->managing || q->resetting) return FALSE;
+    if (d->worker) {
+        if (StorPortFreeWorker(d->extension, d->worker) != STOR_STATUS_SUCCESS) return FALSE;
+        d->worker = NULL;
+    }
+    if (!ufs_platform_stop(&d->phy, now_us)) return FALSE;
     if (d->bus_vote && !d->power.set_bus_power(d->power.context, 0)) return FALSE;
     UfsIoRelease(q);
     if (d->phy_registers) StorPortFreeDeviceBase(d->extension, d->phy_registers);

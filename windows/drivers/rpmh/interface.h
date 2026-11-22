@@ -10,7 +10,7 @@
 static const GUID GUID_PIANO_RPMH_INTERFACE = {
     0xdda1f9f3,0x747d,0x4750,{0x99,0xfa,0x17,0x2c,0xae,0x1c,0xd8,0xe6}
 };
-#define PIANO_RPMH_INTERFACE_VERSION 5
+#define PIANO_RPMH_INTERFACE_VERSION 6
 typedef struct {
     INTERFACE Header;
     NTSTATUS (*Open)(PVOID, struct rpmh_client **);
@@ -29,4 +29,7 @@ typedef struct {
      * complete set of consumer dependencies calls Finish after they sync. */
     NTSTATUS (*HoldBootResources)(PVOID, unsigned rails, unsigned paths, unsigned supplies);
     NTSTATUS (*FinishBootResources)(PVOID, unsigned rails, unsigned paths, unsigned supplies);
+    /* Hold the provider in D0 while the computer is in S0. This does not
+     * program an AOP sleep vote or guarantee power during a system Sx. */
+    NTSTATUS (*HoldS0Power)(PVOID, struct rpmh_client *);
 } PIANO_RPMH_INTERFACE;

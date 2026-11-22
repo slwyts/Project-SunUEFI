@@ -9,7 +9,8 @@ struct host {
     struct ufs_management_ucd ucd;
     struct ufs_link l;
     uint64_t now;
-    unsigned startup, publish, consume, read_init, transfers, hold_stop, get_count;
+    unsigned startup, publish, consume, read_init, transfers, hold_stop, get_count, hibern8, hibern8_exit;
+    unsigned hold_hce, refuse_timer;
     uint32_t original_ie;
 };
 static uint32_t reg_read(void *ctx, unsigned reg) { return ((struct host *)ctx)->regs[reg / 4]; }
@@ -27,10 +28,17 @@ static void reg_write(void *ctx, unsigned reg, uint32_t value)
         assert(h->get_count < sizeof(pa)/sizeof(*pa) && h->regs[0x94 / 4] == (pa[h->get_count] << 16));
         assert(!h->regs[0x98 / 4] && !h->regs[0x9c / 4] && !(h->regs[0x20 / 4] & 0x400));
         ++h->get_count;
+    } else if (reg == 0x90 && (value == 0x17 || value == 0x18)) {
+        assert(!h->regs[0x94 / 4] && !h->regs[0x98 / 4] && !h->regs[0x9c / 4]);
+        assert(!(h->regs[0x20 / 4] & 0x440) && !h->regs[0x18 / 4]);
+        if (value == 0x17) ++h->hibern8;
+        else ++h->hibern8_exit;
     } else if (reg == 0x90) {
         assert(value == 0x16 && !h->regs[0x94 / 4] && !h->regs[0x98 / 4] && !h->regs[0x9c / 4]);
         ++h->startup;
-    } else h->regs[reg / 4] = value;
+    } else if (!(reg == 0x34 && h->hold_hce) && !(reg == 0x18 && h->refuse_timer)) {
+        h->regs[reg / 4] = value;
+    }
 }
 static void barrier_out(void *ctx) { ++((struct host *)ctx)->publish; }
 static void barrier_in(void *ctx) { ++((struct host *)ctx)->consume; }
@@ -84,6 +92,7 @@ static void deliver(struct host *h)
                 assert(request[13] == 2 && (request[14] == 0 || request[14] == 6));
                 length = 0x2d; desc[2] = request[14];
                 desc[3] = request[14] == 0 || request[14] == 6;
+                desc[5] = request[14] == 6; /* LU 6 supports power-on write protection. */
             }
             rsp[11] = length; rsp[19] = length; desc[0] = length; desc[1] = request[13];
         }
@@ -103,8 +112,217 @@ static void warm_nop(struct host *h)
     assert(h->l.phase == UFS_LINK_WAIT_REPLY && !h->ucd.request[0]);
 }
 
+/* Complete only what the device actually received. Never derive the expected
+ * LU, CDB, flag or transition from the driver's internal command enum. */
+static void media_reply(struct host *h, uint8_t opcode, uint8_t id, uint8_t mode, uint32_t value)
+{
+    assert(h->l.phase == UFS_LINK_WAIT_REPLY && h->regs[0x58 / 4] == 1);
+    uint8_t *r = h->ucd.request, *rsp = h->ucd.response;
+    assert(h->list[0].data[3] == 0x11 && h->list[0].data[8] == 15 &&
+           !h->list[0].data[28] && !h->list[0].data[29]);
+    uint8_t expected[32] = {0};
+    if (opcode == 0x35 || opcode == 0x1b) {
+        expected[0] = 1; expected[1] = 1; expected[2] = id;
+        expected[16] = opcode; expected[20] = mode;
+        rsp[0] = 0x21; rsp[2] = id;
+    } else {
+        expected[0] = 0x16;
+        expected[5] = opcode == 6 || opcode == 7 ? 0x81 : 1;
+        expected[12] = opcode; expected[13] = id;
+        rsp[0] = 0x36; rsp[5] = expected[5]; rsp[12] = opcode; rsp[13] = id;
+        for (unsigned i = 0; i < 4; ++i) rsp[23-i] = (uint8_t)(value >> (8*i));
+    }
+    assert(!memcmp(expected, r, sizeof(expected)));
+    h->list[0].data[8] = 0;
+    h->regs[0x58 / 4] = 0; h->regs[0x20 / 4] |= 1;
+}
+
+static void request(struct host *h)
+{
+    for (unsigned n = 0; n < 8 && h->l.phase != UFS_LINK_WAIT_REPLY; ++n)
+        assert(pump(h) != UFS_LINK_FAILED);
+    assert(h->l.phase == UFS_LINK_WAIT_REPLY);
+}
+
+static void answer(struct host *h, uint8_t opcode, uint8_t id, uint8_t mode, uint32_t value)
+{
+    request(h);
+    media_reply(h, opcode, id, mode, value);
+    assert(pump(h) != UFS_LINK_FAILED);
+}
+
+static void start_down(struct host *h, struct ufs_media_settings *m, enum ufs_link_operation operation)
+{
+    init(h, 1);
+    assert(ufs_link_stop(&h->l));
+    h->regs[0x18 / 4] = 0x401;
+    struct ufs_link_io io = h->l.io;
+    assert(ufs_link_media(&h->l, &io, m, UINT32_C(0x80000040), operation, h->now) == UFS_LINK_OK);
+    assert(!h->regs[0x18 / 4] && m->restore_ahit && m->ahit == 0x401);
+}
+
+static void check_media_power(void)
+{
+    struct host h;
+    struct ufs_media_settings m = {0};
+    start_down(&h, &m, UFS_POWER_OFF);
+    answer(&h, 0x35, 6, 0, 0);
+    answer(&h, 0x35, 31, 0, 0); /* Sparse LUs; no guessed disk zero. */
+    answer(&h, 5, 4, 0, 1);
+    answer(&h, 7, 4, 0, 0);
+    answer(&h, 5, 4, 0, 0);
+    answer(&h, 0x1b, 0xd0, 0x30, 0);
+    answer(&h, 3, 2, 0, 0x30);
+    assert(!h.hibern8 && h.regs[0x34 / 4] == 1);
+    answer(&h, 3, 2, 0, 0x33);
+    h.regs[0x20 / 4] |= 0x440; /* An earlier UIC completion proves nothing. */
+    assert(pump(&h) == UFS_LINK_WAIT_HIBERN8 && h.hibern8 == 1);
+    h.regs[0x20 / 4] |= 0x400;
+    assert(pump(&h) == UFS_LINK_WAIT_HIBERN8 && h.regs[0x34 / 4] == 1);
+    h.regs[0x20 / 4] |= 0x40;
+    assert(pump(&h) == UFS_LINK_STOP_HOST && pump(&h) == UFS_LINK_WAIT_OFF);
+    assert(!h.regs[0x60 / 4] && !h.regs[0x50 / 4] && !h.regs[0x34 / 4]);
+    assert(pump(&h) == UFS_LINK_WAIT_OFF); /* Inactive-link delay before releasing VCC. */
+    assert(pump(&h) == UFS_LINK_OFF && !h.l.owns_controller && !h.l.owns_list && m.restore_bkops);
+
+    /* Wake from OFF: a new link, not Hibern8 Exit on a reset HCI. With no
+     * device power cycle the media may still report PowerDown. */
+    struct ufs_link_io io = h.l.io;
+    h.regs[0x30 / 4] = 8;
+    assert(ufs_link_begin(&h.l, &io, h.now) == UFS_LINK_OK);
+    h.l.media = &m;
+    for (unsigned n = 0; n < 20 && h.l.command != UFS_MGMT_READ_MODE; ++n) {
+        if (h.l.phase == UFS_LINK_WAIT_REPLY) deliver(&h);
+        if (h.l.phase == UFS_LINK_WAIT_STARTUP) {
+            h.regs[0x30 / 4] = 0x10f; h.regs[0x20 / 4] |= 0x400;
+        }
+        assert(pump(&h) != UFS_LINK_FAILED);
+    }
+    assert(h.startup == 1 && h.regs[0x18 / 4] == 0);
+    answer(&h, 3, 2, 0, 0x33);
+    answer(&h, 0x1b, 0xd0, 0x10, 0);
+    answer(&h, 3, 2, 0, 0x10);
+    answer(&h, 3, 2, 0, 0x11);
+    answer(&h, 6, 4, 0, 0);
+    answer(&h, 5, 4, 0, 1);
+    for (unsigned n = 0; n < 25 && h.l.phase != UFS_LINK_READY; ++n) {
+        if (h.l.phase == UFS_LINK_WAIT_REPLY) deliver(&h);
+        assert(pump(&h) != UFS_LINK_FAILED);
+    }
+    assert(h.l.phase == UFS_LINK_READY && !m.restore_bkops && m.check_power_on_wp);
+    assert(ufs_link_stop(&h.l) && h.regs[0x18 / 4] == 0x401 && !m.restore_ahit);
+
+    start_down(&h, &m, UFS_POWER_OFF);
+    answer(&h, 0x35, 6, 0, 0);
+    answer(&h, 0x35, 31, 0, 0);
+    answer(&h, 5, 3, 0, 1);
+    assert(h.l.phase == UFS_LINK_KEEP_POWER && !h.hibern8 && h.regs[0x34 / 4]);
+    assert(ufs_link_stop(&h.l) && h.l.phase == UFS_LINK_KEEP_POWER &&
+           !m.restore_ahit && h.regs[0x18 / 4] == 0x401 && h.l.enabled_luns == UINT32_C(0x80000040));
+
+    for (unsigned fault = 0; fault != 8; ++fault) {
+        m = (struct ufs_media_settings){0};
+        start_down(&h, &m, UFS_POWER_OFF);
+        if (fault == 0) {
+            request(&h);
+            assert(ufs_link_poll(&h.l, h.now + 10000000) == UFS_LINK_FAILED);
+            h.hold_stop = 1;
+            assert(!ufs_link_stop(&h.l) && h.l.owns_list && h.regs[0x50 / 4]);
+            h.regs[0x58 / 4] = 0;
+        } else {
+            answer(&h, 0x35, 6, 0, 0);
+            answer(&h, 0x35, 31, 0, 0);
+            answer(&h, 5, 4, 0, fault == 1 ? 1 : 0);
+            if (fault == 1) {
+                answer(&h, 7, 4, 0, 0);
+                request(&h); media_reply(&h, 5, 4, 0, 1); /* Clear did not stick. */
+            } else if (fault == 2) {
+                request(&h); media_reply(&h, 0x1b, 0xd0, 0x30, 0);
+                h.ucd.response[2] = 0; /* Good status, wrong LU. */
+            } else {
+                answer(&h, 0x1b, 0xd0, 0x30, 0);
+                if (fault == 3) {
+                    request(&h); media_reply(&h, 3, 2, 0, 0x11);
+                } else {
+                    answer(&h, 3, 2, 0, 0x33);
+                    assert(pump(&h) == UFS_LINK_WAIT_HIBERN8);
+                    h.regs[0x20 / 4] |= 0x400;
+                    if (fault == 4) {
+                        assert(ufs_link_poll(&h.l, h.now + 500000) == UFS_LINK_FAILED);
+                        assert(!ufs_link_stop(&h.l) && h.regs[0x34 / 4]);
+                        h.regs[0x20 / 4] |= 0x40;
+                    } else {
+                        h.regs[0x20 / 4] |= 0x40;
+                        if (fault == 5) h.regs[0x30 / 4] = 0x20f; /* PWR_REMOTE, not PWR_LOCAL. */
+                        else {
+                            assert(pump(&h) == UFS_LINK_STOP_HOST);
+                            if (fault == 6) h.regs[0x78 / 4] = 1; /* Foreign task management DMA. */
+                            else {
+                                h.hold_hce = 1;
+                                assert(pump(&h) == UFS_LINK_WAIT_OFF);
+                                assert(ufs_link_poll(&h.l, h.now + 500000) == UFS_LINK_FAILED);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert(pump(&h) == UFS_LINK_FAILED && h.regs[0x34 / 4] == 1);
+        assert(ufs_link_stop(&h.l) && h.l.phase == UFS_LINK_FAILED);
+    }
+
+    /* S0 D3hot keeps the original write protection and both power rails.
+     * This host reports only the dedicated Hibern8 event, not UCCS. */
+    m = (struct ufs_media_settings){ .check_power_on_wp = 1 };
+    start_down(&h, &m, UFS_SLEEP);
+    answer(&h, 0x35, 6, 0, 0); answer(&h, 0x35, 31, 0, 0);
+    answer(&h, 5, 3, 0, 1); answer(&h, 5, 4, 0, 0);
+    answer(&h, 0x1b, 0xd0, 0x20, 0); answer(&h, 3, 2, 0, 0x22);
+    assert(pump(&h) == UFS_LINK_WAIT_HIBERN8);
+    h.regs[0x20 / 4] |= 0x40;
+    assert(pump(&h) == UFS_LINK_STOP_HOST && pump(&h) == UFS_LINK_ASLEEP && !h.l.owns_controller);
+    assert(h.regs[0x34 / 4] == 1 && !h.regs[0x60 / 4] && !h.regs[0x58 / 4] && m.verify_power_on_wp);
+    io = h.l.io;
+    assert(ufs_link_media(&h.l, &io, &m, h.l.enabled_luns, UFS_WAKE, h.now) == UFS_LINK_OK);
+    assert(pump(&h) == UFS_LINK_WAIT_HIBERN8 && h.hibern8_exit == 1 && !h.startup);
+    h.regs[0x20 / 4] |= 0x40; /* Wrong direction cannot wake the device. */
+    assert(pump(&h) == UFS_LINK_WAIT_HIBERN8);
+    h.regs[0x20 / 4] |= 0x20;
+    assert(pump(&h) == UFS_LINK_WAIT_PRESENT);
+    answer(&h, 0x1b, 0xd0, 0x10, 0);
+    answer(&h, 3, 2, 0, 0x11);
+    answer(&h, 5, 3, 0, 1);
+    assert(!m.verify_power_on_wp);
+    for (unsigned n = 0; n < 25 && h.l.phase != UFS_LINK_READY; ++n) {
+        if (h.l.phase == UFS_LINK_WAIT_REPLY) deliver(&h);
+        assert(pump(&h) != UFS_LINK_FAILED);
+    }
+    assert(h.l.phase == UFS_LINK_READY && h.l.enabled_luns == 0x41 && ufs_link_stop(&h.l));
+    /* A missing UIC event must not block recovery. Reset can complete late;
+     * never recycle the common buffer while either engine might still DMA. */
+    start_down(&h, &m, UFS_SLEEP);
+    answer(&h, 0x35, 6, 0, 0); answer(&h, 0x35, 31, 0, 0);
+    answer(&h, 5, 3, 0, 1); answer(&h, 5, 4, 0, 0);
+    answer(&h, 0x1b, 0xd0, 0x20, 0); answer(&h, 3, 2, 0, 0x22);
+    assert(pump(&h) == UFS_LINK_WAIT_HIBERN8);
+    h.regs[0x20 / 4] |= 0x400;
+    assert(ufs_link_poll(&h.l, h.now + 500000) == UFS_LINK_FAILED && !ufs_link_stop(&h.l));
+    h.hold_hce = 1;
+    assert(!ufs_link_reset(&h.l) && h.l.owns_list && h.regs[0x50 / 4]);
+    h.regs[0x34 / 4] = 0;
+    assert(!ufs_link_stop(&h.l) && h.l.owns_controller);
+    h.regs[0x60 / 4] = 0; h.regs[0x78 / 4] = 1;
+    assert(!ufs_link_reset(&h.l) && h.l.owns_controller);
+    h.regs[0x78 / 4] = 0;
+    assert(ufs_link_reset(&h.l) && !h.l.owns_controller && !h.l.owns_list && !h.l.uic_inflight);
+    h.hold_hce = 0; io = h.l.io;
+    assert(ufs_link_begin(&h.l, &io, h.now) == UFS_LINK_OK);
+    assert(pump(&h) == UFS_LINK_WAIT_UIC && pump(&h) == UFS_LINK_WAIT_STARTUP && h.startup == 1);
+}
+
 int main(void)
 {
+    check_media_power();
     const uint8_t report_luns[12] = {0xa0}, inquiry[6] = {0x12}, flush[10] = {0x35};
     uint8_t wire_lun = 0xee;
     assert(ufs_scsi_lun(0x80, 0, report_luns, sizeof(report_luns), &wire_lun) && wire_lun == 0x81);
