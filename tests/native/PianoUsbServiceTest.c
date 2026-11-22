@@ -1084,10 +1084,10 @@ static VOID run_typec_orientation(TYPEC_CASE Test){
   free_cold_model();
 }
 #endif
-static BOOLEAN loader_timeout;
-static BOOLEAN loader_timed_out(VOID *Context){
+static PIANO_USB_LOADER_STATE loader_state;
+static PIANO_USB_LOADER_STATE get_loader_state(VOID *Context){
   assert(Context==(VOID *)0x55 && in_timer && current_tpl==TPL_CALLBACK);
-  return loader_timeout;
+  return loader_state;
 }
 static UINT64 loader_now(VOID *Context){assert(Context==(VOID *)0x55);return fake_now+=10;}
 static VOID loader_send(CONST CHAR8 *Command){
@@ -1102,37 +1102,48 @@ static VOID loader_ack(CONST CHAR8 *Response){
 }
 static VOID run_loader_query(VOID){
   setup_model();stall_hook=NULL;current_tpl=TPL_APPLICATION;scenario=0;fake_now=0;
+  loader_state=PianoUsbLoaderInactive;
   bs.RaiseTPL=raise_tpl;bs.RestoreTPL=restore_tpl;bs.CreateEvent=create_event;bs.CreateEventEx=create_event_ex;
   bs.SetTimer=set_timer;bs.CloseEvent=close_event;clock.DisableClock=clock.DisableClockPowerDomain=persistent_disable;
-  PIANO_DWC3_SERVICE_CONFIG C={.Context=(VOID*)0x55,.NowUs=loader_now,.Storage=&backend,.LoaderTimedOut=loader_timed_out};
+  PIANO_DWC3_SERVICE_CONFIG C={.Context=(VOID*)0x55,.NowUs=loader_now,.Storage=&backend,.GetLoaderState=get_loader_state};
   assert(PianoUsbControllerServiceStart((VOID*)123,&C)==EFI_SUCCESS);service_enumerate();
-  CONST CHAR8 *Query="getvar:product";
-  CopyMem(mBulkRx.Cpu,Query,strlen(Query));DWC_TRB *Out=mTrbs[2].Cpu,*In=mTrbs[3].Cpu;
-  Out->Size=mPosted[2]-(UINT32)strlen(Query);Out->Control&=~BIT0;
-  publish(0xc044);timer_tick();assert(mService.Count==1 && !mPending[3]);
-  loader_timeout=TRUE;
+  loader_send("getvar:product");
+  assert(mService.Count==1 && !mPending[3]);
+  loader_state=PianoUsbLoaderRunning;
   mService.State.Busy=TRUE;timer_tick();assert(mService.Count==1 && !mPending[3]);mService.State.Busy=FALSE;
-  timer_tick();assert(!mService.Count && mPending[3] && mFrames==&mPackets[0].Frame &&
-    mPosted[3]==strlen("OKAYpiano-sunuefi") && !memcmp(mBulkTx.Cpu,"OKAYpiano-sunuefi",mPosted[3]));
-  In->Size=0;In->Control&=~BIT0;publish(0xc046);timer_tick();
+  mPersistent.ServicesLost=TRUE;timer_tick();assert(mService.Count==1 && !mPending[3]);mPersistent.ServicesLost=FALSE;
+  timer_tick();timer_tick();
+  assert(!mService.Count && mPending[3] && mFrames==&mPackets[0].Frame && mFrameCount==1);
+  loader_ack("OKAYpiano-sunuefi");
   assert(!mFrames && !mPending[3] && mPending[2] && !mPackets[0].Frame.Data);
+  loader_send("getvar:serialno");loader_ack("OKAYSunUEFI-piano");
+  loader_send("getvar:version");loader_ack("OKAY0.4");
+  loader_send("oem status");
+  loader_ack("INFOEFI loader running; UEFI owns USB; handoff not started");
+  loader_ack("OKAY");assert(mPending[2] && !mFrames);
+  loader_state=PianoUsbLoaderTimedOut;
   loader_send("oem status");
   loader_ack("INFOEFI loader timed out; UEFI owns USB; handoff not started");
   loader_ack("OKAY");assert(mPending[2] && !mFrames);
   // The timer leaves an APP-only command in the queue. It is handled once
   // by the ordinary worker when the child eventually returns.
-  Query="getvar:partition-size:xbl_config_a";UINTN Infos=backend_infos;
-  CopyMem(mBulkRx.Cpu,Query,strlen(Query));Out->Size=mPosted[2]-(UINT32)strlen(Query);Out->Control&=~BIT0;
-  publish(0xc044);timer_tick();timer_tick();assert(mService.Count==1 && !mPending[3] && mPending[2] && backend_infos==Infos);
-  loader_timeout=FALSE;
+  loader_state=PianoUsbLoaderRunning;
+  UINTN Infos=backend_infos;
+  loader_send("getvar:partition-size:xbl_config_a");
+  timer_tick();assert(mService.Count==1 && !mPending[3] && mPending[2] && backend_infos==Infos);
+  loader_state=PianoUsbLoaderInactive;
   assert(PianoUsbControllerServicePumpApp(1,5000)==EFI_SUCCESS && mPending[3] && !mService.Count && backend_infos==Infos+1);
-  service_ack();loader_timeout=TRUE;loader_send("reboot");
+  service_ack();
+  loader_state=PianoUsbLoaderRunning;
+  loader_send("reboot");
   assert(mFastboot.RebootRequested && mService.State.Phase==PianoUsbServiceListening);
   loader_ack("INFOReboot requested; waiting for the EFI loader to return");
   assert(mService.State.Phase==PianoUsbServiceListening);
   loader_ack("OKAY");
   assert(mService.State.Action==PianoUsbServiceActionReboot &&
     mService.State.Phase==PianoUsbServiceStopRequested && !resets && !mFrames);
+  timer_tick();
+  assert(mService.State.Action==PianoUsbServiceActionReboot && !resets && !mFrames);
   free_cold_model();
 }
 static VOID run_stale_completion(VOID){

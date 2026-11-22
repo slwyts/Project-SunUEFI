@@ -8,6 +8,11 @@
 #if PIANO_USB_SERVICE != 0 && PIANO_USB_SERVICE != 1
 #error PIANO_USB_SERVICE must be exactly 0 or 1
 #endif
+typedef enum {
+  PianoUsbLoaderInactive=0,
+  PianoUsbLoaderRunning,
+  PianoUsbLoaderTimedOut
+} PIANO_USB_LOADER_STATE;
 typedef struct {
   VOID *Context;
   // Monotonic CPU-only clock. Never allocate, call BS or read an owner device.
@@ -16,8 +21,9 @@ typedef struct {
   // Context must outlive the service; public partition reads use the shared
   // UFS/USB SMMU guard rather than directly calling these callbacks.
   CONST PIANO_FB_STORAGE *Storage;
-  // Notification-safe, reads only firmware ownership and the watchdog flag.
-  BOOLEAN (*LoaderTimedOut)(VOID *Context);
+  // Notification-safe. Inactive when the installed loader has not entered,
+  // has returned, or the firmware no longer owns USB.
+  PIANO_USB_LOADER_STATE (*GetLoaderState)(VOID *Context);
   // Optional APP-only immutable snapshot reemit. CPU/RAM only: no MMIO,
   // allocation, BS, device access or recursive service work. Copied at Start.
   // Exact success is required before oem ramlog freezes the RAM console.

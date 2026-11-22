@@ -661,7 +661,7 @@ STATIC VOID EFIAPI ServiceTimer(EFI_EVENT Event,VOID *Context) {
   if(mPersistent.DiagnosticsOnly && !ControllerDiagnosticsLive())return;
   if(mPersistent.Started && !mPersistent.ServicesLost){
     (VOID)PianoDwc3ServicePollBounded(16);
-    if(mPersistent.Config.LoaderTimedOut && ControllerDiagnosticsLive())PianoDwc3ServicePollLoaderQuery();
+    if(mPersistent.Config.GetLoaderState && ControllerDiagnosticsLive())PianoDwc3ServicePollLoaderQuery();
   }
 }
 STATIC VOID EFIAPI ServiceExit(EFI_EVENT Event,VOID *Context) {

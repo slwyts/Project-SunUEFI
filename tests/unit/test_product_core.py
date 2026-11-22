@@ -73,3 +73,6 @@ class ProductCoreTests(unittest.TestCase):
 
     def test_returned_loader_keeps_normal_fastboot_and_accepts_local_menu_selection(self):
         self.run_case('boot-error-recovery')
+
+    def test_usb_queries_allow_active_install_loader_only_before_handoff(self):
+        self.run_case('loader-usb-state')

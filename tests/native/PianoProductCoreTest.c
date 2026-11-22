@@ -367,6 +367,26 @@ STATIC VOID PrepareErrorDiagnostics(VOID){
   mOwners.Report.Initialized=TRUE;mOwners.Report.Phase=PianoProductOwnersRunning;
   mOwners.Config.StartedOwnerMask=PIANO_OWNER_USB|PIANO_OWNER_UFS;
 }
+STATIC VOID LoaderUsbState(VOID){
+  PrepareErrorDiagnostics();
+  assert(GetLoaderState(NULL)==PianoUsbLoaderRunning);
+  WatchdogTimedOut=TRUE;
+  assert(GetLoaderState(NULL)==PianoUsbLoaderTimedOut);
+  // Even an old timeout flag cannot admit work before StartImage or after
+  // the application returns, loses Boot Services, or starts handing off.
+#define USB_LOADER_INACTIVE(Change) do{ \
+  PrepareErrorDiagnostics();WatchdogTimedOut=TRUE;Change; \
+  assert(GetLoaderState(NULL)==PianoUsbLoaderInactive); \
+}while(0)
+  USB_LOADER_INACTIVE(mLinuxApplication.StartCalled=FALSE);
+  USB_LOADER_INACTIVE(mLinuxApplication.StartReturned=TRUE);
+  USB_LOADER_INACTIVE(mLinuxApplication.EbsObserved=TRUE);
+  USB_LOADER_INACTIVE(mOwners.Report.ServicesLost=TRUE);
+  USB_LOADER_INACTIVE(mOwners.Report.Busy=TRUE);
+  USB_LOADER_INACTIVE(mOwners.Report.RetiredMask=PIANO_OWNER_USB);
+  USB_LOADER_INACTIVE(mLateHandoff.Phase=PianoExitArmed);
+#undef USB_LOADER_INACTIVE
+}
 STATIC UINT32 RecoveryAction;
 STATIC EFI_SIMPLE_TEXT_INPUT_PROTOCOL ConsoleIn;
 STATIC EFI_STATUS EFIAPI RecoveryPump(PIANO_PRODUCT_RUNTIME_PROTOCOL *This,UINT32 Reason,UINTN BudgetUs){
@@ -491,6 +511,7 @@ int main(int Argc,char **Argv){
   else if(!strcmp(Argv[1],"boot-fallback"))BootFallback();
   else if(!strcmp(Argv[1],"error-diagnostics"))ErrorDiagnostics();
   else if(!strcmp(Argv[1],"boot-error-recovery"))BootErrorRecovery();
+  else if(!strcmp(Argv[1],"loader-usb-state"))LoaderUsbState();
   else assert(!"unknown test case");
   puts("Actual resident Core UKI admission and failure diagnostics passed");return 0;
 }

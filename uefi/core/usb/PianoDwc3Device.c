@@ -245,7 +245,7 @@ STATIC EFI_STATUS Command(UINT8 Ep,UINT32 Cmd,UINT32 P0,UINT32 P1,UINT32 P2) {
   }
   UINTN Polls=1000;
 #if PIANO_USB_SERVICE
-  // The timeout worker only posts STARTTRANSFER. Use its monotonic counter
+  // The loader query worker only posts STARTTRANSFER. Use its monotonic counter
   // rather than re-entering Boot Services from a timer notification.
   UINT64 Start=0;
   if(mServingLoaderQuery){Start=FastbootNowUs(NULL);Polls=100000;}
@@ -577,21 +577,24 @@ STATIC LOADER_COMMAND LoaderCommand(CONST VOID *Data,UINTN Bytes) {
   if(Bytes==sizeof("reboot")-1 && !CompareMem(Data,"reboot",Bytes))return LoaderReboot;
   return LoaderCommandNone;
 }
-STATIC EFI_STATUS SendLoaderReply(LOADER_COMMAND Command,CONST VOID *Data,UINTN Bytes) {
+STATIC EFI_STATUS SendLoaderReply(LOADER_COMMAND Command,PIANO_USB_LOADER_STATE LoaderState,
+  CONST VOID *Data,UINTN Bytes) {
   if(LoaderCommand(Data,Bytes)!=Command || mPackets[0].Frame.Data || mPackets[1].Frame.Data)
     return EFI_COMPROMISED_DATA;
   if(Command==LoaderIdentity){
     CONST CHAR8 *Reply=PianoFastbootIdentityReply(Data,Bytes);
     return FastbootSend(NULL,Reply,AsciiStrLen(Reply));
   }
-  CONST CHAR8 *Info=Command==LoaderStatus?"INFOEFI loader timed out; UEFI owns USB; handoff not started":
-    "INFOReboot requested; waiting for the EFI loader to return";
+  CONST CHAR8 *Info="INFOReboot requested; waiting for the EFI loader to return";
+  if(Command==LoaderStatus)
+    Info=LoaderState==PianoUsbLoaderTimedOut?"INFOEFI loader timed out; UEFI owns USB; handoff not started":
+      "INFOEFI loader running; UEFI owns USB; handoff not started";
   EFI_STATUS S=FastbootSend(NULL,Info,AsciiStrLen(Info));if(S!=EFI_SUCCESS)return S;
   // The stable command literal only latches a reset and queues its OKAY.
   // Only the APP owner manager can actually retire devices and reboot.
   return Command==LoaderReboot?PianoFastbootPacket(&mFastboot,"reboot",6):FastbootSend(NULL,"OKAY",4);
 }
-STATIC EFI_STATUS BulkComplete(UINT8 Ep,UINT8 EventStatus,LOADER_COMMAND Command) {
+STATIC EFI_STATUS BulkComplete(UINT8 Ep,UINT8 EventStatus,LOADER_COMMAND Command,PIANO_USB_LOADER_STATE LoaderState) {
   if(!mPending[Ep])return mEnding[Ep] || !mBulkLive?EFI_SUCCESS:EFI_COMPROMISED_DATA;
   // A queued completion may precede END/reset and refer to the old TRB.
   // Inspect the current TRB without transferring DMA ownership to the CPU.
@@ -612,7 +615,7 @@ STATIC EFI_STATUS BulkComplete(UINT8 Ep,UINT8 EventStatus,LOADER_COMMAND Command
     // No OUT TRB is posted while a response is queued or IN owns its bounce.
     if(mFrames!=NULL || mPending[3])return EFI_COMPROMISED_DATA;
     BOOLEAN Download=mFastboot.Receiving;
-    S=Command!=LoaderCommandNone?SendLoaderReply(Command,mBulkRx.Cpu,Bytes):
+    S=Command!=LoaderCommandNone?SendLoaderReply(Command,LoaderState,mBulkRx.Cpu,Bytes):
       PianoFastbootPacket(&mFastboot,mBulkRx.Cpu,Bytes);
     if(EFI_ERROR(S))return S;
     if(mFastboot.BootTransferFrozen)return EFI_ABORTED;
@@ -754,7 +757,7 @@ STATIC EFI_STATUS Event(UINT32 E) {
 #if PIANO_USB_FASTBOOT
     if(Ep>3)return EFI_UNSUPPORTED;
     if(Type==7)return BulkEnded(Ep,E);
-    if(Type==1)return BulkComplete(Ep,Status,LoaderCommandNone);
+    if(Type==1)return BulkComplete(Ep,Status,LoaderCommandNone,PianoUsbLoaderInactive);
     return EFI_SUCCESS;
 #else
     return EFI_UNSUPPORTED;
@@ -1387,12 +1390,14 @@ EFI_STATUS PianoDwc3ServicePollBounded(UINTN MaxEvents) {
   Dw(0xC40C,(UINT32)(4*N));mService.State.WorkPending=TRUE;return EFI_SUCCESS;
 }
 VOID PianoDwc3ServicePollLoaderQuery(VOID) {
-  if(!mService.Config.LoaderTimedOut || !mService.State.Started || mService.State.Busy ||
+  if(!mService.Config.GetLoaderState || !mService.State.Started || mService.State.Busy ||
      mService.State.Phase!=PianoUsbServiceListening || mService.State.Retained || mService.State.ServicesLost ||
      mService.DiagnosticsOnly || !mConfigured || !mBulkLive || mEnding[2] || mEnding[3] ||
      mFastboot.Receiving || mFastboot.Flash || mFastboot.FlashExecuting || mFastboot.BootPreparing ||
      mFastboot.BootPending || mFastboot.BootTransferFrozen ||
-     mFastboot.ExitRequested || !mService.Config.LoaderTimedOut(mService.Config.Context))return;
+     mFastboot.ExitRequested)return;
+  PIANO_USB_LOADER_STATE LoaderState=mService.Config.GetLoaderState(mService.Config.Context);
+  if(LoaderState!=PianoUsbLoaderRunning && LoaderState!=PianoUsbLoaderTimedOut)return;
   for(CONST FB_FRAME *F=mFrames;F;F=F->Next)
     if(F!=&mPackets[0].Frame && F!=&mPackets[1].Frame)return;
   // A timer cannot interrupt an APP service operation while Busy is set.
@@ -1422,7 +1427,7 @@ VOID PianoDwc3ServicePollLoaderQuery(VOID) {
     mService.Head=(mService.Head+1)%SERVICE_EVENTS;
     --mService.Count;
     mServingLoaderQuery=TRUE;
-    if(Complete)S=BulkComplete(Ep,Status,Command);
+    if(Complete)S=BulkComplete(Ep,Status,Command,LoaderState);
     else S=Event(E);
   }
   mServingLoaderQuery=TRUE;
