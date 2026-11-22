@@ -10,13 +10,14 @@ typedef struct {
  * consumer. GPLL0 main and its even divider hold the same physical PLL. */
 typedef struct {
     volatile ULONG *base;
-    ULONGLONG start, end;
+    ULONGLONG start, end, generation;
     PKSPIN_LOCK vote_lock;
     KMUTEX lock;
     SM8750_GCC_PLL_STATE pll[2];
+    ULONG gpu_users[Sm8750GpuClockCount - 1];
     PVOID ufs;
     PVOID volatile retained_ufs;
-    BOOLEAN online, removed;
+    BOOLEAN online, removed, release_gpu_parent, release_gpu_branch;
 } SM8750_GCC_PLLS;
 
 _IRQL_requires_(PASSIVE_LEVEL) void Sm8750InitializeGcc(SM8750_GCC_PLLS *, PKSPIN_LOCK);
@@ -27,6 +28,10 @@ _IRQL_requires_(PASSIVE_LEVEL) NTSTATUS Sm8750GccPower(SM8750_GCC_PLLS *, BOOLEA
 _IRQL_requires_(PASSIVE_LEVEL) PVOID Sm8750DetachGcc(SM8750_GCC_PLLS *);
 _IRQL_requires_(PASSIVE_LEVEL) NTSTATUS
     Sm8750SetGccPll(PVOID clocks, enum sm8750_gcc_pll, BOOLEAN *held, BOOLEAN on);
+_IRQL_requires_(PASSIVE_LEVEL) NTSTATUS
+    Sm8750SetGpuGccClock(SM8750_GCC_PLLS *, enum sm8750_gcc_gpu_clock, BOOLEAN *held, BOOLEAN on);
+void Sm8750AbandonGpuGccClocks(SM8750_GCC_PLLS *, BOOLEAN held[Sm8750GpuClockCount]);
+NTSTATUS Sm8750GccGeneration(SM8750_GCC_PLLS *, ULONGLONG *generation);
 _IRQL_requires_(PASSIVE_LEVEL) NTSTATUS Sm8750ReleaseGccPllBootReference(SM8750_GCC_PLLS *, enum sm8750_gcc_pll);
 
 NTSTATUS Sm8750OpenUfsClocks(SM8750_GCC_PLLS *, PVOID adapter);

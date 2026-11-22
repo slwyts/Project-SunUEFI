@@ -9,7 +9,7 @@ typedef struct {
     KMUTEX lock;
     volatile ULONG *control, *status;
     ULONG users;
-    BOOLEAN initialized, boot_ref;
+    BOOLEAN initialized, boot_ref, resuming;
 } ADRENO_CX_DOMAIN;
 
 typedef struct { ADRENO_CX_DOMAIN *domain; } ADRENO_CX_REFERENCE;

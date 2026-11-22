@@ -22,6 +22,7 @@ enum {
     STATUS_INVALID_DEVICE_STATE = -9, STATUS_DEVICE_BUSY = -10,
 };
 #define MAXLONGLONG INT64_MAX
+#define NT_ASSERT(expression) assert(expression)
 #define PAGED_CODE() assert(gcc_test_irql == PASSIVE_LEVEL)
 
 extern _Thread_local KIRQL gcc_test_irql;

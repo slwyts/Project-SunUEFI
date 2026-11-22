@@ -24,3 +24,23 @@ typedef struct {
     ULONG (*ReadUfs)(PVOID, PVOID adapter, ULONG offset);
     VOID (*WriteUfs)(PVOID, PVOID adapter, ULONG offset, ULONG value);
 } SM8750_GCC_INTERFACE;
+
+/* The GPU clocks use a separate query interface. The storage interface's
+ * size, version and operations are unchanged. Both reach the same GPLL0. */
+static const GUID GUID_SM8750_GCC_GPU_INTERFACE = {
+    0x9e25799e, 0x26c9, 0x4479, {0x96, 0x47, 0x7e, 0xb5, 0xde, 0x75, 0xa6, 0xca}};
+enum sm8750_gcc_gpu_clock {
+    Sm8750GpuGpll0, Sm8750GpuGpll0Main, Sm8750GpuDdrAxi, Sm8750GpuMemnoc, Sm8750GpuClockCount
+};
+typedef struct {
+    INTERFACE Header;
+    /* A failed enable can leave a reference. Disable that same reference
+     * before dropping the interface or the parent power votes. */
+    NTSTATUS (*SetClock)(PVOID, enum sm8750_gcc_gpu_clock, BOOLEAN *held, BOOLEAN enable);
+    /* The consumer has lost its hardware. Transfer any unfinished release
+     * to the supplier; the consumer can now drop its PnP reference. */
+    VOID (*Abandon)(PVOID, BOOLEAN held[Sm8750GpuClockCount]);
+    /* Each uninterrupted D0 period has its own generation. A reference
+     * to the object alone is not evidence that the hardware stayed on. */
+    NTSTATUS (*PowerGeneration)(PVOID, ULONGLONG *generation);
+} SM8750_GCC_GPU_INTERFACE;

@@ -46,7 +46,8 @@ static NTSTATUS prepare(WDFDEVICE device, WDFCMRESLIST raw, WDFCMRESLIST transla
 
     /* _UID distinguishes instances, not hardware IDs. Check the firmware's
      * model before assigning any vendor-specific meaning to a resource. */
-    NTSTATUS s = Sm8750CheckGccModel(WdfDeviceGetIoTarget(device));
+    static const char model[] = "qcom,sm8750-gcc";
+    NTSTATUS s = Sm8750CheckClockModel(WdfDeviceGetIoTarget(device), model, sizeof(model));
     if (s == STATUS_NOT_SUPPORTED) return STATUS_DEVICE_CONFIGURATION_ERROR;
     if (!NT_SUCCESS(s)) return s;
     PHYSICAL_ADDRESS address;
@@ -105,6 +106,8 @@ static NTSTATUS hold_idle(GCC_DEVICE *d)
 
 static void release_unused(GCC_DEVICE *d)
 {
+    for (unsigned i = 0; i < RTL_NUMBER_OF(d->clocks.gpu_users); ++i)
+        if (d->clocks.gpu_users[i]) return;
     if (!d->clocks.ufs && !d->clocks.pll[0].users && !d->clocks.pll[1].users) resume_idle(d->device, d);
 }
 
@@ -149,6 +152,31 @@ static NTSTATUS set_pll(PVOID context, enum sm8750_gcc_pll clock, BOOLEAN *held,
     release_unused(d);
     KeReleaseMutex(&d->clients, FALSE);
     return s;
+}
+
+static NTSTATUS gpu_clock(PVOID context, enum sm8750_gcc_gpu_clock clock, BOOLEAN *held, BOOLEAN enable)
+{
+    GCC_DEVICE *d = context;
+    KeWaitForSingleObject(&d->clients, Executive, KernelMode, FALSE, NULL);
+    NTSTATUS s = enable ? hold_idle(d) : STATUS_SUCCESS;
+    if (NT_SUCCESS(s)) s = Sm8750SetGpuGccClock(&d->clocks, clock, held, enable);
+    release_unused(d);
+    KeReleaseMutex(&d->clients, FALSE);
+    return s;
+}
+
+static VOID abandon_gpu(PVOID context, BOOLEAN held[Sm8750GpuClockCount])
+{
+    GCC_DEVICE *d = context;
+    KeWaitForSingleObject(&d->clients, Executive, KernelMode, FALSE, NULL);
+    Sm8750AbandonGpuGccClocks(&d->clocks, held);
+    release_unused(d);
+    KeReleaseMutex(&d->clients, FALSE);
+}
+
+static NTSTATUS power_generation(PVOID ctx, ULONGLONG *generation)
+{
+    return Sm8750GccGeneration(&((GCC_DEVICE *)ctx)->clocks, generation);
 }
 
 static NTSTATUS open_ufs(PVOID context, PVOID adapter)
@@ -221,6 +249,13 @@ static NTSTATUS add_device(WDFDRIVER driver, PWDFDEVICE_INIT init)
     };
     WDF_QUERY_INTERFACE_CONFIG query;
     WDF_QUERY_INTERFACE_CONFIG_INIT(&query, &api.Header, &GUID_SM8750_GCC_INTERFACE, NULL);
+    s = WdfDeviceAddQueryInterface(device, &query);
+    if (!NT_SUCCESS(s)) return s;
+    SM8750_GCC_GPU_INTERFACE gpu = {
+        .Header = {sizeof(gpu), 1, d, reference, dereference}, .SetClock = gpu_clock, .Abandon = abandon_gpu,
+        .PowerGeneration = power_generation
+    };
+    WDF_QUERY_INTERFACE_CONFIG_INIT(&query, &gpu.Header, &GUID_SM8750_GCC_GPU_INTERFACE, NULL);
     s = WdfDeviceAddQueryInterface(device, &query);
     if (!NT_SUCCESS(s)) return s;
     return WdfDeviceCreateDeviceInterface(device, &GUID_DEVINTERFACE_SM8750_GCC, NULL);

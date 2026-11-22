@@ -24,7 +24,7 @@ static BOOLEAN is_value(PACPI_METHOD_ARGUMENT a, USHORT type, const VOID *value,
     return a && a->Type == type && a->DataLength == size && RtlEqualMemory((const UCHAR *)a->Data, value, size);
 }
 
-static BOOLEAN is_gcc(PACPI_EVAL_OUTPUT_BUFFER out, SIZE_T returned)
+static BOOLEAN is_model(PACPI_EVAL_OUTPUT_BUFFER out, SIZE_T returned, PCSTR model, SIZE_T size)
 {
     if (returned < FIELD_OFFSET(ACPI_EVAL_OUTPUT_BUFFER, Argument) ||
         out->Signature != ACPI_EVAL_OUTPUT_BUFFER_SIGNATURE || out->Length > returned || (out->Count & 1) ||
@@ -47,8 +47,7 @@ static BOOLEAN is_gcc(PACPI_EVAL_OUTPUT_BUFFER out, SIZE_T returned)
             PACPI_METHOD_ARGUMENT name = next(&entry), value = next(&entry);
             if (!name || name->Type != ACPI_METHOD_ARGUMENT_STRING || !value || entry.at != entry.end) return FALSE;
             if (is_value(name, ACPI_METHOD_ARGUMENT_STRING, "compatible", sizeof("compatible"))) {
-                if (compatible || !is_value(value, ACPI_METHOD_ARGUMENT_STRING, "qcom,sm8750-gcc",
-                                            sizeof("qcom,sm8750-gcc"))) return FALSE;
+                if (compatible || !is_value(value, ACPI_METHOD_ARGUMENT_STRING, model, size)) return FALSE;
                 compatible = TRUE;
             }
         }
@@ -56,7 +55,7 @@ static BOOLEAN is_gcc(PACPI_EVAL_OUTPUT_BUFFER out, SIZE_T returned)
     return compatible && sections.at == sections.end;
 }
 
-NTSTATUS Sm8750CheckGccModel(WDFIOTARGET target)
+NTSTATUS Sm8750CheckClockModel(WDFIOTARGET target, PCSTR model, SIZE_T size)
 {
     ACPI_EVAL_INPUT_BUFFER method = {.Signature = ACPI_EVAL_INPUT_BUFFER_SIGNATURE,
                                      .MethodName = {'_', 'D', 'S', 'D'}};
@@ -77,7 +76,7 @@ NTSTATUS Sm8750CheckGccModel(WDFIOTARGET target)
         out = ExAllocatePool2(POOL_FLAG_PAGED, length, 'dCcG');
         if (!out) return STATUS_INSUFFICIENT_RESOURCES;
     }
-    if (NT_SUCCESS(s) && (bytes > length || !is_gcc(out, bytes))) s = STATUS_DEVICE_CONFIGURATION_ERROR;
+    if (NT_SUCCESS(s) && (bytes > length || !is_model(out, bytes, model, size))) s = STATUS_DEVICE_CONFIGURATION_ERROR;
     if ((PVOID)out != stack) ExFreePoolWithTag((PVOID)out, 'dCcG');
     return s;
 }

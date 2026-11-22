@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "wddm_pnp.h"
+#include "../gcc/query.h"
 
 /* A830 GMU register numbers are GPU-relative words, as in a6xx_gmu.xml.
  * RSC registers below are relative to its own translated PnP window. */
@@ -166,7 +167,7 @@ NTSTATUS AdrenoStartGmu(ADRENO_RENDER_DEVICE *d)
         return STATUS_DEVICE_CONFIGURATION_ERROR;
     const ADRENO_GMU_PLATFORM *p = d->platform;
     ADRENO_GMU_DEVICE *g = &d->gmu_state;
-    if (!p || !p->clocks || !p->clocks->gpucc || !p->SetRailsAndBus)
+    if (!p || !p->SetRailsAndBus)
         return STATUS_DEVICE_NOT_READY;
     if (g->rails) return STATUS_INVALID_DEVICE_STATE;
     if (!adreno_hfi_bandwidth_table(&p->bandwidth, &bw.table) ||
@@ -174,10 +175,20 @@ NTSTATUS AdrenoStartGmu(ADRENO_RENDER_DEVICE *d)
                                  &g->initial_level))
         return STATUS_DEVICE_CONFIGURATION_ERROR;
 
+    NTSTATUS s = Sm8750QueryClockInterface(&GUID_DEVINTERFACE_SM8750_GPUCC, &GUID_SM8750_GPUCC_INTERFACE,
+                                           &g->clocks.Header, sizeof(g->clocks), d->driver, &g->clock_target);
+    if (!NT_SUCCESS(s)) return s;
+    if (!g->clocks.SetClocks) {
+        g->clocks.Header.InterfaceDereference(g->clocks.Header.Context);
+        Sm8750CloseClockTarget(&g->clock_target);
+        RtlZeroMemory(&g->clocks, sizeof(g->clocks));
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
     g->rails = TRUE;
-    NTSTATUS s = p->SetRailsAndBus(p->context, TRUE);
+    s = p->SetRailsAndBus(p->context, TRUE);
     if (s != STATUS_SUCCESS) return s;
-    s = AdrenoSetGpuClocks(p->clocks, &g->clock_ref, AdrenoGmuClocks, TRUE);
+    g->clock_requested = TRUE;
+    s = g->clocks.SetClocks(g->clocks.Header.Context, g, AdrenoGmuClocks, TRUE);
     if (s != STATUS_SUCCESS) return s;
 
     gmu_write(d, cx_falnext, 1);
@@ -310,11 +321,17 @@ NTSTATUS AdrenoStopGmu(ADRENO_RENDER_DEVICE *d)
     if (s != STATUS_SUCCESS) return s;
     RtlZeroMemory(&g->hfi, sizeof(g->hfi));
     g->slumber_requested = FALSE;
-    if (g->clock_ref.controller) {
-        s = AdrenoSetGpuClocks(p->clocks, &g->clock_ref, AdrenoGmuClocks, FALSE);
+    if (g->clock_requested) {
+        s = g->clocks.SetClocks(g->clocks.Header.Context, g, AdrenoGmuClocks, FALSE);
         if (s != STATUS_SUCCESS) return s;
+        g->clock_requested = FALSE;
     }
     s = p->SetRailsAndBus(p->context, FALSE);
-    if (s == STATUS_SUCCESS) g->rails = FALSE;
+    if (s == STATUS_SUCCESS) {
+        g->rails = FALSE;
+        g->clocks.Header.InterfaceDereference(g->clocks.Header.Context);
+        Sm8750CloseClockTarget(&g->clock_target);
+        RtlZeroMemory(&g->clocks, sizeof(g->clocks));
+    }
     return s;
 }

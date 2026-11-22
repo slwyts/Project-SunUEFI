@@ -10,7 +10,7 @@ enum clock_id {
 };
 enum { pll_mode = 0x00, pll_op = 0x04, pll_l = 0x10, pll_frac = 0x14, pll_user = 0x18,
        pll_user_hi = 0x1c, pll_cfg = 0x20, pll_cfg_hi = 0x24, pll_cfg_hi1 = 0x28,
-       hub_rcg = 0x93ec, gmu_rcg = 0x9318, gpll_bit = 15 };
+       hub_rcg = 0x93ec, gmu_rcg = 0x9318 };
 #define BIT(n) (1u << (n))
 #define CLK_OFF BIT(31)
 #define NOC_ON(v) (!((v) & CLK_OFF) || (((v) >> 28) & 7) == 2)
@@ -125,19 +125,22 @@ static NTSTATUS start_pll(ADRENO_GPU_CLOCKS *c)
     return run_pll(c);
 }
 
-static NTSTATUS set_gpll(ADRENO_GPU_CLOCKS *c, BOOLEAN on)
+static enum sm8750_gcc_gpu_clock gcc_clock(enum clock_id id)
 {
-    KIRQL old;
-    KeAcquireSpinLock(c->gcc->vote_lock, &old);
-    ULONG v = READ_REGISTER_ULONG(c->gpll_vote);
-    NTSTATUS s = STATUS_DEVICE_NOT_CONNECTED;
-    if (v != MAXULONG) {
-        if (on) c->dirty |= BIT(gpll);
-        s = update(c->gpll_vote, BIT(gpll_bit), on ? BIT(gpll_bit) : 0);
+    switch (id) {
+    case gcc_pll: return Sm8750GpuGpll0;
+    case gpll: return Sm8750GpuGpll0Main;
+    case axi: return Sm8750GpuDdrAxi;
+    case memnoc: return Sm8750GpuMemnoc;
+    default: return Sm8750GpuClockCount;
     }
-    KeReleaseSpinLock(c->gcc->vote_lock, old);
-    if (s == STATUS_SUCCESS) KeStallExecutionProcessor(10);
-    return s;
+}
+
+static NTSTATUS set_gcc(ADRENO_GPU_CLOCKS *c, enum sm8750_gcc_gpu_clock id, BOOLEAN on)
+{
+    if (!on && !c->gcc_held[id]) return STATUS_SUCCESS;
+    if (!c->gcc.SetClock) return STATUS_DEVICE_NOT_READY;
+    return c->gcc.SetClock(c->gcc.Header.Context, id, &c->gcc_held[id], on);
 }
 
 static NTSTATUS gate(ADRENO_GPU_CLOCKS *c, enum clock_id id, BOOLEAN on)
@@ -146,8 +149,6 @@ static NTSTATUS gate(ADRENO_GPU_CLOCKS *c, enum clock_id id, BOOLEAN on)
     switch (id) {
     case gmu: addr = reg(c, 0x90d4); break;
     case cxo: addr = reg(c, 0x90e4); break;
-    case axi: addr = c->axi; break;
-    case memnoc: addr = c->memnoc; break;
     case ahb: addr = reg(c, 0x90bc); break;
     case hub: addr = reg(c, 0x90e8); break;
     case smmu: addr = reg(c, 0x7000); break;
@@ -155,10 +156,9 @@ static NTSTATUS gate(ADRENO_GPU_CLOCKS *c, enum clock_id id, BOOLEAN on)
     }
     /* These branch2_aon gates have no hardware disable operation. Their
      * parents still park on CXO or lose their respective software vote. */
-    if (!on && (id == gmu || id == hub || id == axi || id == memnoc)) return STATUS_SUCCESS;
+    if (!on && (id == gmu || id == hub)) return STATUS_SUCCESS;
     NTSTATUS s = update(addr, 1, on ? 1u : 0u);
     if (s != STATUS_SUCCESS) return s;
-    if (id == axi) return STATUS_SUCCESS; /* BRANCH_HALT_SKIP */
     if (id == ahb || (!on && id != cxo)) {
         KeStallExecutionProcessor(10);
         return STATUS_SUCCESS;
@@ -166,7 +166,7 @@ static NTSTATUS gate(ADRENO_GPU_CLOCKS *c, enum clock_id id, BOOLEAN on)
     for (unsigned i = 0; i <= 200; ++i) {
         ULONG v = READ_REGISTER_ULONG(addr);
         if (v == MAXULONG) return STATUS_DEVICE_NOT_CONNECTED;
-        if ((id == memnoc && (v & 2)) || (on ? NOC_ON(v) : (v & CLK_OFF))) return STATUS_SUCCESS;
+        if (on ? NOC_ON(v) : (v & CLK_OFF)) return STATUS_SUCCESS;
         if (i != 200) KeStallExecutionProcessor(1);
     }
     return STATUS_IO_TIMEOUT;
@@ -174,9 +174,9 @@ static NTSTATUS gate(ADRENO_GPU_CLOCKS *c, enum clock_id id, BOOLEAN on)
 
 static NTSTATUS enable_clock(ADRENO_GPU_CLOCKS *c, enum clock_id id)
 {
-    if (id == gcc_pll) return Sm8750SetGccPll(c->gcc, Sm8750Gpll0, &c->parent_held, TRUE);
+    enum sm8750_gcc_gpu_clock source = gcc_clock(id);
+    if (source != Sm8750GpuClockCount) return set_gcc(c, source, TRUE);
     if (id == pll) return start_pll(c);
-    if (id == gpll) return set_gpll(c, TRUE);
     c->dirty |= BIT(id);
     if (id == hub_root) return set_root(c, hub_rcg, RCG(5, 5));
     if (id == gmu_root) return set_root(c, gmu_rcg, RCG(2, 1));
@@ -185,14 +185,14 @@ static NTSTATUS enable_clock(ADRENO_GPU_CLOCKS *c, enum clock_id id)
 
 static NTSTATUS disable_clock(ADRENO_GPU_CLOCKS *c, enum clock_id id)
 {
-    if (id == gcc_pll) return Sm8750SetGccPll(c->gcc, Sm8750Gpll0, &c->parent_held, FALSE);
+    enum sm8750_gcc_gpu_clock source = gcc_clock(id);
+    if (source != Sm8750GpuClockCount) return set_gcc(c, source, FALSE);
     if (id == pll && c->park_gmu) {
         NTSTATUS s = set_root(c, gmu_rcg, RCG(0, 1));
         if (s != STATUS_SUCCESS) return s;
         c->park_gmu = FALSE;
     }
     if (!(c->dirty & BIT(id))) return STATUS_SUCCESS;
-    if (id == gpll) return set_gpll(c, FALSE);
     if (id == hub_root || id == gmu_root) return set_root(c, id == hub_root ? hub_rcg : gmu_rcg, RCG(0, 1));
     if (id == pll) return stop_pll(c);
     return gate(c, id, FALSE);
@@ -270,13 +270,17 @@ done:
     return s;
 }
 
-NTSTATUS AdrenoPrepareGpuClocks(ADRENO_GPU_CLOCKS *c, PCM_PARTIAL_RESOURCE_DESCRIPTOR gpucc, SM8750_GCC_PLLS *gcc)
+NTSTATUS AdrenoPrepareGpuClocks(ADRENO_GPU_CLOCKS *c, PCM_PARTIAL_RESOURCE_DESCRIPTOR gpucc)
 {
-    ULONGLONG cb, ce;
+    ULONGLONG cb;
     PAGED_CODE();
-    if (!c || c->gpucc || !gcc || !gcc->base || gcc->end < gcc->start || gcc->end-gcc->start < 0x71154 ||
-        !window(gpucc, &cb, 0x9800, &ce) ||
-        (gcc->start < ce && cb < gcc->end))
+    if (!c || c->gpucc || !gpucc ||
+        (gpucc->Type != CmResourceTypeMemory && gpucc->Type != CmResourceTypeMemoryLarge) ||
+        gpucc->ShareDisposition != CmResourceShareDeviceExclusive ||
+        (gpucc->Flags & (CM_RESOURCE_MEMORY_READ_ONLY | CM_RESOURCE_MEMORY_WRITE_ONLY)))
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    ULONGLONG bytes = RtlCmDecodeMemIoResource(gpucc, &cb);
+    if (bytes < 0x9800 || bytes > MAXLONGLONG || cb > (ULONGLONG)MAXLONGLONG - bytes || (cb & 3))
         return STATUS_DEVICE_CONFIGURATION_ERROR;
     PHYSICAL_ADDRESS start;
     start.QuadPart = (LONGLONG)cb;
@@ -290,10 +294,6 @@ NTSTATUS AdrenoPrepareGpuClocks(ADRENO_GPU_CLOCKS *c, PCM_PARTIAL_RESOURCE_DESCR
         return s;
     }
     c->gpucc = mapping;
-    c->axi = gcc->base + 0x71150 / 4;
-    c->memnoc = gcc->base + 0x71010 / 4;
-    c->gpll_vote = gcc->base + 0x52000 / 4;
-    c->gcc = gcc;
     return STATUS_SUCCESS;
 }
 
@@ -308,6 +308,21 @@ NTSTATUS AdrenoReleaseGpuClocks(ADRENO_GPU_CLOCKS *c)
         if (c->users[i]) return STATUS_DEVICE_BUSY;
     if (c->cx.users) return STATUS_DEVICE_BUSY;
     MmUnmapIoSpace((void *)c->gpucc, 0x9800);
-    RtlZeroMemory(c, sizeof(*c));
+    c->gpucc = NULL;
+    c->cx.control = c->cx.status = NULL;
     return STATUS_SUCCESS;
+}
+
+void AdrenoForgetGpuClocks(ADRENO_GPU_CLOCKS *c)
+{
+    PAGED_CODE();
+    /* The caller serialized all clients. GCC takes responsibility for a
+     * final release that cannot reach hardware until its next D0. */
+    RtlZeroMemory(c->users, sizeof(c->users));
+    c->cx.users = 0;
+    if (c->cx.initialized) c->cx.resuming = TRUE;
+    c->cx.initialized = FALSE;
+    c->dirty = c->partial = c->forced = 0;
+    c->park_gmu = FALSE;
+    if (c->gcc.Abandon) c->gcc.Abandon(c->gcc.Header.Context, c->gcc_held);
 }

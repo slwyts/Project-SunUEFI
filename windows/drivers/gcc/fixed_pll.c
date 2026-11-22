@@ -77,9 +77,23 @@ static NTSTATUS apply(SM8750_GCC_PLLS *p, unsigned i, BOOLEAN on)
     return s;
 }
 
-NTSTATUS Sm8750SetGccPll(PVOID ctx, enum sm8750_gcc_pll id, BOOLEAN *held, BOOLEAN on)
+static NTSTATUS release_pll(SM8750_GCC_PLLS *p, unsigned i)
 {
-    SM8750_GCC_PLLS *p = ctx;
+    /* A deferred GPU branch release keeps its source alive even when the
+     * last ordinary PLL user leaves. Release the source after the branch. */
+    if (i == 0 && p->release_gpu_branch) {
+        p->release_gpu_parent = TRUE;
+        return STATUS_SUCCESS;
+    }
+    NTSTATUS s = apply(p, i, FALSE);
+    if (i == 0 && NT_SUCCESS(s))
+        p->release_gpu_parent = FALSE;
+    return s;
+}
+
+static NTSTATUS set_pll(SM8750_GCC_PLLS *p, enum sm8750_gcc_pll id, BOOLEAN *held, BOOLEAN on,
+                        BOOLEAN gpu)
+{
     PAGED_CODE();
     if (!p || !held || (unsigned)id >= Sm8750GccPllCount)
         return STATUS_INVALID_PARAMETER;
@@ -88,9 +102,10 @@ NTSTATUS Sm8750SetGccPll(PVOID ctx, enum sm8750_gcc_pll id, BOOLEAN *held, BOOLE
     SM8750_GCC_PLL_STATE *g = &p->pll[i];
     NTSTATUS s = STATUS_SUCCESS;
     if (!p->online) {
-        if (p->removed && !on && *held && g->users) {
+        if ((p->removed || gpu) && !on && *held && g->users) {
             --g->users;
             *held = FALSE;
+            if (gpu && !p->removed && !g->users && !g->boot) p->release_gpu_parent = TRUE;
         } else if (on || *held) {
             s = p->removed ? STATUS_DEVICE_REMOVED : STATUS_DEVICE_NOT_READY;
         }
@@ -124,8 +139,10 @@ NTSTATUS Sm8750SetGccPll(PVOID ctx, enum sm8750_gcc_pll id, BOOLEAN *held, BOOLE
                 }
                 v &= op;
             }
-            /* A vote retained across D3 may be ours, not firmware's. */
-            g->boot = !!(v & (voted ? fixed[i].vote : 1)) && (!g->restore || g->boot);
+            /* Do not mistake our retained or deferred request for
+             * a firmware request when reading the vote after D3. */
+            BOOLEAN owned = g->restore || (i == 0 && p->release_gpu_parent);
+            g->boot = !!(v & (voted ? fixed[i].vote : 1)) && (!owned || g->boot);
             g->voted = voted;
             g->initialized = TRUE;
         } else if (g->voted != voted) {
@@ -155,7 +172,7 @@ NTSTATUS Sm8750SetGccPll(PVOID ctx, enum sm8750_gcc_pll id, BOOLEAN *held, BOOLE
         if (g->restore && g->users > 1)
             s = apply(p, i, TRUE);
         else if (g->users == 1 && !g->boot)
-            s = apply(p, i, FALSE);
+            s = release_pll(p, i);
         if (s == STATUS_SUCCESS) {
             --g->users;
             *held = FALSE;
@@ -165,6 +182,11 @@ NTSTATUS Sm8750SetGccPll(PVOID ctx, enum sm8750_gcc_pll id, BOOLEAN *held, BOOLE
 out:
     KeReleaseMutex(&p->lock, FALSE);
     return s;
+}
+
+NTSTATUS Sm8750SetGccPll(PVOID ctx, enum sm8750_gcc_pll id, BOOLEAN *held, BOOLEAN on)
+{
+    return set_pll(ctx, id, held, on, FALSE);
 }
 
 NTSTATUS Sm8750ReleaseGccPllBootReference(SM8750_GCC_PLLS *p, enum sm8750_gcc_pll id)
@@ -177,11 +199,104 @@ NTSTATUS Sm8750ReleaseGccPllBootReference(SM8750_GCC_PLLS *p, enum sm8750_gcc_pl
     SM8750_GCC_PLL_STATE *g = &p->pll[i];
     NTSTATUS s = p->online && g->initialized ? STATUS_SUCCESS : STATUS_DEVICE_NOT_READY;
     if (s == STATUS_SUCCESS && g->boot && !g->users)
-        s = apply(p, i, FALSE);
+        s = release_pll(p, i);
     if (s == STATUS_SUCCESS)
         g->boot = FALSE;
     KeReleaseMutex(&p->lock, FALSE);
     return s;
+}
+
+/* MiCode gcc-sun: GPLL0 main is an APSS vote, DDR AXI skips halt polling,
+ * and GEMNoC also accepts hardware clock gating. Both NoC branches are
+ * branch2_aon: release the software reference without powering them off. */
+static NTSTATUS gpu_branch(SM8750_GCC_PLLS *p, enum sm8750_gcc_gpu_clock id, BOOLEAN on)
+{
+    const ULONG offset = id == Sm8750GpuGpll0Main ? 0x52000 : id == Sm8750GpuDdrAxi ? 0x71150 : 0x71010;
+    const ULONG mask = id == Sm8750GpuGpll0Main ? 1u << 15 : 1;
+    if (!on && id != Sm8750GpuGpll0Main) return STATUS_SUCCESS;
+    volatile ULONG *r = p->base + offset / sizeof(ULONG);
+    KIRQL irql;
+    KeAcquireSpinLock(p->vote_lock, &irql);
+    NTSTATUS s = update(r, mask, on ? mask : 0);
+    KeReleaseSpinLock(p->vote_lock, irql);
+    if (!NT_SUCCESS(s)) return s;
+    if (id == Sm8750GpuGpll0Main) KeStallExecutionProcessor(10);
+    if (id != Sm8750GpuMemnoc) return STATUS_SUCCESS;
+    for (unsigned i = 0; i <= 200; ++i) {
+        ULONG v = READ_REGISTER_ULONG(r);
+        if (v == MAXULONG) return STATUS_DEVICE_NOT_CONNECTED;
+        if ((v & 2) || !(v & (1u << 31)) || ((v >> 28) & 7) == 2) return STATUS_SUCCESS;
+        if (i != 200) KeStallExecutionProcessor(1);
+    }
+    return STATUS_IO_TIMEOUT;
+}
+
+NTSTATUS Sm8750SetGpuGccClock(SM8750_GCC_PLLS *p, enum sm8750_gcc_gpu_clock id, BOOLEAN *held, BOOLEAN on)
+{
+    PAGED_CODE();
+    if (!p || !held || (unsigned)id >= Sm8750GpuClockCount) return STATUS_INVALID_PARAMETER;
+    if (id == Sm8750GpuGpll0) return set_pll(p, Sm8750Gpll0, held, on, TRUE);
+    KeWaitForSingleObject(&p->lock, Executive, KernelMode, FALSE, NULL);
+    ULONG *users = &p->gpu_users[id - 1];
+    NTSTATUS s = STATUS_SUCCESS;
+    if (!on && !*held) goto out;
+    if (!p->online && on) {
+        s = p->removed ? STATUS_DEVICE_REMOVED : STATUS_DEVICE_NOT_READY;
+        goto out;
+    }
+    if (on) {
+        if (!*held) {
+            if (*users == MAXULONG) { s = STATUS_INTEGER_OVERFLOW; goto out; }
+            ++*users;
+            *held = TRUE;
+        }
+        s = gpu_branch(p, id, TRUE);
+    } else if (!*users) {
+        s = STATUS_INVALID_DEVICE_STATE;
+    } else {
+        if (p->online) s = gpu_branch(p, id, *users > 1);
+        else if (!p->removed && *users == 1 && id == Sm8750GpuGpll0Main) p->release_gpu_branch = TRUE;
+        if (NT_SUCCESS(s)) {
+            --*users;
+            *held = FALSE;
+        }
+    }
+out:
+    KeReleaseMutex(&p->lock, FALSE);
+    return s;
+}
+
+static NTSTATUS release_gpu_votes(SM8750_GCC_PLLS *p)
+{
+    NTSTATUS s = STATUS_SUCCESS;
+    if (p->release_gpu_branch) {
+        if (!p->gpu_users[Sm8750GpuGpll0Main - 1]) s = gpu_branch(p, Sm8750GpuGpll0Main, FALSE);
+        if (NT_SUCCESS(s)) p->release_gpu_branch = FALSE;
+    }
+    if (NT_SUCCESS(s) && p->release_gpu_parent) {
+        if (!p->pll[0].users && !p->pll[0].boot) s = apply(p, 0, FALSE);
+        if (NT_SUCCESS(s)) p->release_gpu_parent = FALSE;
+    }
+    return s;
+}
+
+void Sm8750AbandonGpuGccClocks(SM8750_GCC_PLLS *p, BOOLEAN held[Sm8750GpuClockCount])
+{
+    PAGED_CODE();
+    KeWaitForSingleObject(&p->lock, Executive, KernelMode, FALSE, NULL);
+    for (unsigned i = Sm8750GpuClockCount; i--;) {
+        if (!held[i]) continue;
+        ULONG *n = i == Sm8750GpuGpll0 ? &p->pll[0].users : &p->gpu_users[i - 1];
+        NT_ASSERT(*n);
+        --*n;
+        if (!*n && !p->removed) {
+            if (i == Sm8750GpuGpll0Main) p->release_gpu_branch = TRUE;
+            if (i == Sm8750GpuGpll0 && !p->pll[0].boot) p->release_gpu_parent = TRUE;
+        }
+        held[i] = FALSE;
+    }
+    if (p->online) (void)release_gpu_votes(p);
+    KeReleaseMutex(&p->lock, FALSE);
 }
 
 NTSTATUS Sm8750GccPower(SM8750_GCC_PLLS *p, BOOLEAN online, BOOLEAN removed)
@@ -189,10 +304,20 @@ NTSTATUS Sm8750GccPower(SM8750_GCC_PLLS *p, BOOLEAN online, BOOLEAN removed)
     PAGED_CODE();
     KeWaitForSingleObject(&p->lock, Executive, KernelMode, FALSE, NULL);
     KIRQL irql;
+    NTSTATUS s = !online ? STATUS_SUCCESS : p->removed || removed ? STATUS_DEVICE_REMOVED :
+                 p->base ? STATUS_SUCCESS : STATUS_DEVICE_NOT_READY;
+    /* A GPUCC removed while GCC was in D3 cannot come back to finish an
+     * old release. Retire its last vote on resume, child before parent.
+     * AON gates need no write, and another PLL client keeps its parent. */
+    /* A GPU branch can refuse to turn off. Keep the pending release for
+     * the next GPU request or resume; that unused branch is not a reason
+     * to fail D0 and take the storage controller offline. */
+    if (online && NT_SUCCESS(s)) (void)release_gpu_votes(p);
     KeAcquireSpinLock(p->vote_lock, &irql);
     if (removed) p->removed = TRUE;
-    NTSTATUS s = !online ? STATUS_SUCCESS : p->removed ? STATUS_DEVICE_REMOVED :
-                 p->base ? STATUS_SUCCESS : STATUS_DEVICE_NOT_READY;
+    if (online && NT_SUCCESS(s) && !p->online) {
+        if (!++p->generation) ++p->generation;
+    }
     p->online = online && s == STATUS_SUCCESS;
     if (!p->online) InterlockedExchangePointer(&p->retained_ufs, NULL);
     KeReleaseSpinLock(p->vote_lock, irql);
@@ -202,6 +327,18 @@ NTSTATUS Sm8750GccPower(SM8750_GCC_PLLS *p, BOOLEAN online, BOOLEAN removed)
             p->pll[i].initialized = FALSE;
         }
     }
+    KeReleaseMutex(&p->lock, FALSE);
+    return s;
+}
+
+NTSTATUS Sm8750GccGeneration(SM8750_GCC_PLLS *p, ULONGLONG *generation)
+{
+    PAGED_CODE();
+    if (!generation) return STATUS_INVALID_PARAMETER;
+    KeWaitForSingleObject(&p->lock, Executive, KernelMode, FALSE, NULL);
+    NTSTATUS s = p->removed ? STATUS_DEVICE_REMOVED : !p->online ? STATUS_DEVICE_NOT_READY : STATUS_SUCCESS;
+    if (NT_SUCCESS(s)) s = release_gpu_votes(p);
+    if (NT_SUCCESS(s)) *generation = p->generation;
     KeReleaseMutex(&p->lock, FALSE);
     return s;
 }

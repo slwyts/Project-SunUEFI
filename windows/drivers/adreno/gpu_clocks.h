@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 #pragma once
 #include "cx_power.h"
-#include "../gcc/fixed_pll.h"
+#include "gpucc_interface.h"
+#include "../gcc/clock_interface.h"
 
 typedef struct ADRENO_GPU_CLOCKS ADRENO_GPU_CLOCKS;
 typedef struct {
@@ -10,28 +11,28 @@ typedef struct {
     ULONG held;
 } ADRENO_CLOCK_REFERENCE;
 
-enum adreno_clock_client { AdrenoGmuClocks, AdrenoRenderBusClocks, AdrenoSmmuClocks };
-
-/* GPUCC owns its register resource. GCC lends its already mapped resource
- * and the same APSS vote lock used by the other clients of GCC's 0x52000.
- * The sole consumer of that word's GPU GPLL0-main bit is GPUCC. Never map
- * GCC from the render PDO. Keep both providers in D0 while taking clocks.
+/* GPUCC owns only its translated register resource. The GCC provider
+ * retains its own registers and arbitrates votes shared with storage.
  * The platform has taken over the GPU from firmware. SetRailsAndBus must
  * hold the board's XO, CX/MX and interconnect votes before touching GPUCC,
  * including PLL calibration at 0x44 * 19.2 MHz. */
 struct ADRENO_GPU_CLOCKS {
     ADRENO_CX_DOMAIN cx;
     KMUTEX lock;
-    volatile ULONG *gpucc, *axi, *memnoc, *gpll_vote;
-    SM8750_GCC_PLLS *gcc;
+    volatile ULONG *gpucc;
+    SM8750_GCC_GPU_INTERFACE gcc;
     ULONG users[12], dirty, partial, forced;
-    BOOLEAN park_gmu, parent_held;
+    BOOLEAN park_gmu, gcc_held[Sm8750GpuClockCount];
 };
 
 _IRQL_requires_(PASSIVE_LEVEL)
-NTSTATUS AdrenoPrepareGpuClocks(ADRENO_GPU_CLOCKS *clocks, PCM_PARTIAL_RESOURCE_DESCRIPTOR gpucc, SM8750_GCC_PLLS *gcc);
+NTSTATUS AdrenoPrepareGpuClocks(ADRENO_GPU_CLOCKS *clocks, PCM_PARTIAL_RESOURCE_DESCRIPTOR gpucc);
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS AdrenoReleaseGpuClocks(ADRENO_GPU_CLOCKS *clocks);
+/* The FDO has fenced off all local access and owns reference cleanup.
+ * Return foreign votes, without dereferencing inaccessible GPUCC registers. */
+_IRQL_requires_(PASSIVE_LEVEL)
+void AdrenoForgetGpuClocks(ADRENO_GPU_CLOCKS *clocks);
 
 /* Zero-initialize a separate reference per client. Releasing after a
  * failed enable retires any pending hardware operation before its parents.

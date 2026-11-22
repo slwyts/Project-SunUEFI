@@ -23,16 +23,3 @@ static inline NTSTATUS wait_bits(volatile ULONG *address, ULONG mask, ULONG valu
     }
     return STATUS_IO_TIMEOUT;
 }
-
-static inline BOOLEAN window(PCM_PARTIAL_RESOURCE_DESCRIPTOR r, ULONGLONG *base, ULONGLONG minimum, ULONGLONG *end)
-{
-    if (!r || (r->Type != CmResourceTypeMemory && r->Type != CmResourceTypeMemoryLarge) ||
-        (r->Flags & (CM_RESOURCE_MEMORY_READ_ONLY | CM_RESOURCE_MEMORY_WRITE_ONLY)) ||
-        r->ShareDisposition == CmResourceShareShared)
-        return FALSE;
-    ULONGLONG size = RtlCmDecodeMemIoResource(r, base);
-    if (size < minimum || size > MAXLONGLONG || (*base & (PAGE_SIZE - 1)) || *base > (ULONGLONG)MAXLONGLONG - size)
-        return FALSE;
-    *end = *base + size;
-    return TRUE;
-}

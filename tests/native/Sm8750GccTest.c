@@ -5,10 +5,12 @@
 #include "piano_power.h"
 #include <errno.h>
 
-enum { VOTE = 0x52020 / 4, GPLL4 = 0x4000 / 4, L = 4, ALPHA = 5, USER = 6, UFS_BASE = 0x100000 };
+enum { VOTE = 0x52020 / 4, GPU_VOTE = 0x52000 / 4, GPU_AXI = 0x71150 / 4,
+       GPU_MEM = 0x71010 / 4, GPLL4 = 0x4000 / 4, L = 4, ALPHA = 5, USER = 6, UFS_BASE = 0x100000 };
 #define LOCKED (UINT32_C(1) << 31)
 static ULONG first[SM8750_GCC_REQUIRED_BYTES / 4], second[RTL_NUMBER_OF(first)], *mapped;
 static unsigned accesses;
+static BOOLEAN stuck_gpu_vote;
 static int disk, other;
 static SM8750_GCC_PLLS gcc;
 static KSPIN_LOCK vote_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -64,10 +66,12 @@ void WRITE_REGISTER_ULONG(volatile ULONG *reg, ULONG value)
         mapped[0] = value & 1 ? LOCKED : 0;
         mapped[GPLL4] = value & 16 ? LOCKED : 0;
     }
+    if (i == GPU_VOTE || i == GPU_AXI || i == GPU_MEM) assert(gcc_test_irql == DISPATCH_LEVEL);
+    if (stuck_gpu_vote && i == GPU_VOTE) value |= mapped[i] & (1u << 15);
     mapped[i] = value;
 }
 
-void KeStallExecutionProcessor(ULONG usec) { assert(usec == 1); }
+void KeStallExecutionProcessor(ULONG usec) { assert(usec == 1 || usec == 10); }
 
 static void prepare(void)
 {
@@ -231,11 +235,77 @@ static void remap_and_remove(void)
     assert(Sm8750CloseUfsClocks(&gcc, &disk) && !Sm8750CloseUfsClocks(&gcc, &disk));
 }
 
+static void gpu_branches(void)
+{
+    BOOLEAN first_user = FALSE, second_user = FALSE;
+    mapped[GPU_VOTE] = 0xa51;
+    assert(Sm8750SetGpuGccClock(&gcc, Sm8750GpuGpll0Main, &first_user, TRUE) == STATUS_SUCCESS);
+    assert(Sm8750SetGpuGccClock(&gcc, Sm8750GpuGpll0Main, &second_user, TRUE) == STATUS_SUCCESS);
+    assert(first_user && second_user && mapped[GPU_VOTE] == (0xa51 | (1u << 15)));
+    assert(Sm8750SetGpuGccClock(&gcc, Sm8750GpuGpll0Main, &first_user, FALSE) == STATUS_SUCCESS);
+    assert(mapped[GPU_VOTE] == (0xa51 | (1u << 15)));
+    assert(Sm8750SetGpuGccClock(&gcc, Sm8750GpuGpll0Main, &second_user, FALSE) == STATUS_SUCCESS);
+    assert(mapped[GPU_VOTE] == 0xa51 && !first_user && !second_user);
+    mapped[GPU_AXI] = 0x80000040;
+    assert(Sm8750SetGpuGccClock(&gcc, Sm8750GpuDdrAxi, &first_user, TRUE) == STATUS_SUCCESS);
+    assert(Sm8750SetGpuGccClock(&gcc, Sm8750GpuDdrAxi, &first_user, FALSE) == STATUS_SUCCESS);
+    assert(mapped[GPU_AXI] == 0x80000041);
+    mapped[GPU_MEM] = 0x80000010; /* stopped and not hardware-gated */
+    assert(Sm8750SetGpuGccClock(&gcc, Sm8750GpuMemnoc, &first_user, TRUE) == STATUS_IO_TIMEOUT && first_user);
+    mapped[GPU_MEM] |= 2;
+    assert(Sm8750SetGpuGccClock(&gcc, Sm8750GpuMemnoc, &first_user, TRUE) == STATUS_SUCCESS);
+    assert(Sm8750SetGpuGccClock(&gcc, Sm8750GpuMemnoc, &first_user, FALSE) == STATUS_SUCCESS);
+    assert(mapped[GPU_MEM] == 0x80000013 && !first_user);
+    /* A disappearing GPUCC cannot come back to release a vote after
+     * resume. Make the supplier retire it without accessing sleeping MMIO. */
+    BOOLEAN client[Sm8750GpuClockCount] = {FALSE};
+    for (unsigned i = 0; i < Sm8750GpuClockCount; ++i)
+        assert(Sm8750SetGpuGccClock(&gcc, (enum sm8750_gcc_gpu_clock)i, &client[i], TRUE) == STATUS_SUCCESS);
+    assert((mapped[VOTE] & 1) && (mapped[GPU_VOTE] & (1u << 15)));
+    assert(Sm8750GccPower(&gcc, FALSE, FALSE) == STATUS_SUCCESS);
+    mapped = NULL;
+    Sm8750AbandonGpuGccClocks(&gcc, client);
+    for (unsigned i = 0; i < Sm8750GpuClockCount; ++i) assert(!client[i]);
+    mapped = first;
+    assert(mapped[VOTE] & 1);
+    assert(Sm8750GccPower(&gcc, TRUE, FALSE) == STATUS_SUCCESS);
+    assert(!(mapped[VOTE] & 1) && mapped[GPU_VOTE] == 0xa51);
+    assert(mapped[GPU_AXI] == 0x80000041 && mapped[GPU_MEM] == 0x80000013);
+    /* Ordinary UFS rights to the same PLL outlive a GPU's forced removal. */
+    assert(Sm8750SetGccPll(&gcc, Sm8750Gpll0Even, &first_user, TRUE) == STATUS_SUCCESS);
+    assert(Sm8750SetGpuGccClock(&gcc, Sm8750GpuGpll0, &client[0], TRUE) == STATUS_SUCCESS);
+    assert(Sm8750SetGpuGccClock(&gcc, Sm8750GpuGpll0Main, &client[1], TRUE) == STATUS_SUCCESS);
+    ULONGLONG old, now;
+    assert(Sm8750GccGeneration(&gcc, &old) == STATUS_SUCCESS && old);
+    assert(Sm8750GccPower(&gcc, FALSE, FALSE) == STATUS_SUCCESS);
+    assert(Sm8750GccGeneration(&gcc, &now) == STATUS_DEVICE_NOT_READY);
+    mapped = NULL;
+    Sm8750AbandonGpuGccClocks(&gcc, client);
+    mapped = first;
+    stuck_gpu_vote = TRUE;
+    assert(Sm8750GccPower(&gcc, TRUE, FALSE) == STATUS_SUCCESS);
+    assert(Sm8750GccGeneration(&gcc, &now) == STATUS_DEVICE_HARDWARE_ERROR);
+    assert((mapped[VOTE] & 1) && first_user && !client[0]);
+    assert(Sm8750SetGccPll(&gcc, Sm8750Gpll0Even, &first_user, TRUE) == STATUS_SUCCESS);
+    /* The last storage client may leave while the GPU vote is still stuck. */
+    assert(Sm8750SetGccPll(&gcc, Sm8750Gpll0Even, &first_user, FALSE) == STATUS_SUCCESS && !first_user);
+    assert((mapped[VOTE] & 1) && (mapped[GPU_VOTE] & (1u << 15)));
+    assert(Sm8750GccPower(&gcc, FALSE, FALSE) == STATUS_SUCCESS);
+    assert(Sm8750GccPower(&gcc, TRUE, FALSE) == STATUS_SUCCESS);
+    assert(Sm8750SetGccPll(&gcc, Sm8750Gpll0Even, &first_user, TRUE) == STATUS_SUCCESS);
+    assert(Sm8750SetGccPll(&gcc, Sm8750Gpll0Even, &first_user, FALSE) == STATUS_SUCCESS && !first_user);
+    assert((mapped[VOTE] & 1) && (mapped[GPU_VOTE] & (1u << 15)));
+    stuck_gpu_vote = FALSE;
+    assert(Sm8750GccGeneration(&gcc, &now) == STATUS_SUCCESS && now != old && !(mapped[GPU_VOTE] & (1u << 15)));
+    assert(!(mapped[VOTE] & 1));
+}
+
 int main(void)
 {
     prepare();
     ufs_registers();
     shared_plls();
+    gpu_branches();
     remap_and_remove();
     return 0;
 }

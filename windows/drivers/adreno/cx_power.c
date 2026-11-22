@@ -40,8 +40,10 @@ NTSTATUS AdrenoCxAcquire(ADRENO_CX_DOMAIN *d, ADRENO_CX_REFERENCE *ref)
     if (before == MAXULONG) { status = STATUS_DEVICE_NOT_CONNECTED; goto done; }
     if (before & (HW_CONTROL | SW_OVERRIDE)) { status = STATUS_DEVICE_BUSY; goto done; }
     if (!d->initialized) {
-        d->boot_ref = !(before & SW_COLLAPSE);
+        /* A retained AP vote after D3 may be Windows' own request. */
+        d->boot_ref = !(before & SW_COLLAPSE) && (!d->resuming || d->boot_ref);
         d->initialized = TRUE;
+        d->resuming = FALSE;
     }
     if (!ref->domain) {
         if (d->users == MAXULONG) { status = STATUS_INTEGER_OVERFLOW; goto done; }

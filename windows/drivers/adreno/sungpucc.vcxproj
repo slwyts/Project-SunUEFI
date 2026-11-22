@@ -1,23 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
-    <ProjectConfiguration Include="Debug|ARM64"><Configuration>Debug</Configuration><Platform>ARM64</Platform></ProjectConfiguration>
     <ProjectConfiguration Include="Release|ARM64"><Configuration>Release</Configuration><Platform>ARM64</Platform></ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
-    <ProjectGuid>{E6DB85E9-1255-4D27-8FD7-F51D04C44517}</ProjectGuid>
+    <ProjectGuid>{622F1307-F73C-4951-8DE6-B74B450B3B1B}</ProjectGuid>
     <WindowsTargetPlatformVersion Condition="'$(WindowsTargetPlatformVersion)'==''">10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Label="Configuration">
-    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <ConfigurationType>Driver</ConfigurationType>
     <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
-    <DriverType>WDM</DriverType>
+    <DriverType>KMDF</DriverType>
+    <KMDF_VERSION_MAJOR>1</KMDF_VERSION_MAJOR>
+    <KMDF_VERSION_MINOR>33</KMDF_VERSION_MINOR>
+    <TargetVersion>Windows10</TargetVersion>
     <DriverTargetPlatform>Universal</DriverTargetPlatform>
   </PropertyGroup>
   <PropertyGroup>
-    <IntDir>$(MSBuildThisFileDirectory)..\..\..\build\windows\gcc\$(Configuration)\</IntDir>
-    <OutDir>$(MSBuildThisFileDirectory)..\..\..\artifacts\windows\drivers\gcc\$(Configuration)\</OutDir>
+    <IntDir>$(MSBuildThisFileDirectory)..\..\..\build\windows\sungpucc\$(Configuration)\</IntDir>
+    <OutDir>$(MSBuildThisFileDirectory)..\..\..\artifacts\windows\drivers\sungpucc\$(Configuration)\</OutDir>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ItemDefinitionGroup>
@@ -28,10 +30,18 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="fixed_pll.c" />
-    <ClInclude Include="clock_interface.h" />
-    <ClInclude Include="fixed_pll.h" />
-    <ClInclude Include="registers.h" />
+    <ClCompile Include="gpucc_device.c" />
+    <ClCompile Include="gpu_clocks.c" />
+    <ClCompile Include="cx_power.c" />
+    <ClCompile Include="../gcc/acpi.c" />
+    <ClCompile Include="../gcc/query.c" />
+    <ClInclude Include="gpucc_interface.h" />
+    <ClInclude Include="gpu_clocks.h" />
+    <ClInclude Include="cx_power.h" />
+    <ClInclude Include="../gcc/registers.h" />
+    <ClInclude Include="../gcc/clock_interface.h" />
+    <ClInclude Include="../gcc/query.h" />
+    <ClInclude Include="../gcc/acpi.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

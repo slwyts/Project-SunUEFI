@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #pragma once
-#include "gpu_clocks.h"
+#include "gpucc_interface.h"
+#include "../gcc/query.h"
 #include "gmu_memory.h"
 #include "hfi.h"
 #include "hfi_bandwidth.h"
@@ -15,7 +16,6 @@ struct ADRENO_RENDER_DEVICE;
  * Tables and provider references remain valid throughout PnP start/stop. */
 typedef struct {
     void *context;
-    ADRENO_GPU_CLOCKS *clocks;
     NTSTATUS (*SetRailsAndBus)(void *context, BOOLEAN enable);
     /* Optional GX clock controller recovery, only if RSC left GX powered. */
     NTSTATUS (*PowerOffGx)(void *context);
@@ -29,12 +29,13 @@ typedef struct {
 enum adreno_gx_request { AdrenoGxReleased, AdrenoGxWaitAck, AdrenoGxWaitPower, AdrenoGxHeld };
 
 typedef struct {
-    ADRENO_CLOCK_REFERENCE clock_ref;
+    ADRENO_GPUCC_INTERFACE clocks;
+    SM8750_CLOCK_TARGET clock_target;
     ADRENO_GMU_MEMORY memory;
     ADRENO_HFI hfi;
     enum adreno_gx_request gx_request;
     struct adreno_hfi_level initial_level;
-    BOOLEAN rails, wake_pending, rsc_awake, reset_pending, reset_released, hfi_running, slumber_requested;
+    BOOLEAN rails, clock_requested, wake_pending, rsc_awake, reset_pending, reset_released, hfi_running, slumber_requested;
     BOOLEAN rsc_sleeping, gbif_pending;
 } ADRENO_GMU_DEVICE;
 
