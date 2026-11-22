@@ -1,5 +1,6 @@
 """Check Debian source identity and package-cache ABI boundaries."""
 import copy
+from io import StringIO
 import json
 from pathlib import Path
 import subprocess
@@ -28,6 +29,9 @@ class DebianPackageTests(unittest.TestCase):
         summary = '\nE: Some files failed to download\nE: Failed to process build dependencies\n'
         self.assertEqual(debian_package.dependency_download_resets(reset + summary),
                          {'https://deb.debian.org/debian/pool/dh-python.deb'})
+        install_summary = '\nE: Unable to fetch some archives, maybe run apt update or try with --fix-missing?\n'
+        self.assertEqual(debian_package.dependency_download_resets(reset + install_summary),
+                         {'https://deb.debian.org/debian/pool/dh-python.deb'})
         for error in (
             summary,
             reset.replace('https://', 'http://') + summary,
@@ -38,6 +42,32 @@ class DebianPackageTests(unittest.TestCase):
         ):
             with self.subTest(error=error):
                 self.assertFalse(debian_package.dependency_download_resets(error))
+
+    def test_interrupted_dependency_install_retries_only_the_download(self):
+        uri = 'https://deb.debian.org/debian/pool/sensible-utils_0.0.26_all.deb'
+        name = 'sensible-utils_0.0.26_all.deb'
+        commands = []
+
+        def apt(root, args, **kwargs):
+            commands.append(args[-1])
+            archive = root / args[2].split('=', 1)[1].lstrip('/') / 'partial' / name
+            if len(commands) == 1:
+                archive.parent.mkdir()
+                archive.write_bytes(b'interrupted')
+                kwargs['stdout'].write(
+                    f'E: Failed to fetch {uri}  OpenSSL system call error: error:00000000:lib(0)::reason(0)'
+                    '  - openssl (104: Connection reset by peer) [IP: 192.0.2.1 443]\n'
+                    'E: Unable to fetch some archives, maybe run apt update or try with --fix-missing?\n')
+                raise subprocess.CalledProcessError(100, args)
+            if args[-1] == '--print-uris':
+                return subprocess.CompletedProcess(args, 0, stdout=f"'{uri}' {name} 27000 SHA256:digest\n")
+            self.assertFalse(archive.exists())
+
+        with tempfile.TemporaryDirectory() as temporary, patch.object(debian_package, 'chroot', side_effect=apt):
+            root = Path(temporary)
+            (root / 'var/cache/apt').mkdir(parents=True)
+            debian_package.install_apt_dependencies(root, ['install', 'build-essential'], StringIO())
+        self.assertEqual(commands, ['--download-only', '--print-uris', '--download-only', '--no-download'])
 
     def test_mesa_local_revision_is_bound_to_config_and_built_output(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -50,6 +50,8 @@ CI_UNIT = (
     'test_rtc_offset.py',
     'test_usb_ram_boot_controller.py',
     'test_gt9764.py',
+    'test_debian.py',
+    'test_debian_package.py',
     'test_build_libcamera_packages.py',
     'test_build_pipewire_packages.py',
     'test_build_plasma_camera_package.py',

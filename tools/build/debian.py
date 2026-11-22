@@ -500,9 +500,8 @@ def dependencies(root, log, resume=False):
     signed.signed_records(root, 'Sources', ())
     if root != Path('/'):
         align_development_cohorts(root, log)
-    guest(root, ['apt-get', 'install', '-y', '--no-install-recommends', 'build-essential',
-                 'ca-certificates', 'dpkg-dev', 'devscripts', 'equivs', 'ccache', 'patch'],
-          stdout=log, stderr=subprocess.STDOUT)
+    signed.install_apt_dependencies(root, ['install', 'build-essential', 'ca-certificates',
+                                          'dpkg-dev', 'devscripts', 'equivs', 'ccache', 'patch'], log)
 
 
 def add_patches(work, patches, package, version, message):

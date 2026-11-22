@@ -205,7 +205,8 @@ def prepare_build_indexes(rootfs, execute, *, refresh=True):
 
 def dependency_download_resets(output):
     """Return failed archive names only if every error is an HTTPS reset."""
-    summaries = {'E: Some files failed to download', 'E: Failed to process build dependencies'}
+    summaries = {'E: Some files failed to download', 'E: Failed to process build dependencies',
+                 'E: Unable to fetch some archives, maybe run apt update or try with --fix-missing?'}
     errors = [line for line in output.splitlines() if line.startswith('E:') and line not in summaries]
     archives = set()
     for line in errors:
@@ -218,7 +219,7 @@ def dependency_download_resets(output):
     return archives
 
 
-def install_build_dependencies(rootfs, package, version, log, *, architecture_only=False):
+def install_apt_dependencies(rootfs, operation, log):
     # APT can reuse cached files based on size. Keep the cache private to
     # this verified acquisition and its single offline installation.
     cache = rootfs / 'var/cache/apt'
@@ -226,9 +227,7 @@ def install_build_dependencies(rootfs, package, version, log, *, architecture_on
         archives = Path(directory)
         archives.chmod(0o755)
         args = ['apt-get', '-o', 'Dir::Cache::archives=' + inside(rootfs, archives),
-                'build-dep', '-y', '--no-install-recommends', '--no-fix-missing',
-                *(['--arch-only'] if architecture_only else []),
-                '--build-profiles=' + BUILD_PROFILES, package + '=' + version]
+                *operation, '-y', '--no-install-recommends', '--no-fix-missing']
         download = [*args, '--download-only']
         # APT can report a reset after the final TLS record as a permanent error.
         failure = None
@@ -255,6 +254,11 @@ def install_build_dependencies(rootfs, package, version, log, *, architecture_on
             log.flush()
             chroot(rootfs, download, stdout=log, stderr=subprocess.STDOUT)
         chroot(rootfs, [*args, '--no-download'], stdout=log, stderr=subprocess.STDOUT)
+
+
+def install_build_dependencies(rootfs, package, version, log, *, architecture_only=False):
+    install_apt_dependencies(rootfs, ['build-dep', *(['--arch-only'] if architecture_only else []),
+                                      '--build-profiles=' + BUILD_PROFILES, package + '=' + version], log)
 
 
 def source_identity(row):
