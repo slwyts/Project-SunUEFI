@@ -52,7 +52,7 @@ STATIC EFI_STATUS BaselineGate(CONST PIANO_UFS_WRITE_REQUEST *Q,BOOLEAN WriteAut
   return AllZero(B->OriginalBlock.Data,4096)?EFI_SUCCESS:EFI_SECURITY_VIOLATION;
 }
 STATIC EFI_STATUS GuardGate(CONST PIANO_UFS_WRITE_GUARD *G) {
-  return PianoUfsWriteGuardCheck(G);
+  return PianoUfsWriteGuardCheck(G,PIANO_UFS_WRITE_TEST_CAPACITY);
 }
 STATIC VOID Quarantine(PIANO_UFS_WRITE_RESULT *R,EFI_STATUS S) {
   R->Quarantined=R->RequiresRecovery=TRUE;R->SafeToContinue=R->DataUnchanged=FALSE;

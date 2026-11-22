@@ -10,7 +10,7 @@
 // Release must not reset when Dirty/NeedsRecovery; those states outlive each IO.
 typedef EFI_STATUS (*PIANO_WINDOW_ACQUIRE)(VOID *);
 typedef EFI_STATUS (*PIANO_WINDOW_RELEASE)(VOID *,BOOLEAN Quarantined);
-typedef struct {PIANO_UFS_WRITE_IO Io;PIANO_WINDOW_ACQUIRE Acquire;PIANO_WINDOW_RELEASE Release;} PIANO_UFS_WINDOW_IO;
+typedef struct {PIANO_UFS_WRITE_IO Io;PIANO_WINDOW_ACQUIRE Acquire;PIANO_WINDOW_RELEASE Release;UINT64 DiskLastLba;UINT32 DiskBlockBytes;} PIANO_UFS_WINDOW_IO;
 typedef struct {
   BOOLEAN Opened,Closed,Busy,Dirty,NeedsRecovery,Quarantined,RestoreVerified,ConsumersDetached;
   UINT64 Requests,WriteRequests,WriteAttempts,VerifiedBlocks,Flushes,Failures,ReadBlocks;
