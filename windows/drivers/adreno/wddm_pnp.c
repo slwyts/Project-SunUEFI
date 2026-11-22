@@ -66,7 +66,10 @@ static NTSTATUS power_down(ADRENO_RENDER_DEVICE *device)
     AdrenoSetGpuClockPowered(&device->clock, FALSE);
     device->powered = FALSE;
     if (device->engine_acquired) {
-        NTSTATUS status = device->power_down(device);
+        NTSTATUS status = AdrenoHoldGx(device);
+        if (status != STATUS_SUCCESS)
+            return status;
+        status = device->power_down(device);
         if (status != STATUS_SUCCESS)
             return status;
         device->engine_acquired = FALSE;
@@ -88,6 +91,7 @@ static NTSTATUS power_up(ADRENO_RENDER_DEVICE *device)
         status = device->power_up(device);
     }
     if (status == STATUS_SUCCESS) {
+        AdrenoReleaseGx(device);
         device->powered = TRUE;
         AdrenoSetGpuClockPowered(&device->clock, TRUE);
     }

@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from test_hfi_bandwidth import Config as Bandwidth
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / 'windows/drivers/adreno'
@@ -76,6 +77,8 @@ class HfiPerfTableTests(unittest.TestCase):
                        check=True)
         cls.lib = ct.CDLL(str(library))
         cls.lib.adreno_hfi_perf_table.argtypes = [U32, ct.POINTER(Config), ct.POINTER(Table)]
+        cls.lib.adreno_hfi_select_level.argtypes = [ct.POINTER(Config), ct.POINTER(Bandwidth),
+                                                    U32, U32, ct.POINTER(U32)]
         cls.lib.adreno_hfi_init.argtypes = [ct.POINTER(Hfi), ct.c_void_p, SIZE, ct.c_uint64]
         cls.lib.adreno_hfi_send.argtypes = [ct.POINTER(Hfi), ct.c_uint8, ct.POINTER(U32), SIZE, ct.POINTER(U32)]
 
@@ -128,6 +131,34 @@ class HfiPerfTableTests(unittest.TestCase):
         cfg.gpu_count = 32
         self.assertEqual(self.lib.adreno_hfi_perf_table(0x20070001, ct.byref(cfg), ct.byref(table)), 2)
         self.assertEqual(bytes(table), before)
+
+    def test_factory_initial_opp_selects_gpu_and_ddr_independently(self):
+        node = '/soc/qcom,kgsl-3d0@3d00000'
+        bins = node + '/qcom,gpu-pwrlevel-bins'
+        ddr = [n for n, in struct.iter_unpack('>I', self.tree[node]['qcom,bus-table-ddr'])]
+        bandwidth = Bandwidth(None, (U32 * len(ddr))(*ddr), len(ddr), 0)
+        encoded = (U32 * 2)()
+        for group, properties in self.tree.items():
+            if group.rpartition('/')[0] != bins:
+                continue
+            with self.subTest(group=group):
+                entries = [v for p, v in self.tree.items() if p.rpartition('/')[0] == group]
+                initial = next(v for v in entries if v['reg'] == properties['qcom,initial-pwrlevel'])
+                khz = int.from_bytes(initial['qcom,gpu-freq'], 'big') // 1000
+                bus = int.from_bytes(initial['qcom,bus-freq'], 'big')
+                gpu = sorted((int.from_bytes(v['qcom,gpu-freq'], 'big') // 1000,
+                              int.from_bytes(v['qcom,level'], 'big')) for v in entries)
+                cfg = config(gpu, [], [[]] * 5)
+                gpu_index = len(entries) - int.from_bytes(initial['reg'], 'big')  # KGSL numbers highest first.
+                for ddr_index in (bus, 1, len(ddr) - 1):
+                    self.assertEqual(self.lib.adreno_hfi_select_level(ct.byref(cfg), ct.byref(bandwidth),
+                                                                     khz, ddr[ddr_index], encoded), 1)
+                    self.assertEqual(tuple(encoded), (gpu_index, 0xffff0000 | ddr_index))
+                before = tuple(encoded)
+                for unavailable in ((0, ddr[bus]), (khz + 1, ddr[bus]), (khz, 0), (khz, ddr[bus] + 1)):
+                    self.assertEqual(self.lib.adreno_hfi_select_level(ct.byref(cfg), ct.byref(bandwidth),
+                                                                     *unavailable, encoded), 0)
+                    self.assertEqual(tuple(encoded), before)
 
 
 if __name__ == '__main__':

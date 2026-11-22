@@ -8,15 +8,17 @@ enum {
     gx_power = 0x1f7e8, rpmh_power = 0x1f7e9, cx_fal = 0x1f7ec, cx_falnext = 0x1f7ed,
     cm3_reset = 0x1f800, cm3_boot = 0x1f801,
     cm3_result = 0x1f81c, cm3_config = 0x1f82d, intr_clear = 0x1f991, intr_info = 0x1f992,
-    intr_mask = 0x1f993, log_address = 0x1f9c8, log_write = 0x1f9c9, chip_id = 0x1f9ca,
+    intr_mask = 0x1f993, host_intr_set = 0x1f994,
+    log_address = 0x1f9c8, log_write = 0x1f9c9, chip_id = 0x1f9ca,
     power_counter = 0x1fc10, ao_intr_clear = 0x23b04, ao_intr_mask = 0x23b06,
     rsc_req = 0x23b07, rsc_ack = 0x23b08, cx_busy = 0x23b0c, fence_control = 0x23b10,
     fence_range = 0x23b11, fence_clear = 0x23b14,
     gbif_config = 0x3c00, qsb_side0 = 0x3c03, gbif_halt = 0x3c45, gbif_ack = 0x3c46,
     rsc_status = 4, rsc_seq_busy = 0x101,
-    hfi_bw = 3, hfi_start = 10, hfi_core = 14, hfi_slumber = 33,
+    hfi_bw = 3, hfi_start = 10, hfi_core = 14, hfi_gx_vote = 30, hfi_slumber = 33,
     gmu_iort_input = 0x03000005 /* Piano XBL NAMEDNODE_GPU, not its physical stream ID. */
 };
+#define GX_WAKE_ACK (1u << 31)
 
 static volatile ULONG *gmu_reg(ADRENO_RENDER_DEVICE *d, unsigned word)
 {
@@ -47,15 +49,22 @@ static NTSTATUS poll(volatile ULONG *reg, ULONG mask, ULONG expected, ULONG time
     return STATUS_IO_TIMEOUT;
 }
 
+static NTSTATUS gmu_boot_state(ADRENO_RENDER_DEVICE *d, ULONG *irq)
+{
+    ULONG boot = READ_REGISTER_ULONG(gmu_reg(d, cm3_result));
+    *irq = READ_REGISTER_ULONG(gmu_reg(d, intr_info));
+    if (boot == MAXULONG || *irq == MAXULONG) return STATUS_DEVICE_NOT_CONNECTED;
+    if ((boot & 0xe00) || (*irq & (1u << 15))) return STATUS_DEVICE_HARDWARE_ERROR;
+    return (boot & 0x1ff) == 0x100 ? STATUS_SUCCESS : STATUS_DEVICE_NOT_READY;
+}
+
 static NTSTATUS wait_for_boot(ADRENO_RENDER_DEVICE *d)
 {
     ULONGLONG start = KeQueryInterruptTime();
     do {
-        ULONG state = READ_REGISTER_ULONG(gmu_reg(d, cm3_result));
-        ULONG irq = READ_REGISTER_ULONG(gmu_reg(d, intr_info));
-        if (state == MAXULONG || irq == MAXULONG) return STATUS_DEVICE_NOT_CONNECTED;
-        if ((state & 0xe00) || (irq & (1u << 15))) return STATUS_DEVICE_HARDWARE_ERROR;
-        if ((state & 0x1ff) == 0x100) return STATUS_SUCCESS;
+        ULONG irq;
+        NTSTATUS status = gmu_boot_state(d, &irq);
+        if (status != STATUS_DEVICE_NOT_READY) return status;
         short_delay();
     } while (KeQueryInterruptTime() - start < 100 * 10000);
     return STATUS_IO_TIMEOUT;
@@ -93,6 +102,57 @@ static NTSTATUS hold_reset(ADRENO_RENDER_DEVICE *d)
     return poll(gmu_reg(d, cm3_reset), 1, 1, 100);
 }
 
+NTSTATUS AdrenoHoldGx(ADRENO_RENDER_DEVICE *d)
+{
+    PAGED_CODE();
+    ADRENO_GMU_DEVICE *g = &d->gmu_state;
+    if (!g->reset_released)
+        return STATUS_INVALID_DEVICE_STATE;
+
+    ULONGLONG start = KeQueryInterruptTime();
+    do {
+        ULONG irq;
+        NTSTATUS status = gmu_boot_state(d, &irq);
+        if (status != STATUS_SUCCESS) return status;
+        if (g->gx_request == AdrenoGxReleased) {
+            /* An OOB acknowledgement has no sequence number. A previous
+             * latch must read clear before a fresh request may be posted. */
+            if (irq & GX_WAKE_ACK) {
+                gmu_write(d, intr_clear, GX_WAKE_ACK);
+                short_delay();
+            } else {
+                g->gx_request = AdrenoGxWaitAck;
+                gmu_write(d, host_intr_set, 1u << 30);
+            }
+            continue;
+        }
+        if (g->gx_request == AdrenoGxWaitAck && (irq & GX_WAKE_ACK)) {
+            gmu_write(d, intr_clear, GX_WAKE_ACK);
+            g->gx_request = AdrenoGxWaitPower;
+        }
+        if (g->gx_request != AdrenoGxWaitAck) {
+            ULONG gx = READ_REGISTER_ULONG(gmu_reg(d, gx_power));
+            if (gx == MAXULONG) return STATUS_DEVICE_NOT_CONNECTED;
+            if (!(gx & 3)) {
+                g->gx_request = AdrenoGxHeld;
+                return STATUS_SUCCESS;
+            }
+        }
+        short_delay();
+    } while (KeQueryInterruptTime() - start < 100 * 10000);
+    return STATUS_IO_TIMEOUT;
+}
+
+void AdrenoReleaseGx(ADRENO_RENDER_DEVICE *d)
+{
+    PAGED_CODE();
+    if (d->gmu_state.gx_request != AdrenoGxReleased) {
+        /* Gen8 has no acknowledgement for relinquishing host access. */
+        gmu_write(d, host_intr_set, 1u << 31);
+        d->gmu_state.gx_request = AdrenoGxReleased;
+    }
+}
+
 NTSTATUS AdrenoStartGmu(ADRENO_RENDER_DEVICE *d)
 {
     union {
@@ -109,7 +169,9 @@ NTSTATUS AdrenoStartGmu(ADRENO_RENDER_DEVICE *d)
     if (!p || !p->clocks || !p->clocks->gpucc || !p->SetRailsAndBus)
         return STATUS_DEVICE_NOT_READY;
     if (g->rails) return STATUS_INVALID_DEVICE_STATE;
-    if (!adreno_hfi_bandwidth_table(&p->bandwidth, &bw.table))
+    if (!adreno_hfi_bandwidth_table(&p->bandwidth, &bw.table) ||
+        !adreno_hfi_select_level(&p->perf, &p->bandwidth, p->initial_gpu_khz, p->initial_ddr_kbps,
+                                 &g->initial_level))
         return STATUS_DEVICE_CONFIGURATION_ERROR;
 
     g->rails = TRUE;
@@ -179,10 +241,11 @@ NTSTATUS AdrenoStartGmu(ADRENO_RENDER_DEVICE *d)
         s = AdrenoHfiRequest(&g->hfi, hfi_bw, bw.words, RTL_NUMBER_OF(bw.words), 1000);
     const uint32_t handle = 0;
     if (s == STATUS_SUCCESS) s = AdrenoHfiRequest(&g->hfi, hfi_core, &handle, 1, 1000);
-    if (s == STATUS_SUCCESS) {
-        g->hfi_running = TRUE;
-        s = AdrenoHfiRequest(&g->hfi, hfi_start, NULL, 0, 1000);
-    }
+    const uint32_t vote[] = {1 /* blocking */, g->initial_level.gpu_index, g->initial_level.bw_vote};
+    if (s == STATUS_SUCCESS) s = AdrenoHfiRequest(&g->hfi, hfi_gx_vote, vote, RTL_NUMBER_OF(vote), 1000);
+    if (s == STATUS_SUCCESS) s = AdrenoHoldGx(d);
+    if (s == STATUS_SUCCESS) s = AdrenoHfiRequest(&g->hfi, hfi_start, NULL, 0, 1000);
+    if (s == STATUS_SUCCESS) g->hfi_running = TRUE;
     return s;
 }
 
@@ -197,8 +260,9 @@ NTSTATUS AdrenoStopGmu(ADRENO_RENDER_DEVICE *d)
         s = finish_wake(d);
         if (s != STATUS_SUCCESS) return s;
     }
+    AdrenoReleaseGx(d);
     if (g->hfi_running && !g->slumber_requested) {
-        const uint32_t slumber[2] = {0, 0}; /* Off entries in the BW and performance tables. */
+        const uint32_t slumber[] = {g->initial_level.bw_vote, g->initial_level.gpu_index};
         gmu_write(d, power_counter, 0);
         g->slumber_requested = TRUE;
         s = AdrenoHfiRequest(&g->hfi, hfi_slumber, slumber, RTL_NUMBER_OF(slumber), 1000);

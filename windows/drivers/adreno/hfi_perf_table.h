@@ -28,6 +28,10 @@ struct adreno_perf_table {
     size_t count;
     uint32_t words[ADRENO_HFI_PERF_WORDS]; /* Header is supplied by adreno_hfi_send. */
 };
+struct adreno_bw_config;
+struct adreno_hfi_level {
+    uint32_t gpu_index, bw_vote;
+};
 enum adreno_perf_status { ADRENO_PERF_OK, ADRENO_PERF_VERSION, ADRENO_PERF_INVALID, ADRENO_PERF_NO_CORNER };
 
 /* Encode H2F_MSG_TABLE as used by Gen8 HFI 2.6.1 and later. No frequencies,
@@ -35,3 +39,9 @@ enum adreno_perf_status { ADRENO_PERF_OK, ADRENO_PERF_VERSION, ADRENO_PERF_INVAL
  */
 enum adreno_perf_status adreno_hfi_perf_table(uint32_t hfi_version,
         const struct adreno_perf_config *config, struct adreno_perf_table *table);
+
+/* Select active entries in the separately indexed performance and DDR
+ * tables. The HFI vote sets peak bandwidth; average bandwidth stays under
+ * the platform's interconnect vote. No rounding to another OPP or bus rate. */
+int adreno_hfi_select_level(const struct adreno_perf_config *perf, const struct adreno_bw_config *bandwidth,
+                            uint32_t gpu_khz, uint32_t ddr_kbps, struct adreno_hfi_level *level);

@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "hfi_perf_table.h"
+#include "hfi_bandwidth.h"
 #include <string.h>
 
 /* AnyLaySys' A830 GMU Configure() uses the compact Qualcomm Gen8 performance
@@ -48,6 +49,26 @@ static int ascending(const struct adreno_opp *opps, size_t count, size_t limit)
     for (size_t i = 1; i < count; ++i)
         if (opps[i].khz <= opps[i - 1].khz)
             return 0;
+    return 1;
+}
+
+int adreno_hfi_select_level(const struct adreno_perf_config *p, const struct adreno_bw_config *bw,
+                            uint32_t gpu_khz, uint32_t ddr_kbps, struct adreno_hfi_level *level)
+{
+    if (!level || !p || !bw || !gpu_khz || !ddr_kbps || !bw->kbps || bw->count < 2 ||
+        bw->count > ADRENO_HFI_DDR_LEVELS || bw->kbps[0] ||
+        !ascending(p->gpu, p->gpu_count, ADRENO_HFI_GPU_LEVELS))
+        return 0;
+    uint32_t gpu = 0, ddr = 0;
+    for (size_t i = 0; i < p->gpu_count; ++i)
+        if (p->gpu[i].khz == gpu_khz) gpu = (uint32_t)i + 1;
+    /* Only the DDR input already contains the firmware's off entry. */
+    for (size_t i = 1; i < bw->count; ++i) {
+        if (bw->kbps[i] <= bw->kbps[i - 1]) return 0;
+        if (bw->kbps[i] == ddr_kbps) ddr = (uint32_t)i;
+    }
+    if (!gpu || !ddr) return 0;
+    *level = (struct adreno_hfi_level){gpu, UINT32_C(0xffff0000) | ddr};
     return 1;
 }
 

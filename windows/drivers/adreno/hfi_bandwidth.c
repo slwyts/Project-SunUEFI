@@ -7,7 +7,7 @@ _Static_assert(sizeof(struct adreno_bw_table) == 159 * sizeof(uint32_t), "Gen8 H
 int adreno_hfi_bandwidth_table(const struct adreno_bw_config *c, struct adreno_bw_table *t)
 {
     static const enum rpmh_bcm_id ids[] = { RPMH_BCM_SH0, RPMH_BCM_MC0, RPMH_BCM_ACV, RPMH_BCM_CN0 };
-    if (!c || !t || !c->fabric || !c->kbps || c->count < 2 || c->count > 16 || c->kbps[0])
+    if (!c || !t || !c->fabric || !c->kbps || c->count < 2 || c->count > ADRENO_HFI_DDR_LEVELS || c->kbps[0])
         return 0;
     for (size_t i = 1; i < c->count; ++i)
         if (c->kbps[i] <= c->kbps[i - 1]) return 0;
