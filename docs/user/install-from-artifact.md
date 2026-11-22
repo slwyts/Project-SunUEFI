@@ -6,15 +6,17 @@
 
 平板已解锁 Bootloader，并安装了 KernelSU 或 SukiSU，重要数据已备份。官方 Magisk 需要 MMRL 等支持 WebUI 的管理器。
 
-从 [Build products](https://github.com/slwyts/Project-SunUEFI/actions/workflows/build-products.yml) 同一次完整构建里下载三个包：
+### 下载
+
+从 [GitHub Releases](https://github.com/slwyts/Project-SunUEFI/releases) 选同一正式版本，下载下表中的三个包。想试开发版，在 [GitHub Actions 的 Build products](https://github.com/slwyts/Project-SunUEFI/actions/workflows/build-products.yml) 打开同一轮成功构建，下载并解压 `downloads.json` 产物。打开解压后的 `downloads.json`，用其中的链接从 Cloudflare R2 下载。普通镜像保留最近三轮，正式发布的镜像长期保存。
 
 | 下载包 | 解压后使用的文件 | 用途 |
 | --- | --- | --- |
-| `SunUEFI-Module` | `SunUEFI-Piano-版本.zip` | 引导助手模块 |
-| `SunUEFI-ESP` | `esp.sparse.img` | 启动镜像（ESP） |
-| `SunUEFI-Root-发行版` | `root-发行版.sparse.img` | 系统镜像（root） |
+| `SunUEFI-Module.zip` | `SunUEFI-Piano-版本.zip` | 引导助手模块 |
+| `SunUEFI-ESP.zip` | `esp.sparse.img` | 启动镜像（ESP，即 EFI 系统分区） |
+| `SunUEFI-Root-发行版.zip` | `root-发行版.sparse.img` | 系统镜像（root，即根文件系统） |
 
-系统镜像可从[发行版列表](getting-started.md#选一个系统)中选择。ESP 和模块各只有一份，供所有系统使用。手动选择 `uefi` 或 `linux` 的开发构建不含完整系统。`SunUEFI-UEFI-Fastboot` 只用于[临时启动](temporary-boot.md)，`logs` 用于排查构建问题，安装时都不需要。
+系统镜像可从[发行版列表](getting-started.md#选一个系统)中选择。启动镜像和引导助手供所有系统使用。若开发构建只列出固件或软件包，换一轮包含所选系统镜像的构建。`SunUEFI-UEFI-Fastboot.zip` 只用于[临时启动](temporary-boot.md)，安装时不需要。
 
 把模块 ZIP 和两个镜像文件保存在平板上。模块 ZIP 不要解压，镜像文件放在任意位置，之后在助手里用文件选择器选取。刷写稀疏镜像需要 0.5.2 或更新的助手。
 

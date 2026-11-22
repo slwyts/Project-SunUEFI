@@ -9,7 +9,7 @@
 
 * 平板已解锁 Bootloader，并且用引导助手创建过独立分区，也就是已有 `sunuefi_esp` 和 `sunuefi_root`。没有的话先在助手的 **存储** 页点 **创建独立分区**。
 * 电脑装有 Android platform-tools（`adb` 和 `fastboot`），并有一根 USB-C 数据线。
-* 从同一次 [Build products](https://github.com/slwyts/Project-SunUEFI/actions/workflows/build-products.yml) 下载 `SunUEFI-ESP` 和所需的 `SunUEFI-Root-发行版`，解压得到 `esp.sparse.img` 和 `root-发行版.sparse.img`。它们是 Android 稀疏镜像，只能用原厂 Fastboot 刷写，不能直接用 `dd`。
+* 按[下载说明](https://github.com/slwyts/Project-SunUEFI/blob/main/docs/user/install-from-artifact.md#下载)获取同一版本的 `SunUEFI-ESP.zip` 和 `SunUEFI-Root-发行版.zip`，解压得到 `esp.sparse.img` 和 `root-发行版.sparse.img`。它们是 Android 稀疏镜像，在本流程中交给原厂 Fastboot 刷写，不要直接用 `dd`。
 
 ## 刷写
 

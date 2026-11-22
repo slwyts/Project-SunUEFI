@@ -1,5 +1,7 @@
 # Project SunUEFI
 
+[English](README.en.md)
+
 > [!IMPORTANT]
 > **引用与署名**：引用、移植或基于本项目的内容（代码、数据、图片、结论）时，请在文档、说明页或发布页注明来源，并链接回 [Project SunUEFI](https://github.com/slwyts/Project-SunUEFI)。再分发代码时，请保留各文件原有的版权和许可证声明
 
@@ -62,7 +64,7 @@ UEFI 运行时，后台常驻一个 USB Fastboot 服务（设备名 `SunUEFI-pia
 
 ### 同一个 UEFI 核心
 
-项目只维护一份 UEFI 核心 `PianoUEFI-product.img`。合体 BOOT、`fastboot boot` 临时启动和安装器用的都是它，不再按功能拆成多套测试镜像。只想试运行、不改动平板时，下载 `SunUEFI-UEFI-Fastboot`，见[临时启动](docs/user/temporary-boot.md)。
+项目只维护一份 UEFI 核心 `PianoUEFI-product.img`。合体 BOOT、`fastboot boot` 临时启动和安装器用的都是它，不再按功能拆成多套测试镜像。只想试用 UEFI、不刷入平板时，见[临时启动](docs/user/temporary-boot.md)。
 
 ## 实机画面
 
@@ -131,7 +133,7 @@ UEFI 运行时，后台常驻一个 USB Fastboot 服务（设备名 `SunUEFI-pia
 > [!NOTE]
 > 需要 Bootloader 已解锁、已安装 KernelSU 或 SukiSU 的小米平板 8 Pro，并提前备份数据。
 
-1. 从 [Build products](https://github.com/slwyts/Project-SunUEFI/actions/workflows/build-products.yml) 下载三个包：引导助手模块（`SunUEFI-Module`）、启动镜像（ESP，`SunUEFI-ESP`）和系统镜像（root，`SunUEFI-Root-发行版`）。
+1. 从同一个[正式发布](https://github.com/slwyts/Project-SunUEFI/releases)下载引导助手模块、启动镜像（ESP）和所选发行版的系统镜像，再解压外层下载包。
 2. 在模块管理器里安装模块并重启，点击模块卡片上的 **打开 WebUI**，打开引导助手。
 3. 在 **存储** 页点 **创建独立分区**，选好容量后确认并重启。已有独立分区时跳过这一步。
 4. 在 **存储** 页选择下载好的启动镜像和系统镜像，点 **安装所选镜像**。
@@ -140,7 +142,9 @@ UEFI 运行时，后台常驻一个 USB Fastboot 服务（设备名 `SunUEFI-pia
 > [!WARNING]
 > 新平板的首次分区还没有在设备上验证过，见[已知问题](docs/user/known-issues.md#首次分区)。
 
-系统镜像可选 Debian GNOME、Debian KDE、Nyarch GNOME、SteamOS，以及使用 Denial 触控桌面的 Debian 和 Arch Linux ARM。首次启动会自动把根文件系统扩展到分区大小，耗时比后续启动长。用户名 `piano`、密码 `piano123456` 登录，系统默认自动登录，锁屏解锁和 `sudo` 用同一个密码。完整步骤见[安装指南](docs/user/getting-started.md)。
+系统镜像可选 Debian GNOME、Debian KDE、Nyarch GNOME、SteamOS，以及使用 Denial 触控桌面的 Debian 和 Arch Linux ARM。首次启动会自动把根文件系统扩展到分区大小，耗时比后续启动长。用户名 `piano`、密码 `piano123456` 登录，系统默认自动登录，锁屏解锁和 `sudo` 用同一个密码。完整步骤见[安装指南](docs/user/install-from-artifact.md)。
+
+想试开发版，在 [GitHub Actions 的 Build products](https://github.com/slwyts/Project-SunUEFI/actions/workflows/build-products.yml) 打开一轮成功的构建，下载并解压 `downloads.json` 产物，再按文件内的链接从 Cloudflare R2 下载。普通镜像保留最近三轮，正式发布的镜像长期保存。
 
 ### 软件源
 
@@ -153,6 +157,8 @@ SunUEFI 的内核、设备树、固件和配套软件包通过签名软件源更
 | SteamOS | pacman：`[sunuefi-steamos]` 在 `[sunuefi]` 前面 | `sudo pacman -Syu` |
 
 两个 pacman 仓库共用地址 `https://sunuefi-repo.okassets.uk/pacman/$repo/os/$arch`。SteamOS 专用仓只提供适配 Valve 用户空间的覆盖包，其余从 `sunuefi` 获取。手动配置见[软件源与更新](docs/user/getting-started.md#软件源与更新)。
+
+软件源保留最近五次发布的构建包。旧的下载地址失效时，先刷新软件源再更新。
 
 ### 自己构建
 

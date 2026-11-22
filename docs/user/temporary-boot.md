@@ -8,7 +8,7 @@
 
 * 小米平板 8 Pro，Bootloader 已解锁，重要数据已备份。
 * 电脑装有 `adb` 和 `fastboot`，并有一根 USB-C 数据线。
-* `SunUEFI-UEFI-Fastboot.img`：下载 Build products 里的 `SunUEFI-UEFI-Fastboot` 并解压。也可以自己构建，输出在 `artifacts/product/`，见[构建手册](../devel/building.md)。
+* `SunUEFI-UEFI-Fastboot.img`：按[下载说明](install-from-artifact.md#下载)获取 `SunUEFI-UEFI-Fastboot.zip` 并解压。也可以自己构建，输出在 `artifacts/product/`，见[构建手册](../devel/building.md)。
 
 这个镜像只含 UEFI，不含 Android 内核。助手安装的合体 BOOT 则把同一个 UEFI 和设备当前的 Android 内核打包在一起。
 

@@ -12,7 +12,7 @@ SteamOS 镜像在平板上提供 Steam 游戏模式和 KDE 桌面模式，默认
 
 ## 安装
 
-在 [Build products](https://github.com/slwyts/Project-SunUEFI/actions/workflows/build-products.yml) 里下载 `SunUEFI-Module`、`SunUEFI-ESP` 和 `SunUEFI-Root-steamos`。启动镜像和其他发行版共用，安装步骤和 Debian 一样，见[安装指南](install-from-artifact.md)。
+按[下载说明](install-from-artifact.md#下载)获取同一版本的 `SunUEFI-Module.zip`、`SunUEFI-ESP.zip` 和 `SunUEFI-Root-steamos.zip`。启动镜像和其他发行版共用，安装步骤见[安装指南](install-from-artifact.md)。
 
 系统镜像是 16 GiB，独立 root 分区至少也要这么大。登录用户名 `piano`，密码 `piano123456`。第一次启动 Steam 需要联网检查客户端更新并登录。
 
