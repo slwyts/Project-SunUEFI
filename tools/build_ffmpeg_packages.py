@@ -74,7 +74,7 @@ def build(output, jobs, install_dependencies=False, resume=False, sysroot=None):
         target['source_checksums'] = debian.source_checksums(root, target['sources'])
         work, origin = debian.source(root, output, 'ffmpeg', policy['source_version'], log)
         archive = next(row for row in origin['archives'] if row['file'].endswith('.orig.tar.xz'))
-        # Debian and pacman use the identical upstream release and one patch series.
+        # The Debian orig must match the upstream archive in this patch series.
         shared_archive = (next(row for row in series['source']['archives']
                                if row['filename'].endswith('.orig.tar.xz'))
                           if 'archives' in series['source'] else series['source'])

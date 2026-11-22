@@ -25,11 +25,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def patch_series(package_version):
-    version = package_version.split(':')[-1]
-    if re.match(r'^8\.1(?:\.\d+)?-', version):
+    version, _, release = package_version.rsplit(':', 1)[-1].rpartition('-')
+    if release and re.fullmatch(r'8\.1(?:\.\d+)?', version):
         return ROOT / 'linux/bsp/patches/ffmpeg/series-8.json'
-    if re.match(r'^9\.0\.2-', version):
-        return ROOT / 'patches/ffmpeg/9.0.2/series.json'
+    if release and re.fullmatch(r'9\.\d+(?:\.\d+)?', version):
+        series = ROOT / 'patches/ffmpeg' / version / 'series.json'
+        if series.is_file():
+            return series
     raise ValueError('Port the BSP fixes to the installed FFmpeg ABI before replacing ' + package_version)
 
 
@@ -50,11 +52,13 @@ def installed_package(root):
     if len(records) != 1:
         raise ValueError('Expected one installed FFmpeg package record')
     text = records[0].read_text()
+    files = records[0].with_name('files').read_text().splitlines()
 
     def field(name):
         return text.split('%' + name + '%\n', 1)[1].split('\n\n', 1)[0].splitlines()
 
-    return {'version': field('VERSION')[0], 'depends': field('DEPENDS'), 'provides': field('PROVIDES')}
+    return {'version': field('VERSION')[0], 'depends': field('DEPENDS'),
+            'provides': field('PROVIDES'), 'qt_faststart': 'usr/bin/qt-faststart' in files}
 
 
 def installed_options(root):
@@ -95,18 +99,23 @@ def is_current(output, root):
         return False
 
 
-def package_recipe(version, epoch, pkgrel, options, deps, provides):
+def package_recipe(version, epoch, pkgrel, options, deps, provides, *, qt_faststart):
     quote_array = lambda values: '(' + ' '.join(shlex.quote(v) for v in values) + ')'
+    build_tools = "  make tools/qt-faststart\n" if qt_faststart else ""
+    install_tools = ('  install -Dm755 tools/qt-faststart "$pkgdir/usr/bin/qt-faststart"\n'
+                     if qt_faststart else '')
     return (
         f"pkgname=ffmpeg\npkgver={version}\npkgrel={pkgrel}\n"
         f"epoch={epoch}\npkgdesc='FFmpeg with Piano stateful V4L2 fixes'\n"
         "arch=(aarch64)\nurl=https://ffmpeg.org\nlicense=(GPL-3.0-or-later)\n"
         "options=(!debug !lto)\n"
         f"depends={quote_array(deps)}\nprovides={quote_array(provides)}\n"
-        "build() {\n  cd \"$startdir/ffmpeg-source\"\n  ./configure " +
-        shlex.join(options) + "\n  make\n}\n"
+        "build() {\n  cd \"$startdir/ffmpeg-source\"\n"
+        f"  ./configure {shlex.join(options)}\n  make\n{build_tools}"
+        "}\n"
         "package() {\n  cd \"$startdir/ffmpeg-source\"\n"
         "  make DESTDIR=\"$pkgdir\" install\n"
+        f"{install_tools}"
         "  install -Dm644 COPYING.GPLv3 \"$pkgdir/usr/share/licenses/ffmpeg/COPYING.GPLv3\"\n}\n")
 
 
@@ -146,12 +155,14 @@ def build(root, output, resume=False):
     guest_work.mkdir(parents=True, exist_ok=resume)
     if not (guest_work / 'ffmpeg-source').exists():
         shutil.copytree(output / 'source', guest_work / 'ffmpeg-source')
-    recipe = package_recipe(version, epoch, pkgrel, options, deps, provides)
+    recipe = package_recipe(version, epoch, pkgrel, options, deps, provides,
+                            qt_faststart=target_package['qt_faststart'])
     (guest_work / 'PKGBUILD').write_text(recipe)
     with build_resolver(root), guest_environment(root) as guest:
         dependencies = ['base-devel', 'clang', 'ccache',
                'nasm', 'amf-headers', 'avisynthplus', 'ffnvcodec-headers',
                'frei0r-plugins', 'ladspa', 'opencl-headers', 'vulkan-headers',
+               *series.get('pacman_makedepends', ()),
                *deps]
         # SteamOS retains some base-only packages and virtual soname
         # dependencies. Do not ask the repository to reinstall satisfied ones.

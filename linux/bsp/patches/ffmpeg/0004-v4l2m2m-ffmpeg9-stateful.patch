@@ -1,7 +1,7 @@
 From: slwyts <slwyts@foxmail.com>
 Subject: [PATCH] avcodec/v4l2m2m: follow stateful capture and drain on FFmpeg 9
 
-Port the shared Piano stateful V4L2 fixes to FFmpeg 9.0.2. Keep its public
+Port the shared Piano stateful V4L2 fixes to FFmpeg 9. Keep its public
 av_refstruct API and buffer timestamp/field behavior. Wait for initial
 metadata and DRC LAST before configuring or resuming CAPTURE; retain old
 buffer references and preserve encoder drain behavior. Accept an empty
@@ -839,18 +839,6 @@ nonblocking event queue without hiding other I/O errors.
      }
  }
  
-@@ -268,10 +269,10 @@
-         in->context_ref = av_refstruct_ref(s->self_ref);
- 
-         in->context_refcount = 1;
-+        atomic_fetch_add_explicit(&s->refcount, 1, memory_order_relaxed);
-     }
- 
-     in->status = V4L2BUF_RET_USER;
--    atomic_fetch_add_explicit(&s->refcount, 1, memory_order_relaxed);
- 
-     return 0;
- }
 @@ -463,6 +464,12 @@
      /* these values are updated also during re-init in v4l2_process_driver_event */
      frame->height = avbuf->context->height;

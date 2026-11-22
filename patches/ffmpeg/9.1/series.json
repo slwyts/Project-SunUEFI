@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "component": "ffmpeg-v4l2m2m",
+  "upstream_version": "9.1",
+  "local_revision": "sunuefi7",
+  "targets": ["nyarch-gnome", "arch-denial"],
+  "source": {
+    "url": "https://ffmpeg.org/releases/ffmpeg-9.1.tar.xz",
+    "filename": "ffmpeg-9.1.tar.xz",
+    "size": 12557532,
+    "sha256": "1a4d394ae63d190a526cd052eb4415c156b5c5e2df37efab41a7de0b8fde2433"
+  },
+  "pacman_makedepends": ["spirv-headers"],
+  "series": [
+    {
+      "path": "../../../linux/bsp/patches/ffmpeg/0001-avformat-first-dts-for-chromium.patch",
+      "sha256": "f865d677f8ad39c79dde69186629cb6468c2b289c4156dbb8dec8e68b0131b40",
+      "source": "https://github.com/archlinuxarm/PKGBUILDs/blob/c5cc7cda85eb87dbaef8f3a377bc2fc98547649c/extra/ffmpeg/0001-Add-av_stream_get_first_dts-for-Chromium.patch",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
+    },
+    {
+      "path": "../../../linux/bsp/patches/ffmpeg/0004-v4l2m2m-ffmpeg9-stateful.patch",
+      "sha256": "acb643fd2d3d00662b213cbec5813d097da8d1a1e0d5e3a903c11f847f3b8a2a",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
+    },
+    {
+      "path": "../../../linux/bsp/patches/ffmpeg/0005-v4l2m2m-orphan-capture-ffmpeg9.patch",
+      "sha256": "b35c619d8467a15144db5ba58b4015884de71167f32b0c31fdb6f3b834e29bb3",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
+    },
+    {
+      "path": "../../../linux/bsp/patches/ffmpeg/0006-v4l2m2m-p010-capture.patch",
+      "sha256": "2eeca4bcb88a54819c8211703eb3b6461e00a4fd122d5c405ff2764c08381044",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
+    },
+    {
+      "path": "../9.0.2/0001-v4l2m2m-join-sequence-header.patch",
+      "sha256": "8a79e6ba96c0ad384cf3a61b0cf0fd2d4a577028091509672b16d90741bef7e9",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
+    },
+    {
+      "path": "../9.0.2/0002-v4l2m2m-copy-visible-nv12-rows.patch",
+      "sha256": "28006717fe6028af22c76b9af3215dc05fc16ee7bd034d26c0ba55259ee3e2f2",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
+    },
+    {
+      "path": "../9.0.2/0003-v4l2m2m-stop-unstarted-encoder.patch",
+      "sha256": "63ec598d048ead5424f6cc1eb882b430ff268c368838057b439cdf98ee172c2d",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
+    },
+    {
+      "path": "../9.0.2/0007-v4l2m2m-h264-level.patch",
+      "sha256": "5938ca6dbaf75d8f512365e953ac92e867214746d4770c693aa582702f73a842",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
+    },
+    {
+      "path": "../9.0.2/0008-v4l2m2m-bound-capture-payload.patch",
+      "sha256": "b07edb42a3e1bacf36cc92a47f979317dcfe392658defbfb0d9f4802b07da5e1",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
+    },
+    {
+      "path": "../9.0.2/0009-v4l2m2m-reserve-capture-buffers.patch",
+      "sha256": "d2653aee9c97e564fdf95068148549b51525ff972a66dcd3927205bc4f055c7e",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
+    },
+    {
+      "path": "../9.0.2/0010-matroska-write-late-h26x-codec-private.patch",
+      "sha256": "ef26f34e8ced07ec3384f65960928bca3796f35dfbf4081ecc9a432fe72a9974",
+      "license": "LGPL-2.1-or-later; retain upstream file notices"
+    }
+  ]
+}

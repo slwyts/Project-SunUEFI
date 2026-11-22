@@ -17,14 +17,25 @@
   },
   "series": [
     {
-      "path": "0001-valve-avformat-first-dts.patch",
+      "path": "0001-avformat-first-dts-for-chromium.patch",
       "sha256": "f865d677f8ad39c79dde69186629cb6468c2b289c4156dbb8dec8e68b0131b40",
       "source": "https://holo-packages.steamos.cloud/archlinux-deckard/archlinux/main/sources/packages/ffmpeg-2:8.1.2-7.src.tar.gz",
       "license": "LGPL-2.1-or-later; retain upstream file notices"
     },
     {
+      "path": "../../../../patches/ffmpeg/9.0.2/0000-v4l2m2m-count-buffer-once.patch",
+      "sha256": "2e9de71b4a923c73ecc77d19b391186821cbd2524625f5a0af5573347f45bd24",
+      "license": "LGPL-2.1-or-later; retain upstream file notices",
+      "upstream": {
+        "status": "merged",
+        "url": "https://github.com/FFmpeg/FFmpeg/commit/4d2d58efa9b9f3802893b1db0ea1edfbe1cc66ef",
+        "commit": "4d2d58efa9b9f3802893b1db0ea1edfbe1cc66ef",
+        "drop_when": "The selected FFmpeg release increments the V4L2 context reference count only on the first reference to each buffer, as in FFmpeg 9.1."
+      }
+    },
+    {
       "path": "0004-v4l2m2m-ffmpeg9-stateful.patch",
-      "sha256": "ad7b86872378f38fbbdf8a24e31726f62a765869b6f910322be6a8d8695b1a3c",
+      "sha256": "acb643fd2d3d00662b213cbec5813d097da8d1a1e0d5e3a903c11f847f3b8a2a",
       "license": "LGPL-2.1-or-later; retain upstream file notices"
     },
     {

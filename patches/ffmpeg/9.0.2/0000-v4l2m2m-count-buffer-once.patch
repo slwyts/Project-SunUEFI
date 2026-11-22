@@ -1,0 +1,36 @@
+From 4d2d58efa9b9f3802893b1db0ea1edfbe1cc66ef Mon Sep 17 00:00:00 2001
+From: Michael Niedermayer <michael@niedermayer.cc>
+Date: Mon, 19 Oct 2026 23:47:24 +0200
+Subject: [PATCH] avcodec/v4l2_buffers: count a buffer once in the context
+ reference count
+
+Fixes: 2VchxeAyBc35
+Fixes: AISLE-2026-0150-00089
+Fixes: hang
+Hang Replicated through UnModified FFmpeg (ffprobe) with gdb using a stub
+V4L2 mem2mem decoder with a two plane capture format
+
+Found-by: Joshua Rogers (AISLE)
+
+The report suggested incrementing the count only on the first reference
+to a buffer.
+---
+ libavcodec/v4l2_buffers.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/libavcodec/v4l2_buffers.c b/libavcodec/v4l2_buffers.c
+index 30433885ebe5e..9ad9aebde0b3d 100644
+--- a/libavcodec/v4l2_buffers.c
++++ b/libavcodec/v4l2_buffers.c
+@@ -270,10 +270,10 @@ static int v4l2_buf_increase_ref(V4L2Buffer *in)
+         in->context_ref = av_refstruct_ref(s->self_ref);
+
+         in->context_refcount = 1;
++        atomic_fetch_add_explicit(&s->refcount, 1, memory_order_relaxed);
+     }
+
+     in->status = V4L2BUF_RET_USER;
+-    atomic_fetch_add_explicit(&s->refcount, 1, memory_order_relaxed);
+
+     return 0;
+ }

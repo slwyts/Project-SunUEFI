@@ -336,7 +336,7 @@ Debian 的 Plasma Camera 直接使用 libcamera 读取实体相机。录像时�
 搭配实验 Qt 编码后端，前摄完成 1080p 有声录像，后摄短录 184 张连续的
 4K 帧（约 60 fps）并完整解码；编码级别、长期音画同步和原生 Qt 包另行验收。
 
-FFmpeg 8.1.2 和 9.0.2 共用[有效码流边界](../../../patches/ffmpeg/9.0.2/0008-v4l2m2m-bound-capture-payload.patch)
+产品采用的 FFmpeg 版本共用[有效码流边界](../../../patches/ffmpeg/9.0.2/0008-v4l2m2m-bound-capture-payload.patch)
 和[编码缓冲保留](../../../patches/ffmpeg/9.0.2/0009-v4l2m2m-reserve-capture-buffers.patch)修复。
 当封装等待另一轨而持有编码包时，FFmpeg 复制压缩码流并立即归还稀缺的
 CAPTURE 缓冲，默认缓冲数不变。平板接真实麦克风录制 8 秒，最小补丁版送入

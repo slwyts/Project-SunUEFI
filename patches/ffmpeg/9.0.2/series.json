@@ -3,7 +3,7 @@
   "component": "ffmpeg-v4l2m2m",
   "upstream_version": "9.0.2",
   "local_revision": "sunuefi7",
-  "targets": ["debian-gnome", "debian-kde", "nyarch-gnome"],
+  "targets": ["debian-gnome", "debian-kde", "debian-denial"],
   "upstream": {
     "status": "downstream",
     "url": "https://github.com/FFmpeg/FFmpeg/tree/n9.0.2/libavcodec",
@@ -17,8 +17,19 @@
   },
   "series": [
     {
+      "path": "0000-v4l2m2m-count-buffer-once.patch",
+      "sha256": "2e9de71b4a923c73ecc77d19b391186821cbd2524625f5a0af5573347f45bd24",
+      "license": "LGPL-2.1-or-later; retain upstream file notices",
+      "upstream": {
+        "status": "merged",
+        "url": "https://github.com/FFmpeg/FFmpeg/commit/4d2d58efa9b9f3802893b1db0ea1edfbe1cc66ef",
+        "commit": "4d2d58efa9b9f3802893b1db0ea1edfbe1cc66ef",
+        "drop_when": "The selected FFmpeg release increments the V4L2 context reference count only on the first reference to each buffer, as in FFmpeg 9.1."
+      }
+    },
+    {
       "path": "../../../linux/bsp/patches/ffmpeg/0004-v4l2m2m-ffmpeg9-stateful.patch",
-      "sha256": "ad7b86872378f38fbbdf8a24e31726f62a765869b6f910322be6a8d8695b1a3c",
+      "sha256": "acb643fd2d3d00662b213cbec5813d097da8d1a1e0d5e3a903c11f847f3b8a2a",
       "license": "LGPL-2.1-or-later; retain upstream file notices"
     },
     {
