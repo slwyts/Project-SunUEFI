@@ -36,11 +36,10 @@ static int change(PIANO_UFS_RPMH *r, enum step step, int on)
     return NT_SUCCESS(s);
 }
 
-static int set_rails(void *context, int on)
+int UfsPianoSetRailsAndPaths(PIANO_UFS_RPMH *r, int on)
 {
-    PIANO_UFS_RPMH *r = context;
-    if (!r->client) return 0;
-    if (!on && r->phy_held) return 0;
+    if (!r || !r->client) return 0;
+    if (!on && (r->phy_held || r->device_clock)) return 0;
     if (!on && r->owns_media && (r->held & (1u << DeviceRails)) &&
         !r->parent.media_may_power_off(r->parent.context)) return 0;
     if (on) {
@@ -69,10 +68,15 @@ static int set_rails(void *context, int on)
     return !on;
 }
 
-static int base_clocks(void *context, int on)
+int UfsPianoDeviceReference(PIANO_UFS_RPMH *r, int on)
 {
-    PIANO_UFS_RPMH *r = context;
-    return r->parent.base_clocks(r->parent.context,on);
+    if (!r || !r->client || (on && r->held != (1u << Count)-1)) return 0;
+    if (!on && !r->device_clock) return 1;
+    PVOID ctx=r->api.Header.Context;
+    if (on && !NT_SUCCESS(r->api.HoldBootResources(ctx,1u<<RPMH_UFS_REF_CLOCK,0,0))) return 0;
+    if (!NT_SUCCESS(r->api.SetLevel(ctx,r->client,RPMH_UFS_REF_CLOCK,on ? 1u : 0u))) return 0;
+    r->device_clock=(BOOLEAN)on;
+    return 1;
 }
 
 int UfsPianoSetPhySupply(PIANO_UFS_RPMH *r, enum ufs_phy_supply supply, int on)
@@ -101,10 +105,9 @@ int UfsPianoSetPhySupply(PIANO_UFS_RPMH *r, enum ufs_phy_supply supply, int on)
 }
 
 BOOLEAN UfsPianoOpenRpmh(PIANO_UFS_RPMH *r, const PIANO_RPMH_INTERFACE *a,
-                         const struct piano_ufs_parent *parent, struct piano_ufs_bus_inputs *inputs)
+                         const struct piano_ufs_parent *parent)
 {
-    if (!r || r->client || !parent || !parent->base_clocks || !parent->phy_clocks ||
-        !parent->media_may_power_off || !inputs ||
+    if (!r || r->client || !parent || !parent->media_may_power_off ||
         !a || a->Header.Size < sizeof(*a) || a->Header.Version != PIANO_RPMH_INTERFACE_VERSION ||
         !a->Header.InterfaceReference || !a->Header.InterfaceDereference ||
         !a->Open || !a->Close || !a->SetLevel || !a->SetBandwidth || !a->SetUfsSupplies ||
@@ -117,14 +120,13 @@ BOOLEAN UfsPianoOpenRpmh(PIANO_UFS_RPMH *r, const PIANO_RPMH_INTERFACE *a,
     }
     *r = (PIANO_UFS_RPMH){.api = *a, .client = client, .parent = *parent,
                           .ddr_kBps = DDR_INIT, .cfg_kBps = CFG_INIT};
-    *inputs = (struct piano_ufs_bus_inputs){r,set_rails,base_clocks};
     return TRUE;
 }
 
 BOOLEAN UfsPianoCloseRpmh(PIANO_UFS_RPMH *r)
 {
     if (!r || !r->client) return TRUE;
-    if (!set_rails(r,0) || !NT_SUCCESS(r->api.Close(r->api.Header.Context,r->client))) return FALSE;
+    if (!UfsPianoSetRailsAndPaths(r,0) || !NT_SUCCESS(r->api.Close(r->api.Header.Context,r->client))) return FALSE;
     r->api.Header.InterfaceDereference(r->api.Header.Context);
     *r = (PIANO_UFS_RPMH){0};
     return TRUE;

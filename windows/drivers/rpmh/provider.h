@@ -3,7 +3,7 @@
 #include "fabric.h"
 #include "vrm.h"
 
-enum rpmh_rail { RPMH_XO, RPMH_CX, RPMH_MX, RPMH_RAIL_COUNT };
+enum rpmh_rail { RPMH_XO, RPMH_CX, RPMH_MX, RPMH_UFS_REF_CLOCK, RPMH_RAIL_COUNT };
 
 struct rpmh_transport {
     void *context;
@@ -36,7 +36,7 @@ struct rpmh_provider {
     struct rpmh_fabric fabric;
     struct rpmh_vrm vrm;
     struct rpmh_boot_votes floor, applied;
-    unsigned slots, adopted, touched_paths, restore_rails, restore_bcms, boot_rails, boot_bcms;
+    unsigned slots, adopted, touched_paths, restore_rails, restore_bcms, boot_rails, boot_bcms, deferred_rails;
 };
 
 /* The caller holds one passive lock for this provider and all its clients. */
@@ -53,8 +53,8 @@ int rpmh_provider_boot(struct rpmh_provider *, unsigned rail_mask, unsigned path
 void rpmh_provider_power_lost(struct rpmh_provider *);
 int rpmh_client_open(struct rpmh_provider *, struct rpmh_client *);
 int rpmh_client_close(struct rpmh_provider *, struct rpmh_client *);
-/* XO is a boolean. CX/MX take the firmware's performance level, not a voltage
- * or an index. The command DB translates that level to the actual corner. */
+/* XO and the UFS device reference clock are boolean enables. CX/MX take a
+ * firmware performance level translated through the current command DB. */
 int rpmh_set_level(struct rpmh_provider *, struct rpmh_client *, enum rpmh_rail, uint32_t level);
 int rpmh_set_bandwidth(struct rpmh_provider *, struct rpmh_client *, enum rpmh_fabric_path,
                        uint32_t avg_kBps, uint32_t peak_kBps);

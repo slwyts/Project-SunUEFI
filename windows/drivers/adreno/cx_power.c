@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "cx_power.h"
-#include "clock_registers.h"
+#include "../gcc/registers.h"
 
 enum { CX_CONTROL = 0x9080, CX_STATUS = 0x9094, SW_COLLAPSE = 1, HW_CONTROL = 2,
        SW_OVERRIDE = 4, RETAIN_FF = 1u << 11, WAIT_MASK = 0xfffu << 12,

@@ -49,7 +49,7 @@ struct ufs_platform {
     enum ufs_platform_error error;
     uint64_t since_us;
     unsigned core_asserted, core_settling, phy_asserted, owns_pcs, lane_vote, stopping;
-    unsigned phy_supplies, phy_clocks, release_phy_domain;
+    unsigned phy_supplies, phy_clocks, phy_clock_failed, release_phy_domain;
 };
 
 /* Serialize at PASSIVE_LEVEL with PnP, power, and storage I/O. The caller

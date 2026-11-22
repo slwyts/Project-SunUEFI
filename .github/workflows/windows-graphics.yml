@@ -24,6 +24,7 @@ on:
       - 'tests/unit/test_ufs_link.py'
       - 'tests/native/UfsPlatformTest.c'
       - 'tests/unit/test_ufs_platform.py'
+      - 'tests/native/PianoUfsBaseClockTest.c'
       - 'tests/native/PianoUfsClockTest.c'
       - 'tests/unit/test_piano_ufs_clock.py'
       - 'tests/native/PianoUfsPowerTest.c'

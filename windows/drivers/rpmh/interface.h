@@ -10,7 +10,7 @@
 static const GUID GUID_PIANO_RPMH_INTERFACE = {
     0xdda1f9f3,0x747d,0x4750,{0x99,0xfa,0x17,0x2c,0xae,0x1c,0xd8,0xe6}
 };
-#define PIANO_RPMH_INTERFACE_VERSION 4
+#define PIANO_RPMH_INTERFACE_VERSION 5
 typedef struct {
     INTERFACE Header;
     NTSTATUS (*Open)(PVOID, struct rpmh_client **);

@@ -4,13 +4,8 @@
 #include "piano_power.h"
 #include "platform.h"
 
-/* The shared GCC provider manages HBA bus/ICE/UniPro clocks separately
- * from QMP's reference and interface clocks. Neither includes the three
- * PHY lane clocks owned by this adapter. */
 struct piano_ufs_parent {
     void *context;
-    int (*base_clocks)(void *, int enable);
-    int (*phy_clocks)(void *, int enable);
     /* Storage PM has flushed the medium, completed its device power-down
      * command, stopped background operations and placed the link OFF.
      * Return the confirmed storage PM state, including after clock gating;
@@ -23,7 +18,7 @@ typedef struct {
     struct rpmh_client *client;
     struct piano_ufs_parent parent;
     unsigned held, phy_held;
-    BOOLEAN owns_media;
+    BOOLEAN owns_media, device_clock;
     ULONG ddr_kBps, cfg_kBps;
 } PIANO_UFS_RPMH;
 
@@ -31,7 +26,11 @@ typedef struct {
  * board's APPS RPMh channel. Take a separate reference for the adapter. */
 _IRQL_requires_(PASSIVE_LEVEL)
 BOOLEAN UfsPianoOpenRpmh(PIANO_UFS_RPMH *, const PIANO_RPMH_INTERFACE *,
-                         const struct piano_ufs_parent *, struct piano_ufs_bus_inputs *);
+                         const struct piano_ufs_parent *);
+_IRQL_requires_(PASSIVE_LEVEL)
+int UfsPianoSetRailsAndPaths(PIANO_UFS_RPMH *, int enable);
+_IRQL_requires_(PASSIVE_LEVEL)
+int UfsPianoDeviceReference(PIANO_UFS_RPMH *, int enable);
 _IRQL_requires_(PASSIVE_LEVEL)
 BOOLEAN UfsPianoCloseRpmh(PIANO_UFS_RPMH *);
 _IRQL_requires_(PASSIVE_LEVEL)

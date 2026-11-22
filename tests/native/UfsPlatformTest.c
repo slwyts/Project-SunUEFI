@@ -39,6 +39,7 @@ static int supply(void *ctx, enum ufs_phy_supply id, int on)
 static int phy_clocks(void *ctx,int on)
 {
     struct hardware *h=ctx;
+    if (!on && !h->refclocks) return 1;
     assert(h->rails==15 && !h->lanes && h->refclocks!=(unsigned)on);
     if (!event(h,on?REFCLOCK_ON:REFCLOCK_OFF)) return 0;
     h->refclocks=(unsigned)on;return 1;

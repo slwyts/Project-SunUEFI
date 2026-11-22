@@ -35,16 +35,48 @@ static void wait_us(void *ctx, unsigned usec)
     }
 }
 
+static uint32_t read_base(void *ctx, enum piano_ufs_base_reg r)
+{
+    PIANO_UFS_CLOCK_DEVICE *c=ctx;
+    return StorPortReadRegisterUlong(c->adapter,c->bus_reg[r]);
+}
+static void write_base(void *ctx, enum piano_ufs_base_reg r,uint32_t value)
+{
+    PIANO_UFS_CLOCK_DEVICE *c=ctx;
+    StorPortWriteRegisterUlong(c->adapter,c->bus_reg[r],value);
+}
+static int set_parent(void *ctx,unsigned root,enum piano_ufs_pll id,int on)
+{
+    PIANO_UFS_CLOCK_DEVICE *c=ctx;
+    static const enum sm8750_gcc_pll clocks[]={Sm8750Gpll0,Sm8750Gpll4,Sm8750Gpll0Even};
+    enum sm8750_gcc_pll pll=clocks[id];
+    return c->gcc.Set(c->gcc.Header.Context,pll,&c->pll[root][pll],(BOOLEAN)on)==STATUS_SUCCESS;
+}
+static int device_reference(void *ctx,int on)
+{
+    PIANO_UFS_CLOCK_DEVICE *c=ctx;
+    return UfsPianoDeviceReference(&c->rpmh,on);
+}
+static int set_bus_clocks(void *ctx,int on)
+{
+    PIANO_UFS_CLOCK_DEVICE *c=ctx;
+    return piano_ufs_bus_clocks(&c->base,on);
+}
+static int set_rails_and_paths(void *ctx,int on)
+{
+    PIANO_UFS_CLOCK_DEVICE *c=ctx;
+    return UfsPianoSetRailsAndPaths(&c->rpmh,on);
+}
+
 static void unmap_controls(PIANO_UFS_CLOCK_DEVICE *c)
 {
     if (c->adapter && c->adapter->link_power_context == c) {
         c->adapter->link_power_ready = NULL;
         c->adapter->link_power_context = NULL;
     }
-    for (unsigned i = 0; i < PIANO_UFS_DOMAINS; ++i)
-        if (c->domain[i]) StorPortFreeDeviceBase(c->adapter, c->domain[i]);
-    for (unsigned i = 0; i < PIANO_UFS_CLOCK_REGS; ++i)
-        if (c->reg[i]) StorPortFreeDeviceBase(c->adapter, c->reg[i]);
+    if (c->bus_reg[PIANO_QREF]) StorPortFreeDeviceBase(c->adapter,c->bus_reg[PIANO_QREF]);
+    if (c->windows.clocks) c->gcc.CloseUfs(c->gcc.Header.Context,&c->windows);
+    if (c->gcc.Header.InterfaceDereference) c->gcc.Header.InterfaceDereference(c->gcc.Header.Context);
     RtlZeroMemory(c, sizeof(*c));
 }
 
@@ -54,9 +86,10 @@ static void link_power_ready(PVOID context, const uint8_t *p)
     /* Now that the handed-over link has actually served the device, it can
      * be powered down on media shutdown just like a cold-initialized link. */
     ufs_platform_claim_phy(&c->adapter->platform.phy);
+    piano_ufs_claim_clocks(&c->base);
     /* Only release the boot votes for exclusive UFS supplies. The display,
      * cameras, USB, audio and radio synchronize their shared rails separately. */
-    (void)c->rpmh.api.FinishBootResources(c->rpmh.api.Header.Context,0,0,
+    (void)c->rpmh.api.FinishBootResources(c->rpmh.api.Header.Context,1u<<RPMH_UFS_REF_CLOCK,0,
         (1u << RPMH_UFS_VCC) | (1u << RPMH_UFS_VCCQ) | (1u << RPMH_UFS_PHY_ANALOG));
     if (!p) return;
     unsigned tx = p[UfsPaPowerMode] & 15, rx = p[UfsPaPowerMode] >> 4;
@@ -79,7 +112,7 @@ static int set_phy_supply(void *context, enum ufs_phy_supply supply, int enable)
 static int set_phy_clocks(void *context, int enable)
 {
     PIANO_UFS_CLOCK_DEVICE *c = context;
-    return c->rpmh.parent.phy_clocks(c->rpmh.parent.context,enable);
+    return piano_ufs_phy_clocks(&c->base,enable);
 }
 
 static int collapse_phy(void *context)
@@ -103,10 +136,13 @@ static PULONG map_resource(UFS_ADAPTER *a, PPORT_CONFIGURATION_INFORMATION cfg, 
 }
 
 ULONG UfsPianoFindAdapter(PIANO_UFS_CLOCK_DEVICE *c, UFS_ADAPTER *a, PPORT_CONFIGURATION_INFORMATION cfg,
-                          const PIANO_RPMH_INTERFACE *rpmh, const struct piano_ufs_parent *parent)
+                          const PIANO_RPMH_INTERFACE *rpmh, const SM8750_GCC_INTERFACE *gcc,
+                          const struct piano_ufs_parent *parent)
 {
-    if (!c || !a || c->adapter ||
-        !cfg || !cfg->AccessRanges || cfg->NumberOfAccessRanges < 2 + PIANO_UFS_CLOCK_REGS + PIANO_UFS_DOMAINS)
+    if (!c || !a || c->adapter || !gcc || gcc->Header.Size<sizeof(*gcc) ||
+        gcc->Header.Version!=SM8750_GCC_INTERFACE_VERSION || !gcc->Header.InterfaceReference ||
+        !gcc->Header.InterfaceDereference || !gcc->Set || !gcc->OpenUfs || !gcc->CloseUfs ||
+        !cfg || !cfg->AccessRanges || cfg->NumberOfAccessRanges < 3)
         return SP_RETURN_BAD_CONFIG;
     struct piano_ufs_clock_io io = { .context = c, .read = read_clock, .write = write_clock, .wait_us = wait_us };
     struct ufs_platform_power power;
@@ -114,15 +150,19 @@ ULONG UfsPianoFindAdapter(PIANO_UFS_CLOCK_DEVICE *c, UFS_ADAPTER *a, PPORT_CONFI
     if (!piano_ufs_clock_init(&c->clocks, &io, &c->power, piano_ufs_set_bus_power, &power))
         return SP_RETURN_BAD_CONFIG;
     c->adapter = a;
-    for (unsigned i = 0; i < PIANO_UFS_CLOCK_REGS; ++i) {
-        c->reg[i] = map_resource(a, cfg, piano_ufs_gcc_address[i], sizeof(ULONG));
-        if (!c->reg[i]) goto failed;
-    }
-    for (unsigned i = 0; i < PIANO_UFS_DOMAINS; ++i) {
-        c->domain[i] = map_resource(a, cfg, piano_ufs_domain_address[i], 2 * sizeof(ULONG));
-        if (!c->domain[i]) goto failed;
-    }
-    if (!UfsPianoOpenRpmh(&c->rpmh,rpmh,parent,&c->power.inputs)) goto failed;
+    gcc->Header.InterfaceReference(gcc->Header.Context);
+    c->gcc=*gcc;
+    if (gcc->OpenUfs(gcc->Header.Context,&c->windows)!=STATUS_SUCCESS) goto failed;
+    ULONG bcr=piano_ufs_gcc_address[PIANO_UFS_BCR];
+    for (unsigned i=0;i<PIANO_UFS_CLOCK_REGS;++i) c->reg[i]=c->windows.clocks+(piano_ufs_gcc_address[i]-bcr)/4;
+    c->domain[PIANO_UFS_HBA_DOMAIN]=c->windows.clocks+(piano_ufs_domain_address[PIANO_UFS_HBA_DOMAIN]-bcr)/4;
+    c->domain[PIANO_UFS_PHY_DOMAIN]=c->windows.phy_domain;
+    for (unsigned i=0;i<PIANO_QREF;++i) c->bus_reg[i]=c->windows.clocks+(piano_ufs_base_address[i]-bcr)/4;
+    c->bus_reg[PIANO_QREF]=map_resource(a,cfg,piano_ufs_base_address[PIANO_QREF],sizeof(ULONG));
+    if (!c->bus_reg[PIANO_QREF]) goto failed;
+    if (!UfsPianoOpenRpmh(&c->rpmh,rpmh,parent)) goto failed;
+    c->base.io=(struct piano_ufs_base_io){c,read_base,write_base,wait_us,set_parent,device_reference};
+    c->power.inputs=(struct piano_ufs_bus_inputs){c,set_rails_and_paths,set_bus_clocks};
     power.phy = (struct ufs_phy_power){c,set_phy_supply,set_phy_clocks,collapse_phy};
     ULONG result = UfsMiniportFindPiano(a, cfg, &power);
     if (result == SP_RETURN_FOUND) {

@@ -12,6 +12,43 @@ from compose_piano_dtb import read_fdt
 
 
 class PianoUfsClockTest(unittest.TestCase):
+    def test_bus_roots_branches_reference_and_rollback(self):
+        unit=ROOT/'windows/drivers/ufs'
+        with tempfile.TemporaryDirectory() as tmp:
+            exe=Path(tmp)/'ufs-base'
+            subprocess.run(['cc','-std=c17','-Wall','-Wextra','-Werror','-I',unit,unit/'piano_base_clock.c',
+                            ROOT/'tests/native/PianoUfsBaseClockTest.c','-o',exe],check=True)
+            addresses=[int(n,16) for n in subprocess.check_output([exe],text=True).split()]
+        fw=(ROOT/'vendor/piano/native/ClockDxe.efi').read_bytes()
+        def word(p):
+            return struct.unpack_from('<Q',fw,p)[0]
+        def record(name):
+            p=fw.index(name.encode()+b'\0')
+            row,=(j for j in range(0,len(fw)-8,8) if word(j)==p)
+            return row
+        dt=read_fdt((ROOT/'vendor/piano/dtb/piano.dtb').read_bytes())['tree']
+        xbl=read_fdt((ROOT/'vendor/piano/dtb/xbl-config.dtb').read_bytes())['tree']
+        gdsc=next(n for n in dt.values() if n.get('regulator-name')==b'gcc_ufs_phy_gdsc\0')
+        offset=struct.unpack('>II',gdsc['reg'])[0]-word(record('gcc_ufs_phy_gdsc')+24)
+        names=('gcc_ufs_phy_axi_clk','gcc_aggre_ufs_phy_axi_clk','gcc_ufs_phy_ahb_clk',
+               'gcc_ufs_phy_unipro_core_clk','gcc_ufs_phy_ice_core_clk','gcc_ufs_phy_phy_aux_clk')
+        self.assertEqual(addresses[8:14],[offset+word(record(n)+32) for n in names])
+        rcgs=[offset+word(word(record(names[i])+8)+40) for i in (0,3,4,5)]
+        self.assertEqual(addresses[:8],[r+d for r in rcgs for d in (0,4)])
+        timing={n['clk_name'].rstrip(b'\0').decode():struct.unpack('>6I',n['config'])
+                for n in xbl.values() if 'clk_name' in n and len(n.get('config',b''))==24}
+        for i in (0,3,4): self.assertEqual(timing[names[i]][2:],(100000000,201500000,403000000,403000000))
+        h=dt['/soc/ufshc@1d84000'];phy=dt['/soc/ufsphy_mem@1d80000']
+        rpmh=next(n for n in dt.values() if n.get('compatible')==b'qcom,sun-rpmh-clk\0')['phandle']
+        tcsr=next(n for n in dt.values() if b'qcom,sun-tcsrcc' in n.get('compatible',b''))
+        self.assertEqual(addresses[-1],struct.unpack('>II',tcsr['reg'])[0]+0x1000)
+        for n,k,owner,idx in ((h,'ref_clk',rpmh,4),(phy,'ref_clk_src',rpmh,27),(phy,'qref_clk',tcsr['phandle'],1)):
+            name=n['clock-names'].rstrip(b'\0').decode().split('\0').index(k)
+            self.assertEqual(n['clocks'][8*name:8*name+8],owner+struct.pack('>I',idx))
+        for name,hz,l,alpha in (('gcc_gpll0',600000000,31,0x4000),('gcc_gpll4',806000000,41,0xfaaa)):
+            config=word(record(name)+24)
+            self.assertEqual((struct.unpack_from('<I',fw,config)[0],*struct.unpack_from('<II',fw,config+28)),(hz,l,alpha))
+
     def test_inherited_cold_and_retry_against_stock_clock_records(self):
         unit = ROOT / 'windows/drivers/ufs'
         with tempfile.TemporaryDirectory() as path:

@@ -122,8 +122,11 @@ int piano_ufs_set_bus_power(void *context, int enable)
     p->inputs_held = 1;
     for (unsigned d = 0; d < PIANO_UFS_DOMAINS; ++d)
         if (!power_up(p, (enum piano_ufs_domain)d)) goto undo;
+    /* Even a failed clock enable may still have a posted RCG update.
+     * Require a successful disable before dropping domains or RPMh votes. */
+    p->clocks_held = 1;
     if (!p->inputs.base_clocks(p->inputs.context, 1)) goto undo;
-    p->clocks_held = p->ready = 1;
+    p->ready = 1;
     return 1;
 undo:
     (void)release_power(p);

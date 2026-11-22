@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "gpu_clocks.h"
-#include "clock_registers.h"
+#include "../gcc/registers.h"
 
 /* MiCode gpucc-sun, gcc-sun and KGSL gen8_0_1. Offsets are relative to
  * their provider's translated base. GCC source 600 MHz / 3 supplies the
@@ -174,7 +174,7 @@ static NTSTATUS gate(ADRENO_GPU_CLOCKS *c, enum clock_id id, BOOLEAN on)
 
 static NTSTATUS enable_clock(ADRENO_GPU_CLOCKS *c, enum clock_id id)
 {
-    if (id == gcc_pll) return Sm8750SetGccPll0(c->gcc, &c->parent_held, TRUE);
+    if (id == gcc_pll) return Sm8750SetGccPll(c->gcc, Sm8750Gpll0, &c->parent_held, TRUE);
     if (id == pll) return start_pll(c);
     if (id == gpll) return set_gpll(c, TRUE);
     c->dirty |= BIT(id);
@@ -185,7 +185,7 @@ static NTSTATUS enable_clock(ADRENO_GPU_CLOCKS *c, enum clock_id id)
 
 static NTSTATUS disable_clock(ADRENO_GPU_CLOCKS *c, enum clock_id id)
 {
-    if (id == gcc_pll) return Sm8750SetGccPll0(c->gcc, &c->parent_held, FALSE);
+    if (id == gcc_pll) return Sm8750SetGccPll(c->gcc, Sm8750Gpll0, &c->parent_held, FALSE);
     if (id == pll && c->park_gmu) {
         NTSTATUS s = set_root(c, gmu_rcg, RCG(0, 1));
         if (s != STATUS_SUCCESS) return s;
@@ -270,11 +270,12 @@ done:
     return s;
 }
 
-NTSTATUS AdrenoPrepareGpuClocks(ADRENO_GPU_CLOCKS *c, PCM_PARTIAL_RESOURCE_DESCRIPTOR gpucc, SM8750_GCC_PLL0 *gcc)
+NTSTATUS AdrenoPrepareGpuClocks(ADRENO_GPU_CLOCKS *c, PCM_PARTIAL_RESOURCE_DESCRIPTOR gpucc, SM8750_GCC_PLLS *gcc)
 {
     ULONGLONG cb, ce;
     PAGED_CODE();
-    if (!c || c->gpucc || !gcc || !gcc->base || !window(gpucc, &cb, 0x9800, &ce) ||
+    if (!c || c->gpucc || !gcc || !gcc->base || gcc->end < gcc->start || gcc->end-gcc->start < 0x71154 ||
+        !window(gpucc, &cb, 0x9800, &ce) ||
         (gcc->start < ce && cb < gcc->end))
         return STATUS_DEVICE_CONFIGURATION_ERROR;
     PHYSICAL_ADDRESS start;

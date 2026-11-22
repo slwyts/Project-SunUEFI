@@ -31,7 +31,9 @@
   <ItemGroup>
     <ClCompile Include="cx_power.c" />
     <ClCompile Include="firmware.c" />
-    <ClCompile Include="gcc_pll.c" />
+    <ProjectReference Include="../gcc/gcc.vcxproj">
+      <Project>{E6DB85E9-1255-4D27-8FD7-F51D04C44517}</Project>
+    </ProjectReference>
     <ClCompile Include="gmu_firmware.c" />
     <ClCompile Include="gmu_memory.c" />
     <ClCompile Include="gmu_memory_layout.c" />
@@ -46,8 +48,9 @@
     <ClCompile Include="wddm_clock.c" />
     <ClCompile Include="wddm_pnp.c" />
     <ClInclude Include="cx_power.h" />
-    <ClInclude Include="clock_registers.h" />
-    <ClInclude Include="gcc_pll.h" />
+    <ClInclude Include="../gcc/registers.h" />
+    <ClInclude Include="../gcc/fixed_pll.h" />
+    <ClInclude Include="../gcc/clock_interface.h" />
     <ClInclude Include="firmware.h" />
     <ClInclude Include="gmu_firmware.h" />
     <ClInclude Include="gmu_memory.h" />

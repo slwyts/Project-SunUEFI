@@ -177,8 +177,42 @@ static void check_boot_supplies(void)
     assert(rpmh_client_close(&p,&display) && rpmh_client_close(&p,&usb));
 }
 
+struct clock_hw { unsigned written, enabled, fail; };
+static int write_clock(void *ctx,const struct rpmh_rsc_command *c,unsigned n,unsigned wait)
+{
+    struct clock_hw *h=ctx;
+    assert(n==1 && wait==1 && c->address==0x45504 && c->data<=1);
+    h->enabled=c->data;++h->written;
+    if (h->fail) {--h->fail;return 0;}
+    return 1;
+}
+static void reference_clock(void)
+{
+    uint8_t bytes[HEADER+ENTRY]={0};
+    u32(bytes+4,0x0c0330db);u16(bytes+8,RPMH_VRM);u16(bytes+12,ENTRY);u16(bytes+14,1);
+    memcpy(bytes+HEADER,"clka8",5);u32(bytes+HEADER+16,0x45500);
+    struct rpmh_cmd_db db;struct rpmh_provider p;
+    struct rpmh_client ufs,peer;struct clock_hw hw={0};
+    struct rpmh_transport t={&hw,write_clock};
+    unsigned mask=1u<<RPMH_UFS_REF_CLOCK;
+    assert(rpmh_db_open(&db,bytes,sizeof(bytes)) && rpmh_provider_start(&p,&db,&t,4));
+    assert(rpmh_client_open(&p,&ufs) && rpmh_client_open(&p,&peer));
+    assert(rpmh_provider_boot(&p,mask,0,0,1) && hw.enabled && hw.written==1);
+    assert(rpmh_set_level(&p,&ufs,RPMH_UFS_REF_CLOCK,1) && rpmh_set_level(&p,&peer,RPMH_UFS_REF_CLOCK,1));
+    assert(rpmh_provider_boot(&p,mask,0,0,0) && hw.written==1);
+    assert(rpmh_client_close(&p,&peer) && hw.enabled);
+    rpmh_provider_power_lost(&p);hw.enabled=0;
+    struct rpmh_boot_votes fresh={.rails=1u<<RPMH_UFS_REF_CLOCK};
+    assert(rpmh_provider_adopt(&p,&fresh) && !rpmh_provider_reconcile(&p) && !hw.enabled);
+    assert(rpmh_provider_boot(&p,mask,0,0,1) && hw.enabled && hw.written==2);
+    hw.fail=1;
+    assert(!rpmh_set_level(&p,&ufs,RPMH_UFS_REF_CLOCK,0) && !hw.enabled);
+    assert(rpmh_provider_reconcile(&p) && hw.enabled && rpmh_client_close(&p,&ufs) && !hw.enabled);
+}
+
 int main(void)
 {
+    reference_clock();
     check_boot_supplies();
     uint8_t bytes[HEADER + 3*ENTRY];
     struct rpmh_cmd_db db;

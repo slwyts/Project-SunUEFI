@@ -121,9 +121,12 @@ static int phy_supply(struct ufs_platform *p, enum ufs_phy_supply supply, int en
 
 static int phy_pll_clocks(struct ufs_platform *p)
 {
-    if (!phy_supply(p,UFS_PHY_PLL,1) || !p->power.phy.set_clocks(p->power.phy.context,1)) return 0;
+    if (!phy_supply(p,UFS_PHY_PLL,1)) return 0;
+    /* A failed update may still need the reference clock and analog rails
+     * until its owner observes completion and undoes its earlier writes. */
     p->phy_clocks = 1;
-    return 1;
+    p->phy_clock_failed = !p->power.phy.set_clocks(p->power.phy.context,1);
+    return !p->phy_clock_failed;
 }
 
 static int analog_power(struct ufs_platform *p, int enable)
@@ -284,6 +287,10 @@ int ufs_platform_stop(struct ufs_platform *p, uint64_t now)
     if (p->core_settling && now - p->since_us < RESET_SETTLE_US) return 0;
     if ((p->owns_pcs || p->lane_vote) && !host_stopped(p)) return 0;
     if (p->phy_asserted && now - p->since_us < RESET_SETTLE_US) return 0;
+    if (p->phy_clock_failed) {
+        if (!p->power.phy.set_clocks(p->power.phy.context,0)) return 0;
+        p->phy_clock_failed = p->phy_clocks = 0;
+    }
     if (p->lane_vote) {
         if (!p->power.set_lane_clocks(p->power.context, 0)) return 0;
         p->lane_vote = 0;

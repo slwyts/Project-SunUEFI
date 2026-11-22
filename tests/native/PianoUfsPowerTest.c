@@ -58,6 +58,7 @@ static int rails(void *ctx, int on)
 static int clocks(void *ctx, int on)
 {
     struct hw *h=ctx;
+    if (!on && !h->clocks) return 1;
     assert(h->rails && on!=h->clocks);
     assert(h->status[HBA]==UP && !(h->ctrl[HBA]&1));
     if (!on && h->phy_quiesced) assert(h->status[PHY]==DOWN && (h->ctrl[PHY]&1));

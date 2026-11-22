@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #pragma once
 #include "cx_power.h"
-#include "gcc_pll.h"
+#include "../gcc/fixed_pll.h"
 
 typedef struct ADRENO_GPU_CLOCKS ADRENO_GPU_CLOCKS;
 typedef struct {
@@ -23,13 +23,13 @@ struct ADRENO_GPU_CLOCKS {
     ADRENO_CX_DOMAIN cx;
     KMUTEX lock;
     volatile ULONG *gpucc, *axi, *memnoc, *gpll_vote;
-    SM8750_GCC_PLL0 *gcc;
+    SM8750_GCC_PLLS *gcc;
     ULONG users[12], dirty, partial, forced;
     BOOLEAN park_gmu, parent_held;
 };
 
 _IRQL_requires_(PASSIVE_LEVEL)
-NTSTATUS AdrenoPrepareGpuClocks(ADRENO_GPU_CLOCKS *clocks, PCM_PARTIAL_RESOURCE_DESCRIPTOR gpucc, SM8750_GCC_PLL0 *gcc);
+NTSTATUS AdrenoPrepareGpuClocks(ADRENO_GPU_CLOCKS *clocks, PCM_PARTIAL_RESOURCE_DESCRIPTOR gpucc, SM8750_GCC_PLLS *gcc);
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS AdrenoReleaseGpuClocks(ADRENO_GPU_CLOCKS *clocks);
 
