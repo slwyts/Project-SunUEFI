@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+#include "PianoAcpi.h"
+
+// The board describes always-on, active-low, level-sensitive timer PPIs.
+#define TIMER_FLAGS  (EFI_ACPI_6_3_GTDT_TIMER_FLAG_TIMER_INTERRUPT_POLARITY | \
+                      EFI_ACPI_6_3_GTDT_TIMER_FLAG_ALWAYS_ON_CAPABILITY)
+
+STATIC EFI_ACPI_6_3_GENERIC_TIMER_DESCRIPTION_TABLE mGtdt = {
+  .Header = PIANO_ACPI_HEADER (EFI_ACPI_6_3_GENERIC_TIMER_DESCRIPTION_TABLE_SIGNATURE,
+                              EFI_ACPI_6_3_GENERIC_TIMER_DESCRIPTION_TABLE,
+                              EFI_ACPI_6_3_GENERIC_TIMER_DESCRIPTION_TABLE_REVISION),
+  .CntControlBasePhysicalAddress = MAX_UINT64,
+  .CntReadBasePhysicalAddress    = MAX_UINT64,
+  .SecurePL1TimerGSIV            = 29,
+  .SecurePL1TimerFlags           = TIMER_FLAGS,
+  .NonSecurePL1TimerGSIV         = 30,
+  .NonSecurePL1TimerFlags        = TIMER_FLAGS,
+  .VirtualTimerGSIV              = 27,
+  .VirtualTimerFlags             = TIMER_FLAGS,
+  .NonSecurePL2TimerGSIV         = 26,
+  .NonSecurePL2TimerFlags        = TIMER_FLAGS
+};
+
+VOID *
+EFIAPI
+ReferenceAcpiTable (
+  VOID
+  )
+{
+  return &mGtdt;
+}

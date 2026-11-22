@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+#include "PianoAcpi.h"
+
+typedef struct {
+  EFI_ACPI_6_3_MULTIPLE_APIC_DESCRIPTION_TABLE_HEADER    Madt;
+  EFI_ACPI_6_3_GIC_STRUCTURE                             Cpu[8];
+  EFI_ACPI_6_3_GIC_DISTRIBUTOR_STRUCTURE                 Distributor;
+  EFI_ACPI_6_3_GIC_ITS_STRUCTURE                         Its;
+} PIANO_MADT;
+
+// The board uses a 256 KiB stride. Advertise each GICR frame rather than
+// relying on the OS to derive that stride from a single contiguous region.
+#define CPU_INTERFACE(Uid, Mpidr, Efficiency)                   \
+  { .Type = EFI_ACPI_6_3_GIC,                                    \
+    .Length = sizeof (EFI_ACPI_6_3_GIC_STRUCTURE),                \
+    .CPUInterfaceNumber = Uid, .AcpiProcessorUid = Uid,           \
+    .Flags = EFI_ACPI_6_3_GIC_ENABLED,                            \
+    .PerformanceInterruptGsiv = 23, .VGICMaintenanceInterrupt = 25, \
+    .GICRBaseAddress = 0x16080000 + 0x40000 * (Uid),               \
+    .MPIDR = Mpidr, .ProcessorPowerEfficiencyClass = Efficiency }
+
+STATIC PIANO_MADT mMadt = {
+  .Madt.Header = PIANO_ACPI_HEADER (EFI_ACPI_6_3_MULTIPLE_APIC_DESCRIPTION_TABLE_SIGNATURE,
+                                   PIANO_MADT, EFI_ACPI_6_3_MULTIPLE_APIC_DESCRIPTION_TABLE_REVISION),
+  .Cpu = {
+    CPU_INTERFACE (0, 0x00000, 0),
+    CPU_INTERFACE (1, 0x00100, 0),
+    CPU_INTERFACE (2, 0x00200, 0),
+    CPU_INTERFACE (3, 0x00300, 0),
+    CPU_INTERFACE (4, 0x00400, 0),
+    CPU_INTERFACE (5, 0x00500, 0),
+    CPU_INTERFACE (6, 0x10000, 1),
+    CPU_INTERFACE (7, 0x10100, 1)
+  },
+  .Distributor = {
+    .Type = EFI_ACPI_6_3_GICD,
+    .Length = sizeof (EFI_ACPI_6_3_GIC_DISTRIBUTOR_STRUCTURE),
+    .PhysicalBaseAddress = 0x16000000,
+    .GicVersion = EFI_ACPI_6_3_GIC_V3
+  },
+  .Its = {
+    .Type = EFI_ACPI_6_3_GIC_ITS,
+    .Length = sizeof (EFI_ACPI_6_3_GIC_ITS_STRUCTURE),
+    .PhysicalBaseAddress = 0x16040000
+  }
+};
+
+VOID *
+EFIAPI
+ReferenceAcpiTable (
+  VOID
+  )
+{
+  return &mMadt;
+}

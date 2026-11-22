@@ -38,6 +38,7 @@ PORTABLE = (
     'tests/unit/test_ci_container.py',
 )
 CI_UNIT = (
+    'test_acpi_tables.py',
     'test_boot_options.py',
     'test_build_input.py',
     'test_droidloom.py',

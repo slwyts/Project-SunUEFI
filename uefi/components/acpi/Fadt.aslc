@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+#include "PianoAcpi.h"
+
+STATIC EFI_ACPI_6_3_FIXED_ACPI_DESCRIPTION_TABLE mFadt = {
+  .Header = PIANO_ACPI_HEADER (EFI_ACPI_6_3_FIXED_ACPI_DESCRIPTION_TABLE_SIGNATURE,
+                              EFI_ACPI_6_3_FIXED_ACPI_DESCRIPTION_TABLE,
+                              EFI_ACPI_6_3_FIXED_ACPI_DESCRIPTION_TABLE_REVISION),
+  .PreferredPmProfile = EFI_ACPI_6_3_PM_PROFILE_TABLET,
+  .Flags             = EFI_ACPI_6_3_HW_REDUCED_ACPI,
+  // The board uses the SMC conduit for PSCI. AcpiTableDxe fills XDsdt.
+  .ArmBootArch       = EFI_ACPI_6_3_ARM_PSCI_COMPLIANT,
+  .MinorVersion      = EFI_ACPI_6_3_FIXED_ACPI_DESCRIPTION_TABLE_MINOR_REVISION
+};
+
+VOID *
+EFIAPI
+ReferenceAcpiTable (
+  VOID
+  )
+{
+  return &mFadt;
+}
