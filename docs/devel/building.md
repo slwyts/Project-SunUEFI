@@ -109,7 +109,9 @@ vkd3d 着色器编译器的源码归档，后续可复用 `--source-cache` 中�
 
 调试首次启动时加 `--probe`，输出到 `artifacts/windows/winpe/`。这份介质只启动
 WinPE，不打开安装程序。启动脚本初始化设备，找到带 `SunUEFI/WinPE/probe.tag`
-的卷后，在同目录记录本次启动、磁盘卷和设备，再重启。`memory.txt`
+的卷后，在同目录记录本次启动、磁盘卷和设备，再重启。`storage.txt` 给出回执写入卷对应的
+磁盘 ID 和总线类型；如果标记在 USB 盘上，即使从内置盘启动，这份回执也只证明 USB 盘可写。
+`storage-devices.txt` 可核对 Windows 为磁盘和控制器选择的驱动。`memory.txt`
 是 Windows 内核识别的物理内存地址段，不是固件报告的标称容量。若 Windows
 没有识别带标记的卷，脚本仍请求重启，不写其他卷。普通安装介质不包含这个探测脚本。
 
