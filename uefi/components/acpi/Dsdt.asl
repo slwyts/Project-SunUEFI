@@ -100,6 +100,22 @@ DefinitionBlock ("", "DSDT", 2, "SUNUEF", "PIANO   ", 1)
             }
         }
 
+        Device (GCC0)
+        {
+            Name (_HID, "PRP0001")
+            Name (_UID, "GCC")
+            Name (_DDN, "Qualcomm SM8750 global clock controller")
+            Name (_DSD, Package ()
+            {
+                ToUUID ("daffd814-6eba-4d8c-8a91-bc9bbf4aa301"),
+                Package () { Package () { "compatible", "qcom,sm8750-gcc" } }
+            })
+            Name (_CRS, ResourceTemplate ()
+            {
+                Memory32Fixed (ReadWrite, 0x00100000, 0x001F4200)
+            })
+        }
+
         // The display and render engines do not own the GPU clock controller.
         Device (GCLK)
         {

@@ -13,17 +13,27 @@ typedef struct {
     ULONGLONG start, end;
     PKSPIN_LOCK vote_lock;
     KMUTEX lock;
-    INTERFACE lifetime;
     SM8750_GCC_PLL_STATE pll[2];
-    SM8750_UFS_GCC_WINDOWS *ufs;
+    PVOID ufs;
+    PVOID volatile retained_ufs;
+    BOOLEAN online, removed;
 } SM8750_GCC_PLLS;
 
-_IRQL_requires_(PASSIVE_LEVEL) NTSTATUS
-    Sm8750PrepareGccPlls(SM8750_GCC_PLLS *, PCM_PARTIAL_RESOURCE_DESCRIPTOR gcc, PVOID mapping,
-                         PKSPIN_LOCK vote_lock, const INTERFACE *device);
+_IRQL_requires_(PASSIVE_LEVEL) void Sm8750InitializeGcc(SM8750_GCC_PLLS *, PKSPIN_LOCK);
+BOOLEAN Sm8750GccResource(PCM_PARTIAL_RESOURCE_DESCRIPTOR, ULONGLONG *start, ULONGLONG *end);
+_IRQL_requires_(PASSIVE_LEVEL) NTSTATUS Sm8750PrepareGccPlls(SM8750_GCC_PLLS *, PCM_PARTIAL_RESOURCE_DESCRIPTOR,
+                                                              PVOID mapping);
+_IRQL_requires_(PASSIVE_LEVEL) NTSTATUS Sm8750GccPower(SM8750_GCC_PLLS *, BOOLEAN online, BOOLEAN removed);
+_IRQL_requires_(PASSIVE_LEVEL) PVOID Sm8750DetachGcc(SM8750_GCC_PLLS *);
 _IRQL_requires_(PASSIVE_LEVEL) NTSTATUS
     Sm8750SetGccPll(PVOID clocks, enum sm8750_gcc_pll, BOOLEAN *held, BOOLEAN on);
 _IRQL_requires_(PASSIVE_LEVEL) NTSTATUS Sm8750ReleaseGccPllBootReference(SM8750_GCC_PLLS *, enum sm8750_gcc_pll);
-_IRQL_requires_(PASSIVE_LEVEL) void Sm8750GccPllPowerLost(SM8750_GCC_PLLS *);
-/* Fill IRP_MN_QUERY_INTERFACE for a child of the GCC PnP provider. */
-_IRQL_requires_(PASSIVE_LEVEL) NTSTATUS Sm8750GetGccInterface(SM8750_GCC_PLLS *, SM8750_GCC_INTERFACE *);
+
+NTSTATUS Sm8750OpenUfsClocks(SM8750_GCC_PLLS *, PVOID adapter);
+BOOLEAN Sm8750CloseUfsClocks(SM8750_GCC_PLLS *, PVOID adapter);
+BOOLEAN Sm8750UfsPowerRetained(SM8750_GCC_PLLS *, PVOID adapter);
+ULONG Sm8750ReadUfsClock(SM8750_GCC_PLLS *, PVOID adapter, ULONG offset);
+void Sm8750WriteUfsClock(SM8750_GCC_PLLS *, PVOID adapter, ULONG offset, ULONG value);
+
+/* End of the UFS PHY domain status, the highest register we access. */
+#define SM8750_GCC_REQUIRED_BYTES 0x9e008

@@ -12,17 +12,15 @@ typedef struct {
     struct piano_ufs_bus_power power;
     struct piano_ufs_base_clocks base;
     SM8750_GCC_INTERFACE gcc;
-    SM8750_UFS_GCC_WINDOWS windows;
+    BOOLEAN gcc_open;
     BOOLEAN pll[4][Sm8750GccPllCount];
     PIANO_UFS_RPMH rpmh;
     UFS_ADAPTER *adapter;
-    PULONG reg[PIANO_UFS_CLOCK_REGS];
-    PULONG bus_reg[PIANO_UFS_BASE_REGS];
-    PULONG domain[PIANO_UFS_DOMAINS];
+    PULONG qref;
 } PIANO_UFS_CLOCK_DEVICE;
 
 /* ACPI assigns HCI, QMP and the UFS TCSR gate to this board instance.
- * GCC lends its own UFS windows. PnP must not assign overlapping GCC
+ * GCC performs the UFS clock accesses. PnP must not assign overlapping GCC
  * resources to both the clock provider and the storage controller.
  */
 _IRQL_requires_(PASSIVE_LEVEL)

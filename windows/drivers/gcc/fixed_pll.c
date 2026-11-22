@@ -9,23 +9,40 @@ static const struct {
     unsigned word, vote, l, alpha;
 } fixed[] = {{0, 1u, 31, 0x4000}, {0x4000 / 4, 1u << 4, 41, 0xfaaa}};
 
-NTSTATUS Sm8750PrepareGccPlls(SM8750_GCC_PLLS *p, PCM_PARTIAL_RESOURCE_DESCRIPTOR gcc, PVOID mapping,
-                              PKSPIN_LOCK vote_lock, const INTERFACE *device)
+void Sm8750InitializeGcc(SM8750_GCC_PLLS *p, PKSPIN_LOCK vote_lock)
+{
+    RtlZeroMemory(p, sizeof(*p));
+    KeInitializeMutex(&p->lock, 0);
+    p->vote_lock = vote_lock;
+}
+
+BOOLEAN Sm8750GccResource(PCM_PARTIAL_RESOURCE_DESCRIPTOR r, ULONGLONG *start, ULONGLONG *end)
+{
+    if (!r || (r->Type != CmResourceTypeMemory && r->Type != CmResourceTypeMemoryLarge) ||
+        r->ShareDisposition != CmResourceShareDeviceExclusive ||
+        (r->Flags & (CM_RESOURCE_MEMORY_READ_ONLY | CM_RESOURCE_MEMORY_WRITE_ONLY))) return FALSE;
+    ULONGLONG size = RtlCmDecodeMemIoResource(r, start);
+    if (size < SM8750_GCC_REQUIRED_BYTES || size > MAXLONGLONG || (*start & (sizeof(ULONG) - 1)) ||
+        *start > (ULONGLONG)MAXLONGLONG - size) return FALSE;
+    *end = *start + size;
+    return TRUE;
+}
+
+NTSTATUS Sm8750PrepareGccPlls(SM8750_GCC_PLLS *p, PCM_PARTIAL_RESOURCE_DESCRIPTOR gcc, PVOID mapping)
 {
     ULONGLONG start, end;
     PAGED_CODE();
-    if (!p || p->base || !mapping || ((ULONG_PTR)mapping & 3) || !vote_lock || !device ||
-        !device->InterfaceReference || !device->InterfaceDereference || !window(gcc, &start, 0x52024, &end) ||
-        start != 0x100000)
+    if (!mapping || ((ULONG_PTR)mapping & 3) || !Sm8750GccResource(gcc, &start, &end))
         return STATUS_DEVICE_CONFIGURATION_ERROR;
-    RtlZeroMemory(p, sizeof(*p));
-    KeInitializeMutex(&p->lock, 0);
-    p->base = mapping;
-    p->start = start;
-    p->end = end;
-    p->vote_lock = vote_lock;
-    p->lifetime = *device;
-    return STATUS_SUCCESS;
+    KeWaitForSingleObject(&p->lock, Executive, KernelMode, FALSE, NULL);
+    NTSTATUS s = p->removed ? STATUS_DEVICE_REMOVED : p->base ? STATUS_DEVICE_BUSY : STATUS_SUCCESS;
+    if (s == STATUS_SUCCESS) {
+        p->base = mapping;
+        p->start = start;
+        p->end = end;
+    }
+    KeReleaseMutex(&p->lock, FALSE);
+    return s;
 }
 
 static NTSTATUS apply(SM8750_GCC_PLLS *p, unsigned i, BOOLEAN on)
@@ -64,13 +81,22 @@ NTSTATUS Sm8750SetGccPll(PVOID ctx, enum sm8750_gcc_pll id, BOOLEAN *held, BOOLE
 {
     SM8750_GCC_PLLS *p = ctx;
     PAGED_CODE();
-    if (!p || !p->base || !held || (unsigned)id >= Sm8750GccPllCount)
+    if (!p || !held || (unsigned)id >= Sm8750GccPllCount)
         return STATUS_INVALID_PARAMETER;
     KeWaitForSingleObject(&p->lock, Executive, KernelMode, FALSE, NULL);
     unsigned i = id == Sm8750Gpll4 ? 1u : 0u;
-    volatile ULONG *r = p->base + fixed[i].word;
     SM8750_GCC_PLL_STATE *g = &p->pll[i];
     NTSTATUS s = STATUS_SUCCESS;
+    if (!p->online) {
+        if (p->removed && !on && *held && g->users) {
+            --g->users;
+            *held = FALSE;
+        } else if (on || *held) {
+            s = p->removed ? STATUS_DEVICE_REMOVED : STATUS_DEVICE_NOT_READY;
+        }
+        goto out;
+    }
+    volatile ULONG *r = p->base + fixed[i].word;
     if (on || (*held && !g->initialized)) {
         ULONG u = READ_REGISTER_ULONG(r + USER), l = READ_REGISTER_ULONG(r + L),
               a = READ_REGISTER_ULONG(r + ALPHA);
@@ -98,7 +124,8 @@ NTSTATUS Sm8750SetGccPll(PVOID ctx, enum sm8750_gcc_pll id, BOOLEAN *held, BOOLE
                 }
                 v &= op;
             }
-            g->boot = !!(v & (voted ? fixed[i].vote : 1));
+            /* A vote retained across D3 may be ours, not firmware's. */
+            g->boot = !!(v & (voted ? fixed[i].vote : 1)) && (!g->restore || g->boot);
             g->voted = voted;
             g->initialized = TRUE;
         } else if (g->voted != voted) {
@@ -143,12 +170,12 @@ out:
 NTSTATUS Sm8750ReleaseGccPllBootReference(SM8750_GCC_PLLS *p, enum sm8750_gcc_pll id)
 {
     PAGED_CODE();
-    if (!p || !p->base || (unsigned)id >= Sm8750GccPllCount)
+    if (!p || (unsigned)id >= Sm8750GccPllCount)
         return STATUS_INVALID_PARAMETER;
     unsigned i = id == Sm8750Gpll4 ? 1u : 0u;
     KeWaitForSingleObject(&p->lock, Executive, KernelMode, FALSE, NULL);
     SM8750_GCC_PLL_STATE *g = &p->pll[i];
-    NTSTATUS s = g->initialized ? STATUS_SUCCESS : STATUS_DEVICE_NOT_READY;
+    NTSTATUS s = p->online && g->initialized ? STATUS_SUCCESS : STATUS_DEVICE_NOT_READY;
     if (s == STATUS_SUCCESS && g->boot && !g->users)
         s = apply(p, i, FALSE);
     if (s == STATUS_SUCCESS)
@@ -157,66 +184,112 @@ NTSTATUS Sm8750ReleaseGccPllBootReference(SM8750_GCC_PLLS *p, enum sm8750_gcc_pl
     return s;
 }
 
-void Sm8750GccPllPowerLost(SM8750_GCC_PLLS *p)
+NTSTATUS Sm8750GccPower(SM8750_GCC_PLLS *p, BOOLEAN online, BOOLEAN removed)
 {
     PAGED_CODE();
-    if (!p || !p->base)
-        return;
     KeWaitForSingleObject(&p->lock, Executive, KernelMode, FALSE, NULL);
-    for (unsigned i = 0; i < RTL_NUMBER_OF(p->pll); ++i) {
-        p->pll[i].restore = p->pll[i].users != 0;
-        p->pll[i].initialized = p->pll[i].boot = FALSE;
-    }
-    KeReleaseMutex(&p->lock, FALSE);
-}
-
-static VOID reference(PVOID ctx)
-{
-    SM8750_GCC_PLLS *p = ctx;
-    p->lifetime.InterfaceReference(p->lifetime.Context);
-}
-static VOID dereference(PVOID ctx)
-{
-    SM8750_GCC_PLLS *p = ctx;
-    p->lifetime.InterfaceDereference(p->lifetime.Context);
-}
-static NTSTATUS open_ufs(PVOID ctx, SM8750_UFS_GCC_WINDOWS *w)
-{
-    SM8750_GCC_PLLS *p = ctx;
-    PAGED_CODE();
-    if (!w || p->end - p->start < 0x9e008)
-        return STATUS_DEVICE_CONFIGURATION_ERROR;
-    KeWaitForSingleObject(&p->lock, Executive, KernelMode, FALSE, NULL);
-    NTSTATUS s = STATUS_DEVICE_BUSY;
-    if (!p->ufs) {
-        w->clocks = (PULONG)(p->base + 0x77000 / 4);
-        w->phy_domain = (PULONG)(p->base + 0x9e000 / 4);
-        p->ufs = w;
-        s = STATUS_SUCCESS;
+    KIRQL irql;
+    KeAcquireSpinLock(p->vote_lock, &irql);
+    if (removed) p->removed = TRUE;
+    NTSTATUS s = !online ? STATUS_SUCCESS : p->removed ? STATUS_DEVICE_REMOVED :
+                 p->base ? STATUS_SUCCESS : STATUS_DEVICE_NOT_READY;
+    p->online = online && s == STATUS_SUCCESS;
+    if (!p->online) InterlockedExchangePointer(&p->retained_ufs, NULL);
+    KeReleaseSpinLock(p->vote_lock, irql);
+    if (!p->online) {
+        for (unsigned i = 0; i < RTL_NUMBER_OF(p->pll); ++i) {
+            p->pll[i].restore = p->pll[i].users != 0;
+            p->pll[i].initialized = FALSE;
+        }
     }
     KeReleaseMutex(&p->lock, FALSE);
     return s;
 }
-static VOID close_ufs(PVOID ctx, SM8750_UFS_GCC_WINDOWS *w)
+
+PVOID Sm8750DetachGcc(SM8750_GCC_PLLS *p)
 {
-    SM8750_GCC_PLLS *p = ctx;
     PAGED_CODE();
     KeWaitForSingleObject(&p->lock, Executive, KernelMode, FALSE, NULL);
-    if (w && w == p->ufs) {
-        p->ufs = NULL;
-        w->clocks = w->phy_domain = NULL;
-    }
+    KIRQL irql;
+    KeAcquireSpinLock(p->vote_lock, &irql);
+    PVOID mapping = (PVOID)p->base;
+    p->online = FALSE;
+    InterlockedExchangePointer(&p->retained_ufs, NULL);
+    p->base = NULL;
+    p->start = p->end = 0;
+    KeReleaseSpinLock(p->vote_lock, irql);
     KeReleaseMutex(&p->lock, FALSE);
+    return mapping;
 }
-NTSTATUS Sm8750GetGccInterface(SM8750_GCC_PLLS *p, SM8750_GCC_INTERFACE *out)
+
+NTSTATUS Sm8750OpenUfsClocks(SM8750_GCC_PLLS *p, PVOID adapter)
 {
-    PAGED_CODE();
-    if (!p || !p->base || !out)
-        return STATUS_INVALID_PARAMETER;
-    *out =
-        (SM8750_GCC_INTERFACE){.Header = {sizeof(*out), SM8750_GCC_INTERFACE_VERSION, p, reference, dereference},
-                               .Set = Sm8750SetGccPll,
-                               .OpenUfs = open_ufs,
-                               .CloseUfs = close_ufs};
-    return STATUS_SUCCESS;
+    KIRQL irql;
+    KeAcquireSpinLock(p->vote_lock, &irql);
+    NTSTATUS s = !adapter ? STATUS_INVALID_PARAMETER : p->removed ? STATUS_DEVICE_REMOVED :
+                 !p->online ? STATUS_DEVICE_NOT_READY : p->ufs ? STATUS_DEVICE_BUSY : STATUS_SUCCESS;
+    if (s == STATUS_SUCCESS) {
+        p->ufs = adapter;
+        InterlockedExchangePointer(&p->retained_ufs, adapter);
+    }
+    KeReleaseSpinLock(p->vote_lock, irql);
+    return s;
+}
+
+BOOLEAN Sm8750CloseUfsClocks(SM8750_GCC_PLLS *p, PVOID adapter)
+{
+    KIRQL irql;
+    KeAcquireSpinLock(p->vote_lock, &irql);
+    BOOLEAN held = adapter && adapter == p->ufs;
+    if (held) {
+        InterlockedExchangePointer(&p->retained_ufs, NULL);
+        p->ufs = NULL;
+    }
+    KeReleaseSpinLock(p->vote_lock, irql);
+    return held;
+}
+
+BOOLEAN Sm8750UfsPowerRetained(SM8750_GCC_PLLS *p, PVOID adapter)
+{
+    /* Half-duplex Storport asks from StartIo at DIRQL. This snapshot does
+     * not wait, call WDF, or touch registers. */
+    return adapter && InterlockedCompareExchangePointer(&p->retained_ufs, NULL, NULL) == adapter;
+}
+
+/* The UFS driver owns these clocks, reset and two domains. The status
+ * words are read-only. Other subsystems and APSS vote words stay private. */
+static BOOLEAN ufs_register(ULONG offset, BOOLEAN write)
+{
+    switch (offset) {
+    case 0x77008: case 0x9e004:
+        return !write;
+    case 0x77000: case 0x77004: case 0x9e000: /* reset and domains */
+    case 0x77030: case 0x77068: case 0x770d8: case 0x770ec: case 0x7702c: case 0x77058: /* lanes */
+    case 0x77034: case 0x77038: case 0x770a4: case 0x770a8: case 0x7708c: case 0x77090:
+    case 0x770c0: case 0x770c4: /* root clocks */
+    case 0x77018: case 0x770f0: case 0x77028: case 0x7706c: case 0x7707c: case 0x770bc: /* branches */
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+ULONG Sm8750ReadUfsClock(SM8750_GCC_PLLS *p, PVOID adapter, ULONG offset)
+{
+    KIRQL irql;
+    ULONG value = MAXULONG;
+    KeAcquireSpinLock(p->vote_lock, &irql);
+    if (adapter && adapter == p->ufs && p->online && ufs_register(offset, FALSE))
+        value = READ_REGISTER_ULONG(p->base + offset / 4);
+    KeReleaseSpinLock(p->vote_lock, irql);
+    return value;
+}
+
+void Sm8750WriteUfsClock(SM8750_GCC_PLLS *p, PVOID adapter, ULONG offset, ULONG value)
+{
+    KIRQL irql;
+    KeAcquireSpinLock(p->vote_lock, &irql);
+    if (adapter && adapter == p->ufs && p->online && ufs_register(offset, TRUE))
+        WRITE_REGISTER_ULONG(p->base + offset / 4, value);
+    KeReleaseSpinLock(p->vote_lock, irql);
 }

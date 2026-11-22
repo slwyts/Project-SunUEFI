@@ -1,28 +1,39 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 #include "piano_clock_storport.h"
 
+/* These are bus addresses in Piano's GCC register descriptions, not
+ * Windows physical addresses. The provider applies the relative offset
+ * to its translated mapping. TCSR belongs to the storage device instead. */
+enum { GCC_BUS_BASE = 0x100000 };
+
+static ULONG read_gcc(PIANO_UFS_CLOCK_DEVICE *c, ULONG address)
+{
+    return c->gcc.ReadUfs(c->gcc.Header.Context, c, address - GCC_BUS_BASE);
+}
+
+static void write_gcc(PIANO_UFS_CLOCK_DEVICE *c, ULONG address, ULONG value)
+{
+    c->gcc.WriteUfs(c->gcc.Header.Context, c, address - GCC_BUS_BASE, value);
+}
+
 static uint32_t read_clock(void *ctx, enum piano_ufs_clock_reg reg)
 {
-    PIANO_UFS_CLOCK_DEVICE *c = ctx;
-    return StorPortReadRegisterUlong(c->adapter, c->reg[reg]);
+    return read_gcc(ctx, piano_ufs_gcc_address[reg]);
 }
 
 static void write_clock(void *ctx, enum piano_ufs_clock_reg reg, uint32_t value)
 {
-    PIANO_UFS_CLOCK_DEVICE *c = ctx;
-    StorPortWriteRegisterUlong(c->adapter, c->reg[reg], value);
+    write_gcc(ctx, piano_ufs_gcc_address[reg], value);
 }
 
 static uint32_t read_domain(void *ctx, enum piano_ufs_domain d, unsigned offset)
 {
-    PIANO_UFS_CLOCK_DEVICE *c = ctx;
-    return StorPortReadRegisterUlong(c->adapter, c->domain[d] + offset / sizeof(ULONG));
+    return read_gcc(ctx, piano_ufs_domain_address[d] + offset);
 }
 
 static void write_domain(void *ctx, enum piano_ufs_domain d, uint32_t value)
 {
-    PIANO_UFS_CLOCK_DEVICE *c = ctx;
-    StorPortWriteRegisterUlong(c->adapter, c->domain[d], value);
+    write_gcc(ctx, piano_ufs_domain_address[d], value);
 }
 
 static void wait_us(void *ctx, unsigned usec)
@@ -38,12 +49,16 @@ static void wait_us(void *ctx, unsigned usec)
 static uint32_t read_base(void *ctx, enum piano_ufs_base_reg r)
 {
     PIANO_UFS_CLOCK_DEVICE *c=ctx;
-    return StorPortReadRegisterUlong(c->adapter,c->bus_reg[r]);
+    return r == PIANO_QREF ? StorPortReadRegisterUlong(c->adapter, c->qref) :
+                             read_gcc(c, piano_ufs_base_address[r]);
 }
 static void write_base(void *ctx, enum piano_ufs_base_reg r,uint32_t value)
 {
     PIANO_UFS_CLOCK_DEVICE *c=ctx;
-    StorPortWriteRegisterUlong(c->adapter,c->bus_reg[r],value);
+    if (r == PIANO_QREF)
+        StorPortWriteRegisterUlong(c->adapter, c->qref, value);
+    else
+        write_gcc(c, piano_ufs_base_address[r], value);
 }
 static int set_parent(void *ctx,unsigned root,enum piano_ufs_pll id,int on)
 {
@@ -76,8 +91,8 @@ static void unmap_controls(PIANO_UFS_CLOCK_DEVICE *c)
         c->adapter->can_retain_s0 = NULL;
         c->adapter->link_power_context = NULL;
     }
-    if (c->bus_reg[PIANO_QREF]) StorPortFreeDeviceBase(c->adapter,c->bus_reg[PIANO_QREF]);
-    if (c->windows.clocks) c->gcc.CloseUfs(c->gcc.Header.Context,&c->windows);
+    if (c->qref) StorPortFreeDeviceBase(c->adapter, c->qref);
+    if (c->gcc_open) c->gcc.CloseUfs(c->gcc.Header.Context, c);
     if (c->gcc.Header.InterfaceDereference) c->gcc.Header.InterfaceDereference(c->gcc.Header.Context);
     RtlZeroMemory(c, sizeof(*c));
 }
@@ -92,7 +107,7 @@ static BOOLEAN can_retain_s0(PVOID context)
 {
     PIANO_UFS_CLOCK_DEVICE *c = context;
     return c->adapter->platform.bus_vote && c->adapter->platform.phy.lane_vote && c->power.ready &&
-           UfsPianoHasS0Power(&c->rpmh);
+           UfsPianoHasS0Power(&c->rpmh) && c->gcc.UfsPowerRetained(c->gcc.Header.Context, c);
 }
 
 static void link_power_ready(PVOID context, const uint8_t *p)
@@ -156,6 +171,7 @@ ULONG UfsPianoFindAdapter(PIANO_UFS_CLOCK_DEVICE *c, UFS_ADAPTER *a, PPORT_CONFI
     if (!c || !a || c->adapter || !gcc || gcc->Header.Size<sizeof(*gcc) ||
         gcc->Header.Version!=SM8750_GCC_INTERFACE_VERSION || !gcc->Header.InterfaceReference ||
         !gcc->Header.InterfaceDereference || !gcc->Set || !gcc->OpenUfs || !gcc->CloseUfs ||
+        !gcc->UfsPowerRetained || !gcc->ReadUfs || !gcc->WriteUfs ||
         !cfg || cfg->Length < RTL_SIZEOF_THROUGH_FIELD(PORT_CONFIGURATION_INFORMATION, DumpMode) || cfg->DumpMode ||
         !cfg->AccessRanges || cfg->NumberOfAccessRanges < 3)
         return SP_RETURN_BAD_CONFIG;
@@ -167,14 +183,10 @@ ULONG UfsPianoFindAdapter(PIANO_UFS_CLOCK_DEVICE *c, UFS_ADAPTER *a, PPORT_CONFI
     c->adapter = a;
     gcc->Header.InterfaceReference(gcc->Header.Context);
     c->gcc=*gcc;
-    if (gcc->OpenUfs(gcc->Header.Context,&c->windows)!=STATUS_SUCCESS) goto failed;
-    ULONG bcr=piano_ufs_gcc_address[PIANO_UFS_BCR];
-    for (unsigned i=0;i<PIANO_UFS_CLOCK_REGS;++i) c->reg[i]=c->windows.clocks+(piano_ufs_gcc_address[i]-bcr)/4;
-    c->domain[PIANO_UFS_HBA_DOMAIN]=c->windows.clocks+(piano_ufs_domain_address[PIANO_UFS_HBA_DOMAIN]-bcr)/4;
-    c->domain[PIANO_UFS_PHY_DOMAIN]=c->windows.phy_domain;
-    for (unsigned i=0;i<PIANO_QREF;++i) c->bus_reg[i]=c->windows.clocks+(piano_ufs_base_address[i]-bcr)/4;
-    c->bus_reg[PIANO_QREF]=map_resource(a,cfg,piano_ufs_base_address[PIANO_QREF],sizeof(ULONG));
-    if (!c->bus_reg[PIANO_QREF]) goto failed;
+    if (gcc->OpenUfs(gcc->Header.Context, c) != STATUS_SUCCESS) goto failed;
+    c->gcc_open = TRUE;
+    c->qref = map_resource(a, cfg, piano_ufs_base_address[PIANO_QREF], sizeof(ULONG));
+    if (!c->qref) goto failed;
     if (!UfsPianoOpenRpmh(&c->rpmh,rpmh,&a->media_off)) goto failed;
     c->base.io=(struct piano_ufs_base_io){c,read_base,write_base,wait_us,set_parent,device_reference};
     c->power.inputs=(struct piano_ufs_bus_inputs){c,set_rails_and_paths,set_bus_clocks};

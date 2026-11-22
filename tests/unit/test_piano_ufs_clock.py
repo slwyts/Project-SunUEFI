@@ -12,6 +12,18 @@ from compose_piano_dtb import read_fdt
 
 
 class PianoUfsClockTest(unittest.TestCase):
+    def test_shared_gcc_translation_power_and_removal(self):
+        gcc = ROOT / 'windows/drivers/gcc'
+        ufs = ROOT / 'windows/drivers/ufs'
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = Path(tmp) / 'sm8750-gcc'
+            subprocess.run(['cc', '-std=c17', '-Wall', '-Wextra', '-Werror', '-pthread',
+                            '-I', ROOT / 'tests/fixtures/gcc', '-I', gcc, '-I', ufs,
+                            gcc / 'fixed_pll.c', ufs / 'piano_clock.c', ufs / 'piano_base_clock.c',
+                            ufs / 'piano_power.c', ROOT / 'tests/native/Sm8750GccTest.c',
+                            '-o', exe], check=True)
+            subprocess.run([exe], check=True, timeout=10)
+
     def test_bus_roots_branches_reference_and_rollback(self):
         unit=ROOT/'windows/drivers/ufs'
         with tempfile.TemporaryDirectory() as tmp:

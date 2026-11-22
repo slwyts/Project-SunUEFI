@@ -110,6 +110,18 @@ class AcpiTablesTests(unittest.TestCase):
         self.assertEqual((kind, flags), (0, 4))  # Level-high SPI
         self.assertEqual(irqs, [32 + spi])
 
+    def test_system_clocks_have_one_resource_shared_by_storage_and_gpu(self):
+        handles = {n['phandle']: n for n in self.board.values() if 'phandle' in n}
+        gcc = self.board['/soc/clock-controller@100000']
+        for path in ('/soc/ufshc@1d84000', '/soc/qcom,gmu@3d37000'):
+            self.assertTrue(any(handles[handle] is gcc for handle, _ in
+                                struct.iter_unpack('>4sI', self.board[path]['clocks'])))
+        base, size = struct.unpack('>II', gcc['reg'])
+        self.assertEqual(self.mmio_and_irqs('GCC0'), ([(base, size)], []))
+        for device in ('UFS0', 'GPU0', 'GCLK'):
+            windows, _ = self.mmio_and_irqs(device)
+            self.assertTrue(all(b + n <= base or base + size <= b for b, n in windows))
+
     def test_gpu_pnp_resources_match_the_board(self):
         gpu = self.board['/soc/qcom,kgsl-3d0@3d00000']
         gmu = self.board['/soc/qcom,gmu@3d37000']

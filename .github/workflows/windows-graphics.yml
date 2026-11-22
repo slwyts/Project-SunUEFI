@@ -28,6 +28,8 @@ on:
       - 'tests/native/UfsPlatformTest.c'
       - 'tests/unit/test_ufs_platform.py'
       - 'tests/native/PianoUfsBaseClockTest.c'
+      - 'tests/native/Sm8750GccTest.c'
+      - 'tests/fixtures/gcc/**'
       - 'tests/native/PianoUfsClockTest.c'
       - 'tests/unit/test_piano_ufs_clock.py'
       - 'tests/native/PianoUfsPowerTest.c'
@@ -123,6 +125,11 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $rpmh -notmatch 'Machine: IMAGE_FILE_MACHINE_ARM64' -or
               $rpmh -notmatch 'Subsystem: IMAGE_SUBSYSTEM_NATIVE' -or $rpmh -notmatch 'Symbol: WdfLdrQueryInterface') {
             throw 'Expected the ARM64 RPMh platform driver linked against KMDF.'
+          }
+          $gcc = llvm-readobj --file-headers --coff-imports artifacts/windows/drivers/sungcc/Release/sungcc.sys | Out-String
+          if ($LASTEXITCODE -ne 0 -or $gcc -notmatch 'Machine: IMAGE_FILE_MACHINE_ARM64' -or
+              $gcc -notmatch 'Subsystem: IMAGE_SUBSYSTEM_NATIVE' -or $gcc -notmatch 'Symbol: WdfLdrQueryInterface') {
+            throw 'Expected the ARM64 SM8750 clock controller driver linked against KMDF.'
           }
           $storage = 'artifacts/windows/drivers/ufs/Release'
           $pe = llvm-readobj --file-headers --coff-imports "$storage/sunufs.sys" | Out-String
