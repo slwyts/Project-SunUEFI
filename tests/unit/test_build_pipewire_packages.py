@@ -7,6 +7,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
@@ -167,6 +168,18 @@ class ArchPipeWirePolicyTests(unittest.TestCase):
         self.assertEqual([Path(row['path']).name for row in selected[len(base):]],
                          arch['libcamera_patches']['files'])
         self.assertEqual(len({Path(row['path']).resolve() for row in selected}), len(selected))
+
+    def test_steamos_recipe_is_verified_without_downloading_a_valve_archive(self):
+        data = pipewire_arch.policy('steamos')
+        with tempfile.TemporaryDirectory() as directory:
+            recipe = Path(directory)
+            with patch.object(pipewire_arch, 'download', side_effect=AssertionError('unexpected download')):
+                pipewire_arch.recipe_inputs(recipe / 'cache', recipe, data)
+                self.assertEqual(builder.package_build.sha(recipe / 'PKGBUILD.upstream'),
+                                 data['recipe_file']['sha256'])
+                data['recipe_file']['sha256'] = '0' * 64
+                with self.assertRaisesRegex(ValueError, 'differs from the pinned Valve recipe'):
+                    pipewire_arch.recipe_inputs(recipe / 'cache', recipe, data)
 
     def test_compatible_jack_split_is_preserved(self):
         jack = {'pipewire-jack', 'pipewire-jack-client'}

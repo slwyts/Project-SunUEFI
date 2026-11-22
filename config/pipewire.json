@@ -29,16 +29,12 @@
   "steamos": {
     "upstream_package_version": "1:1.6.8-5",
     "package_release": "5.4",
-    "recipe_archive": {
-      "url": "https://holo-packages.steamos.cloud/archlinux-deckard/archlinux/main/sources/packages/pipewire-1:1.6.6-1.src.tar.gz",
-      "sha256": "c842186423b71de31fe5eedf4288face39874066d481342aa45e471d6c28dc98"
+    "recipe_file": {
+      "name": "PKGBUILD.valve",
+      "origin": "https://holo-packages.steamos.cloud/archlinux-deckard/archlinux/main/sources/packages/pipewire-1%3A1.6.7-1.src.tar.gz",
+      "sha256": "00e51e6d01276c06a0f14e786201298cd515f3f1e7c2caafff462f9499f1e8f1"
     },
-    "files": {
-      "PKGBUILD": "958d1c38dbe6920c5f90c4c7fd37387cea9a2f4d6fbab2af8030c806d9c805c3",
-      "pipewire.install": "6273955909650638a70fe6592a3f5a11c47a288a8a79d63ec2b312afe077e9de",
-      "pipewire-pulse.install": "96bb31292f93db26c3755e7e9a9f4e7a4a95738c614d45d556bbd788c6a77712"
-    },
-    "shared_files": ["pipewire-sysusers.conf"],
+    "shared_files": ["pipewire.install", "pipewire-pulse.install", "pipewire-sysusers.conf"],
     "spandsp": {
       "soname": "libspandsp.so=2-64"
     },

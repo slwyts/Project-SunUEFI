@@ -46,20 +46,17 @@ def patch_records(base, selected):
 
 
 def recipe_inputs(cache, recipe, data):
-    if upstream := data.get('recipe_archive'):
-        archive = cache / (upstream['sha256'] + '.src.tar.gz')
-        download(upstream['url'], archive, upstream['sha256'])
-    for name, digest in data['files'].items():
+    if upstream := data.get('recipe_file'):
+        # Valve's source index is rolling. Use the pinned packaging recipe locally.
+        original = RECIPE_DIR / upstream['name']
+        if package_build.sha(original) != upstream['sha256']:
+            raise ValueError('Local PipeWire recipe differs from the pinned Valve recipe')
+        shutil.copy2(original, recipe / 'PKGBUILD.upstream')
+    for name, digest in data.get('files', {}).items():
         destination = recipe / (name + '.upstream' if name == 'PKGBUILD' else name)
-        if upstream:
-            content = subprocess.check_output(['bsdtar', '-xOf', archive, f'pipewire/{name}'])
-            destination.write_bytes(content)
-            if package_build.sha(destination) != digest:
-                raise ValueError('Valve PipeWire source file differs from the recipe: ' + name)
-        else:
-            cached = cache / (digest + '-' + name)
-            download(data['recipe_url'] + '/' + name, cached, digest)
-            shutil.copy2(cached, destination)
+        cached = cache / (digest + '-' + name)
+        download(data['recipe_url'] + '/' + name, cached, digest)
+        shutil.copy2(cached, destination)
 
 
 def prepare(recipe, data, source, patches, version, inputs, jobs, *, target='arch'):
@@ -81,7 +78,8 @@ def prepare(recipe, data, source, patches, version, inputs, jobs, *, target='arc
     patch_names = [Path(row['path']).name for row in patches]
     for row, name in zip(patches, patch_names, strict=True):
         shutil.copy2(ROOT / row['path'], recipe / name)
-    sources = [archive.name, *(name for name in data['files'] if name != 'PKGBUILD'), *shared, *patch_names]
+    sources = [archive.name, *(name for name in data.get('files', {}) if name != 'PKGBUILD'),
+               *shared, *patch_names]
     recipe_patch = 'PKGBUILD.steamos.patch' if target == 'steamos' else 'PKGBUILD.patch'
     text = capture(['patch', '--silent', '--batch', '--fuzz=0', '-o', '-',
                     recipe / 'PKGBUILD.upstream', '-i', RECIPE_DIR / recipe_patch])
