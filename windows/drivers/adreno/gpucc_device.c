@@ -14,6 +14,7 @@ typedef struct {
 
 typedef struct {
     WDFDEVICE device;
+    WDFWORKITEM gcc_remove_work;
     KMUTEX lock;
     ADRENO_GPU_CLOCKS clocks;
     LIST_ENTRY requests;
@@ -35,12 +36,42 @@ static EVT_WDF_DEVICE_QUERY_REMOVE query_remove;
 static EVT_WDF_DEVICE_QUERY_STOP query_stop;
 static EVT_WDFDEVICE_WDM_IRP_PREPROCESS relations;
 static EVT_WDF_OBJECT_CONTEXT_CLEANUP cleanup;
+static EVT_WDF_WORKITEM gcc_remove_complete;
 
 static void lock(GPUCC_DEVICE *d) { KeWaitForSingleObject(&d->lock, Executive, KernelMode, FALSE, NULL); }
 static void unlock(GPUCC_DEVICE *d) { KeReleaseMutex(&d->lock, FALSE); }
 
+static void refresh_relations(GPUCC_DEVICE *d)
+{
+    if (!d->removed) IoInvalidateDeviceRelations(WdfDeviceWdmGetPhysicalDevice(d->device), PowerRelations);
+}
+
+static void forget_gcc_target(GPUCC_DEVICE *d)
+{
+    if (!d->gcc_target.pdo) return;
+    Sm8750CloseClockTarget(&d->gcc_target);
+    refresh_relations(d);
+}
+
+static void gcc_removed(PVOID context)
+{
+    WdfWorkItemEnqueue(((GPUCC_DEVICE *)context)->gcc_remove_work);
+}
+
+/* Notify Windows even when no clock client is active. An active interface
+ * survives until its caller retires any remaining hardware requests. */
+static void gcc_remove_complete(WDFWORKITEM work)
+{
+    GPUCC_DEVICE *d = gpucc_device((WDFDEVICE)WdfWorkItemGetParentObject(work));
+    lock(d);
+    if (Sm8750ClockTargetStatus(&d->gcc_target) == STATUS_DEVICE_REMOVED)
+        forget_gcc_target(d);
+    unlock(d);
+}
+
 static NTSTATUS check_gcc(GPUCC_DEVICE *d)
 {
+    if (!d->gcc_target.pdo) return STATUS_DEVICE_REMOVED;
     ULONGLONG now;
     NTSTATUS s = Sm8750ClockTargetStatus(&d->gcc_target);
     if (NT_SUCCESS(s)) s = d->clocks.gcc.PowerGeneration(d->clocks.gcc.Header.Context, &now);
@@ -54,18 +85,20 @@ static NTSTATUS connect_gcc(GPUCC_DEVICE *d)
 {
     SM8750_GCC_GPU_INTERFACE *api = &d->clocks.gcc;
     if (api->SetClock) return check_gcc(d);
+    if (Sm8750ClockTargetStatus(&d->gcc_target) == STATUS_DEVICE_REMOVED)
+        forget_gcc_target(d);
+    ULONG_PTR previous = (ULONG_PTR)d->gcc_target.pdo;
     NTSTATUS s = Sm8750QueryClockInterface(&GUID_DEVINTERFACE_SM8750_GCC, &GUID_SM8750_GCC_GPU_INTERFACE,
                                            &api->Header, sizeof(*api), WdfDriverWdmGetDriverObject(WdfDeviceGetDriver(d->device)),
                                            &d->gcc_target);
-    if (!NT_SUCCESS(s)) return s;
-    if (!api->SetClock || !api->Abandon || !api->PowerGeneration) {
+    if (NT_SUCCESS(s) && (!api->SetClock || !api->Abandon || !api->PowerGeneration)) {
         api->Header.InterfaceDereference(api->Header.Context);
         RtlZeroMemory(api, sizeof(*api));
         Sm8750CloseClockTarget(&d->gcc_target);
-        return STATUS_DEVICE_CONFIGURATION_ERROR;
+        s = STATUS_DEVICE_CONFIGURATION_ERROR;
     }
-    IoInvalidateDeviceRelations(WdfDeviceWdmGetPhysicalDevice(d->device), PowerRelations);
-    return check_gcc(d);
+    if ((ULONG_PTR)d->gcc_target.pdo != previous) refresh_relations(d);
+    return NT_SUCCESS(s) ? check_gcc(d) : s;
 }
 
 static void disconnect_gcc(GPUCC_DEVICE *d)
@@ -74,9 +107,14 @@ static void disconnect_gcc(GPUCC_DEVICE *d)
     if (!api->Header.InterfaceDereference) return;
     api->Header.InterfaceDereference(api->Header.Context);
     RtlZeroMemory(api, sizeof(*api));
-    Sm8750CloseClockTarget(&d->gcc_target);
     d->gcc_generation = 0;
-    if (!d->removed) IoInvalidateDeviceRelations(WdfDeviceWdmGetPhysicalDevice(d->device), PowerRelations);
+}
+
+static void release_unused_gcc(GPUCC_DEVICE *d)
+{
+    for (unsigned i = 0; i < RTL_NUMBER_OF(d->clocks.gcc_held); ++i)
+        if (d->clocks.gcc_held[i]) return;
+    disconnect_gcc(d);
 }
 
 /* Supply the power manager with the actual translated GCC stack. Do not
@@ -174,9 +212,9 @@ static NTSTATUS set_clocks(PVOID context, PVOID client, enum adreno_clock_client
         }
     }
 done:
+    release_unused_gcc(d);
     if (IsListEmpty(&d->requests)) {
         d->stale = FALSE;
-        disconnect_gcc(d);
         idle(d);
     }
     unlock(d);
@@ -245,6 +283,7 @@ static void revoke(GPUCC_DEVICE *d)
     d->stale = !IsListEmpty(&d->requests);
     AdrenoForgetGpuClocks(&d->clocks);
     disconnect_gcc(d);
+    forget_gcc_target(d);
     idle(d);
     if (d->removed) {
         while (!IsListEmpty(&d->requests)) {
@@ -281,6 +320,7 @@ static NTSTATUS release(WDFDEVICE device, WDFCMRESLIST translated)
     UNREFERENCED_PARAMETER(translated);
     GPUCC_DEVICE *d = gpucc_device(device);
     lock(d);
+    /* Stop watching before KMDF can delete the device's work item. */
     revoke(d);
     NTSTATUS s = AdrenoReleaseGpuClocks(&d->clocks);
     unlock(d);
@@ -334,6 +374,16 @@ static NTSTATUS add_device(WDFDRIVER driver, PWDFDEVICE_INIT init)
     d->device = device;
     InitializeListHead(&d->requests);
     KeInitializeMutex(&d->lock, 0);
+    WDF_WORKITEM_CONFIG work;
+    WDF_WORKITEM_CONFIG_INIT(&work, gcc_remove_complete);
+    work.AutomaticSerialization = FALSE;
+    WDF_OBJECT_ATTRIBUTES_INIT(&attrs);
+    attrs.ParentObject = device;
+    s = WdfWorkItemCreate(&work, &attrs, &d->gcc_remove_work);
+    if (!NT_SUCCESS(s)) return s;
+    d->gcc_target.removed = gcc_removed;
+    d->gcc_target.context = d;
+
     ADRENO_GPUCC_INTERFACE api = {
         .Header = {sizeof(api), 1, d, reference, dereference}, .SetClocks = set_clocks
     };
