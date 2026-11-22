@@ -686,6 +686,7 @@ def prepare(root=ROOT):
   MdeModulePkg/Bus/Pci/XhciDxe/XhciDxe.inf
   MdeModulePkg/Bus/Usb/UsbMouseDxe/UsbMouseDxe.inf
   pianoProductPkg/Drivers/PianoGopDxe/PianoGopDxe.inf
+  pianoProductPkg/Drivers/MonotonicCounter/MonotonicCounter.inf
   '''+RNG_DXE+''' {
     <LibraryClasses>
       RngLib|MdePkg/Library/BaseRngLib/BaseRngLib.inf
@@ -724,6 +725,9 @@ def prepare(root=ROOT):
     text+='\n[BuildOptions]\n  GCC:*_CLANGPDB_AARCH64_CC_FLAGS = '+ ' '.join('-D'+flag for flag in flags)+'\n'
     dsc.write_text(text)
     fdf=target/'pianoProduct.fdf';text=fdf.read_text().replace('# Host-only stage-0 diagnostic; NOT hardware validated.','# Single PianoUEFI product integration candidate; INCOMPLETE_NOT_RELEASE.')
+    old_count='EmbeddedPkg/EmbeddedMonotonicCounter/EmbeddedMonotonicCounter.inf'
+    if text.count(old_count)!=2:raise ValueError('Expected one early dispatch and one firmware file for the monotonic counter')
+    text=text.replace(old_count,'pianoProductPkg/Drivers/MonotonicCounter/MonotonicCounter.inf')
     text=text.replace('SiliciumPkg/Drivers/SimpleFbDxe/SimpleFbDxe.inf','pianoProductPkg/Drivers/PianoGopDxe/PianoGopDxe.inf')
     modules=DISK_MODULES+HOST_MODULES+ACPI_MODULES+SETUP_FV_MODULES+(RNG_DXE,
         'MdeModulePkg/Universal/SmbiosDxe/SmbiosDxe.inf',

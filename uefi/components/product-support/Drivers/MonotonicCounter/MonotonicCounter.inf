@@ -1,0 +1,29 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = PianoMonotonicCounter
+  FILE_GUID = 5977481D-8115-47F7-99FD-A29AC41BCF51
+  MODULE_TYPE = DXE_RUNTIME_DRIVER
+  VERSION_STRING = 1.0
+  ENTRY_POINT = MonotonicCounterInitialize
+
+[Sources]
+  MonotonicCounter.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiBootServicesTableLib
+  UefiRuntimeServicesTableLib
+  UefiRuntimeLib
+
+[Guids]
+  gMtcVendorGuid
+
+[Protocols]
+  gEfiMonotonicCounterArchProtocolGuid
+
+[Depex]
+  TRUE

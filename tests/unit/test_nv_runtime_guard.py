@@ -80,6 +80,7 @@ static EFI_STATUS EFIAPI Open(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *Fs,EFI_FILE_PROTO
 }
 EFI_RUNTIME_SERVICES Rt={.GetNextVariableName=Next};
 EFI_RUNTIME_SERVICES *gRT=&Rt;
+EFI_BOOT_SERVICES *gBS;
 EFI_SIMPLE_FILE_SYSTEM_PROTOCOL Fs={.OpenVolume=Open};
 static VOID Reset(EFI_STATUS Status){
   mFs=&Fs;
@@ -116,6 +117,14 @@ int main(void){
 ''','-ffunction-sections','-fdata-sections','-Wl,--gc-sections',
     '-Wno-misleading-indentation','-I'+str(nv/'Include'),
     '-I'+str(ROOT/'uefi/core/storage'))
+ def test_monotonic_counter_commits_before_return(self):
+  nv=ROOT/'uefi/components/nv'
+  counter=ROOT/'uefi/components/product-support/Drivers/MonotonicCounter'
+  self.compile_and_run((ROOT/'tests/native/MonotonicCounterTest.c').read_text(),
+    '-DNO_MSABI_VA_FUNCS','-ffunction-sections','-fdata-sections','-Wl,--gc-sections',
+    '-fsanitize=address,undefined','-fno-pie','-no-pie','-Wno-misleading-indentation',
+    '-I'+str(nv),'-I'+str(nv/'Include'),'-I'+str(counter),'-I'+str(ROOT/'uefi/core/storage'),
+    str(ROOT/'uefi/core/storage/PianoGpt.c'))
  def test_pinned_and_idempotent(self):
   with tempfile.TemporaryDirectory()as d:
    root=Path(d);path=self.pinned_sources(root)

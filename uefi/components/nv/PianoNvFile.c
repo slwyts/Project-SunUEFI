@@ -21,7 +21,8 @@
 #define NAME_BYTES 2048U
 STATIC EFI_GUID mGuid=PIANO_NV_FILE_PROTOCOL_GUID;
 STATIC EFI_HANDLE mHandle;
-STATIC PIANO_NV_FILE_PROTOCOL mProtocol={1,0,FALSE};
+STATIC EFI_STATUS EFIAPI Sync(VOID);
+STATIC PIANO_NV_FILE_PROTOCOL mProtocol={PIANO_NV_FILE_REVISION,0,FALSE,Sync};
 STATIC EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *mFs;
 STATIC UINT64 mSequence,mSavedChanges;
 STATIC UINT32 mActive;
@@ -136,7 +137,7 @@ STATIC EFI_STATUS Collect(UINT8 *Data,UINTN *Bytes){
     S=gRT->GetVariable(Name,&Guid,&Attr,&Size,Data+At+28+N);if(S!=EFI_SUCCESS)return S;At+=28+N+Size;
   }return EFI_OUT_OF_RESOURCES;
 }
-EFI_STATUS PianoNvFileSave(BOOLEAN Freeze){
+STATIC EFI_STATUS SaveSnapshot(BOOLEAN Freeze,BOOLEAN Force){
   if(mExited)return EFI_UNSUPPORTED;if(!mStarted)return EFI_NOT_STARTED;
   if(mProtocol.Frozen)return Freeze?EFI_SUCCESS:EFI_NOT_READY;if(mBusy)return EFI_NOT_READY;
   if(mSaveError!=EFI_SUCCESS){
@@ -145,7 +146,7 @@ EFI_STATUS PianoNvFileSave(BOOLEAN Freeze){
     mProtocol.Frozen=TRUE;
     return EFI_SUCCESS;
   }
-  if(mSavedChanges==mProtocol.Changes&&mSequence){if(Freeze)mProtocol.Frozen=TRUE;return EFI_SUCCESS;}
+  if(!Force&&mSavedChanges==mProtocol.Changes&&mSequence){if(Freeze)mProtocol.Frozen=TRUE;return EFI_SUCCESS;}
   mBusy=TRUE;
   UINT64 Changes=mProtocol.Changes;
   UINT8 *Data=mSequence==MAX_UINT64?NULL:AllocateZeroPool(LIMIT);
@@ -165,9 +166,29 @@ EFI_STATUS PianoNvFileSave(BOOLEAN Freeze){
   }
   if(Data){ZeroMem(Data,LIMIT);FreePool(Data);}mBusy=FALSE;
   if(S!=EFI_SUCCESS){
-    mSaveError=S;
+    if(!Force)mSaveError=S;
     if(Freeze && PianoNvFileSaveOptionalError(S))mProtocol.Frozen=TRUE;
   }
   DEBUG((DEBUG_WARN,"PIANO_NV_FILE_SAVE status=%r sequence=%lu frozen=%u\n",S,mSequence,mProtocol.Frozen));
   return Freeze && PianoNvFileSaveOptionalError(S)?EFI_SUCCESS:S;
+}
+
+EFI_STATUS PianoNvFileSave(BOOLEAN Freeze){
+  return SaveSnapshot(Freeze,FALSE);
+}
+
+STATIC EFI_STATUS EFIAPI Sync(VOID){
+  if(mExited)return EFI_UNSUPPORTED;
+  EFI_TPL Tpl=gBS->RaiseTPL(TPL_HIGH_LEVEL);
+  gBS->RestoreTPL(Tpl);
+  if(Tpl>TPL_CALLBACK)return EFI_NOT_READY;
+  // A successful synchronous update must survive recovery from either
+  // slot. Ordinary deferred saves still alternate a single snapshot.
+  UINT64 Changes=mProtocol.Changes;
+  for(UINTN I=0;I<2;++I){
+    EFI_STATUS S=SaveSnapshot(FALSE,TRUE);
+    if(S!=EFI_SUCCESS)return S;
+    if(Changes!=mProtocol.Changes)return EFI_NOT_READY;
+  }
+  return EFI_SUCCESS;
 }

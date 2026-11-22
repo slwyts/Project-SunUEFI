@@ -64,7 +64,6 @@ STATIC EFI_RT_PROPERTIES_TABLE  mRuntimeProperties = {
   EFI_RT_SUPPORTED_GET_NEXT_VARIABLE_NAME |
   EFI_RT_SUPPORTED_SET_VIRTUAL_ADDRESS_MAP |
   EFI_RT_SUPPORTED_CONVERT_POINTER |
-  EFI_RT_SUPPORTED_GET_NEXT_HIGH_MONOTONIC_COUNT |
   EFI_RT_SUPPORTED_RESET_SYSTEM |
   EFI_RT_SUPPORTED_QUERY_VARIABLE_INFO
 };
@@ -162,6 +161,7 @@ LibRtcInitialize (
                                                   EFI_RT_SUPPORTED_GET_WAKEUP_TIME |
                                                   EFI_RT_SUPPORTED_SET_WAKEUP_TIME |
                                                   EFI_RT_SUPPORTED_SET_VARIABLE |
+                                                  EFI_RT_SUPPORTED_GET_NEXT_HIGH_MONOTONIC_COUNT |
                                                   EFI_RT_SUPPORTED_UPDATE_CAPSULE |
                                                   EFI_RT_SUPPORTED_QUERY_CAPSULE_CAPABILITIES);
   return gBS->InstallConfigurationTable (&gEfiRtPropertiesTableGuid, &mRuntimeProperties);

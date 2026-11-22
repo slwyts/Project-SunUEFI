@@ -818,6 +818,13 @@ EFI_STATUS EFIAPI PianoProductCoreEntry(EFI_HANDLE Image,EFI_SYSTEM_TABLE *Syste
   mBootLogStage="UFS";
   Status=PianoNvFileStart();
   DEBUG((DEBUG_WARN,"PIANO_NV_FILE_BACKEND status=%r\n",Status));
+  if(Status==EFI_SUCCESS){
+    // Advance the boot generation after the nonvolatile variables have
+    // been restored. Failure disables this counter, not the boot path.
+    UINT32 High;
+    EFI_STATUS CountStatus=gRT->GetNextHighMonotonicCount(&High);
+    if(CountStatus!=EFI_SUCCESS)DEBUG((DEBUG_WARN,"PIANO_MONOTONIC_COUNT boot=%r\n",CountStatus));
+  }
   (VOID)PianoBluetoothAddressInitialize();
   UINT32 RtcOffset;
   if(PianoRtcOffsetInitialize(&RtcOffset)==EFI_SUCCESS){
