@@ -107,6 +107,12 @@ class BuildDownloadsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Cannot verify'):
             downloads.select_artifacts(artifacts, expected, 2, 100, 5, '0' * 40)
 
+    def test_retry_uses_the_latest_available_logs_from_the_source_attempts(self):
+        artifacts = [github_artifact('logs-1', 99), github_artifact('logs-2', 10),
+                     github_artifact('logs-3', 11, expired=True), github_artifact('logs-4', 12)]
+        self.assertEqual(downloads.latest_log_id(artifacts, 3), 10)
+        self.assertEqual(downloads.latest_log_id(artifacts, 1), 99)
+
     def test_index_cannot_point_at_another_attempt_or_at_a_release(self):
         archives = {name: github_artifact(name, artifact_id)
                     for artifact_id, name in enumerate(downloads.artifact_names([]), 1)}
@@ -153,17 +159,25 @@ class BuildDownloadsTests(unittest.TestCase):
         index = downloads.make_index(archives, 100, 2, COMMIT)
         with patch.object(downloads, 'run_artifacts', return_value=[module]):
             with self.assertRaisesRegex(ValueError, 'download list is missing'):
-                downloads.temporary_artifact_ids('owner/repo', 5, index)
+                downloads.temporary_artifact_ids('owner/repo', 5, index, 100, COMMIT)
         keep = github_artifact('downloads.json', 2)
         different = dict(module, digest='sha256:' + '0' * 64)
         with patch.object(downloads, 'run_artifacts', return_value=[keep, different]):
             with self.assertRaisesRegex(ValueError, 'changed after publication'):
-                downloads.temporary_artifact_ids('owner/repo', 5, index)
+                downloads.temporary_artifact_ids('owner/repo', 5, index, 100, COMMIT)
         objects = [keep, module, github_artifact('build-input-kernel', 3),
                    github_artifact('logs-2', 4), github_artifact('extra', 5),
                    github_artifact('logs-3', 6, workflow_run=dict(ORIGIN, id=101))]
         with patch.object(downloads, 'run_artifacts', return_value=objects):
-            self.assertEqual(downloads.temporary_artifact_ids('owner/repo', 5, index), [1, 3, 4])
+            self.assertEqual(downloads.temporary_artifact_ids('owner/repo', 5, index, 100, COMMIT),
+                             [1, 3, 4])
+
+        retry_sha = 'ea' * 20
+        keep = github_artifact('downloads.json', 7,
+                               workflow_run=dict(ORIGIN, id=101, head_sha=retry_sha))
+        with patch.object(downloads, 'run_artifacts', side_effect=[objects, [keep]]):
+            self.assertEqual(downloads.temporary_artifact_ids('owner/repo', 5, index, 101, retry_sha),
+                             [1, 3, 4])
 
 
 if __name__ == '__main__':

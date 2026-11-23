@@ -101,13 +101,16 @@ class CiBuildTargetsTests(unittest.TestCase):
         self.assertEqual(targets.select([*check_files, '.github/workflows/_rootfs.yml']), PRODUCTS)
         self.assertEqual(targets.select([*check_files, 'tools/package/camera.py']), PRODUCTS)
 
-    def test_manual_release_workflow_does_not_expand_product_builds(self):
-        release = '.github/workflows/publish-release-images.yml'
-        self.assertEqual(targets.select([release]), [])
-        self.assertEqual(targets.select([release, 'config/denial.json']),
+    def test_download_publication_changes_do_not_rebuild_products(self):
+        publication = [
+            '.github/workflows/publish-release-images.yml', '.github/workflows/retry-downloads.yml',
+            '.github/workflows/_downloads.yml', '.github/scripts/publish_build_downloads.py',
+            '.github/scripts/publish_release_images.py', 'tools/ci_build_targets.py',
+        ]
+        self.assertEqual(targets.select(publication), [])
+        self.assertEqual(targets.select([*publication, 'config/denial.json']),
                          ['debian-denial', 'arch-denial'])
-        self.assertEqual(targets.select(['.github/scripts/publish_build_downloads.py']), PRODUCTS)
-        self.assertEqual(targets.select(['.github/scripts/publish_release_images.py']), PRODUCTS)
+        self.assertEqual(targets.select([*publication, '.github/workflows/_rootfs.yml']), PRODUCTS)
 
 
 if __name__ == '__main__':

@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       run_id:
-        description: Successful Build products run ID
+        description: Build products run ID with all six images published
         required: true
         type: string
       source_sha:

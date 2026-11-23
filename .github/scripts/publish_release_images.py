@@ -34,15 +34,34 @@ def gh_json(path, *options):
     return json.loads(subprocess.check_output(['gh', 'api', path, *options]))
 
 
-def product_run(repository, repository_id, run_id, source_sha, *, completed=True):
+def product_run(repository, repository_id, run_id, source_sha):
     endpoint = f'/repos/{repository}/actions/runs/{run_id}'
     run = gh_json(endpoint)
     if (run['path'] != '.github/workflows/build-products.yml'
             or run['head_branch'] != 'main' or run['head_sha'] != source_sha
-            or (run['head_repository'] or {}).get('id') != repository_id
-            or (completed and (run['status'], run['conclusion']) != ('completed', 'success'))):
-        raise ValueError('The Build products run does not match the source or required status.')
+            or (run['head_repository'] or {}).get('id') != repository_id):
+        raise ValueError('The Build products run does not match the source commit on main.')
     return run
+
+
+def recoverable_targets(repository, run):
+    """Accept a completed build whose only failure was in download publication."""
+    if (run['status'], run['conclusion']) != ('completed', 'failure'):
+        raise ValueError('Select a completed build with a failed download job.')
+    endpoint = f"/repos/{repository}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs"
+    pages = gh_json(endpoint + '?per_page=100', '--paginate', '--slurp')
+    jobs = {job['name']: job['conclusion'] for page in pages for job in page['jobs']}
+    failed = {name for name, conclusion in jobs.items() if conclusion == 'failure'}
+    if (not failed or not failed <= {'downloads / publish', 'downloads / prune'}
+            or any(result not in ('success', 'skipped', 'failure') for result in jobs.values())
+            or any(jobs.get(name) != 'success' for name in (
+                'checks / check', 'shared / shared (firmware)', 'logs',
+            ))):
+        raise ValueError('The build failed before its download jobs; rerun the failed build jobs.')
+    targets = [target for target in DISTROS if jobs.get(f'build / build ({target})') == 'success']
+    if targets and jobs.get('repository / publish') != 'success':
+        raise ValueError('The signed package repository was not published.')
+    return targets
 
 
 def download_zip(repository, artifact, path):
@@ -276,6 +295,9 @@ def main():
     if not re.fullmatch(r'[1-9][0-9]*', run_id) or not re.fullmatch(r'[0-9a-f]{40}', source_sha):
         raise ValueError('Enter a Build products run ID and its full commit SHA.')
     run = product_run(repository, repository_id, int(run_id), source_sha)
+    if ((run['status'], run['conclusion']) != ('completed', 'success')
+            and set(recoverable_targets(repository, run)) != set(DISTROS)):
+        raise ValueError('The recovered build must include all six Linux images.')
     store = Store()
     temp = Path(os.environ['RUNNER_TEMP'])
     with TemporaryDirectory(dir=temp) as directory:

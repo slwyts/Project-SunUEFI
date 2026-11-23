@@ -11,6 +11,31 @@ import publish_release_images as release
 
 
 class ReleaseImagesTests(unittest.TestCase):
+    @patch.object(release, 'gh_json')
+    def test_retry_accepts_a_complete_build_only_if_downloads_failed(self, gh):
+        run = {'id': 10, 'run_attempt': 2, 'status': 'completed', 'conclusion': 'failure'}
+        jobs = {'checks / check': 'success', 'shared / shared (firmware)': 'success',
+                'shared / shared (kernel)': 'success', 'repository / publish': 'success',
+                'logs': 'success', 'downloads / publish': 'failure', 'downloads / prune': 'skipped',
+                **{f'build / build ({target})': 'success' for target in release.DISTROS}}
+
+        def page(changes):
+            return [{'jobs': [{'name': name, 'conclusion': conclusion}
+                              for name, conclusion in {**jobs, **changes}.items()]}]
+
+        gh.return_value = page({})
+        self.assertEqual(release.recoverable_targets('owner/repo', run), release.DISTROS)
+        gh.assert_called_once_with('/repos/owner/repo/actions/runs/10/attempts/2/jobs?per_page=100',
+                                   '--paginate', '--slurp')
+        gh.return_value = page({'downloads / publish': 'success', 'downloads / prune': 'failure'})
+        self.assertEqual(release.recoverable_targets('owner/repo', run), release.DISTROS)
+        gh.return_value = page({'build / build (steamos)': 'failure'})
+        with self.assertRaisesRegex(ValueError, 'failed before'):
+            release.recoverable_targets('owner/repo', run)
+        gh.return_value = page({'repository / publish': 'skipped'})
+        with self.assertRaisesRegex(ValueError, 'signed package repository'):
+            release.recoverable_targets('owner/repo', run)
+
     def test_copy_completes_conditionally_without_unsupported_copy_conditions(self):
         src = {'Bucket': 'images', 'Key': 'builds/10/1/SunUEFI-ESP.zip'}
         dest = {'Bucket': 'images', 'Key': 'releases/v1.0.0/SunUEFI-ESP.zip'}

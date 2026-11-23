@@ -38,8 +38,11 @@ DENIAL_FILES = {'config/denial.json', 'config/keys/denial-repo-key.asc',
                 'tools/build/denial_manifest.py', 'tools/build/denial_overlay.py',
                 'tools/desktop/build_denial.py', 'tools/desktop/denial_packages.py'}
 TARGETS = ('uefi', 'linux', *DISTROS)
-NON_PRODUCT_FILES = {'.github/workflows/_checks.yml',
-                     'tools/check_host.py', 'tools/build/check_patch_series.py'}
+NON_PRODUCT_FILES = {
+    '.github/workflows/_checks.yml', '.github/workflows/_downloads.yml',
+    '.github/scripts/publish_build_downloads.py', '.github/scripts/publish_release_images.py',
+    'tools/check_host.py', 'tools/build/check_patch_series.py', 'tools/ci_build_targets.py',
+}
 
 
 def shared_kinds(targets):

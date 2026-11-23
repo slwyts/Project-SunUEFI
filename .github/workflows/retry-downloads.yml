@@ -1,0 +1,32 @@
+name: Retry image upload
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Build products run ID (only the download job failed)
+        required: true
+        type: string
+      source_sha:
+        description: Full source commit SHA of that build
+        required: true
+        type: string
+
+concurrency:
+  # Do not race publication or cleanup for the same source build.
+  group: build-products-${{ github.ref }}
+  queue: max
+
+jobs:
+  downloads:
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      actions: write
+      contents: read
+    uses: ./.github/workflows/_downloads.yml
+    with:
+      source_run: ${{ inputs.run_id }}
+      source_sha: ${{ inputs.source_sha }}
+    secrets:
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}

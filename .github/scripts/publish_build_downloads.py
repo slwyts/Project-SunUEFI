@@ -13,7 +13,8 @@ from tempfile import TemporaryDirectory
 from botocore.exceptions import ClientError
 from publish_release_images import (
     DISTROS, PUBLIC_REPOSITORY_URL, SHA256, Store,
-    already_uploaded, download_zip, gh_json, product_run, upload_zip, verify_download,
+    already_uploaded, download_zip, gh_json, product_run, recoverable_targets, upload_zip,
+    verify_download,
 )
 
 
@@ -22,6 +23,7 @@ INDEX = 'downloads.json'
 KEEP_BUILDS = 3
 FIRMWARE_ARCHIVES = {'SunUEFI-Module', 'SunUEFI-UEFI-Fastboot'}
 PRODUCT_NAME = r'SunUEFI-(?:Module|UEFI-Fastboot|ESP|Root-[a-z0-9]+(?:-[a-z0-9]+)*)'
+LOG_ARCHIVE = re.compile(r'logs-([1-9][0-9]*)')
 BUILD_OBJECT = re.compile(
     rf'{BUILD_PREFIX}([1-9][0-9]*)/([1-9][0-9]*)/({re.escape(INDEX)}|(?:logs|{PRODUCT_NAME})\.zip)'
 )
@@ -61,7 +63,7 @@ def select_artifacts(artifacts, expected, log_id, run_id, repository_id, source_
     selected = {}
     for artifact in artifacts:
         name = artifact['name']
-        if artifact['id'] == log_id and re.fullmatch(r'logs-[1-9][0-9]*', name):
+        if artifact['id'] == log_id and LOG_ARCHIVE.fullmatch(name):
             name = 'logs'
         elif name == 'logs':
             continue
@@ -75,6 +77,14 @@ def select_artifacts(artifacts, expected, log_id, run_id, repository_id, source_
     if missing := expected - selected.keys():
         raise ValueError('The build is missing: ' + ', '.join(sorted(missing)))
     return selected
+
+
+def latest_log_id(artifacts, attempt):
+    # A rerun of only the failed jobs keeps the logs from the original attempt.
+    logs = [(int(match[1]), artifact['id']) for artifact in artifacts
+            if (match := LOG_ARCHIVE.fullmatch(artifact['name']))
+            and int(match[1]) <= attempt and not artifact['expired']]
+    return max(logs, default=(0, 0))[1]
 
 
 def make_index(artifacts, run_id, attempt, source_sha):
@@ -242,11 +252,13 @@ def prune_builds(store, current):
             print(f'Removed expired build downloads from {prefix}', flush=True)
 
 
-def temporary_artifact_ids(repository, repository_id, index):
+def temporary_artifact_ids(repository, repository_id, index, publication_run, publication_sha):
     run_id, source_sha = index['run_id'], index['source_sha']
     artifacts = run_artifacts(repository, run_id)
-    indexes = [artifact for artifact in artifacts if artifact['name'] == INDEX and not artifact['expired']
-               and artifact_origin(artifact, run_id, repository_id, source_sha)]
+    publication = artifacts if publication_run == run_id else run_artifacts(repository, publication_run)
+    indexes = [artifact for artifact in publication if artifact['name'] == INDEX
+               and not artifact['expired']
+               and artifact_origin(artifact, publication_run, repository_id, publication_sha)]
     if len(indexes) != 1:
         raise ValueError('The Actions download list is missing or duplicated; keep the build archives.')
     temporary = []
@@ -260,7 +272,7 @@ def temporary_artifact_ids(repository, repository_id, index):
                     or artifact['size_in_bytes'] != expected['size']):
                 raise ValueError(f'The Actions archive changed after publication: {name}')
             temporary.append(artifact['id'])
-        elif name.startswith(('build-input-', 'build-logs-')) or re.fullmatch(r'logs-[1-9][0-9]*', name):
+        elif name.startswith(('build-input-', 'build-logs-')) or LOG_ARCHIVE.fullmatch(name):
             temporary.append(artifact['id'])
     return temporary
 
@@ -279,22 +291,38 @@ def main():
     args = parser.parse_args()
     repository = os.environ['GITHUB_REPOSITORY']
     repository_id = int(os.environ['GITHUB_REPOSITORY_ID'])
-    run_id = int(os.environ['GITHUB_RUN_ID'])
-    source_sha = os.environ['GITHUB_SHA']
+    publication_run = int(os.environ['GITHUB_RUN_ID'])
+    publication_sha = os.environ['GITHUB_SHA']
+    source_run = os.environ.get('SOURCE_RUN')
+    requested_sha = os.environ.get('SOURCE_SHA')
+    if bool(source_run) != bool(requested_sha):
+        raise ValueError('Supply both the source run and its commit.')
+    run_id = int(source_run) if source_run else publication_run
+    source_sha = requested_sha or publication_sha
     attempt_var = 'PUBLISHED_ATTEMPT' if args.action == 'prune' else 'GITHUB_RUN_ATTEMPT'
     attempt = int(os.environ[attempt_var])
     if (os.environ['GITHUB_REF'] != 'refs/heads/main' or run_id < 1 or attempt < 1
             or not re.fullmatch(r'[0-9a-f]{40}', source_sha)):
         raise ValueError('Publish downloads only for main Build products attempts.')
-    if args.action != 'publish-index':
-        product_run(repository, repository_id, run_id, source_sha, completed=False)
+    run = None
+    if source_run or args.action != 'publish-index':
+        run = product_run(repository, repository_id, run_id, source_sha)
+    if source_run:
+        if args.action == 'prune' and run['run_attempt'] != attempt:
+            raise ValueError('The source build attempt changed; keep its Actions archives.')
+        attempt = run['run_attempt']
     index_path = Path(os.environ['RUNNER_TEMP']) / INDEX
     store = Store()
     if args.action == 'stage':
-        expected = artifact_names(json.loads(os.environ['ROOTFS_MATRIX'])['target'])
+        if source_run:
+            targets = recoverable_targets(repository, run)
+        else:
+            targets = json.loads(os.environ['ROOTFS_MATRIX'])['target']
+        available = run_artifacts(repository, run_id)
+        log_id = (latest_log_id(available, attempt) if source_run
+                  else int(os.environ['LOG_ARTIFACT_ID']))
         artifacts = select_artifacts(
-            run_artifacts(repository, run_id), expected, int(os.environ['LOG_ARTIFACT_ID']),
-            run_id, repository_id, source_sha,
+            available, artifact_names(targets), log_id, run_id, repository_id, source_sha,
         )
         index = make_index(artifacts, run_id, attempt, source_sha)
         stage_downloads(store, index_path, index, artifacts, repository)
@@ -304,7 +332,9 @@ def main():
         index = read_index(store, build_location(run_id, attempt) + INDEX, run_id, attempt)
         if index['source_sha'] != source_sha:
             raise ValueError('The published downloads came from a different commit.')
-        temporary = temporary_artifact_ids(repository, repository_id, index)
+        temporary = temporary_artifact_ids(
+            repository, repository_id, index, publication_run, publication_sha,
+        )
         prune_builds(store, (run_id, attempt))
         remove_temporary_artifacts(repository, temporary)
 
