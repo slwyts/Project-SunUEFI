@@ -148,6 +148,16 @@ class ArchPipeWirePackagesTests(unittest.TestCase):
 
 
 class ArchPipeWirePolicyTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('vercmp'), 'Pacman version comparison needs vercmp')
+    def test_replacement_matches_the_released_arch_plugin_but_not_valve(self):
+        arch_plugin = '1:1.6.11-1.3000000000442905321010000000001'
+        valve_plugin = '1:1.6.8-5.3000000000442905321010000000001'
+        name, floor = pipewire_arch.v4l2_replacement(pipewire_arch.policy()).split('>=', 1)
+        self.assertEqual(name, pipewire_arch.V4L2_PACKAGE)
+        for installed, matches in ((arch_plugin, True), (valve_plugin, False)):
+            with self.subTest(installed=installed):
+                self.assertEqual(int(pipewire_arch.capture(['vercmp', installed, floor])) >= 0, matches)
+
     def test_output_cannot_overwrite_libcamera_input(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
