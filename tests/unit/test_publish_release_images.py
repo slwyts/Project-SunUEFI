@@ -1,5 +1,6 @@
-"""Release ZIP copies use the conditional operation supported by R2."""
+"""Check conditional R2 copies and public range verification."""
 from pathlib import Path
+from subprocess import CompletedProcess
 import sys
 import unittest
 from unittest.mock import Mock, call, patch
@@ -42,6 +43,30 @@ class ReleaseImagesTests(unittest.TestCase):
                         'Parts': [{'ETag': str(i), 'PartNumber': i + 1} for i in range(len(extents))],
                     },
                 )
+
+    @patch.object(release.time, 'sleep')
+    @patch.object(release.subprocess, 'run')
+    def test_range_retries_without_downloading_the_whole_file(self, run, sleep):
+        run.side_effect = (
+            CompletedProcess([], 63, '200\n\n0\n', 'Maximum file size exceeded'),
+            CompletedProcess([], 0, '206\nbytes 4095-4095/4096\n1\n', ''),
+        )
+        release.verify_download('https://example.com/image.zip', 4096)
+        self.assertEqual(run.call_count, 2)
+        for probe in run.call_args_list:
+            command = probe.args[0]
+            self.assertEqual(command[command.index('--range') + 1], '4095-4095')
+            self.assertEqual(command[command.index('--max-filesize') + 1], '1')
+        sleep.assert_called_once()
+
+    @patch.object(release.time, 'sleep')
+    @patch.object(release.subprocess, 'run')
+    def test_range_rejects_wrong_content_length_after_retries(self, run, sleep):
+        run.return_value = CompletedProcess([], 0, '206\nbytes 4095-4095/4097\n1\n', '')
+        with self.assertRaisesRegex(ValueError, r'received.*4095-4095/4097'):
+            release.verify_download('https://example.com/image.zip', 4096)
+        self.assertEqual(run.call_count, len(release.RANGE_RETRY_DELAYS) + 1)
+        self.assertEqual(sleep.call_count, len(release.RANGE_RETRY_DELAYS))
 
 
 if __name__ == '__main__':

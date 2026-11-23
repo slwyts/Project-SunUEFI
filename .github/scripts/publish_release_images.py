@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
+import time
 from zipfile import ZipFile
 
 from botocore.exceptions import ClientError
@@ -22,6 +23,7 @@ from repo.publish import Store, sha
 PART_BYTES = 64 * 1024 * 1024
 SHA256 = r'[0-9a-f]{64}'
 RELEASE_CACHE = 'public, max-age=31536000, immutable'
+RANGE_RETRY_DELAYS = (2, 5, 10)
 ROOT_ARTIFACTS = {target: f'SunUEFI-Root-{target}' for target in DISTROS}
 REQUIRED_ARTIFACTS = {
     *ROOT_ARTIFACTS.values(), 'logs', 'SunUEFI-ESP', 'SunUEFI-Module', 'SunUEFI-UEFI-Fastboot',
@@ -145,16 +147,29 @@ def copy_zip(client, source, target, size, metadata):
     upload_parts(client, target, size, headers, write_parts)
 
 
-def verify_download(url, size, digest=None, *, archive=None):
-    curl = ['curl', '--fail', '--silent', '--show-error', '--location',
-            '--header', 'Accept-Encoding: identity']
+def verify_range(curl, url, size):
     byte = size - 1
-    response = subprocess.check_output([
-        *curl, '--range', f'{byte}-{byte}', '--max-time', '30', '--output', '/dev/null',
-        '--write-out', '%{response_code}\n%header{content-range}\n%{size_download}\n', url,
-    ], text=True).splitlines()
-    if response != ['206', f'bytes {byte}-{byte}/{size}', '1']:
-        raise ValueError(f'Download does not support resuming: {url}')
+    expected = ['206', f'bytes {byte}-{byte}/{size}', '1']
+    probe = [*curl, '--range', f'{byte}-{byte}', '--max-time', '30', '--max-filesize', '1',
+             '--output', '/dev/null',
+             '--write-out', '%{response_code}\n%header{content-range}\n%{size_download}\n', url]
+    for delay in (*RANGE_RETRY_DELAYS, None):
+        result = subprocess.run(probe, capture_output=True, text=True)
+        response = result.stdout.splitlines()
+        if not result.returncode and response == expected:
+            return
+        detail = (f'expected {expected!r}, received {response!r}, curl exited {result.returncode}'
+                  + (f': {result.stderr.strip()}' if result.stderr.strip() else ''))
+        if delay is None:
+            raise ValueError(f'Download does not support resuming: {url} ({detail})')
+        print(f'Range check for {url}: {detail}. Retrying in {delay}s.', flush=True)
+        time.sleep(delay)
+
+
+def verify_download(url, size, digest=None, *, archive=None):
+    curl = ['curl', '--disable', '--fail', '--silent', '--show-error', '--location',
+            '--header', 'Accept-Encoding: identity']
+    verify_range(curl, url, size)
     if digest is not None:
         download = [*curl, '--speed-limit', '1024', '--speed-time', '60']
         if archive is not None:
