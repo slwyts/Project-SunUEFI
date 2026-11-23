@@ -107,7 +107,7 @@ KDE 数位板页已显示内屏映射、两个笔身按钮和压力曲线；KWin
 非虚拟 tablet-tool，压力曲线修改与恢复均可读回。板面没有独立快捷键，
 因此不创建 tablet-pad。按钮动作与曲线对实际书写的影响还缺物理操作检查。
 `./build.sh libwacom` 生成标准 Debian／pacman 包，四个产品的 rootfs 构建均安装该包。
-SteamOS 的 2.18 基础包升级为同一份 2.20 源码，保留 `libwacom.so.9`，不另存旧版本补丁。
+SteamOS 和 Arch 使用同一份 2.20 源码。打包时用 pacman 的版本规则避免降级，并核对新版保留现有 `libwacom.so.9` 的导出符号。
 这些修改仍是下游补丁，尚未进入 libwacom 上游。
 
 现有 [`piano-pen-decoder.cpp`](../../../linux/userspace/pen/piano-pen-decoder.cpp)

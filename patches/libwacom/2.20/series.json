@@ -2,7 +2,7 @@
   "schema_version": 1,
   "version": "2.20.0",
   "versions": ["2.20.0"],
-  "installed_versions": ["2.18.0", "2.20.0"],
+  "pacman_pkgrel": "1.1",
   "targets": ["debian-gnome", "debian-kde", "nyarch-gnome", "steamos"],
   "source": {
     "url": "https://deb.debian.org/debian/pool/main/libw/libwacom/libwacom_2.20.0.orig.tar.gz",

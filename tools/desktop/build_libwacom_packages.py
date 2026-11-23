@@ -11,6 +11,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 import build_arch_package
+from build import overlay_release
 from build_piano_runtime_helpers import source_patches
 from desktop import debian_package, package_build
 
@@ -19,6 +20,7 @@ PATCHES = source_patches(SERIES)
 RUNTIME = {'libwacom9': 'arm64', 'libwacom-common': 'all', 'libwacom-bin': 'arm64'}
 REVISION = 1
 ARCH_ABI_PACKAGES = ('glibc', 'glib2', 'libevdev', 'libgudev', 'systemd-libs', 'libgcc')
+LIBWACOM_SONAME = 'libwacom.so.9'
 
 
 def arch_target(root):
@@ -27,17 +29,34 @@ def arch_target(root):
             'packages': dict(line.split(maxsplit=1) for line in packages.splitlines())}
 
 
-def verify_arch_runtime(root):
+def verify_arch_runtime(root, previous):
     library = root / 'usr/lib/libwacom.so.9.0.0'
     header = library.read_bytes()[:20]
     if header[:6] != b'\x7fELF\x02\x01' or header[18:20] != b'\xb7\x00':
         raise ValueError('The pacman libwacom runtime must be ARM64')
+    soname, exports = debian_package.library_exports(library)
+    if soname != previous[0] or not previous[1] <= exports:
+        raise ValueError('The libwacom upgrade must preserve the target library ABI')
     for path in ('/usr/lib/libwacom.so.9.0.0', '/usr/bin/libwacom-list-local-devices'):
         process = subprocess.run(['chroot', root, 'ldd', '-r', path], text=True, capture_output=True)
         if process.returncode or any(word in process.stdout + process.stderr
                                      for word in ('not found', 'undefined symbol')):
             raise ValueError('The libwacom runtime has unresolved target dependencies: ' + path)
     return debian_package.sha(library)
+
+
+def check_arch_upgrade(root, version, release):
+    installed = debian_package.capture(['chroot', root, 'pacman', '-Q', 'libwacom']).split()[1]
+    package_version = f'{version}-{overlay_release.pacman_release(release)}'
+    if int(debian_package.capture(['chroot', root, 'vercmp', package_version, installed])) < 0:
+        raise ValueError(f'Update the libwacom recipe: {package_version} would downgrade {installed}')
+    library = root / 'usr/lib' / LIBWACOM_SONAME
+    if not library.is_file():
+        raise ValueError('The installed libwacom package does not provide ' + LIBWACOM_SONAME)
+    previous = debian_package.library_exports(library)
+    if previous[0] != LIBWACOM_SONAME:
+        raise ValueError('The installed libwacom package does not use the expected library ABI')
+    return previous
 
 
 def selection(rootfs):
@@ -80,11 +99,8 @@ def build_arch(root, output, jobs):
             root.is_relative_to(output)):
         raise ValueError('Use root and separate project Arch rootfs and output directories')
     data = json.loads(SERIES.read_text())
-    installed = debian_package.capture(['chroot', root, 'pacman', '-Q', 'libwacom']).split()[1]
-    installed_version = installed.rsplit('-', 1)[0]
-    if installed_version not in data['installed_versions']:
-        raise ValueError('Check the selected libwacom ABI before replacing version ' + installed_version)
-    version = data['version']
+    version, release = data['version'], data['pacman_pkgrel']
+    previous = check_arch_upgrade(root, version, release)
     target = arch_target(root)
     template = ROOT / 'linux/desktops/common/libwacom/PKGBUILD'
     inputs = debian_package.input_records([Path(__file__), SERIES, template, *PATCHES,
@@ -98,7 +114,7 @@ def build_arch(root, output, jobs):
                     debian_package.sha(output / 'runtime' / name) == row['sha256']
                     for name, row in record['packages'].items())):
             build_arch_package.install_cached(root, output / 'runtime')
-            if verify_arch_runtime(root) != record.get('library_sha256'):
+            if verify_arch_runtime(root, previous) != record.get('library_sha256'):
                 raise ValueError('The installed libwacom library differs from its package cache')
             return record
     output.mkdir(parents=True, exist_ok=True)
@@ -106,14 +122,13 @@ def build_arch(root, output, jobs):
     recipe.mkdir(exist_ok=True)
     sources = [data['source']['url'], *[path.name for path in PATCHES]]
     checksums = [data['source']['sha256'], *[debian_package.sha(path) for path in PATCHES]]
-    text = template.read_text().replace('@VERSION@', version)
+    text = template.read_text().replace('@VERSION@', version).replace('@RELEASE@', release)
     text = text.replace('@SOURCES@', ' '.join(map(shlex.quote, sources)))
     text = text.replace('@CHECKSUMS@', ' '.join(map(shlex.quote, checksums)))
     (recipe / 'PKGBUILD').write_text(text)
     for patch in PATCHES:
         (recipe / patch.name).write_bytes(patch.read_bytes())
     runtime = output / 'runtime'
-    previous = debian_package.library_exports(root / 'usr/lib/libwacom.so.9')
     work = root / 'var/tmp/sunuefi-package-build'
     resume = work.is_dir() and (work / 'PKGBUILD').read_bytes() == (recipe / 'PKGBUILD').read_bytes()
     with (output / 'build.log').open('a') as log:
@@ -122,11 +137,8 @@ def build_arch(root, output, jobs):
                         *(['--resume'] if resume else [])],
                        check=True, stdout=log, stderr=subprocess.STDOUT)
     record = json.loads((runtime / 'manifest.json').read_text())
-    current = debian_package.library_exports(root / 'usr/lib/libwacom.so.9')
-    if previous[0] != 'libwacom.so.9' or current[0] != previous[0] or not previous[1] <= current[1]:
-        raise ValueError('The libwacom upgrade must preserve the target library ABI')
     record.update(inputs=inputs, source=data['source'], target=target,
-                  library_sha256=verify_arch_runtime(root))
+                  library_sha256=verify_arch_runtime(root, previous))
     metadata.write_text(json.dumps(record, indent=2) + '\n')
     return record
 

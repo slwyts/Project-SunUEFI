@@ -3,7 +3,7 @@
 # database, tools, and udev integration.
 pkgname=libwacom
 pkgver=@VERSION@
-pkgrel=1.1
+pkgrel=@RELEASE@
 pkgdesc='Tablet model library and database'
 arch=(aarch64)
 url='https://github.com/linuxwacom/libwacom'
