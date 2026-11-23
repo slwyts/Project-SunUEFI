@@ -9,7 +9,6 @@ import re
 import subprocess
 import sys
 import tarfile
-import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
@@ -107,6 +106,7 @@ def is_current(output, selected):
         packages = manifest['packages']
         if (manifest['recipe_sha256'] != build_arch_package.recipe_sha256(selected / 'PKGBUILD') or
                 validation['official_source_files_checked'] <= 0 or not packages or
+                validation.get('patches') != expected['patches'] or
                 set(validation['packages']) != set(packages) or
                 any(origin.get(key) != expected[key] for key in
                     ('official_source', 'config_sha256', 'recipe_sha256', 'patches'))):
@@ -165,19 +165,10 @@ def validate(root, work, output):
     prepared = candidates[0]
     selected = debian.capture(['bash', '-c',
         'source "$1"; printf "%s\\n" "${pkgname[@]}"', 'packages', work / 'PKGBUILD']).splitlines()
-    patches = json.loads((work / 'SOURCE.json').read_text())['patches']
-    changed = {}
-    if patches:
-        with tarfile.open(mesa.source_archive()) as archive:
-            name = 'src/gallium/drivers/freedreno/freedreno_resource.c'
-            original = archive.extractfile('mesa-' + source['commit'] + '/' + name).read()
-        patch = ROOT / 'patches/mesa/27.0' / patches[0]['file']
-        with tempfile.NamedTemporaryFile(prefix='mesa-source-', dir=output) as temporary:
-            temporary.write(original)
-            temporary.flush()
-            result = subprocess.run(['patch', '--batch', '--fuzz=0', '--output=-', temporary.name, patch],
-                                    capture_output=True, check=True)
-        changed[name] = hashlib.sha256(result.stdout).hexdigest()
+    patches = mesa.patch_proof()
+    if json.loads((work / 'SOURCE.json').read_text())['patches'] != patches:
+        raise ValueError('Prepared native Mesa patch series differs from the selected patches')
+    changed = mesa.patched_source_hashes(patches)
     source_files = 0
     with tarfile.open(mesa.source_archive()) as archive:
         prefix = 'mesa-' + source['commit'] + '/'
@@ -185,12 +176,14 @@ def validate(root, work, output):
             if not member.isfile():
                 continue
             name = member.name.removeprefix(prefix)
-            expected = changed.get(name)
-            if expected is None:
-                expected = hashlib.sha256(archive.extractfile(member).read()).hexdigest()
-            if package_build.sha(prepared / name) != expected:
+            expected = (changed.pop(name) if name in changed else
+                        hashlib.sha256(archive.extractfile(member).read()).hexdigest())
+            if not mesa.source_file_matches(prepared / name, expected):
                 raise ValueError('Prepared native Mesa source differs from its official archive: ' + name)
             source_files += 1
+    for name, digest in changed.items():
+        if not mesa.source_file_matches(prepared / name, digest):
+            raise ValueError('Prepared native Mesa source differs from its patch series: ' + name)
     options = json.loads((work / 'src/build/meson-info/intro-buildoptions.json').read_text())
     options = {row['name']: row['value'] for row in options}
     expected = {
@@ -261,7 +254,7 @@ def validate(root, work, output):
         raise ValueError('Native Mesa build did not produce the complete selected package set')
     (output / 'builder-packages.tsv').write_text(debian.capture(['chroot', root, 'pacman', '-Q']) + '\n')
     validation = {
-        'official_source_files_checked': source_files,
+        'official_source_files_checked': source_files, 'patches': patches,
         'bindgen': bindgen, 'build_options': options, 'packages': packages}
     verify_installed(root, validation)
     (output / 'VALIDATION.json').write_text(json.dumps(validation, indent=2) + '\n')
@@ -277,7 +270,7 @@ def main(argv):
     parser.add_argument('output', type=Path)
     parser.add_argument('--rootfs', type=Path, required=True,
                         help='Isolated ARM64 pacman root; installs built packages')
-    parser.add_argument('--steamos', action='store_true', help='Keep Valve package identity and height patch')
+    parser.add_argument('--steamos', action='store_true', help='Keep Valve package identity')
     parser.add_argument('--jobs', type=int, default=package_build.default_jobs())
     parser.add_argument('--resume', action='store_true')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)

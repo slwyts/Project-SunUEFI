@@ -40,8 +40,7 @@
     "patch_series": "patches/webrtc-audio-processing/2.1/series.json"
   },
   "mesa": {
-    "source_config": "config/mesa.json",
-    "patch_series": "patches/mesa/27.0/series.json"
+    "source_config": "config/mesa.json"
   },
   "manager": {
     "version": "26.4.1",

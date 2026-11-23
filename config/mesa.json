@@ -9,9 +9,10 @@
     "sha256": "bea4ecf8793291d81efb7c1b2a0570dd918cd9ffbfd82c024f1ad8ed0f0f2d63"
   },
   "source_verification": "Official Mesa GitLab commit and HTTPS archive; pinned SHA256. The development commit has no release signature.",
+  "patch_series": "patches/mesa/27.0/series.json",
   "debian": {
     "recipe_source_version": "26.2.6-1",
-    "package_version": "27.0.0~devel+gitd4d193a29952-1",
+    "package_version": "27.0.0~devel+gitd4d193a29952-2",
     "llvm_version": "22"
   },
   "subprojects": {
@@ -24,6 +25,6 @@
     "recipe_url": "https://raw.githubusercontent.com/archlinuxarm/PKGBUILDs/4dcea2e6ce7ca9dcf8b5c85a01da90b4f1d5e03c/extra/mesa/PKGBUILD",
     "recipe_sha256": "e05a38b199da12bd6d747d83cd34a5fbf89105f27d8e5b3ceef07a3bd13aff29",
     "package_version": "27.0.0_devel.gitd4d193a29952",
-    "package_release": "1"
+    "package_release": "2"
   }
 }

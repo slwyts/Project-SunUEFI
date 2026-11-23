@@ -3,6 +3,7 @@ from contextlib import contextmanager, redirect_stdout
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -12,6 +13,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools'))
 from build import mesa
+from ci_build_targets import DISTROS
 
 
 @contextmanager
@@ -48,6 +50,13 @@ class MesaTests(unittest.TestCase):
         self.assertEqual(len(data['source']['commit']), 40)
         self.assertTrue(data['source']['url'].startswith(data['source']['repository'][:-4]))
         self.assertFalse((mesa.ROOT / 'patches/mesa/26.2.6/series.json').exists())
+
+    def test_height_alignment_is_shared_by_every_mesa_target(self):
+        series = json.loads((mesa.ROOT / mesa.policy()['patch_series']).read_text())
+        self.assertEqual(set(series['targets']), set(DISTROS))
+        patches = mesa.patch_proof()
+        self.assertIn('0001-freedreno-renderonly-height-alignment.patch',
+                      {Path(row['path']).name for row in patches})
 
     def test_recipe_retains_all_other_drivers_and_supported_layers(self):
         original = ('GALLIUM_DEFAULTS = softpipe\nGALLIUM_DRIVERS += freedreno llvmpipe softpipe\n'

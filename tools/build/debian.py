@@ -636,10 +636,9 @@ def collect(output, source_dir, runtime_names, version=None, built=True):
         fields = dict(line.split(': ', 1) for line in capture(
             ['dpkg-deb', '-f', path, 'Package', 'Version', 'Architecture']).splitlines())
         name = fields['Package']
-        if name not in runtime_names:
+        if name not in runtime_names or (version is not None and fields['Version'] != version):
             continue
-        if (name in packages or fields['Architecture'] not in ('arm64', 'all') or
-                (version and fields['Version'] != version)):
+        if name in packages or fields['Architecture'] not in ('arm64', 'all'):
             raise ValueError('Unexpected package identity: ' + path.name)
         if built:
             proofs = [checksum_rows(row).get(path.name) for changes in source_dir.glob('*.changes')

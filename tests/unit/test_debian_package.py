@@ -70,35 +70,34 @@ class DebianPackageTests(unittest.TestCase):
         self.assertEqual(commands, ['--download-only', '--print-uris', '--download-only', '--no-download'])
 
     def test_mesa_local_revision_is_bound_to_config_and_built_output(self):
+        from build import mesa
+
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            config = root / 'config/mesa.json'
-            producer = root / 'tools/build/mesa.py'
             output = root / 'build/mesa/SOURCE.json'
-            for path in (config, producer, output):
-                path.parent.mkdir(parents=True, exist_ok=True)
-            policy = {'source': {'repository': 'https://gitlab.freedesktop.org/mesa/mesa.git',
-                                 'commit': 'a' * 40, 'version': '27.0.0-devel', 'sha256': 'b' * 64},
-                      'debian': {'recipe_source_version': '26.2.6-1',
-                                 'package_version': '27.0.0~devel+git123-1'}}
-            config.write_text(json.dumps(policy))
-            producer.write_text('Mesa package builder')
-            record = {'official_source': policy['source'], 'source': {'version': '26.2.6-1'},
-                      'patches': [], 'config_sha256': debian_package.sha(config),
-                      'producer_sha256': debian_package.sha(producer)}
+            output.parent.mkdir(parents=True)
+            policy = mesa.policy()
+            version = policy['debian']['recipe_source_version']
+            patches = mesa.patch_proof()
+            record = {'official_source': policy['source'], 'source': {'version': version},
+                      'patches': patches, 'source_patch_series': mesa.quilt_series(patches),
+                      'config_sha256': debian_package.sha(mesa.CONFIG),
+                      'producer_sha256': debian_package.sha(mesa.__file__)}
             output.write_text(json.dumps(record))
-            official = {'Package': 'libgbm1', 'Source': 'mesa', 'Version': '26.2.6-1'}
+            official = {'Package': 'libgbm1', 'Source': 'mesa', 'Version': version}
             installed = {'version': policy['debian']['package_version'], 'source': 'mesa',
                          'source_version': policy['debian']['package_version'], 'architecture': 'arm64'}
             with patch.object(debian_package, 'ROOT', root):
                 self.assertEqual(debian_package.local_package_spec('libgbm1', installed, official),
-                                 (root / 'build/mesa', []))
+                                 (root / 'build/mesa', patches))
                 with self.assertRaisesRegex(ValueError, 'declared local revision'):
                     debian_package.local_package_spec('libgbm1', {**installed, 'version': '99+piano1'}, official)
-                record['official_source'] = {'version': 'different'}
-                output.write_text(json.dumps(record))
-                with self.assertRaisesRegex(ValueError, 'provenance'):
-                    debian_package.local_package_spec('libgbm1', installed, official)
+                for change in ({'official_source': {'version': 'different'}}, {'patches': []},
+                               {'source_patch_series': []},
+                               {'patches': [{**row, 'sha256': 'bad-digest'} for row in patches]}):
+                    with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'provenance'):
+                        output.write_text(json.dumps({**record, **change}))
+                        debian_package.local_package_spec('libgbm1', installed, official)
 
     def test_local_revision_needs_declared_package_source_and_exact_version(self):
         official = {'Package': 'gdm3', 'Source': 'gdm3 (51.1-1)', 'Version': '51.1-1+b1'}

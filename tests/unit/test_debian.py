@@ -3,6 +3,7 @@
 from pathlib import Path
 import sys
 import json
+import subprocess
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -174,6 +175,28 @@ signature
                 debian.validate_resume(output, changed, patches, record['package_version'])
             with self.assertRaisesRegex(ValueError, 'package version and patches'):
                 debian.validate_resume(output, target, [], record['package_version'])
+
+    def test_collect_ignores_an_older_revision_left_in_the_build_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary)
+            package = source / 'package'
+            (package / 'DEBIAN').mkdir(parents=True)
+            output = source / 'output'
+            output.mkdir()
+            for version in ('1', '2'):
+                control = package / 'DEBIAN/control'
+                control.write_text(f'Package: example\nVersion: {version}\nArchitecture: arm64\n'
+                                   'Maintainer: Test Builder <builder@example.com>\nDescription: Test package\n')
+                archive = source / f'example_{version}_arm64.deb'
+                subprocess.run(['dpkg-deb', '--build', '--root-owner-group', package, archive],
+                               check=True, stdout=subprocess.DEVNULL)
+                (source / f'example_{version}_arm64.changes').write_text(
+                    f'Version: {version}\nChecksums-Sha256:\n'
+                    f' {debian.package_build.sha(archive)} {archive.stat().st_size} {archive.name}\n')
+            packages = debian.collect(output, source, {'example'}, '2')
+            self.assertEqual(packages['example']['file'], 'example_2_arm64.deb')
+            with self.assertRaisesRegex(ValueError, 'Incomplete runtime package set'):
+                debian.collect(output, source, {'example'}, '3')
 
     def test_unchanged_quilt_series_keeps_its_timestamp(self):
         with tempfile.TemporaryDirectory() as temporary:

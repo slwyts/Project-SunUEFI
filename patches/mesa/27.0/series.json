@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "targets": ["steamos"],
+  "targets": ["debian-gnome", "debian-kde", "debian-denial", "nyarch-gnome", "arch-denial", "steamos"],
   "patches": [
     {
       "file": "0001-freedreno-renderonly-height-alignment.patch",

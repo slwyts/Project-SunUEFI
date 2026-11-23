@@ -125,7 +125,7 @@ x86 主机用 `./build.sh ffmpeg --sysroot 已完成的sid_ARM64根目录` 构�
 交叉编译使用 GNU 汇编器与链接器，保留 Debian 的符号版本表和调试信息处理。
 产品 CI 使用原生 ARM64 构建机，缓存与源码、补丁匹配的 Debian 运行包。
 
-Debian 的 Mesa、FFmpeg、sensors 在 sid 根目录的隔离副本中构建，不安装宿主容器的库或混用 trixie-backports。`--sysroot` 不修改输入根目录；包版本、源码归档、补丁和二进制哈希记录在各输出目录。三个产品共用 `config/mesa.json` 固定的官方 Mesa 27 开发源码；Debian 保留 sid 原始完整配方，Nyarch 使用 Arch Linux ARM 的完整配方。官方源码已包含 830v1 和 DirectX-Headers 修正，旧26.2回移植已删除。SteamOS 的 renderonly 高度修正仍单独保留，因为该官方提交只对齐缓冲宽度，不保证非4行对齐模式的尾部空间。
+Debian 的 Mesa、FFmpeg、sensors 在 sid 根目录的隔离副本中构建，不安装宿主容器的库或混用 trixie-backports。`--sysroot` 不修改输入根目录；包版本、源码归档、补丁和二进制哈希记录在各输出目录。Debian、Arch Linux ARM 和 SteamOS 共用 `config/mesa.json` 固定的 Mesa 27 开发源码和[显示缓冲修正](hardware/display-depth.md#分辨率与刷新率)。Debian 使用 sid 的完整配方，经 quilt 应用补丁；pacman 包在原生 PKGBUILD 中应用补丁。
 
 已有 sid ARM64 根目录时，可以单独重建这三组包：
 
@@ -289,7 +289,7 @@ sudo ./build.sh mesa build/mesa-nyarch --format pacman --rootfs build/distros/ny
 sudo ./build.sh mesa build/mesa-steamos --format pacman --rootfs build/distros/steamos-builder/rootfs --steamos --jobs 8
 ```
 
-中断后使用相同参数加 `--resume`，保留已配置的源码和对象。SteamOS 构建保留 `deckard-mesa-linux-aarch64` 包名及 renderonly 高度补丁；Nyarch 保留 Arch Linux ARM 的原生拆分包。
+中断后使用相同参数加 `--resume`，保留已配置的源码和对象。SteamOS 构建保留 `deckard-mesa-linux-aarch64` 包名；Nyarch 和 Arch Denial 保留 Arch Linux ARM 的原生拆分包。
 
 两种产品构建都会检查 Mesa 源码、完整驱动选项和 ARM64 包。CI 分别缓存原生包；复用前核对来源、配方与包摘要，安装后重新检查 ELF 和目标系统的依赖，避免把不匹配的滚动发行版缓存带入镜像。
 

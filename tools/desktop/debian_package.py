@@ -272,13 +272,16 @@ def source_identity(row):
 def local_package_spec(name, installed, official, *, package_output=None):
     source, version = source_identity(official)
     if name == 'libgbm1':
+        from build import mesa
+
         folder = ROOT / 'build/mesa'
         record = json.loads((folder / 'SOURCE.json').read_text())
-        config = ROOT / 'config/mesa.json'
-        policy = json.loads(config.read_text())
-        if (record.get('producer_sha256') != sha(ROOT / 'tools/build/mesa.py') or
-                record.get('config_sha256') != sha(config) or
-                record.get('official_source') != policy['source'] or record.get('patches') != [] or
+        policy = mesa.policy()
+        proof = mesa.patch_proof()
+        if (record.get('producer_sha256') != sha(mesa.__file__) or
+                record.get('config_sha256') != sha(mesa.CONFIG) or
+                record.get('official_source') != policy['source'] or record.get('patches') != proof or
+                record.get('source_patch_series') != mesa.quilt_series(proof) or
                 record.get('source', {}).get('version') != policy['debian']['recipe_source_version']):
             raise ValueError('Local Mesa provenance does not match the selected Mesa builder')
         upstream = policy['source']
@@ -289,7 +292,6 @@ def local_package_spec(name, installed, official, *, package_output=None):
         local_version = policy['debian']['package_version']
         if source != 'mesa':
             raise ValueError('The signed libgbm1 source is not Mesa')
-        patches = []
     elif name == PIPEWIRE_ABI_PACKAGE:
         from desktop import build_pipewire_packages as builder
 
@@ -317,6 +319,8 @@ def local_package_spec(name, installed, official, *, package_output=None):
             installed['source_version'], installed['architecture']) != (
                 local_version, source, installed['version'], 'arm64'):
         raise ValueError('Installed package is not the declared local revision: ' + name)
+    if name == 'libgbm1':
+        return folder, proof
     proof = []
     for path, digest in patches:
         if sha(path) != digest:
