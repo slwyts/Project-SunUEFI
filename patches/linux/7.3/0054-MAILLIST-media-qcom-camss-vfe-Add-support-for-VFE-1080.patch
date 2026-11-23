@@ -1,0 +1,448 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+Date: Thu, 12 Nov 2026 21:33:42 -0800
+Subject: [PATCH] media: qcom: camss: vfe: Add support for VFE 1080
+
+Add support for the VFE (Video Front End) 1080 found on Kaanapali SoC.
+
+In the Kaanapali camera subsystem, the front-end blocks are referred to
+as TFEs (Thin Front Ends). This driver continues to use the VFE naming
+in some places to preserve consistency with the existing code and avoid
+unnecessary renaming. Support is currently limited to three output lines,
+matching the constraints of the CAMSS framework.
+
+Kaanapali requires REG_UPDATE and AUP_UPDATE to be issued only after all
+CSID configuration has completed. In addition, the number of AUP_UPDATE
+requests must match the number of buffers queued to the write master
+while it is being enabled.
+
+Although real-time TFE traffic is routed through RT_CAMNOC, both
+camnoc_rt_axi and camnoc_nrt_axi clocks must be enabled. This ensures
+that the PDX_NOC, which sits downstream of both RT and NRT NOCs, exits
+reset in a fully idle state.
+
+Link: https://lore.kernel.org/r/20261112-kaanapali-camss-v25-10-1d709f57f370@oss.qualcomm.com
+Reviewed-by: Bryan O'Donoghue <bryan.odonoghue@linaro.org>
+Tested-by: Nihal Kumar Gupta <nihal.gupta@oss.qualcomm.com>
+Co-developed-by: Atiya Kailany <atiya.kailany@oss.qualcomm.com>
+Signed-off-by: Atiya Kailany <atiya.kailany@oss.qualcomm.com>
+Signed-off-by: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+---
+ drivers/media/platform/qcom/camss/Makefile    |   1 +
+ .../platform/qcom/camss/camss-vfe-1080.c      | 213 ++++++++++++++++++
+ drivers/media/platform/qcom/camss/camss-vfe.c |   2 +
+ drivers/media/platform/qcom/camss/camss-vfe.h |   1 +
+ drivers/media/platform/qcom/camss/camss.c     | 123 ++++++++++
+ 5 files changed, 340 insertions(+)
+ create mode 100644 drivers/media/platform/qcom/camss/camss-vfe-1080.c
+
+diff --git a/drivers/media/platform/qcom/camss/Makefile b/drivers/media/platform/qcom/camss/Makefile
+index 218ba3a959394c85abb789220133f12ed9ecaf59..42a14e8fe1b7f28ba5ffcbe59769093b08db4d6b 100644
+--- a/drivers/media/platform/qcom/camss/Makefile
++++ b/drivers/media/platform/qcom/camss/Makefile
+@@ -26,6 +26,7 @@ qcom-camss-objs += \
+ 		camss-vfe-340.o \
+ 		camss-vfe-480.o \
+ 		camss-vfe-680.o \
++		camss-vfe-1080.o \
+ 		camss-vfe-gen1.o \
+ 		camss-vfe-gen3.o \
+ 		camss-vfe-vbif.o \
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe-1080.c b/drivers/media/platform/qcom/camss/camss-vfe-1080.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..68798f13fbea892d1e37f396a57c7b7f5f8d22a2
+--- /dev/null
++++ b/drivers/media/platform/qcom/camss/camss-vfe-1080.c
+@@ -0,0 +1,213 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * camss-vfe-1080.c
++ *
++ * Qualcomm MSM Camera Subsystem - VFE (Video Front End) Module 1080
++ *
++ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
++ */
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++
++#include "camss.h"
++#include "camss-vfe.h"
++
++/* VFE-1080 Bus Register Base Addresses */
++#define BUS_REG_BASE				(vfe_is_lite(vfe) ? 0x800 : 0x1000)
++
++#define VFE_BUS_WM_CGC_OVERRIDE			(BUS_REG_BASE + 0x08)
++#define		WM_CGC_OVERRIDE_ALL			(0x7FFFFFF)
++
++#define VFE_BUS_WM_TEST_BUS_CTRL		(BUS_REG_BASE + 0x128)
++
++#define VFE_BUS_WM_CFG(n)			(BUS_REG_BASE + 0x500 + (n) * 0x100)
++#define		WM_CFG_EN				BIT(0)
++#define		WM_VIR_FRM_EN				BIT(1)
++#define		WM_CFG_MODE				BIT(16)
++#define VFE_BUS_WM_IMAGE_ADDR(n)		(BUS_REG_BASE + 0x504 + (n) * 0x100)
++#define VFE_BUS_WM_FRAME_INCR(n)		(BUS_REG_BASE + 0x508 + (n) * 0x100)
++#define VFE_BUS_WM_IMAGE_CFG_0(n)		(BUS_REG_BASE + 0x50C + (n) * 0x100)
++#define		WM_IMAGE_CFG_0_DEFAULT_WIDTH		(0xFFFF)
++#define VFE_BUS_WM_IMAGE_CFG_2(n)		(BUS_REG_BASE + 0x514 + (n) * 0x100)
++#define		WM_IMAGE_CFG_2_DEFAULT_STRIDE		(0xFFFF)
++#define VFE_BUS_WM_PACKER_CFG(n)		(BUS_REG_BASE + 0x518 + (n) * 0x100)
++
++#define VFE_BUS_WM_IRQ_SUBSAMPLE_PERIOD(n)	(BUS_REG_BASE + 0x530 + (n) * 0x100)
++#define VFE_BUS_WM_IRQ_SUBSAMPLE_PATTERN(n)	(BUS_REG_BASE + 0x534 + (n) * 0x100)
++
++/* VFE lite has no such registers */
++#define VFE_BUS_WM_FRAMEDROP_PERIOD(n)		(BUS_REG_BASE + 0x538 + (n) * 0x100)
++#define VFE_BUS_WM_FRAMEDROP_PATTERN(n)		(BUS_REG_BASE + 0x53C + (n) * 0x100)
++
++#define VFE_BUS_WM_MMU_PREFETCH_CFG(n)		(BUS_REG_BASE + 0x560 + (n) * 0x100)
++#define VFE_BUS_WM_MMU_PREFETCH_MAX_OFFSET(n)	(BUS_REG_BASE + 0x564 + (n) * 0x100)
++
++/*
++ * IFE write master client IDs
++ *
++ * VIDEO_FULL			0
++ * VIDEO_DC4_Y			1
++ * VIDEO_DC4_C			2
++ * VIDEO_DC16_Y			3
++ * VIDEO_DC16_C			4
++ * DISPLAY_DS2_Y		5
++ * DISPLAY_DS2_C		6
++ * FD_Y				7
++ * FD_C				8
++ * PIXEL_RAW			9
++ * STATS_AEC_BG			10
++ * STATS_AEC_BHIST		11
++ * STATS_TINTLESS_BG		12
++ * STATS_AWB_BG			13
++ * STATS_AWB_BFW		14
++ * STATS_AF_BHIST		15
++ * STATS_ALSC_BG		16
++ * STATS_FLICKER_BAYERRS	17
++ * STATS_TMC_BHIST		18
++ * PDAF_0			19
++ * PDAF_1			20
++ * PDAF_2			21
++ * PDAF_3			22
++ * RDI0				23
++ * RDI1				24
++ * RDI2				25
++ * RDI3				26
++ * RDI4				27
++ *
++ * IFE Lite write master client IDs
++ *
++ * RDI0			0
++ * RDI1			1
++ * RDI2			2
++ * RDI3			3
++ * GAMMA		4
++ * STATES_BE		5
++ */
++#define RDI_WM(n) ((vfe_is_lite(vfe) ? 0x0 : 0x17) + (n))
++
++static void vfe_wm_start(struct vfe_device *vfe, u8 wm, struct vfe_line *line)
++{
++	struct v4l2_pix_format_mplane *pix =
++		&line->video_out.active_fmt.fmt.pix_mp;
++
++	wm = RDI_WM(wm);
++
++	/* no clock gating at bus input */
++	writel(WM_CGC_OVERRIDE_ALL, vfe->base + VFE_BUS_WM_CGC_OVERRIDE);
++
++	writel(0x0, vfe->base + VFE_BUS_WM_TEST_BUS_CTRL);
++
++	writel(ALIGN(pix->plane_fmt[0].bytesperline, 16) * pix->height >> 8,
++	       vfe->base + VFE_BUS_WM_FRAME_INCR(wm));
++	writel((WM_IMAGE_CFG_0_DEFAULT_WIDTH & 0xFFFF),
++	       vfe->base + VFE_BUS_WM_IMAGE_CFG_0(wm));
++	writel(WM_IMAGE_CFG_2_DEFAULT_STRIDE,
++	       vfe->base + VFE_BUS_WM_IMAGE_CFG_2(wm));
++	writel(0, vfe->base + VFE_BUS_WM_PACKER_CFG(wm));
++
++	/* no dropped frames, one irq per frame */
++	if (!vfe_is_lite(vfe)) {
++		writel(0, vfe->base + VFE_BUS_WM_FRAMEDROP_PERIOD(wm));
++		writel(1, vfe->base + VFE_BUS_WM_FRAMEDROP_PATTERN(wm));
++	}
++
++	writel(0, vfe->base + VFE_BUS_WM_IRQ_SUBSAMPLE_PERIOD(wm));
++	writel(1, vfe->base + VFE_BUS_WM_IRQ_SUBSAMPLE_PATTERN(wm));
++
++	writel(1, vfe->base + VFE_BUS_WM_MMU_PREFETCH_CFG(wm));
++	writel(0xFFFFFFFF, vfe->base + VFE_BUS_WM_MMU_PREFETCH_MAX_OFFSET(wm));
++
++	writel(WM_CFG_EN | WM_CFG_MODE, vfe->base + VFE_BUS_WM_CFG(wm));
++}
++
++static void vfe_wm_stop(struct vfe_device *vfe, u8 wm)
++{
++	wm = RDI_WM(wm);
++	writel(0, vfe->base + VFE_BUS_WM_CFG(wm));
++}
++
++static void vfe_wm_update(struct vfe_device *vfe, u8 wm, u32 addr,
++			  struct vfe_line *line)
++{
++	wm = RDI_WM(wm);
++	writel(addr >> 8, vfe->base + VFE_BUS_WM_IMAGE_ADDR(wm));
++
++	dev_dbg(vfe->camss->dev, "wm:%d, image buf addr:0x%x\n", wm, addr);
++}
++
++static void vfe_reg_update(struct vfe_device *vfe, enum vfe_line_id line_id)
++{
++	int port_id = line_id;
++
++	camss_reg_update(vfe->camss, vfe->id, port_id, false);
++}
++
++static void vfe_reg_update_clear(struct vfe_device *vfe,
++				 enum vfe_line_id line_id)
++{
++	int port_id = line_id;
++
++	camss_reg_update(vfe->camss, vfe->id, port_id, true);
++}
++
++static void vfe_addr_update(struct vfe_device *vfe, enum vfe_line_id line_id)
++{
++	int port_id = line_id;
++
++	camss_addr_update(vfe->camss, vfe->id, port_id, false);
++}
++
++static void vfe_addr_update_clear(struct vfe_device *vfe, enum vfe_line_id line_id)
++{
++	int port_id = line_id;
++
++	camss_addr_update(vfe->camss, vfe->id, port_id, true);
++}
++
++static const struct camss_video_ops vfe_video_ops_1080 = {
++	.queue_buffer = vfe_queue_buffer_v2,
++	.flush_buffers = vfe_flush_buffers,
++};
++
++static void vfe_subdev_init(struct device *dev, struct vfe_device *vfe)
++{
++	vfe->video_ops = vfe_video_ops_1080;
++}
++
++static void vfe_global_reset(struct vfe_device *vfe)
++{
++	vfe_isr_reset_ack(vfe);
++}
++
++static irqreturn_t vfe_isr(int irq, void *dev)
++{
++	/* nop */
++	return IRQ_HANDLED;
++}
++
++static int vfe_halt(struct vfe_device *vfe)
++{
++	/* rely on vfe_disable_output() to stop the VFE */
++	return 0;
++}
++
++const struct vfe_hw_ops vfe_ops_1080 = {
++	.addr_update = vfe_addr_update,
++	.addr_update_clear = vfe_addr_update_clear,
++	.global_reset = vfe_global_reset,
++	.hw_version = vfe_hw_version,
++	.isr = vfe_isr,
++	.pm_domain_off = vfe_pm_domain_off,
++	.pm_domain_on = vfe_pm_domain_on,
++	.reg_update = vfe_reg_update,
++	.reg_update_clear = vfe_reg_update_clear,
++	.subdev_init = vfe_subdev_init,
++	.vfe_disable = vfe_disable,
++	.vfe_enable = vfe_enable_v2,
++	.vfe_halt = vfe_halt,
++	.vfe_wm_start = vfe_wm_start,
++	.vfe_wm_stop = vfe_wm_stop,
++	.vfe_buf_done = vfe_buf_done,
++	.vfe_wm_update = vfe_wm_update,
++};
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index 235f06e1f4f6436838b93f358bc8e2f4b12bd197..7fd609e663320528c1d7d61ba6133f4a3a222c46 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -353,6 +353,7 @@ static u32 vfe_src_pad_code(struct vfe_line *line, u32 sink_code,
+ 	case CAMSS_8550:
+ 	case CAMSS_8650:
+ 	case CAMSS_8775P:
++	case CAMSS_KAANAPALI:
+ 	case CAMSS_X1E80100:
+ 		switch (sink_code) {
+ 		case MEDIA_BUS_FMT_YUYV8_1X16:
+@@ -2020,6 +2021,7 @@ static int vfe_bpl_align_rdi(struct vfe_device *vfe)
+ 	case CAMSS_8550:
+ 	case CAMSS_8650:
+ 	case CAMSS_8775P:
++	case CAMSS_KAANAPALI:
+ 	case CAMSS_X1E80100:
+ 		ret = 16;
+ 		break;
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.h b/drivers/media/platform/qcom/camss/camss-vfe.h
+index 8312e4c91e98a770b50520e03daca84715c3fe1c..0a91440cfe438625f7f1b71b60186491b3d24d5d 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.h
++++ b/drivers/media/platform/qcom/camss/camss-vfe.h
+@@ -251,6 +251,7 @@ extern const struct vfe_hw_ops vfe_ops_170;
+ extern const struct vfe_hw_ops vfe_ops_340;
+ extern const struct vfe_hw_ops vfe_ops_480;
+ extern const struct vfe_hw_ops vfe_ops_680;
++extern const struct vfe_hw_ops vfe_ops_1080;
+ extern const struct vfe_hw_ops vfe_ops_gen3;
+ 
+ int vfe_get(struct vfe_device *vfe);
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index bad824119049a0c12e6b6e7f4b92a3ad9e39ede2..8ef1e11607d89eb92efe25ca105a3196540a97e7 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -105,6 +105,127 @@ static const struct camss_subdev_resources csid_res_kaanapali[] = {
+ 	}
+ };
+ 
++/* In Kaanapali, CAMNOC requires all CPAS_TFEX clocks
++ * to operate on any TFE Full.
++ */
++static const struct camss_subdev_resources vfe_res_kaanapali[] = {
++	/* VFE0 - TFE Full */
++	{
++		.clock = { "vfe0_fast_ahb", "vfe0",
++			   "cpas_vfe0", "cpas_vfe1", "cpas_vfe2",
++			   "camnoc_rt_axi", "camnoc_nrt_axi", "qdss_debug_xo" },
++		.clock_rate = { { 0 },
++				{ 360280000, 480000000, 630000000, 716000000,
++				  833000000 },
++				{ 0 },
++				{ 0 },
++				{ 0 },
++				{ 200000000, 300000000, 400000000, 480000000 },
++				{ 0 },
++				{ 0 } },
++		.reg = { "vfe0" },
++		.interrupt = { "vfe0" },
++		.vfe = {
++			.line_num = 3,
++			.has_pd = true,
++			.pd_name = "ife0",
++			.hw_ops = &vfe_ops_1080,
++			.formats_rdi = &vfe_formats_rdi_845,
++			.formats_pix = &vfe_formats_pix_845
++		}
++	},
++	/* VFE1 - TFE Full */
++	{
++		.clock = { "vfe1_fast_ahb", "vfe1",
++			   "cpas_vfe0", "cpas_vfe1", "cpas_vfe2",
++			   "camnoc_rt_axi", "camnoc_nrt_axi", "qdss_debug_xo" },
++		.clock_rate = { { 0 },
++				{ 360280000, 480000000, 630000000, 716000000,
++				  833000000 },
++				{ 0 },
++				{ 0 },
++				{ 0 },
++				{ 200000000, 300000000, 400000000, 480000000 },
++				{ 0 },
++				{ 0 } },
++		.reg = { "vfe1" },
++		.interrupt = { "vfe1" },
++		.vfe = {
++			.line_num = 3,
++			.has_pd = true,
++			.pd_name = "ife1",
++			.hw_ops = &vfe_ops_1080,
++			.formats_rdi = &vfe_formats_rdi_845,
++			.formats_pix = &vfe_formats_pix_845
++		}
++	},
++	/* VFE2 - TFE Full */
++	{
++		.clock = { "vfe2_fast_ahb", "vfe2",
++			   "cpas_vfe0", "cpas_vfe1", "cpas_vfe2",
++			   "camnoc_rt_axi", "camnoc_nrt_axi", "qdss_debug_xo" },
++		.clock_rate = { { 0 },
++				{ 360280000, 480000000, 630000000, 716000000,
++				  833000000 },
++				{ 0 },
++				{ 0 },
++				{ 0 },
++				{ 200000000, 300000000, 400000000, 480000000 },
++				{ 0 },
++				{ 0 } },
++		.reg = { "vfe2" },
++		.interrupt = { "vfe2" },
++		.vfe = {
++			.line_num = 3,
++			.has_pd = true,
++			.pd_name = "ife2",
++			.hw_ops = &vfe_ops_1080,
++			.formats_rdi = &vfe_formats_rdi_845,
++			.formats_pix = &vfe_formats_pix_845
++		}
++	},
++	/* VFE3 - IFE Lite */
++	{
++		.clock = { "vfe_lite_ahb", "vfe_lite", "cpas_vfe_lite",
++			   "camnoc_rt_axi", "camnoc_nrt_axi", "qdss_debug_xo" },
++		.clock_rate = { { 0 },
++				{ 266666667, 400000000, 480000000 },
++				{ 0 },
++				{ 200000000, 300000000, 400000000, 480000000 },
++				{ 0 },
++				{ 0 } },
++		.reg = { "vfe_lite0" },
++		.interrupt = { "vfe_lite0" },
++		.vfe = {
++			.line_num = 3,
++			.is_lite = true,
++			.hw_ops = &vfe_ops_1080,
++			.formats_rdi = &vfe_formats_rdi_845,
++			.formats_pix = &vfe_formats_pix_845
++		}
++	},
++	/* VFE4 - IFE Lite */
++	{
++		.clock = { "vfe_lite_ahb", "vfe_lite", "cpas_vfe_lite",
++			   "camnoc_rt_axi", "camnoc_nrt_axi", "qdss_debug_xo" },
++		.clock_rate = { { 0 },
++				{ 266666667, 400000000, 480000000 },
++				{ 0 },
++				{ 200000000, 300000000, 400000000, 480000000 },
++				{ 0 },
++				{ 0 } },
++		.reg = { "vfe_lite1" },
++		.interrupt = { "vfe_lite1" },
++		.vfe = {
++			.line_num = 3,
++			.is_lite = true,
++			.hw_ops = &vfe_ops_1080,
++			.formats_rdi = &vfe_formats_rdi_845,
++			.formats_pix = &vfe_formats_pix_845
++		}
++	},
++};
++
+ static const struct resources_icc icc_res_kaanapali[] = {
+ 	{
+ 		.name = "ahb",
+@@ -5730,12 +5851,14 @@ static const struct camss_resources kaanapali_resources = {
+ 	.pd_name = "top",
+ 	.pm_clks = { "cpas_fast_ahb", "cpas_ahb", "gcc_axi_hf" },
+ 	.csid_res = csid_res_kaanapali,
++	.vfe_res = vfe_res_kaanapali,
+ 	.icc_res = icc_res_kaanapali,
+ 	.tpg_res = tpg_res_8775p,
+ 	.icc_path_num = ARRAY_SIZE(icc_res_kaanapali),
+ 	.csiphy_num = 6,
+ 	.tpg_num = ARRAY_SIZE(tpg_res_8775p),
+ 	.csid_num = ARRAY_SIZE(csid_res_kaanapali),
++	.vfe_num = ARRAY_SIZE(vfe_res_kaanapali),
+ };
+ 
+ static const struct camss_resources msm8916_resources = {

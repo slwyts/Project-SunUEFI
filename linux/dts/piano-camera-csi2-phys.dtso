@@ -1,0 +1,291 @@
+// SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/clock/qcom,sm8750-camcc.h>
+#include <dt-bindings/clock/qcom,sm8750-gcc.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/media/video-interfaces.h>
+#include <dt-bindings/power/qcom,rpmhpd.h>
+#include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+
+/ {
+	fragment@0 {
+		target-path = "/";
+		__overlay__ {
+			piano_csiphy_opp: opp-table-piano-csiphy {
+				compatible = "operating-points-v2";
+
+				opp-266666667 {
+					opp-hz = /bits/ 64 <266666667>;
+					required-opps = <&rpmhpd_opp_low_svs_d1_ml>,
+							<&rpmhpd_opp_low_svs_d1_ml>;
+				};
+
+				opp-400000000 {
+					opp-hz = /bits/ 64 <400000000>;
+					required-opps = <&rpmhpd_opp_low_svs_ml>,
+							<&rpmhpd_opp_low_svs_ml>;
+				};
+
+				opp-480000000 {
+					opp-hz = /bits/ 64 <480000000>;
+					required-opps = <&rpmhpd_opp_svs_ml>,
+							<&rpmhpd_opp_svs_ml>;
+				};
+			};
+		};
+	};
+
+	fragment@1 {
+		target-path = "/soc/rsc@16500000/regulators-1";
+		__overlay__ {
+			/* The factory board wires the rear PHY to RPMh ldof1. */
+			piano_csiphy_rear_0p9: ldo1 {
+				regulator-name = "vreg_l1f_csiphy_0p9";
+				regulator-min-microvolt = <880000>;
+				regulator-max-microvolt = <920000>;
+				regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+				regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM RPMH_REGULATOR_MODE_HPM>;
+			};
+		};
+	};
+
+	fragment@2 {
+		target-path = "/soc/rsc@16500000/regulators-7";
+		__overlay__ {
+			/* The front PHY uses RPMh ldoi3. */
+			piano_csiphy_front_0p9: ldo3 {
+				regulator-name = "vreg_l3i_csiphy_0p9";
+				regulator-min-microvolt = <880000>;
+				regulator-max-microvolt = <912000>;
+				regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+				regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM RPMH_REGULATOR_MODE_HPM>;
+			};
+		};
+	};
+
+	fragment@3 {
+		/* Both CSI PHYs share RPMh ldog3 with the USB PHY. */
+		target-path = "/soc/rsc@16500000/regulators-6/ldo3";
+		piano_csiphy_1p2: __overlay__ {};
+	};
+
+	fragment@4 {
+		target-path = "/soc";
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			phy@adab000 {
+				compatible = "qcom,sm8750-csi2-phy";
+				reg = <0x0adab000 0x2000>;
+				clocks = <&camcc_ml CAM_CC_CSIPHY1_CLK>,
+					 <&camcc_ml CAM_CC_CSI1PHYTIMER_CLK>,
+					 <&camcc_ml CAM_CC_CORE_AHB_CLK>;
+				clock-names = "core", "timer", "ahb";
+				interrupts = <GIC_SPI 478 IRQ_TYPE_EDGE_RISING>;
+				power-domains = <&camcc_ml CAM_CC_TITAN_TOP_GDSC>,
+						<&rpmhpd_ml RPMHPD_MMCX>,
+						<&rpmhpd_ml RPMHPD_MXC>;
+				power-domain-names = "top", "mmcx", "mx";
+				operating-points-v2 = <&piano_csiphy_opp>;
+				vdda-0p9-supply = <&piano_csiphy_rear_0p9>;
+				vdda-1p2-supply = <&piano_csiphy_1p2>;
+
+				ports {
+					#address-cells = <1>;
+					#size-cells = <0>;
+
+					port@0 {
+						reg = <0>;
+
+						piano_csiphy_rear_in: endpoint {
+							bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
+							data-lanes = <1 2 3 4>;
+							remote-endpoint = <&cam_wide_ep_ml>;
+						};
+					};
+
+					port@1 {
+						reg = <1>;
+
+						piano_csiphy_rear_out: endpoint {
+							bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
+							data-lanes = <1 2 3 4>;
+							remote-endpoint = <&piano_camss_rear_in>;
+						};
+					};
+				};
+			};
+
+			phy@adb1000 {
+				compatible = "qcom,sm8750-csi2-phy";
+				reg = <0x0adb1000 0x2000>;
+				clocks = <&camcc_ml CAM_CC_CSIPHY4_CLK>,
+					 <&camcc_ml CAM_CC_CSI4PHYTIMER_CLK>,
+					 <&camcc_ml CAM_CC_CORE_AHB_CLK>;
+				clock-names = "core", "timer", "ahb";
+				interrupts = <GIC_SPI 122 IRQ_TYPE_EDGE_RISING>;
+				power-domains = <&camcc_ml CAM_CC_TITAN_TOP_GDSC>,
+						<&rpmhpd_ml RPMHPD_MMCX>,
+						<&rpmhpd_ml RPMHPD_MXC>;
+				power-domain-names = "top", "mmcx", "mx";
+				operating-points-v2 = <&piano_csiphy_opp>;
+				vdda-0p9-supply = <&piano_csiphy_front_0p9>;
+				vdda-1p2-supply = <&piano_csiphy_1p2>;
+
+				ports {
+					#address-cells = <1>;
+					#size-cells = <0>;
+
+					port@0 {
+						reg = <0>;
+
+						piano_csiphy_front_in: endpoint {
+							bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
+							data-lanes = <1 2 3 4>;
+							remote-endpoint = <&cam_front_ep_ml>;
+						};
+					};
+
+					port@1 {
+						reg = <1>;
+
+						piano_csiphy_front_out: endpoint {
+							bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
+							data-lanes = <1 2 3 4>;
+							remote-endpoint = <&piano_camss_front_in>;
+						};
+					};
+				};
+			};
+		};
+	};
+
+	fragment@5 {
+		target-path = "/soc/cci-ml@ac7b000/i2c-bus@1/camera@10/port/endpoint";
+		__overlay__ {
+			data-lanes = <1 2 3 4>;
+			remote-endpoint = <&piano_csiphy_rear_in>;
+		};
+	};
+
+	fragment@6 {
+		target-path = "/soc/qcom,qupv3_2_geni_se@8c0000/i2c@884000/camera@10/port/endpoint";
+		__overlay__ {
+			data-lanes = <1 2 3 4>;
+			remote-endpoint = <&piano_csiphy_front_in>;
+		};
+	};
+
+	fragment@7 {
+		target-path = "/soc/isp-ml@ad27000/ports/port@1/endpoint";
+		piano_camss_rear_in: __overlay__ {
+			data-lanes = <1 2 3 4>;
+			remote-endpoint = <&piano_csiphy_rear_out>;
+		};
+	};
+
+	fragment@8 {
+		target-path = "/soc/isp-ml@ad27000/ports/port@4/endpoint";
+		piano_camss_front_in: __overlay__ {
+			data-lanes = <1 2 3 4>;
+			remote-endpoint = <&piano_csiphy_front_out>;
+		};
+	};
+
+	fragment@9 {
+		target-path = "/soc/qcom,csiphy1@adab000";
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+
+	fragment@10 {
+		target-path = "/soc/qcom,csiphy4@adb1000";
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+
+	fragment@11 {
+		target-path = "/soc/isp-ml@ad27000";
+		__overlay__ {
+			reg = <0x0ac04000 0x1000>,
+			      <0x0ad27000 0x2b00>,
+			      <0x0ad2a000 0x2b00>,
+			      <0x0ad2d000 0x2b00>,
+			      <0x0ad6d000 0x0a00>,
+			      <0x0ad72000 0x0a00>,
+			      <0x0ad8b000 0x0400>,
+			      <0x0ad8c000 0x0400>,
+			      <0x0ad8d000 0x0400>,
+			      <0x0ac86000 0x10000>,
+			      <0x0ac96000 0x10000>,
+			      <0x0aca6000 0x10000>,
+			      <0x0ad6e000 0x3000>,
+			      <0x0ad73000 0x3000>;
+			reg-names = "top", "csid0", "csid1", "csid2", "csid_lite0",
+				    "csid_lite1", "tpg0", "tpg1", "tpg2", "vfe0",
+				    "vfe1", "vfe2", "vfe_lite0", "vfe_lite1";
+
+			/* CPAS AHB belongs to CAMSS runtime PM. Keep the clocks
+			 * used by near-real-time bandwidth and the PIX Bayer path.
+			 */
+			clocks = <&camcc_ml CAM_CC_CAMNOC_NRT_AXI_CLK>,
+				 <&camcc_ml CAM_CC_CAMNOC_RT_AXI_CLK>,
+				 <&camcc_ml CAM_CC_CAM_TOP_AHB_CLK>,
+				 <&camcc_ml CAM_CC_CAM_TOP_FAST_AHB_CLK>,
+				 <&camcc_ml CAM_CC_CAMNOC_RT_TFE_0_MAIN_CLK>,
+				 <&camcc_ml CAM_CC_CAMNOC_RT_TFE_1_MAIN_CLK>,
+				 <&camcc_ml CAM_CC_CAMNOC_RT_TFE_2_MAIN_CLK>,
+				 <&camcc_ml CAM_CC_CAMNOC_RT_IFE_LITE_CLK>,
+				 <&camcc_ml CAM_CC_CAMNOC_RT_TFE_0_BAYER_CLK>,
+				 <&camcc_ml CAM_CC_CAMNOC_RT_TFE_1_BAYER_CLK>,
+				 <&camcc_ml CAM_CC_CAMNOC_RT_TFE_2_BAYER_CLK>,
+				 <&camcc_ml CAM_CC_CSID_CLK>,
+				 <&camcc_ml CAM_CC_CSID_CSIPHY_RX_CLK>,
+				 <&gcc GCC_CAMERA_HF_AXI_CLK>,
+				 <&camcc_ml CAM_CC_TFE_0_MAIN_CLK>,
+				 <&camcc_ml CAM_CC_TFE_0_MAIN_FAST_AHB_CLK>,
+				 <&camcc_ml CAM_CC_TFE_1_MAIN_CLK>,
+				 <&camcc_ml CAM_CC_TFE_1_MAIN_FAST_AHB_CLK>,
+				 <&camcc_ml CAM_CC_TFE_2_MAIN_CLK>,
+				 <&camcc_ml CAM_CC_TFE_2_MAIN_FAST_AHB_CLK>,
+				 <&camcc_ml CAM_CC_TFE_0_BAYER_CLK>,
+				 <&camcc_ml CAM_CC_TFE_0_BAYER_FAST_AHB_CLK>,
+				 <&camcc_ml CAM_CC_TFE_1_BAYER_CLK>,
+				 <&camcc_ml CAM_CC_TFE_1_BAYER_FAST_AHB_CLK>,
+				 <&camcc_ml CAM_CC_TFE_2_BAYER_CLK>,
+				 <&camcc_ml CAM_CC_TFE_2_BAYER_FAST_AHB_CLK>,
+				 <&camcc_ml CAM_CC_IFE_LITE_CLK>,
+				 <&camcc_ml CAM_CC_IFE_LITE_AHB_CLK>,
+				 <&camcc_ml CAM_CC_IFE_LITE_CPHY_RX_CLK>,
+				 <&camcc_ml CAM_CC_IFE_LITE_CSID_CLK>,
+				 <&camcc_ml CAM_CC_QDSS_DEBUG_XO_CLK>;
+			clock-names = "camnoc_nrt_axi", "camnoc_rt_axi", "cpas_ahb", "cpas_fast_ahb",
+				      "cpas_vfe0", "cpas_vfe1", "cpas_vfe2", "cpas_vfe_lite",
+				      "cpas_vfe0_bayer", "cpas_vfe1_bayer", "cpas_vfe2_bayer",
+				      "csid", "csiphy_rx", "gcc_axi_hf",
+				      "vfe0", "vfe0_fast_ahb", "vfe1", "vfe1_fast_ahb",
+				      "vfe2", "vfe2_fast_ahb", "vfe0_bayer", "vfe0_bayer_fast_ahb",
+				      "vfe1_bayer", "vfe1_bayer_fast_ahb", "vfe2_bayer",
+				      "vfe2_bayer_fast_ahb", "vfe_lite", "vfe_lite_ahb",
+				      "vfe_lite_cphy_rx", "vfe_lite_csid", "qdss_debug_xo";
+
+			interrupts = <GIC_SPI 601 IRQ_TYPE_EDGE_RISING>,
+				     <GIC_SPI 603 IRQ_TYPE_EDGE_RISING>,
+				     <GIC_SPI 431 IRQ_TYPE_EDGE_RISING>,
+				     <GIC_SPI 605 IRQ_TYPE_EDGE_RISING>,
+				     <GIC_SPI 376 IRQ_TYPE_EDGE_RISING>,
+				     <GIC_SPI 433 IRQ_TYPE_EDGE_RISING>,
+				     <GIC_SPI 436 IRQ_TYPE_EDGE_RISING>,
+				     <GIC_SPI 457 IRQ_TYPE_EDGE_RISING>,
+				     <GIC_SPI 606 IRQ_TYPE_EDGE_RISING>,
+				     <GIC_SPI 377 IRQ_TYPE_EDGE_RISING>;
+			interrupt-names = "csid0", "csid1", "csid2", "csid_lite0", "csid_lite1",
+					  "vfe0", "vfe1", "vfe2", "vfe_lite0", "vfe_lite1";
+		};
+	};
+};

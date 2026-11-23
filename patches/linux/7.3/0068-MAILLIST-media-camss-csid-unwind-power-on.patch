@@ -1,0 +1,110 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Qianhui Xu <xiaqinghuan@mail.ustc.edu.cn>
+Date: Sat, 31 Oct 2026 12:11:53 +0800
+Subject: [PATCH] media: camss: csid: unwind the power-on path through a single
+ error label
+
+csid_set_power() repeats the same cleanup sequence in every error branch
+and gets it wrong in the first one: when pm_runtime_resume_and_get()
+fails, the parent device reference taken by parent_dev_ops->get() is
+never dropped, so a failing power-on leaks it and the matching VFE stays
+powered.
+
+Replace the four open-coded unwind blocks with gotos to a shared label
+chain and route the pm_runtime failure through the parent put as well.
+No functional change on the success path.
+
+Signed-off-by: Qianhui Xu <xiaqinghuan@mail.ustc.edu.cn>
+Fixes: c5af8db84c01 ("media: camss: Do vfe_get/vfe_put for csid on sm8250")
+Link: https://lore.kernel.org/r/20261031041154.308030-2-xiaqinghuan@mail.ustc.edu.cn
+Link: https://lore.kernel.org/r/20261028093003.722745-4-xiaqinghuan@mail.ustc.edu.cn
+Link: https://github.com/slwyts/Project-SunUEFI/commit/2ec23934486d90834146181a680d435eda0f210b
+
+Backport onto SM8750 v7 clock scaling. Keep csid_release_clock_rates()
+in the common regulator unwind so failures drop any rates already
+voted for before releasing runtime PM and the parent VFE reference.
+---
+ .../media/platform/qcom/camss/camss-csid.c    | 50 ++++++++-----------
+ 1 file changed, 22 insertions(+), 28 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-csid.c b/drivers/media/platform/qcom/camss/camss-csid.c
+index 22b8910c91043797e44c8c3ccc13e49d6e9fa197..3af7a2eea74da459e275b48569d986d5478f973b 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid.c
++++ b/drivers/media/platform/qcom/camss/camss-csid.c
+@@ -822,47 +822,28 @@ static int csid_set_power(struct v4l2_subdev *sd, int on)
+ 
+ 		ret = pm_runtime_resume_and_get(dev);
+ 		if (ret < 0)
+-			return ret;
++			goto err_put_parent;
+ 
+ 		ret = regulator_bulk_enable(csid->num_supplies,
+ 					    csid->supplies);
+-		if (ret < 0) {
+-			pm_runtime_put_sync(dev);
+-			return ret;
+-		}
++		if (ret < 0)
++			goto err_put_runtime;
+ 
+ 		ret = csid_set_clock_rates(csid);
+-		if (ret < 0) {
+-			csid_release_clock_rates(csid);
+-			regulator_bulk_disable(csid->num_supplies,
+-					       csid->supplies);
+-			pm_runtime_put_sync(dev);
+-			return ret;
+-		}
++		if (ret < 0)
++			goto err_disable_supplies;
+ 
+ 		ret = camss_enable_clocks(csid->nclocks, csid->clock, dev);
+-		if (ret < 0) {
+-			csid_release_clock_rates(csid);
+-			regulator_bulk_disable(csid->num_supplies,
+-					       csid->supplies);
+-			pm_runtime_put_sync(dev);
+-			return ret;
+-		}
++		if (ret < 0)
++			goto err_disable_supplies;
+ 
+ 		csid->phy.need_vc_update = true;
+ 
+ 		enable_irq(csid->irq);
+ 
+ 		ret = csid->res->hw_ops->reset(csid);
+-		if (ret < 0) {
+-			disable_irq(csid->irq);
+-			camss_disable_clocks(csid->nclocks, csid->clock);
+-			csid_release_clock_rates(csid);
+-			regulator_bulk_disable(csid->num_supplies,
+-					       csid->supplies);
+-			pm_runtime_put_sync(dev);
+-			return ret;
+-		}
++		if (ret < 0)
++			goto err_disable_irq;
+ 
+ 		csid->res->hw_ops->hw_version(csid);
+ 	} else {
+@@ -875,6 +856,19 @@ static int csid_set_power(struct v4l2_subdev *sd, int on)
+ 		csid->res->parent_dev_ops->put(camss, csid->id);
+ 	}
+ 
++	return ret;
++
++err_disable_irq:
++	disable_irq(csid->irq);
++	camss_disable_clocks(csid->nclocks, csid->clock);
++err_disable_supplies:
++	csid_release_clock_rates(csid);
++	regulator_bulk_disable(csid->num_supplies, csid->supplies);
++err_put_runtime:
++	pm_runtime_put_sync(dev);
++err_put_parent:
++	csid->res->parent_dev_ops->put(camss, csid->id);
++
+ 	return ret;
+ }
+ 

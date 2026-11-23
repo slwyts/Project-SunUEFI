@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+Date: Thu, 12 Nov 2026 21:33:33 -0800
+Subject: [PATCH] dt-bindings: phy: qcom,x1e80100-csi2-phy: Add Kaanapali CSI2
+ PHY
+
+Add "qcom,kaanapali-csi2-phy" as a standalone compatible. Its common
+status register offset differs from x1e80100, so it cannot fall back
+to that compatible.
+
+[Backport: Expand the single upstream compatible into an enum on Linux 7.3.3.]
+
+Link: https://lore.kernel.org/r/20261112-kaanapali-camss-v25-1-1d709f57f370@oss.qualcomm.com
+Reviewed-by: Bryan O'Donoghue <bryan.odonoghue@linaro.org>
+Acked-by: Krzysztof Kozlowski <krzysztof.kozlowski@oss.qualcomm.com>
+Signed-off-by: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+---
+ .../devicetree/bindings/phy/qcom,x1e80100-csi2-phy.yaml       | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/phy/qcom,x1e80100-csi2-phy.yaml b/Documentation/devicetree/bindings/phy/qcom,x1e80100-csi2-phy.yaml
+index dc64af97da6c659628729a758316353798aa98db..24ca06b97656077cf168e72b2a32f493d9c06af2 100644
+--- a/Documentation/devicetree/bindings/phy/qcom,x1e80100-csi2-phy.yaml
++++ b/Documentation/devicetree/bindings/phy/qcom,x1e80100-csi2-phy.yaml
+@@ -16,7 +16,9 @@ description:
+ 
+ properties:
+   compatible:
+-    const: qcom,x1e80100-csi2-phy
++    enum:
++      - qcom,kaanapali-csi2-phy
++      - qcom,x1e80100-csi2-phy
+ 
+   reg:
+     maxItems: 1

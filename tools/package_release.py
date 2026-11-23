@@ -165,6 +165,14 @@ def normalize_mainline_bindings(board):
                 if key in props:
                     del props[key]
                     changes.append(path + ':' + key)
+        if (path == '/soc/isp-ml@ad27000' and
+                props.get('reg-names', b'').startswith(b'top\0')):
+            # Standalone CSI PHYs own their supplies. The old CAMSS links
+            # point at Android-only regulator nodes and can delay probing.
+            for key in tuple(props):
+                if re.fullmatch(r'vdd-csiphy[0-5]-(?:0p9|1p2)-supply', key):
+                    del props[key]
+                    changes.append(path + ':' + key)
         downstream = any(path == root or path.startswith(root + '/') for root in legacy)
         # qcom_q6v5 consumes a standard ICC path during DSP startup. Keep
         # the converted CDSP path when its NSP provider has the mainline

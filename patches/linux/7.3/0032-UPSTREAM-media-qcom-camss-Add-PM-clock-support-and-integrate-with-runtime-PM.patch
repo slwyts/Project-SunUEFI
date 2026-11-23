@@ -1,0 +1,138 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Loic Poulain <loic.poulain@oss.qualcomm.com>
+Date: Fri, 31 Jul 2026 10:54:34 +0200
+Subject: [PATCH] media: qcom: camss: Add PM clock support and integrate with
+ runtime PM
+
+Add optional PM clock support to the CAMSS driver using the PM clock
+framework. This allows CAMSS clocks to be registered once and
+automatically managed during runtime suspend and resume.
+
+This is especially useful for global CAMSS clocks that are shared across
+multiple CAMSS subblocks.
+
+This avoids the need for each subblock to reference and manage the
+shared clocks individually. A typical example is the set of clocks in
+the top_group, which may be used by CSID, PHY, CCI, and other CAMSS
+blocks.
+
+Introduce a small PM clock descriptor table in the CAMSS resources
+structure to describe clocks and their optional rates. Initialize
+these clocks at probe time and delegate clock ownership to the PM
+core.
+
+Hook PM clock handling into the runtime PM callbacks to ensure clocks
+are properly suspended and resumed alongside power domains and ICC
+paths.
+
+Link: https://github.com/torvalds/linux/commit/e4a73365ec8c3d95237f68a0dde5132ef9888705
+Reviewed-by: Bryan O'Donoghue <bryan.odonoghue@linaro.org>
+Reviewed-by: Frank Li <Frank.Li@nxp.com>
+Signed-off-by: Loic Poulain <loic.poulain@oss.qualcomm.com>
+Signed-off-by: Bryan O'Donoghue <bod@kernel.org>
+---
+ drivers/media/platform/qcom/camss/camss.c | 49 +++++++++++++++++++++++
+ drivers/media/platform/qcom/camss/camss.h |  1 +
+ 2 files changed, 50 insertions(+)
+
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index 23f3cc30a15a5e098162bea98ba69fa636abdefb..bcf7e5834e9f6263dbed42bfb4dc97eb749e1a41 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -18,6 +18,7 @@
+ #include <linux/of_graph.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/pm_domain.h>
++#include <linux/pm_clock.h>
+ #include <linux/slab.h>
+ #include <linux/videodev2.h>
+ 
+@@ -5339,6 +5340,40 @@ static void camss_genpd_cleanup(struct camss *camss)
+ 	dev_pm_domain_detach(camss->genpd, true);
+ }
+ 
++/*
++ * camss_init_pm_clks - set up shared CAMSS clocks
++ *
++ * Clocks listed in res->pm_clks are shared across all CAMSS sub-devices
++ * (e.g. top_ahb, axi).
++ */
++static int camss_init_pm_clks(struct camss *camss)
++{
++	struct device *dev = camss->dev;
++	unsigned int i;
++	int ret;
++
++	if (!camss->res->pm_clks[0])
++		return 0;
++
++	if (IS_ENABLED(CONFIG_PM_CLK)) {
++		ret = devm_pm_clk_create(dev);
++		if (ret)
++			return ret;
++	}
++
++	for (i = 0; i < CAMSS_RES_MAX && camss->res->pm_clks[i]; i++) {
++		if (IS_ENABLED(CONFIG_PM_CLK))
++			ret = pm_clk_add(dev, camss->res->pm_clks[i]);
++		else
++			ret = PTR_ERR_OR_ZERO(devm_clk_get_enabled(dev, camss->res->pm_clks[i]));
++		if (ret)
++			return dev_err_probe(dev, ret, "failed to set up pm clock %s\n",
++					     camss->res->pm_clks[i]);
++	}
++
++	return 0;
++}
++
+ /*
+  * camss_probe - Probe CAMSS platform device
+  * @pdev: Pointer to CAMSS platform device
+@@ -5427,6 +5462,10 @@ static int camss_probe(struct platform_device *pdev)
+ 
+ 	pm_runtime_enable(dev);
+ 
++	ret = camss_init_pm_clks(camss);
++	if (ret)
++		goto err_v4l2_device_unregister;
++
+ 	ret = camss_parse_ports(camss);
+ 	if (ret < 0)
+ 		goto err_v4l2_device_unregister;
+@@ -5768,7 +5807,11 @@ static int __maybe_unused camss_runtime_suspend(struct device *dev)
+ 			return ret;
+ 	}
+ 
++#if IS_ENABLED(CONFIG_PM_CLK)
++	return pm_clk_suspend(dev);
++#else
+ 	return 0;
++#endif
+ }
+ 
+ static int __maybe_unused camss_runtime_resume(struct device *dev)
+@@ -5778,6 +5821,12 @@ static int __maybe_unused camss_runtime_resume(struct device *dev)
+ 	int i;
+ 	int ret;
+ 
++#if IS_ENABLED(CONFIG_PM_CLK)
++	ret = pm_clk_resume(dev);
++	if (ret)
++		return ret;
++#endif
++
+ 	for (i = 0; i < camss->res->icc_path_num; i++) {
+ 		ret = icc_set_bw(camss->icc_path[i],
+ 				 icc_res[i].icc_bw_tbl.avg,
+diff --git a/drivers/media/platform/qcom/camss/camss.h b/drivers/media/platform/qcom/camss/camss.h
+index 93d691c8ac63b2a47dbb234856b627d8911a1851..fe5fe25d5f18d8a3ce35b48077a975f1453c341f 100644
+--- a/drivers/media/platform/qcom/camss/camss.h
++++ b/drivers/media/platform/qcom/camss/camss.h
+@@ -107,6 +107,7 @@ enum icc_count {
+ struct camss_resources {
+ 	enum camss_version version;
+ 	const char *pd_name;
++	const char *pm_clks[CAMSS_RES_MAX];
+ 	const struct camss_subdev_resources *csiphy_res;
+ 	const struct camss_subdev_resources *tpg_res;
+ 	const struct camss_subdev_resources *csid_res;

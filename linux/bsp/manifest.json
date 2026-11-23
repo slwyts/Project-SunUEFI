@@ -93,7 +93,7 @@
       "patch": "patches/0001-ucm-piano-microphone-and-speakers.patch",
       "patch_sha256": "580059664918d3620a99f8696b98e94ae21ccff068c5dfc075a51e8d622d7be8",
       "derived_from": {
-        "path": "patches/linux/7.3/0083-EXTERNAL-asoc-qcom-piano-voice-mono.patch",
+        "path": "patches/linux/7.3/0111-EXTERNAL-asoc-qcom-piano-voice-mono.patch",
         "patch_id": "ba6a701bf6d5146f200e76a7513a97f266007bda",
         "scope": "CaptureChannels 1 requires the Piano-specific VA mono FE/BE kernel route"
       }

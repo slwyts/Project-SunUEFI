@@ -1,0 +1,96 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vladimir Zapolskiy <vz@kernel.org>
+Date: Thu, 12 Nov 2026 21:33:40 -0800
+Subject: [PATCH] media: qcom: camss: Allow CSI2 PHY devices without CSIPHY
+ resources
+
+If CAMSS CSIPHYs are supported by the stand-alone CSI2 PHY driver only,
+there is no need to provide description of legacy CSIPHY resources in
+the CAMSS driver, therefore if CSIPHY resources are not given for some
+supported platform, use CAMSS CSIPHY port numbers as CSIPHY identifiers.
+
+Link: https://lore.kernel.org/r/20261112-kaanapali-camss-v25-8-1d709f57f370@oss.qualcomm.com
+Reviewed-by: Bryan O'Donoghue <bod@kernel.org>
+Reviewed-by: Loic Poulain <loic.poulain@oss.qualcomm.com>
+Reviewed-by: Frank Li <Frank.Li@nxp.com>
+Signed-off-by: Vladimir Zapolskiy <vz@kernel.org>
+Signed-off-by: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+---
+ drivers/media/platform/qcom/camss/camss-csiphy.c | 16 +++++++++++++---
+ drivers/media/platform/qcom/camss/camss.c        |  8 ++++++--
+ 2 files changed, 19 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-csiphy.c b/drivers/media/platform/qcom/camss/camss-csiphy.c
+index aaed7d0309dd67b78bcca638aba52e5605ce1db4..ce5ca59c4197ae41c8314037afb8e90e7411ff1a 100644
+--- a/drivers/media/platform/qcom/camss/camss-csiphy.c
++++ b/drivers/media/platform/qcom/camss/camss-csiphy.c
+@@ -798,6 +798,11 @@ int msm_csiphy_subdev_init_legacy(struct camss *camss,
+ 	return ret;
+ }
+ 
++/* Fallback to generic SDM845 compatible formats for non-legacy CSIPHYs */
++static const struct csiphy_subdev_resources csiphy_res_phy = {
++	.formats = &csiphy_formats_sdm845,
++};
++
+ /*
+  * msm_csiphy_subdev_init - Initialize CSIPHY device structure and resources
+  * @camss: CAMSS structure
+@@ -807,7 +812,7 @@ int msm_csiphy_subdev_init_legacy(struct camss *camss,
+  */
+ int msm_csiphy_subdev_init(struct camss *camss, u8 port)
+ {
+-	const struct camss_subdev_resources *res = &camss->res->csiphy_res[port];
++	const struct camss_subdev_resources *res = camss->res->csiphy_res;
+ 	struct csiphy_device *csiphy = &camss->csiphy[port];
+ 	struct device *dev = camss->dev;
+ 	struct device_node *ep, *remote;
+@@ -835,8 +840,13 @@ int msm_csiphy_subdev_init(struct camss *camss, u8 port)
+ 	}
+ 
+ 	csiphy->camss = camss;
+-	csiphy->id = res->csiphy.id;
+-	csiphy->res = &res->csiphy;
++	if (res) {
++		csiphy->id = res[port].csiphy.id;
++		csiphy->res = &res[port].csiphy;
++	} else {
++		csiphy->id = port;
++		csiphy->res = &csiphy_res_phy;
++	}
+ 
+ 	snprintf(csiphy->name, ARRAY_SIZE(csiphy->name), "csi%d", csiphy->id);
+ 
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index a498e4a8145c8bc25480c25a6f16b6a71e13e94a..41b5935c7baccc29e9516489ef7927f1afaa1f26 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -4872,7 +4872,10 @@ static void camss_detect_legacy_phy(struct camss *camss)
+ 	struct device_node *remote;
+ 	struct device_node *ep;
+ 
+-	camss->legacy_phy = true;
++	/* Legacy CSIPHY description implies the provided CSIPHY resources */
++	camss->legacy_phy = !!camss->res->csiphy_res;
++	if (!camss->legacy_phy)
++		goto done;
+ 
+ 	/* Find first remote-endpoint and determine if its a PHY */
+ 	for_each_endpoint_of_node(camss->dev->of_node, ep) {
+@@ -4886,6 +4889,7 @@ static void camss_detect_legacy_phy(struct camss *camss)
+ 		break;
+ 	}
+ 
++done:
+ 	dev_dbg(camss->dev, "legacy phy mode %s\n",
+ 		camss->legacy_phy ? "true" : "false");
+ }
+@@ -4917,7 +4921,7 @@ static int camss_init_subdevices(struct camss *camss)
+ 
+ 		if (ret < 0) {
+ 			dev_err(camss->dev, "csiphy %d init fail\n",
+-				res->csiphy_res[i].csiphy.id);
++				res->csiphy_res ? res->csiphy_res[i].csiphy.id : i);
+ 			return ret;
+ 		}
+ 	}

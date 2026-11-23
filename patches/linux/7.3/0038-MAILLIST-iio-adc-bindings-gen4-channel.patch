@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jishnu Prakash <jishnu.prakash@oss.qualcomm.com>
+Date: Fri, 20 Nov 2026 14:49:41 +0530
+Subject: dt-bindings: iio: adc: Add "qcom,adc5-gen4" property for ADC channels
+
+PMIC5 Gen4 ADC is similar to PMIC5 Gen3 ADC, with several changes made for
+improved performance, mostly at the hardware level. The main differences
+are increased ratiometric conversion resolution (from 14 bits to 16 bits)
+and increased bit field width for PMIC SID (to allow communication with an
+increased number of PMICs, supported on latest SoCs).
+
+In the Gen3 ADC topology, the ADC peripheral on the master PMIC
+communicates with ADCs on other PMICs. It is possible that some of these
+other PMICs have ADCs of a different generation and may need to be handled
+differently (for example, on SM8750, PMK8550 is the master PMIC with Gen3
+ADC peripheral and it communicates with PMIH0108, which has Gen4 ADC).
+Add the "qcom,adc5-gen4" ADC channel property to indicate that a channel
+is of type Gen4 ADC.
+
+Signed-off-by: Jishnu Prakash <jishnu.prakash@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261120-pmic5_gen4_adc-v2-1-94d0e1fd6847@oss.qualcomm.com
+---
+ .../devicetree/bindings/iio/adc/qcom,spmi-adc5-gen3.yaml  | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/iio/adc/qcom,spmi-adc5-gen3.yaml b/Documentation/devicetree/bindings/iio/adc/qcom,spmi-adc5-gen3.yaml
+index 149f4af8f4b8ba40b6ac88f52bb3b86c6a90fb2c..065b82c41e86ef3473003463d4e1fdce54c2507b 100644
+--- a/Documentation/devicetree/bindings/iio/adc/qcom,spmi-adc5-gen3.yaml
++++ b/Documentation/devicetree/bindings/iio/adc/qcom,spmi-adc5-gen3.yaml
+@@ -83,6 +83,14 @@ patternProperties:
+           This property indicates ADC_TM monitoring is done on this channel.
+         type: boolean
+ 
++      qcom,adc5-gen4:
++        description:
++          Indicates channel is of type ADC5 Gen4. This may be needed in cases where the
++          master PMIC has an ADC peripheral of type Gen3, but some of the other PMICs it
++          communicates with have ADC peripherals of type Gen4, so channels of those PMICs
++          need to be marked as Gen4 to ensure their conversions are handled correctly.
++        type: boolean
++
+ required:
+   - compatible
+   - reg

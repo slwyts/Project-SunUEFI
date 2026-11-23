@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-PATCH = ROOT / 'patches/linux/7.3/0230-LOCAL-input-nt36532e-pen.patch'
+PATCH = ROOT / 'patches/linux/7.3/0257-LOCAL-input-nt36532e-pen.patch'
 SOURCE = Path('drivers/input/touchscreen/nt36532e')
 CALIBRATION = ROOT / 'linux/bsp/common/usr/share/piano/pen/calibration'
 

@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+Date: Thu, 12 Nov 2026 21:33:39 -0800
+Subject: [PATCH] media: qcom: camss: Add PM clock definitions for Kaanapali
+
+The CPAS AHB and AXI clocks are shared by every Kaanapali TFE and IFE
+sub-block. Register them as PM clocks so the PM clock framework enables
+them once when CAMSS resumes, instead of each sub-block listing them and
+taking its own reference.
+
+Link: https://lore.kernel.org/r/20261112-kaanapali-camss-v25-7-1d709f57f370@oss.qualcomm.com
+Reviewed-by: Bryan O'Donoghue <bryan.odonoghue@linaro.org>
+Signed-off-by: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+---
+ drivers/media/platform/qcom/camss/camss.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index b5a912ef5a5a0905f97b0877e195221b3d448b4e..a498e4a8145c8bc25480c25a6f16b6a71e13e94a 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -5654,6 +5654,7 @@ static void camss_remove(struct platform_device *pdev)
+ static const struct camss_resources kaanapali_resources = {
+ 	.version = CAMSS_KAANAPALI,
+ 	.pd_name = "top",
++	.pm_clks = { "cpas_fast_ahb", "cpas_ahb", "gcc_axi_hf" },
+ 	.icc_res = icc_res_kaanapali,
+ 	.tpg_res = tpg_res_8775p,
+ 	.icc_path_num = ARRAY_SIZE(icc_res_kaanapali),

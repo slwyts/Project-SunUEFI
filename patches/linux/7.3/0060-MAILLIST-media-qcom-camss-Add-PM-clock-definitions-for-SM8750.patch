@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+Date: Sat, 14 Nov 2026 19:29:25 +0800
+Subject: [PATCH] media: qcom: camss: Add PM clock definitions for SM8750
+
+Add cpas_fast_ahb, cpas_ahb and gcc_axi_hf to the PM clock list for
+SM8750. The CAMSS core enables them through the shared PM clock helper
+when the device is probed.
+
+Link: https://lore.kernel.org/r/20261114-add-support-for-camss-on-sm8750-v7-8-8ff2a11835f6@oss.qualcomm.com
+Signed-off-by: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+Signed-off-by: Wenmeng Liu <wenmeng.liu@oss.qualcomm.com>
+Reviewed-by: Bryan O'Donoghue <bryan.odonoghue@linaro.org>
+---
+ drivers/media/platform/qcom/camss/camss.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index fe6165030c1872cdacbc73297cc787b8ddef9f94..44b2c97111151da136bfcd63ee14d63377962fd5 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -6094,6 +6094,7 @@ static const struct camss_resources sm8650_resources = {
+ static const struct camss_resources sm8750_resources = {
+ 	.version = CAMSS_8750,
+ 	.pd_name = "top",
++	.pm_clks = { "cpas_fast_ahb", "cpas_ahb", "gcc_axi_hf" },
+ 	.icc_res = icc_res_sm8750,
+ 	.icc_path_num = ARRAY_SIZE(icc_res_sm8750),
+ 	.csiphy_num = 6,

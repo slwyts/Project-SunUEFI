@@ -1,0 +1,113 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+Date: Sat, 14 Nov 2026 19:29:29 +0800
+Subject: [PATCH] media: qcom: camss: tpg: Add support for v2.3.0 TPG
+
+Add support for the TPG on SM8750, which uses hardware version 2.3.0.
+Its test enable and reset go through TPG_CTRL_CMD, so lower the hardware
+version gate in the TPG gen1 driver from 2.4.0 to 2.3.0. Older TPGs keep
+the TPG_CTRL test enable path.
+
+Reuse the SA8775P TPG resource table for SM8750, since SM8750 uses the same
+TPG register and clock names. When a TPG is linked to a CSID 980, route its
+output into the CSID RX through the CSI2 TPG mux.
+
+Link: https://lore.kernel.org/r/20261114-add-support-for-camss-on-sm8750-v7-12-8ff2a11835f6@oss.qualcomm.com
+Signed-off-by: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+Signed-off-by: Wenmeng Liu <wenmeng.liu@oss.qualcomm.com>
+---
+ .../media/platform/qcom/camss/camss-csid-980.c   | 16 ++++++++++++++--
+ .../media/platform/qcom/camss/camss-tpg-gen1.c   |  5 +++--
+ drivers/media/platform/qcom/camss/camss.c        |  2 ++
+ 3 files changed, 19 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-csid-980.c b/drivers/media/platform/qcom/camss/camss-csid-980.c
+index 713db25cd8c65ed7e991bffbb8b19d66c662e708..38cbd67d355d0e7bc683cf5a9e521d082c479d58 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid-980.c
++++ b/drivers/media/platform/qcom/camss/camss-csid-980.c
+@@ -6,6 +6,7 @@
+  *
+  * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+  */
++#include <linux/bitfield.h>
+ #include <linux/completion.h>
+ #include <linux/delay.h>
+ #include <linux/interrupt.h>
+@@ -67,6 +68,8 @@
+ #define		CSI2_RX_CFG0_NUM_ACTIVE_LANES		0
+ #define		CSI2_RX_CFG0_DL0_INPUT_SEL		4
+ #define		CSI2_RX_CFG0_PHY_NUM_SEL		20
++#define		CSI2_RX_CFG0_TPG_MUX_EN			BIT(27)
++#define		CSI2_RX_CFG0_TPG_MUX_SEL		GENMASK(29, 28)
+ #define		CSI2_RX_CFG0_PHY_SEL_BASE_IDX		1
+ #define CSID_CSI2_RX_CFG1			(csid_is_lite(csid) ? 0x204 : 0x404)
+ #define		CSI2_RX_CFG1_ECC_CORRECTION_EN		BIT(0)
+@@ -195,12 +198,21 @@ static void __csid_reg_update_clear(struct csid_device *csid, int port_id)
+ static void __csid_configure_rx(struct csid_device *csid,
+ 				struct csid_phy_config *phy)
+ {
++	struct camss *camss = csid->camss;
+ 	int val;
+ 
+ 	val = (phy->lane_cnt - 1) << CSI2_RX_CFG0_NUM_ACTIVE_LANES;
+ 	val |= phy->lane_assign << CSI2_RX_CFG0_DL0_INPUT_SEL;
+-	val |= (phy->csiphy_id + CSI2_RX_CFG0_PHY_SEL_BASE_IDX)
+-	       << CSI2_RX_CFG0_PHY_NUM_SEL;
++
++	if (camss->tpg && csid->tpg_linked &&
++	    camss->tpg[phy->csiphy_id].testgen.mode != TPG_PAYLOAD_MODE_DISABLED) {
++		val |= FIELD_PREP(CSI2_RX_CFG0_TPG_MUX_SEL, phy->csiphy_id + 1);
++		val |= CSI2_RX_CFG0_TPG_MUX_EN;
++	} else {
++		val |= (phy->csiphy_id + CSI2_RX_CFG0_PHY_SEL_BASE_IDX)
++			<< CSI2_RX_CFG0_PHY_NUM_SEL;
++	}
++
+ 	writel(val, csid->base + CSID_CSI2_RX_CFG0);
+ 
+ 	val = CSI2_RX_CFG1_ECC_CORRECTION_EN;
+diff --git a/drivers/media/platform/qcom/camss/camss-tpg-gen1.c b/drivers/media/platform/qcom/camss/camss-tpg-gen1.c
+index cabbb2638cf38ddfd333d2c2c6a04984f223d66b..1972423ba41d9d30f5b00a08c1b4a07ed2a0e51f 100644
+--- a/drivers/media/platform/qcom/camss/camss-tpg-gen1.c
++++ b/drivers/media/platform/qcom/camss/camss-tpg-gen1.c
+@@ -22,6 +22,7 @@
+ 
+ #define TPG_HW_VER_2_0_0                TPG_HW_VER(2, 0, 0)
+ #define TPG_HW_VER_2_1_0                TPG_HW_VER(2, 1, 0)
++#define TPG_HW_VER_2_3_0                TPG_HW_VER(2, 3, 0)
+ #define TPG_HW_VER_2_4_0                TPG_HW_VER(2, 4, 0)
+ 
+ #define TPG_HW_STATUS		0x4
+@@ -170,7 +171,7 @@ static int tpg_stream_on(struct tpg_device *tpg)
+ 	val = FIELD_PREP(TPG_CTRL_NUM_ACTIVE_LANES, lane_cnt - 1) |
+ 	      FIELD_PREP(TPG_CTRL_NUM_ACTIVE_VC, last_vc);
+ 
+-	if (tpg->hw_version < TPG_HW_VER_2_4_0) {
++	if (tpg->hw_version < TPG_HW_VER_2_3_0) {
+ 		val |= FIELD_PREP(TPG_CTRL_TEST_EN, 1);
+ 		writel(val, tpg->base + TPG_CTRL);
+ 	} else {
+@@ -183,7 +184,7 @@ static int tpg_stream_on(struct tpg_device *tpg)
+ 
+ static int tpg_reset(struct tpg_device *tpg)
+ {
+-	if (tpg->hw_version < TPG_HW_VER_2_4_0)
++	if (tpg->hw_version < TPG_HW_VER_2_3_0)
+ 		writel(0, tpg->base + TPG_CTRL);
+ 
+ 	writel(TPG_CTRL_CMD_HW_RESET, tpg->base + TPG_CTRL_CMD);
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index bab4ed6418a64cf0d3df2ba036c0f787ba626dac..83fa569545032e653eed421fb4e8df082ccb4c41 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -6281,8 +6281,10 @@ static const struct camss_resources sm8750_resources = {
+ 	.csid_res = csid_res_sm8750,
+ 	.vfe_res = vfe_res_sm8750,
+ 	.icc_res = icc_res_sm8750,
++	.tpg_res = tpg_res_8775p,
+ 	.icc_path_num = ARRAY_SIZE(icc_res_sm8750),
+ 	.csiphy_num = 6,
++	.tpg_num = ARRAY_SIZE(tpg_res_8775p),
+ 	.csid_num = ARRAY_SIZE(csid_res_sm8750),
+ 	.vfe_num = ARRAY_SIZE(vfe_res_sm8750),
+ };

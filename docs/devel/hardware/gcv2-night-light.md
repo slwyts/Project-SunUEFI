@@ -15,7 +15,7 @@
 - 两类曲线组成一批完整颜色状态，提交到当前分配的两路 DSPP。只有共同完成才更新相应 flush；关闭曲线使用旁路状态。
 - DMA 队列失败时保留既有的生命周期和退出规则，不能释放仍可能被硬件使用的内存。
 
-IGCv5 实现位于[显示补丁](../../../patches/linux/7.3/0117-LOCAL-drm-msm-dpu-igcv5-degamma.patch)，GCv2 暗部扩展位于 [`0159`](../../../patches/linux/7.3/0164-LOCAL-dpu-gcv2-dark-range.patch)。Linux 7.3.3 已在设备上完成暗部扩展的恒等、非线性及旁路恢复，双 DSPP mask 为 `0x60000`，每次均读到硬件完成 `status=0x8`。完整组合命令为 2532 个 word，最终描述符对齐到 10240 字节，仍在 16 KiB 缓冲区内；两组 LUT 同时旁路只需 8 个 word。物理暗阶和颜色准确度仍需独立检查。
+IGCv5 实现位于[显示补丁](../../../patches/linux/7.3/0145-LOCAL-drm-msm-dpu-igcv5-degamma.patch)，GCv2 暗部扩展位于 [`0159`](../../../patches/linux/7.3/0191-LOCAL-dpu-gcv2-dark-range.patch)。Linux 7.3.3 已在设备上完成暗部扩展的恒等、非线性及旁路恢复，双 DSPP mask 为 `0x60000`，每次均读到硬件完成 `status=0x8`。完整组合命令为 2532 个 word，最终描述符对齐到 10240 字节，仍在 16 KiB 缓冲区内；两组 LUT 同时旁路只需 8 个 word。物理暗阶和颜色准确度仍需独立检查。
 
 ## 桌面兼容
 

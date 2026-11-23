@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+Date: Sat, 14 Nov 2026 19:29:23 +0800
+Subject: [PATCH] phy: qcom-mipi-csi2: Add SM8750 support
+
+Add the SM8750 CSI2 DPHY compatible to the match table, using the 3nm
+DPHY configuration.
+
+The SM8750 CSIPHY nodes only carry "qcom,sm8750-csi2-phy" with no
+fallback compatible, so without this entry no driver matches them and
+the PHYs stay unbound.
+
+Link: https://lore.kernel.org/r/20261114-add-support-for-camss-on-sm8750-v7-6-8ff2a11835f6@oss.qualcomm.com
+Signed-off-by: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+Signed-off-by: Wenmeng Liu <wenmeng.liu@oss.qualcomm.com>
+Reviewed-by: Bryan O'Donoghue <bryan.odonoghue@linaro.org>
+---
+ drivers/phy/qualcomm/phy-qcom-mipi-csi2-core.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/phy/qualcomm/phy-qcom-mipi-csi2-core.c b/drivers/phy/qualcomm/phy-qcom-mipi-csi2-core.c
+index 941f8b920b1d632edfc4c35d1f9e22bdc1811d18..92edba848f10c352e5f1ae1b588bf1814c152c11 100644
+--- a/drivers/phy/qualcomm/phy-qcom-mipi-csi2-core.c
++++ b/drivers/phy/qualcomm/phy-qcom-mipi-csi2-core.c
+@@ -444,6 +444,7 @@ static int phy_qcom_mipi_csi2_probe(struct platform_device *pdev)
+ 
+ static const struct of_device_id phy_qcom_mipi_csi2_of_match_table[] = {
+ 	{ .compatible	= "qcom,kaanapali-csi2-phy", .data = &mipi_csi2_dphy_3nm_kaanapali },
++	{ .compatible	= "qcom,sm8750-csi2-phy", .data = &mipi_csi2_dphy_3nm_kaanapali },
+ 	{ .compatible	= "qcom,x1e80100-csi2-phy", .data = &mipi_csi2_dphy_4nm_x1e },
+ 	{ }
+ };

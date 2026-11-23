@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jishnu Prakash <jishnu.prakash@oss.qualcomm.com>
+Date: Fri, 20 Nov 2026 14:49:47 +0530
+Subject: iio: adc: qcom-spmi-adc5-gen3: Add support for Gen4 ADC master PMICs
+
+At present, support is present for Gen4 ADC channels under a master PMIC
+with Gen3 ADC, through the ADC channel property "qcom,adc5-gen4". Add a
+compatible string "qcom,spmi-adc5-gen4" to support a master PMIC with Gen4
+ADC.
+
+For Gen4 master PMIC, add a new DT property "qcom,adc5-gen3" to distinguish
+Gen3 channels under a Gen4 master, similar to the channel property
+"qcom,adc5-gen4". A channel without either of these properties is
+considered to be of the same type indicated by the top-level compatible
+string.
+
+Signed-off-by: Jishnu Prakash <jishnu.prakash@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261120-pmic5_gen4_adc-v2-7-94d0e1fd6847@oss.qualcomm.com
+---
+ drivers/iio/adc/qcom-spmi-adc5-gen3.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/iio/adc/qcom-spmi-adc5-gen3.c b/drivers/iio/adc/qcom-spmi-adc5-gen3.c
+index b5742db466b1fcb04dce49237a034ecf29eed545..b5a444b89ed0d4cdbb92217b8e078f5f1819cb9b 100644
+--- a/drivers/iio/adc/qcom-spmi-adc5-gen3.c
++++ b/drivers/iio/adc/qcom-spmi-adc5-gen3.c
+@@ -521,9 +521,13 @@ static int adc5_gen3_get_fw_channel_data(struct adc5_chip *adc,
+ 	if (fwnode_property_read_bool(fwnode, "qcom,adc5-gen4")) {
+ 		prop->common_props.generation = ADC5_GEN4;
+ 		data = &adc5_gen4_data_pmic;
+-	} else {
++	} else if (fwnode_property_read_bool(fwnode, "qcom,adc5-gen3")) {
+ 		prop->common_props.generation = ADC5_GEN3;
+ 		data = &adc5_gen3_data_pmic;
++	} else {
++		prop->common_props.generation = (adc->data == &adc5_gen3_data_pmic) ?
++						 ADC5_GEN3 : ADC5_GEN4;
++		data = adc->data;
+ 	}
+ 	prop->common_props.data = data;
+ 
+@@ -596,6 +600,10 @@ static const struct of_device_id adc5_match_table[] = {
+ 		.compatible = "qcom,spmi-adc5-gen3",
+ 		.data = &adc5_gen3_data_pmic,
+ 	},
++	{
++		.compatible = "qcom,spmi-adc5-gen4",
++		.data = &adc5_gen4_data_pmic,
++	},
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, adc5_match_table);

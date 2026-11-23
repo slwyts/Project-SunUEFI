@@ -1,0 +1,81 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+Date: Sat, 14 Nov 2026 19:29:24 +0800
+Subject: [PATCH] media: qcom: camss: Add SM8750 compatible
+
+Add support for SM8750 in the camss driver. Add high level resource
+information along with the bus bandwidth votes. Module level detailed
+resource information will be enumerated in the following patches of the
+series.
+
+[Backport: Add the platform match in the Linux 7.3.3 table without Glymur.]
+
+Link: https://lore.kernel.org/r/20261114-add-support-for-camss-on-sm8750-v7-7-8ff2a11835f6@oss.qualcomm.com
+Reviewed-by: Bryan O'Donoghue <bryan.odonoghue@linaro.org>
+Signed-off-by: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+Signed-off-by: Wenmeng Liu <wenmeng.liu@oss.qualcomm.com>
+---
+ drivers/media/platform/qcom/camss/camss.c | 23 +++++++++++++++++++++++
+ drivers/media/platform/qcom/camss/camss.h |  1 +
+ 2 files changed, 24 insertions(+)
+
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index 8ef1e11607d89eb92efe25ca105a3196540a97e7..fe6165030c1872cdacbc73297cc787b8ddef9f94 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -4393,6 +4393,20 @@ static const struct resources_icc icc_res_sa8775p[] = {
+ 	},
+ };
+ 
++static const struct resources_icc icc_res_sm8750[] = {
++	{
++		.name = "ahb",
++		.icc_bw_tbl.avg = 150000,
++		.icc_bw_tbl.peak = 300000,
++	},
++	/* Based on 4096 x 3072 30 FPS 2496 Mbps mode */
++	{
++		.name = "hf_mnoc",
++		.icc_bw_tbl.avg = 471860,
++		.icc_bw_tbl.peak = 925857,
++	},
++};
++
+ static const struct camss_subdev_resources csiphy_res_x1e80100[] = {
+ 	/* CSIPHY0 */
+ 	{
+@@ -6077,6 +6091,14 @@ static const struct camss_resources sm8650_resources = {
+ 	.vfe_num = ARRAY_SIZE(vfe_res_sm8650),
+ };
+ 
++static const struct camss_resources sm8750_resources = {
++	.version = CAMSS_8750,
++	.pd_name = "top",
++	.icc_res = icc_res_sm8750,
++	.icc_path_num = ARRAY_SIZE(icc_res_sm8750),
++	.csiphy_num = 6,
++};
++
+ static const struct camss_resources x1e80100_resources = {
+ 	.version = CAMSS_X1E80100,
+ 	.pd_name = "top",
+@@ -6112,6 +6134,7 @@ static const struct of_device_id camss_dt_match[] = {
+ 	{ .compatible = "qcom,sm8250-camss", .data = &sm8250_resources },
+ 	{ .compatible = "qcom,sm8550-camss", .data = &sm8550_resources },
+ 	{ .compatible = "qcom,sm8650-camss", .data = &sm8650_resources },
++	{ .compatible = "qcom,sm8750-camss", .data = &sm8750_resources },
+ 	{ .compatible = "qcom,x1e80100-camss", .data = &x1e80100_resources },
+ 	{ }
+ };
+diff --git a/drivers/media/platform/qcom/camss/camss.h b/drivers/media/platform/qcom/camss/camss.h
+index b4641e6d0e0c610a804355278e0c689e2b45e25d..d9212e3ef99e04630ed776eab1390bb17b6a97da 100644
+--- a/drivers/media/platform/qcom/camss/camss.h
++++ b/drivers/media/platform/qcom/camss/camss.h
+@@ -95,6 +95,7 @@ enum camss_version {
+ 	CAMSS_845,
+ 	CAMSS_8550,
+ 	CAMSS_8650,
++	CAMSS_8750,
+ 	CAMSS_8775P,
+ 	CAMSS_KAANAPALI,
+ 	CAMSS_X1E80100,

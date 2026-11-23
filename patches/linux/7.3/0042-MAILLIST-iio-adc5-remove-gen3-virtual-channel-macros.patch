@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jishnu Prakash <jishnu.prakash@oss.qualcomm.com>
+Date: Fri, 20 Nov 2026 14:49:45 +0530
+Subject: iio: adc: qcom-spmi-adc5-gen3: Remove Gen3 virtual channel macros
+
+Now that the Gen3 virtual channel macros have been replaced with Gen4
+macros in both main IIO ADC driver and auxiliary ADC_TM driver, remove
+the Gen3 macros as they are no longer used.
+
+Signed-off-by: Jishnu Prakash <jishnu.prakash@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261120-pmic5_gen4_adc-v2-5-94d0e1fd6847@oss.qualcomm.com
+---
+ include/linux/iio/adc/qcom-adc5-gen3-common.h | 5 -----
+ 1 file changed, 5 deletions(-)
+
+diff --git a/include/linux/iio/adc/qcom-adc5-gen3-common.h b/include/linux/iio/adc/qcom-adc5-gen3-common.h
+index 05bd9c8f9dc777663e053db0b71b48a5131530da..562180e8b8fad27046e219aa541d0dc9419a3e01 100644
+--- a/include/linux/iio/adc/qcom-adc5-gen3-common.h
++++ b/include/linux/iio/adc/qcom-adc5-gen3-common.h
+@@ -40,7 +40,6 @@
+ #define ADC5_GEN3_CONV_ERR_CLR_REQ		BIT(0)
+ 
+ #define ADC5_GEN3_SID				0x4f
+-#define ADC5_GEN3_SID_MASK			GENMASK(3, 0)
+ #define ADC5_GEN4_SID_MASK			GENMASK(4, 0)
+ #define ADC5_GEN4_BUS_INDEX_MASK		GENMASK(6, 5)
+ 
+@@ -78,10 +77,6 @@
+ #define ADC5_GEN3_CONV_REQ			0xe5
+ #define ADC5_GEN3_CONV_REQ_REQ			BIT(0)
+ 
+-#define ADC5_GEN3_VIRTUAL_SID_MASK		GENMASK(15, 8)
+-#define ADC5_GEN3_CHANNEL_MASK			GENMASK(7, 0)
+-#define ADC5_GEN3_V_CHAN(x)		\
+-	(FIELD_PREP(ADC5_GEN3_VIRTUAL_SID_MASK, (x).sid) | (x).channel)
+ #define ADC5_GEN4_V_CHAN_BUS_INDEX_MASK		GENMASK(14, 13)
+ #define ADC5_GEN4_V_CHAN_SID_MASK		GENMASK(12, 8)
+ #define ADC5_GEN4_V_CHAN_CHANNEL_MASK		GENMASK(7, 0)

@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+Date: Sat, 14 Nov 2026 19:29:18 +0800
+Subject: [PATCH] dt-bindings: phy: qcom,x1e80100-csi2-phy: Add SM8750 CSI2 PHY
+
+The SM8750 camera subsystem has six CSI2 D-PHY blocks. Describe them
+with a standalone "qcom,sm8750-csi2-phy" compatible, so the CAMSS
+binding can instantiate the CSIPHY nodes as separate phy devices.
+
+Link: https://lore.kernel.org/r/20261114-add-support-for-camss-on-sm8750-v7-1-8ff2a11835f6@oss.qualcomm.com
+Signed-off-by: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+Signed-off-by: Wenmeng Liu <wenmeng.liu@oss.qualcomm.com>
+---
+ .../devicetree/bindings/phy/qcom,x1e80100-csi2-phy.yaml          | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/phy/qcom,x1e80100-csi2-phy.yaml b/Documentation/devicetree/bindings/phy/qcom,x1e80100-csi2-phy.yaml
+index 24ca06b97656077cf168e72b2a32f493d9c06af2..5e5b518369f3346291bb74b39a239cb19fcf387b 100644
+--- a/Documentation/devicetree/bindings/phy/qcom,x1e80100-csi2-phy.yaml
++++ b/Documentation/devicetree/bindings/phy/qcom,x1e80100-csi2-phy.yaml
+@@ -18,6 +18,7 @@ properties:
+   compatible:
+     enum:
+       - qcom,kaanapali-csi2-phy
++      - qcom,sm8750-csi2-phy
+       - qcom,x1e80100-csi2-phy
+ 
+   reg:

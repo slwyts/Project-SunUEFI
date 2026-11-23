@@ -1,0 +1,132 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jishnu Prakash <jishnu.prakash@oss.qualcomm.com>
+Date: Fri, 20 Nov 2026 14:49:44 +0530
+Subject: thermal: qcom: qcom-spmi-adc-tm5-gen3: Add support for QCOM PMIC5
+ Gen4 ADC
+
+PMIC5 Gen4 ADC is similar to PMIC5 Gen3 ADC, with several changes made
+for improved performance, mostly at the hardware level.
+
+One significant software change is that ratiometric conversion resolution
+has been increased from 14 bits to 16 bits. Add a reverse scaling function
+for Gen4 ADC thermistor channels.
+
+In the latest PMIC arbiter version (v8), there can be up to 4 buses
+under the PMIC arbiter and 32 PMICs under each bus. In order to
+support communication between ADC on the master PMIC and ADCs on any
+of the other PMICs, a field of width 2 bits is added for bus index
+and the bits for SID are extended from 4 to 5 bits, in the SID
+register. Add support for this.
+
+Co-developed-by: Anjelique Melendez <anjelique.melendez@oss.qualcomm.com>
+Signed-off-by: Anjelique Melendez <anjelique.melendez@oss.qualcomm.com>
+Signed-off-by: Jishnu Prakash <jishnu.prakash@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261120-pmic5_gen4_adc-v2-4-94d0e1fd6847@oss.qualcomm.com
+---
+ drivers/iio/adc/qcom-vadc-common.c            | 11 +++++++++++
+ drivers/thermal/qcom/qcom-spmi-adc-tm5-gen3.c | 19 ++++++++++++++-----
+ include/linux/iio/adc/qcom-vadc-common.h      |  2 ++
+ 3 files changed, 27 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/iio/adc/qcom-vadc-common.c b/drivers/iio/adc/qcom-vadc-common.c
+index 5c4052f6f24fdf3478683ed22a14271b70344244..779c2a66a85877ebd138e88e1bcd4c404a0c8b38 100644
+--- a/drivers/iio/adc/qcom-vadc-common.c
++++ b/drivers/iio/adc/qcom-vadc-common.c
+@@ -718,6 +718,17 @@ u16 qcom_adc_tm5_gen2_temp_res_scale(int temp)
+ }
+ EXPORT_SYMBOL(qcom_adc_tm5_gen2_temp_res_scale);
+ 
++u16 qcom_adc_tm5_gen4_temp_res_scale(int temp)
++{
++	s64 resistance;
++
++	resistance = qcom_vadc_map_temp_voltage(adcmap7_100k,
++						ARRAY_SIZE(adcmap7_100k), temp);
++
++	return div64_s64(resistance * RATIO_MAX_ADC5_GEN4, resistance + R_PU_100K);
++}
++EXPORT_SYMBOL(qcom_adc_tm5_gen4_temp_res_scale);
++
+ int qcom_adc5_hw_scale(enum vadc_scale_fn_type scaletype,
+ 		    unsigned int prescale_ratio,
+ 		    const struct adc5_data *data,
+diff --git a/drivers/thermal/qcom/qcom-spmi-adc-tm5-gen3.c b/drivers/thermal/qcom/qcom-spmi-adc-tm5-gen3.c
+index 9cf552d368684712806b7f4ad739fd65b663e8bc..80e820b6dc4b2dc3c95c69ced519a3c579945ff6 100644
+--- a/drivers/thermal/qcom/qcom-spmi-adc-tm5-gen3.c
++++ b/drivers/thermal/qcom/qcom-spmi-adc-tm5-gen3.c
+@@ -207,15 +207,23 @@ static int adc_tm5_gen3_disable_channel(struct adc_tm5_gen3_channel_props *prop)
+ 			       ADC5_GEN3_CONV_REQ, &val, sizeof(val));
+ }
+ 
++typedef u16 (*temp_res_scale)(int temp);
++
+ static int adc_tm5_gen3_configure(struct adc_tm5_gen3_channel_props *prop,
+ 				  int low_temp, int high_temp)
+ {
+ 	struct adc_tm5_gen3_chip *adc_tm5 = prop->chip;
+ 	u8 buf[ADC_TM5_GEN3_CONFIG_REGS];
++	temp_res_scale tm_scal_fn;
+ 	u8 conv_req;
+ 	u16 adc_code;
+ 	int ret;
+ 
++	if (prop->common_props.generation == ADC5_GEN4)
++		tm_scal_fn = qcom_adc_tm5_gen4_temp_res_scale;
++	else
++		tm_scal_fn = qcom_adc_tm5_gen2_temp_res_scale;
++
+ 	ret = adc5_gen3_poll_wait_hs(adc_tm5->dev_data, prop->sdam_index);
+ 	if (ret < 0)
+ 		return ret;
+@@ -225,8 +233,9 @@ static int adc_tm5_gen3_configure(struct adc_tm5_gen3_channel_props *prop,
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	/* Write SID */
+-	buf[0] = FIELD_PREP(ADC5_GEN3_SID_MASK, prop->common_props.sid);
++	/* Write SID and bus_id*/
++	buf[0] = FIELD_PREP(ADC5_GEN4_BUS_INDEX_MASK, prop->common_props.bus_index) |
++		 FIELD_PREP(ADC5_GEN4_SID_MASK, prop->common_props.sid);
+ 
+ 	/* Select TM channel and indicate there is an actual conversion request */
+ 	buf[1] = ADC5_GEN3_CHAN_CONV_REQ | prop->tm_chan_index;
+@@ -252,7 +261,7 @@ static int adc_tm5_gen3_configure(struct adc_tm5_gen3_channel_props *prop,
+ 	/* High temperature corresponds to low voltage threshold */
+ 	prop->low_thr_en = (high_temp != INT_MAX);
+ 	if (prop->low_thr_en) {
+-		adc_code = qcom_adc_tm5_gen2_temp_res_scale(high_temp);
++		adc_code = tm_scal_fn(high_temp);
+ 		put_unaligned_le16(adc_code, &buf[8]);
+ 		buf[7] |= ADC5_GEN3_LOW_THR_INT_EN;
+ 	}
+@@ -260,7 +269,7 @@ static int adc_tm5_gen3_configure(struct adc_tm5_gen3_channel_props *prop,
+ 	/* Low temperature corresponds to high voltage threshold */
+ 	prop->high_thr_en = (low_temp != -INT_MAX);
+ 	if (prop->high_thr_en) {
+-		adc_code = qcom_adc_tm5_gen2_temp_res_scale(low_temp);
++		adc_code = tm_scal_fn(low_temp);
+ 		put_unaligned_le16(adc_code, &buf[10]);
+ 		buf[7] |= ADC5_GEN3_HIGH_THR_INT_EN;
+ 	}
+@@ -306,7 +315,7 @@ static int adc_tm5_register_tzd(struct adc_tm5_gen3_chip *adc_tm5)
+ 	int ret;
+ 
+ 	for (int i = 0; i < adc_tm5->nchannels; i++) {
+-		channel = ADC5_GEN3_V_CHAN(adc_tm5->chan_props[i].common_props);
++		channel = ADC5_GEN4_V_CHAN(adc_tm5->chan_props[i].common_props);
+ 		tzd = devm_thermal_of_zone_register(adc_tm5->dev, channel,
+ 						    &adc_tm5->chan_props[i],
+ 						    &adc_tm_ops);
+diff --git a/include/linux/iio/adc/qcom-vadc-common.h b/include/linux/iio/adc/qcom-vadc-common.h
+index 4be68208384346d22f55b14537022c5d603aa550..55efad27ed73e9b7cd1271a7ca25160105eb490a 100644
+--- a/include/linux/iio/adc/qcom-vadc-common.h
++++ b/include/linux/iio/adc/qcom-vadc-common.h
+@@ -159,6 +159,8 @@ u16 qcom_adc_tm5_temp_volt_scale(unsigned int prescale_ratio,
+ 
+ u16 qcom_adc_tm5_gen2_temp_res_scale(int temp);
+ 
++u16 qcom_adc_tm5_gen4_temp_res_scale(int temp);
++
+ int qcom_adc5_prescaling_from_dt(u32 num, u32 den);
+ 
+ int qcom_adc5_hw_settle_time_from_dt(u32 value, const unsigned int *hw_settle);

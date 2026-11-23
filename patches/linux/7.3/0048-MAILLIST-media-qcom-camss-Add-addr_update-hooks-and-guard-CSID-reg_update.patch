@@ -1,0 +1,146 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+Date: Thu, 12 Nov 2026 21:33:36 -0800
+Subject: [PATCH] media: qcom: camss: Add addr_update hooks and guard CSID
+ reg_update
+
+From CSID 680 on, CAMIF was moved into the CSID and the CSID became
+responsible for issuing RUP commands. Starting with CSID 980, RUP and
+AUP are issued separately, and each command must have its corresponding
+SET bit asserted in RUP_AUP_CMD; otherwise, the hardware ignores it.
+
+CSID 980 and newer require a specific stream-on sequence. After the RX
+is configured and before the RDI path is enabled, the CSID must first
+issue an AUP and then a RUP. A RUP issued before that point would leave
+the VFE without a BUF_DONE event. Therefore, once addr_update is set,
+the VFE must skip the initial RUP during stream-on.
+
+Add addr_update hooks and camss_addr_update, and make camss_reg_update
+handle a missing callback safely. The VFE keeps issuing its initial RUP
+during stream-on and behavior is unchanged if nullify addr_update. The
+skip takes effect once a generation that sets addr_update is enabled.
+
+Link: https://lore.kernel.org/r/20261112-kaanapali-camss-v25-4-1d709f57f370@oss.qualcomm.com
+Reviewed-by: Bryan O'Donoghue <bryan.odonoghue@linaro.org>
+Reviewed-by: Loic Poulain <loic.poulain@oss.qualcomm.com>
+Signed-off-by: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+---
+ drivers/media/platform/qcom/camss/camss-csid.h |  8 ++++++++
+ drivers/media/platform/qcom/camss/camss-vfe.c  |  9 ++++++++-
+ drivers/media/platform/qcom/camss/camss-vfe.h  |  3 +++
+ drivers/media/platform/qcom/camss/camss.c      | 15 ++++++++++++++-
+ drivers/media/platform/qcom/camss/camss.h      |  2 ++
+ 5 files changed, 35 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-csid.h b/drivers/media/platform/qcom/camss/camss-csid.h
+index 5296b10f6bac839a3faa1039bdbf0fbbbe9456ac..2f7e593defedbbc4e550dc8f068ed662a7da91cd 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid.h
++++ b/drivers/media/platform/qcom/camss/camss-csid.h
+@@ -137,6 +137,14 @@ struct csid_hw_ops {
+ 	 * @is_clear: Indicate if it is clearing reg update or setting reg update
+ 	 */
+ 	void (*reg_update)(struct csid_device *csid, int port_id, bool is_clear);
++
++	/*
++	 * addr_update - latch buffer address update through AUP
++	 * @csid: CSID device
++	 * @port_id: Port id
++	 * @is_clear: Indicate if it is clearing addr update or setting addr update
++	 */
++	void (*addr_update)(struct csid_device *csid, int port_id, bool is_clear);
+ };
+ 
+ struct csid_subdev_resources {
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index 319d191589884777bced456867e5a2a4211a2770..235f06e1f4f6436838b93f358bc8e2f4b12bd197 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -487,6 +487,8 @@ void vfe_buf_done(struct vfe_device *vfe, int wm)
+ 		ops->vfe_wm_update(vfe, output->wm_idx[0],
+ 				   output->buf[index]->addr[0],
+ 				   line);
++		if (ops->addr_update)
++			ops->addr_update(vfe, line->id);
+ 		ops->reg_update(vfe, line->id);
+ 	} else {
+ 		output->gen2.active_num--;
+@@ -525,6 +527,8 @@ int vfe_enable_output_v2(struct vfe_line *line)
+ 
+ 	spin_lock_irqsave(&vfe->output_lock, flags);
+ 
++	if (ops->addr_update_clear)
++		ops->addr_update_clear(vfe, line->id);
+ 	ops->reg_update_clear(vfe, line->id);
+ 
+ 	if (output->state > VFE_OUTPUT_RESERVED) {
+@@ -552,7 +556,8 @@ int vfe_enable_output_v2(struct vfe_line *line)
+ 		output->gen2.active_num++;
+ 		ops->vfe_wm_update(vfe, output->wm_idx[0],
+ 				   output->buf[i]->addr[0], line);
+-		ops->reg_update(vfe, line->id);
++		if (!ops->addr_update)
++			ops->reg_update(vfe, line->id);
+ 	}
+ 
+ 	spin_unlock_irqrestore(&vfe->output_lock, flags);
+@@ -588,6 +593,8 @@ int vfe_queue_buffer_v2(struct camss_video *vid,
+ 		output->buf[output->gen2.active_num++] = buf;
+ 		ops->vfe_wm_update(vfe, output->wm_idx[0],
+ 				   buf->addr[0], line);
++		if (ops->addr_update)
++			ops->addr_update(vfe, line->id);
+ 		ops->reg_update(vfe, line->id);
+ 	} else {
+ 		vfe_buf_add_pending(output, buf);
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.h b/drivers/media/platform/qcom/camss/camss-vfe.h
+index ae9dad353a3783cc0c9945e58167573b48441067..8312e4c91e98a770b50520e03daca84715c3fe1c 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.h
++++ b/drivers/media/platform/qcom/camss/camss-vfe.h
+@@ -99,6 +99,9 @@ struct vfe_line {
+ struct vfe_device;
+ 
+ struct vfe_hw_ops {
++	void (*addr_update)(struct vfe_device *vfe, enum vfe_line_id line_id);
++	void (*addr_update_clear)(struct vfe_device *vfe,
++				  enum vfe_line_id line_id);
+ 	void (*enable_irq)(struct vfe_device *vfe);
+ 	void (*global_reset)(struct vfe_device *vfe);
+ 	u32 (*hw_version)(struct vfe_device *vfe);
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index 3d6402021fec869620d3135e9987ffb00793ddc6..d134c629c507df3c0b66d4e07771f525f0029c26 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -5101,7 +5101,20 @@ void camss_reg_update(struct camss *camss, int hw_id, int port_id, bool is_clear
+ 	if (hw_id < camss->res->csid_num) {
+ 		csid = &camss->csid[hw_id];
+ 
+-		csid->res->hw_ops->reg_update(csid, port_id, is_clear);
++		if (csid->res->hw_ops->reg_update)
++			csid->res->hw_ops->reg_update(csid, port_id, is_clear);
++	}
++}
++
++void camss_addr_update(struct camss *camss, int hw_id, int port_id, bool is_clear)
++{
++	struct csid_device *csid;
++
++	if (hw_id < camss->res->csid_num) {
++		csid = &camss->csid[hw_id];
++
++		if (csid->res->hw_ops->addr_update)
++			csid->res->hw_ops->addr_update(csid, port_id, is_clear);
+ 	}
+ }
+ 
+diff --git a/drivers/media/platform/qcom/camss/camss.h b/drivers/media/platform/qcom/camss/camss.h
+index 5d82cd6047f17da51e8b5a4a4c5ec7fdc0852300..f74002c6adf8744389d8ccdea5e523cfe92f5237 100644
+--- a/drivers/media/platform/qcom/camss/camss.h
++++ b/drivers/media/platform/qcom/camss/camss.h
+@@ -181,5 +181,7 @@ void camss_delete(struct camss *camss);
+ void camss_buf_done(struct camss *camss, int hw_id, int port_id);
+ void camss_reg_update(struct camss *camss, int hw_id,
+ 		      int port_id, bool is_clear);
++void camss_addr_update(struct camss *camss, int hw_id,
++		       int port_id, bool is_clear);
+ 
+ #endif /* QC_MSM_CAMSS_H */

@@ -1,0 +1,86 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+Date: Thu, 12 Nov 2026 21:33:34 -0800
+Subject: [PATCH] phy: qcom-mipi-csi2: Parametrise the common status register
+ offset
+
+The CSI2 PHY common status registers are not at a fixed offset from the
+common register block across SoCs: x1e80100 uses 0xb0 while other 3PH
+v2.4.0 parts differ.
+
+Replace the hard-coded 0xb0 in CSIPHY_3PH_CMN_CSI_COMMON_STATUSn() with
+a per-SoC common_status_offset field in struct mipi_csi2phy_device_regs,
+initialising x1e80100 to 0xb0 so behaviour is unchanged. This is a
+no-functional-change preparation for describing other SoC offsets.
+
+Link: https://lore.kernel.org/r/20261112-kaanapali-camss-v25-2-1d709f57f370@oss.qualcomm.com
+Reviewed-by: Bryan O'Donoghue <bod@kernel.org>
+Reviewed-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+Signed-off-by: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+---
+ .../phy/qualcomm/phy-qcom-mipi-csi2-3ph-dphy.c   | 16 +++++++++++-----
+ drivers/phy/qualcomm/phy-qcom-mipi-csi2.h        |  1 +
+ 2 files changed, 12 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/phy/qualcomm/phy-qcom-mipi-csi2-3ph-dphy.c b/drivers/phy/qualcomm/phy-qcom-mipi-csi2-3ph-dphy.c
+index 966d79c98f9b21e1a235b8397c4c84b25d869427..8cd331cfb4b32056a8e5a2a6b3115680dd9712df 100644
+--- a/drivers/phy/qualcomm/phy-qcom-mipi-csi2-3ph-dphy.c
++++ b/drivers/phy/qualcomm/phy-qcom-mipi-csi2-3ph-dphy.c
+@@ -19,7 +19,8 @@
+ #define CSIPHY_3PH_CMN_CSI_COMMON_CTRL6_COMMON_PWRDN_B	BIT(0)
+ #define CSIPHY_3PH_CMN_CSI_COMMON_CTRL6_SHOW_REV_ID	BIT(1)
+ #define CSIPHY_3PH_CMN_CSI_COMMON_CTRL10_IRQ_CLEAR_CMD	BIT(0)
+-#define CSIPHY_3PH_CMN_CSI_COMMON_STATUSn(offset, n)	((offset) + 0xb0 + 0x4 * (n))
++#define CSIPHY_3PH_CMN_CSI_COMMON_STATUSn(offset, common_status_offset, n) \
++	((offset) + (common_status_offset) + 0x4 * (n))
+ 
+ #define CSIPHY_2PH_LN_CSI_2PHASE_CTRL9n(n)		((0x200 * (n)) + 0x24)
+ 
+@@ -176,19 +177,23 @@ static void phy_qcom_mipi_csi2_hw_version_read(struct mipi_csi2phy_device *csi2p
+ 	       CSIPHY_3PH_CMN_CSI_COMMON_CTRLn(regs->common_regs_offset, 6));
+ 
+ 	tmp = readl_relaxed(csi2phy->base +
+-			    CSIPHY_3PH_CMN_CSI_COMMON_STATUSn(regs->common_regs_offset, 12));
++			    CSIPHY_3PH_CMN_CSI_COMMON_STATUSn(regs->common_regs_offset,
++							      regs->common_status_offset, 12));
+ 	csi2phy->hw_version = tmp;
+ 
+ 	tmp = readl_relaxed(csi2phy->base +
+-			    CSIPHY_3PH_CMN_CSI_COMMON_STATUSn(regs->common_regs_offset, 13));
++			    CSIPHY_3PH_CMN_CSI_COMMON_STATUSn(regs->common_regs_offset,
++							      regs->common_status_offset, 13));
+ 	csi2phy->hw_version |= (tmp << 8) & 0xFF00;
+ 
+ 	tmp = readl_relaxed(csi2phy->base +
+-			    CSIPHY_3PH_CMN_CSI_COMMON_STATUSn(regs->common_regs_offset, 14));
++			    CSIPHY_3PH_CMN_CSI_COMMON_STATUSn(regs->common_regs_offset,
++							      regs->common_status_offset, 14));
+ 	csi2phy->hw_version |= (tmp << 16) & 0xFF0000;
+ 
+ 	tmp = readl_relaxed(csi2phy->base +
+-			    CSIPHY_3PH_CMN_CSI_COMMON_STATUSn(regs->common_regs_offset, 15));
++			    CSIPHY_3PH_CMN_CSI_COMMON_STATUSn(regs->common_regs_offset,
++							      regs->common_status_offset, 15));
+ 	csi2phy->hw_version |= (tmp << 24) & 0xFF000000;
+ 
+ 	dev_dbg_once(csi2phy->dev, "CSIPHY 3PH HW Version = 0x%08x\n", csi2phy->hw_version);
+@@ -375,6 +380,7 @@ const struct mipi_csi2phy_soc_cfg mipi_csi2_dphy_4nm_x1e = {
+ 		.init_seq = lane_regs_x1e80100,
+ 		.lane_array_size = ARRAY_SIZE(lane_regs_x1e80100),
+ 		.common_regs_offset = 0x1000,
++		.common_status_offset = 0xb0,
+ 	},
+ 	.supply_names = (const char **)x1e_supplies,
+ 	.num_supplies = ARRAY_SIZE(x1e_supplies),
+diff --git a/drivers/phy/qualcomm/phy-qcom-mipi-csi2.h b/drivers/phy/qualcomm/phy-qcom-mipi-csi2.h
+index 7e55ae00737047f2d0384728a9c98780851eec05..d6366f809e510c59bc4c2e1fa69e5429a09e4ef4 100644
+--- a/drivers/phy/qualcomm/phy-qcom-mipi-csi2.h
++++ b/drivers/phy/qualcomm/phy-qcom-mipi-csi2.h
+@@ -51,6 +51,7 @@ struct mipi_csi2phy_device_regs {
+ 	const struct mipi_csi2phy_lane_regs *init_seq;
+ 	const int lane_array_size;
+ 	const u32 common_regs_offset;
++	const u32 common_status_offset;
+ };
+ 
+ struct mipi_csi2_genpd {

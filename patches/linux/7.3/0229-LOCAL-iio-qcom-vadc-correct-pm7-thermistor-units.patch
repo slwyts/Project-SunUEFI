@@ -1,0 +1,167 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Wed, 11 Nov 2026 00:18:30 +0800
+Subject: iio: adc: qcom-vadc: use millidegrees at the thermistor API
+
+The PM7 thermistor resistance table stores temperature in 1/1024
+degrees. Convert forward Gen3 and Gen4 readings to millidegrees and
+apply the inverse conversion before computing thermal trip codes.
+
+Test nominal temperatures, mixed generations, trip round trips and
+invalid readings with KUnit.
+
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+---
+ drivers/iio/adc/Kconfig                 |  7 +++
+ drivers/iio/adc/qcom-vadc-common-test.c | 71 +++++++++++++++++++++++++
+ drivers/iio/adc/qcom-vadc-common.c      | 16 ++++--
+ 3 files changed, 90 insertions(+), 4 deletions(-)
+ create mode 100644 drivers/iio/adc/qcom-vadc-common-test.c
+
+diff --git a/drivers/iio/adc/Kconfig b/drivers/iio/adc/Kconfig
+index 415e519ad4eb48c136174e7faf35a1fe6d46d80a..3989f27227b832c0b85715ce0afbf057576e452b 100644
+--- a/drivers/iio/adc/Kconfig
++++ b/drivers/iio/adc/Kconfig
+@@ -1352,6 +1352,13 @@ config PALMAS_GPADC
+ 	  is used in smartphones and tablets and supports a 16 channel
+ 	  general purpose ADC.
+ 
++config QCOM_VADC_COMMON_KUNIT_TEST
++	bool "Qualcomm ADC temperature conversion tests"
++	depends on KUNIT=y && UML
++	select QCOM_VADC_COMMON
++	help
++	  Test mixed Gen3/Gen4 thermistor scaling and thermal trip conversion.
++
+ config QCOM_VADC_COMMON
+ 	tristate
+ 
+diff --git a/drivers/iio/adc/qcom-vadc-common-test.c b/drivers/iio/adc/qcom-vadc-common-test.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..36312dd2c7a52653c1dbdff99cd0385488eafddd
+--- /dev/null
++++ b/drivers/iio/adc/qcom-vadc-common-test.c
+@@ -0,0 +1,71 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <kunit/test.h>
++
++static void qcom_vadc_gen4_midpoint_test(struct kunit *test)
++{
++	int temp;
++
++	/* A 100 kOhm thermistor equals the pull-up at 25 degrees Celsius. */
++	KUNIT_ASSERT_EQ(test, qcom_adc5_hw_scale(
++		SCALE_HW_CALIB_THERM_100K_PU_GEN4, 0, NULL, 32768, &temp), 0);
++	KUNIT_EXPECT_GE(test, temp, 24950);
++	KUNIT_EXPECT_LE(test, temp, 25050);
++	KUNIT_ASSERT_EQ(test, qcom_adc5_hw_scale(
++		SCALE_HW_CALIB_THERM_100K_PU_PM7, 0, NULL, 8192, &temp), 0);
++	KUNIT_EXPECT_EQ(test, temp, 25000);
++}
++
++static void qcom_vadc_mixed_generation_test(struct kunit *test)
++{
++	static const u16 gen3_codes[] = { 2048, 4096, 8192, 12288, 14336 };
++	int i, gen3, gen4;
++
++	/* The same divider ratio has four times the code on a Gen4 channel. */
++	for (i = 0; i < ARRAY_SIZE(gen3_codes); i++) {
++		KUNIT_ASSERT_EQ(test, qcom_adc5_hw_scale(
++			SCALE_HW_CALIB_THERM_100K_PU_PM7, 0, NULL,
++			gen3_codes[i], &gen3), 0);
++		KUNIT_ASSERT_EQ(test, qcom_adc5_hw_scale(
++			SCALE_HW_CALIB_THERM_100K_PU_GEN4, 0, NULL,
++			gen3_codes[i] * 4, &gen4), 0);
++		KUNIT_EXPECT_LE(test, abs(gen3 - gen4), 50);
++	}
++}
++
++static void qcom_vadc_gen4_trip_roundtrip_test(struct kunit *test)
++{
++	static const int temps[] = { -20000, 0, 25000, 35000, 40000,
++				     45000, 55000, 80000 };
++	int i, actual;
++	u16 code;
++
++	for (i = 0; i < ARRAY_SIZE(temps); i++) {
++		code = qcom_adc_tm5_gen4_temp_res_scale(temps[i]);
++		KUNIT_ASSERT_EQ(test, qcom_adc5_hw_scale(
++			SCALE_HW_CALIB_THERM_100K_PU_GEN4, 0, NULL,
++			code, &actual), 0);
++		KUNIT_EXPECT_LE(test, abs(actual - temps[i]), 100);
++	}
++}
++
++static void qcom_vadc_gen4_invalid_code_test(struct kunit *test)
++{
++	int temp;
++
++	KUNIT_EXPECT_EQ(test, qcom_adc5_hw_scale(
++		SCALE_HW_CALIB_THERM_100K_PU_GEN4, 0, NULL, 65535, &temp), -EINVAL);
++}
++
++static struct kunit_case qcom_vadc_gen4_cases[] = {
++	KUNIT_CASE(qcom_vadc_gen4_midpoint_test),
++	KUNIT_CASE(qcom_vadc_mixed_generation_test),
++	KUNIT_CASE(qcom_vadc_gen4_trip_roundtrip_test),
++	KUNIT_CASE(qcom_vadc_gen4_invalid_code_test),
++	{}
++};
++
++static struct kunit_suite qcom_vadc_gen4_suite = {
++	.name = "qcom-vadc-gen4",
++	.test_cases = qcom_vadc_gen4_cases,
++};
++kunit_test_suite(qcom_vadc_gen4_suite);
+diff --git a/drivers/iio/adc/qcom-vadc-common.c b/drivers/iio/adc/qcom-vadc-common.c
+index 779c2a66a85877ebd138e88e1bcd4c404a0c8b38..a3a5ea3284db73bcd3a97879d944fae956da758a 100644
+--- a/drivers/iio/adc/qcom-vadc-common.c
++++ b/drivers/iio/adc/qcom-vadc-common.c
+@@ -556,7 +556,8 @@ static int qcom_vadc7_scale_hw_calib_therm(
+ 	if (ret)
+ 		return ret;
+ 
+-	*result_mdec = result;
++	/* The PM7 resistance table stores temperature in 1/1024 degrees. */
++	*result_mdec = div_s64((s64)result * 1000, 1024);
+ 
+ 	return 0;
+ }
+@@ -581,7 +582,8 @@ static int qcom_adc5_gen4_scale_hw_calib_therm(
+ 	if (ret)
+ 		return ret;
+ 
+-	*result_mdec = result;
++	/* The PM7 resistance table stores temperature in 1/1024 degrees. */
++	*result_mdec = div_s64((s64)result * 1000, 1024);
+ 
+ 	return 0;
+ }
+@@ -712,7 +714,8 @@ u16 qcom_adc_tm5_gen2_temp_res_scale(int temp)
+ 	int64_t resistance;
+ 
+ 	resistance = qcom_vadc_map_temp_voltage(adcmap7_100k,
+-		ARRAY_SIZE(adcmap7_100k), temp);
++						ARRAY_SIZE(adcmap7_100k),
++						div_s64((s64)temp * 1024, 1000));
+ 
+ 	return div64_s64(resistance * RATIO_MAX_ADC7, resistance + R_PU_100K);
+ }
+@@ -723,7 +726,8 @@ u16 qcom_adc_tm5_gen4_temp_res_scale(int temp)
+ 	s64 resistance;
+ 
+ 	resistance = qcom_vadc_map_temp_voltage(adcmap7_100k,
+-						ARRAY_SIZE(adcmap7_100k), temp);
++						ARRAY_SIZE(adcmap7_100k),
++						div_s64((s64)temp * 1024, 1000));
+ 
+ 	return div64_s64(resistance * RATIO_MAX_ADC5_GEN4, resistance + R_PU_100K);
+ }
+@@ -811,3 +815,7 @@ EXPORT_SYMBOL(qcom_vadc_decimation_from_dt);
+ 
+ MODULE_LICENSE("GPL v2");
+ MODULE_DESCRIPTION("Qualcomm ADC common functionality");
++
++#if IS_ENABLED(CONFIG_QCOM_VADC_COMMON_KUNIT_TEST)
++#include "qcom-vadc-common-test.c"
++#endif

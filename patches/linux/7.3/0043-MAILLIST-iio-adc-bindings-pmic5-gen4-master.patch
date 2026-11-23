@@ -1,0 +1,85 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jishnu Prakash <jishnu.prakash@oss.qualcomm.com>
+Date: Fri, 20 Nov 2026 14:49:46 +0530
+Subject: dt-bindings: iio: adc: Add support for QCOM PMIC5 Gen4 ADC
+
+At present, support is present for Gen4 ADC channels under a master PMIC
+with Gen3 ADC. Add a compatible string "qcom,spmi-adc5-gen4" to support a
+master PMIC with Gen4 ADC. ADC channels under such a device can be
+considered to be of type Gen4 ADC by default.
+
+To support any exceptions (Gen3 ADC channels under a Gen4 master), add the
+"qcom,adc5-gen3" ADC channel property, analogous to "qcom,adc5-gen4", to
+indicate that a channel is of type Gen3 ADC.
+
+Add constraints to ensure that "qcom,adc5-gen4" and "qcom,adc5-gen3"
+channel properties are only valid if the top-level compatible string is
+of the opposite type. A channel without either of these properties can be
+assumed to be of the same type indicated by the master PMIC's compatible
+string.
+
+Signed-off-by: Jishnu Prakash <jishnu.prakash@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261120-pmic5_gen4_adc-v2-6-94d0e1fd6847@oss.qualcomm.com
+---
+ .../bindings/iio/adc/qcom,spmi-adc5-gen3.yaml | 39 ++++++++++++++++++-
+ 1 file changed, 38 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/iio/adc/qcom,spmi-adc5-gen3.yaml b/Documentation/devicetree/bindings/iio/adc/qcom,spmi-adc5-gen3.yaml
+index 065b82c41e86ef3473003463d4e1fdce54c2507b..e79ddc2acca0640ca6c49971a1ceeff0666123a5 100644
+--- a/Documentation/devicetree/bindings/iio/adc/qcom,spmi-adc5-gen3.yaml
++++ b/Documentation/devicetree/bindings/iio/adc/qcom,spmi-adc5-gen3.yaml
+@@ -21,9 +21,14 @@ description: |
+   All boards using a particular (SOC + master PMIC) combination will have the
+   same number of ADC SDAMs supported on that PMIC.
+ 
++  PMIC5 Gen4 ADC is similar to Gen3 ADC, with some differences such as
++  improved ratiometric conversion resolution.
++
+ properties:
+   compatible:
+-    const: qcom,spmi-adc5-gen3
++    enum:
++      - qcom,spmi-adc5-gen3
++      - qcom,spmi-adc5-gen4
+ 
+   reg:
+     items:
+@@ -91,6 +96,38 @@ patternProperties:
+           need to be marked as Gen4 to ensure their conversions are handled correctly.
+         type: boolean
+ 
++      qcom,adc5-gen3:
++        description:
++          Indicates channel is of type ADC5 Gen3. This may be needed in cases where the
++          master PMIC has an ADC peripheral of type Gen4, but some of the other PMICs
++          under it have ADC peripherals of type Gen3.
++        type: boolean
++
++allOf:
++  - if:
++      properties:
++        compatible:
++          contains:
++            const: qcom,spmi-adc5-gen4
++
++    then:
++      patternProperties:
++        "^channel@[0-9a-f]+$":
++          properties:
++            qcom,adc5-gen4: false
++
++  - if:
++      properties:
++        compatible:
++          contains:
++            const: qcom,spmi-adc5-gen3
++
++    then:
++      patternProperties:
++        "^channel@[0-9a-f]+$":
++          properties:
++            qcom,adc5-gen3: false
++
+ required:
+   - compatible
+   - reg

@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jishnu Prakash <jishnu.prakash@oss.qualcomm.com>
+Date: Fri, 20 Nov 2026 14:49:42 +0530
+Subject: iio: adc: qcom-adc5-gen3: Explicitly assign enum values used in
+ hardware
+
+Give explicit assignments for enum values meant to be written into hardware
+registers to avoid errors due to later additions in the middle of the
+enums.
+
+Suggested-by: Andy Shevchenko <andriy.shevchenko@intel.com>
+Signed-off-by: Jishnu Prakash <jishnu.prakash@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20261120-pmic5_gen4_adc-v2-2-94d0e1fd6847@oss.qualcomm.com
+---
+ include/linux/iio/adc/qcom-adc5-gen3-common.h | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/include/linux/iio/adc/qcom-adc5-gen3-common.h b/include/linux/iio/adc/qcom-adc5-gen3-common.h
+index 39cbfcbdb101c38631ec55bab6d55d2c165504ee..dd7c92cac1741b9900a46b380969166178df58b0 100644
+--- a/include/linux/iio/adc/qcom-adc5-gen3-common.h
++++ b/include/linux/iio/adc/qcom-adc5-gen3-common.h
+@@ -104,16 +104,16 @@
+ 
+ enum adc5_cal_method {
+ 	ADC5_NO_CAL = 0,
+-	ADC5_RATIOMETRIC_CAL,
+-	ADC5_ABSOLUTE_CAL,
++	ADC5_RATIOMETRIC_CAL = 1,
++	ADC5_ABSOLUTE_CAL = 2,
+ };
+ 
+ enum adc5_time_select {
+ 	MEAS_INT_DISABLE = 0,
+-	MEAS_INT_IMMEDIATE,
+-	MEAS_INT_50MS,
+-	MEAS_INT_100MS,
+-	MEAS_INT_1S,
++	MEAS_INT_IMMEDIATE = 1,
++	MEAS_INT_50MS = 2,
++	MEAS_INT_100MS = 3,
++	MEAS_INT_1S = 4,
+ 	MEAS_INT_NONE,
+ };
+ 

@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Wed, 11 Nov 2026 00:18:30 +0800
+Subject: iio: adc: qcom-spmi-adc5-gen3: skip disabled channel nodes
+
+Count and configure only available child nodes. Piano needs to omit
+unsupported charger-current channels while retaining the working
+temperature channels.
+
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+---
+ drivers/iio/adc/qcom-spmi-adc5-gen3.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/iio/adc/qcom-spmi-adc5-gen3.c b/drivers/iio/adc/qcom-spmi-adc5-gen3.c
+index b5a444b89ed0d4cdbb92217b8e078f5f1819cb9b..ff3f289b7a5d2f1dcce985f0a5dd9aaea7403a52 100644
+--- a/drivers/iio/adc/qcom-spmi-adc5-gen3.c
++++ b/drivers/iio/adc/qcom-spmi-adc5-gen3.c
+@@ -618,7 +618,9 @@ static int adc5_get_fw_data(struct adc5_chip *adc)
+ 	unsigned int index = 0;
+ 	int ret;
+ 
+-	adc->nchannels = device_get_child_node_count(dev);
++	adc->nchannels = 0;
++	fwnode_for_each_available_child_node_scoped(dev_fwnode(dev), child)
++		adc->nchannels++;
+ 	if (!adc->nchannels)
+ 		return dev_err_probe(dev, -EINVAL, "No ADC channels found\n");
+ 
+@@ -637,7 +639,7 @@ static int adc5_get_fw_data(struct adc5_chip *adc)
+ 	iio_chan = adc->iio_chans;
+ 	adc->data = device_get_match_data(dev);
+ 
+-	device_for_each_child_node_scoped(dev, child) {
++	fwnode_for_each_available_child_node_scoped(dev_fwnode(dev), child) {
+ 		ret = adc5_gen3_get_fw_channel_data(adc, chan_props, child);
+ 		if (ret)
+ 			return ret;

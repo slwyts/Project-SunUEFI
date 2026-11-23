@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+Date: Sat, 14 Nov 2026 19:29:33 +0800
+Subject: [PATCH] arm64: dts: qcom: sm8750: Add camera MCLK pinctrl
+
+Define pinctrl definitions to enable camera master clocks on SM8750.
+
+Link: https://lore.kernel.org/r/20261114-add-support-for-camss-on-sm8750-v7-16-8ff2a11835f6@oss.qualcomm.com
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Signed-off-by: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+Signed-off-by: Wenmeng Liu <wenmeng.liu@oss.qualcomm.com>
+---
+ arch/arm64/boot/dts/qcom/sm8750.dtsi | 56 ++++++++++++++++++++++++++++
+ 1 file changed, 56 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8750.dtsi b/arch/arm64/boot/dts/qcom/sm8750.dtsi
+index e784260db96913e62a8902168a1e851ef785af68..8f7e8ca517af6f37bbccb5b258324d783bbb90a1 100644
+--- a/arch/arm64/boot/dts/qcom/sm8750.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8750.dtsi
+@@ -4385,6 +4385,62 @@ tlmm: pinctrl@f100000 {
+ 			gpio-ranges = <&tlmm 0 0 216>;
+ 			wakeup-parent = <&pdc>;
+ 
++			cam_mclk0_default: cam-mclk0-default-state {
++				pins = "gpio89";
++				function = "cam_mclk";
++				drive-strength = <2>;
++				bias-disable;
++			};
++
++			cam_mclk1_default: cam-mclk1-default-state {
++				pins = "gpio90";
++				function = "cam_mclk";
++				drive-strength = <2>;
++				bias-disable;
++			};
++
++			cam_mclk2_default: cam-mclk2-default-state {
++				pins = "gpio91";
++				function = "cam_aon_mclk2";
++				drive-strength = <2>;
++				bias-disable;
++			};
++
++			cam_mclk3_default: cam-mclk3-default-state {
++				pins = "gpio92";
++				function = "cam_mclk";
++				drive-strength = <2>;
++				bias-disable;
++			};
++
++			cam_mclk4_default: cam-mclk4-default-state {
++				pins = "gpio93";
++				function = "cam_aon_mclk4";
++				drive-strength = <2>;
++				bias-disable;
++			};
++
++			cam_mclk5_default: cam-mclk5-default-state {
++				pins = "gpio94";
++				function = "cam_mclk";
++				drive-strength = <2>;
++				bias-disable;
++			};
++
++			cam_mclk6_default: cam-mclk6-default-state {
++				pins = "gpio95";
++				function = "cam_mclk";
++				drive-strength = <2>;
++				bias-disable;
++			};
++
++			cam_mclk7_default: cam-mclk7-default-state {
++				pins = "gpio96";
++				function = "cam_mclk";
++				drive-strength = <2>;
++				bias-disable;
++			};
++
+ 			cci0_0_default: cci0-0-default-state {
+ 				sda-pins {
+ 					pins = "gpio113";

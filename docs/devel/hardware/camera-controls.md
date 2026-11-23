@@ -2,7 +2,7 @@
 
 相机服务向应用提供前摄、后摄两个 V4L2 摄像头。普通模式使用 CAMSS 硬件图像处理器（ISP）输出 NV12；后摄全幅 RAW10 使用软件 Quad CFA 转换。服务只在应用开流时启动传感器和 ISP，关闭流后停止 DMA。自动曝光、白平衡和后摄对焦（3A）由同一服务的帧循环控制。当前还没有不读取图像数据的 libcamera TFE pipeline 和 IPA 算法模块，旧服务及其 loopback、控制 socket 仍是应用使用相机的依赖。
 
-SM8750 TFE980 的 PIX sink 接收四种排列的 RAW10 Bayer，source 和对应捕获节点只输出 NV12。RAW10 原始采集走 RDI，不能因 PIX 接收 Bayer 就把它公布为 RAW10 捕获设备。[格式补丁](../../../patches/linux/7.3/0221-LOCAL-camss-pix-capture-formats.patch)分别描述 sink 和捕获格式，并让 SM8750 sink 的默认值落在支持的格式中；不再共用包含 RAW10 和 NV12 的捕获枚举。
+SM8750 TFE980 的 PIX sink 接收四种排列的 RAW10 Bayer，source 和对应捕获节点只输出 NV12。RAW10 原始采集走 RDI，不能因 PIX 接收 Bayer 就把它公布为 RAW10 捕获设备。[格式补丁](../../../patches/linux/7.3/0248-LOCAL-camss-pix-capture-formats.patch)分别描述 sink 和捕获格式，并让 SM8750 sink 的默认值落在支持的格式中；不再共用包含 RAW10 和 NV12 的捕获枚举。
 
 NV12 捕获和裁切使用相同的尺寸步长：宽度为 16 的倍数，高度和裁切起点按完整色度样本对齐。缩放下限按 16 倍比例向上取偶数；后摄输入 4080×3060 时，平板读回的最小缩放尺寸为 256×192。DMA 基址和 PIX 行跨度按 TFE980 的 256 字节地址单位校验。
 
@@ -10,7 +10,7 @@ NV12 捕获和裁切使用相同的尺寸步长：宽度为 16 的倍数，高�
 
 产品相机驱动来自 [Linux 补丁链](../../../patches/linux/7.3/series.json)，不是未经修改的主线 CAMSS。图像、控件和帧事件使用 V4L2；颜色矩阵仍有本地私有控件。TFE 的 `vfe_isp_params` 是内核内部状态，不是用户空间可以排队的参数缓冲接口。
 
-CAMSS 每个图像平面只向硬件写一个 DMA 基址。[缓冲区校验](../../../patches/linux/7.3/0241-LOCAL-media-camss-validate-capture-dma-ranges.patch)在写入前确认映射后的连续地址覆盖协商的 `sizeimage`。连续范围可以由相邻的多个 DMA 段组成，不要求整个缓冲区都连续；范围不足时，Videobuf2 解除映射，缓冲区不会交给硬件。
+CAMSS 每个图像平面只向硬件写一个 DMA 基址。[缓冲区校验](../../../patches/linux/7.3/0268-LOCAL-media-camss-validate-capture-dma-ranges.patch)在写入前确认映射后的连续地址覆盖协商的 `sizeimage`。连续范围可以由相邻的多个 DMA 段组成，不要求整个缓冲区都连续；范围不足时，Videobuf2 解除映射，缓冲区不会交给硬件。
 SM8750 在传感器和接收链路启动成功后才提交捕获缓冲，再在帧边界开放 CSID
 端口。启动中途报错时，本次缓冲仍由 Videobuf2 持有。Piano 停流时先停止提交
 新地址，再用写入完成中断核对在途缓冲的地址。PIX 同时核对亮度和色度写入。
@@ -141,9 +141,11 @@ PipeWire 回报 libcamera 实际配置的格式，并从同一条流取缓冲。
 
 libcamera 的[传感器要求](https://github.com/libcamera-org/libcamera/blob/v0.8.0/Documentation/sensor_driver_requirements.rst)还要求 RAW sensor 提供 HBLANK、VBLANK、PIXEL_RATE，并把曝光表示为图像行。当前 OV32D40 不满足这一模型，不能重新填入已证明错误的 blanking 值来通过初始化。上游也没有这两颗 sensor 的增益 helper 和实测控件延迟，默认延迟不能代替逐模式测量。
 
-OV32D40 的[设备树 binding](../../../patches/linux/7.3/0222-LOCAL-media-ov32d40-binding.patch)使用通用 video-device、CSI-2 endpoint schema，描述现有四 lane D-PHY、19.2 MHz MCLK、三路电源、低有效 reset 和单个可选 power domain。binding 的 YAML 与例子通过 `dt_binding_check`；修正遗留布尔属性和无效空 `reg` 后，完整折叠 DT 中的 OV32D40 节点通过定向校验。原生 Piano skeleton 不包含完整相机节点，不能代替该检查。
+OV32D40 的[设备树 binding](../../../patches/linux/7.3/0249-LOCAL-media-ov32d40-binding.patch)使用通用 video-device、CSI-2 endpoint schema，描述现有四 lane D-PHY、19.2 MHz MCLK、三路电源、低有效 reset 和单个可选 power domain。binding 的 YAML 与例子通过 `dt_binding_check`；修正遗留布尔属性和无效空 `reg` 后，完整折叠 DT 中的 OV32D40 节点通过定向校验。原生 Piano skeleton 不包含完整相机节点，不能代替该检查。
 
-SM8750 的 [CAMSS binding](../../../patches/linux/7.3/0223-LOCAL-media-camss-bayer-clock-binding.patch)还描述每条完整 TFE 的 Bayer、Bayer fast AHB 和 Bayer CAMNOC 时钟，共 44 项时钟资源；这些是 PIX 驱动使用的硬件时钟，不能为匹配旧 schema 而删除。捕获端只描述驱动使用的 `ahb`、`hf_mnoc` 两条 interconnect，不把独立 ICP 的资源放进 CAMSS。[带宽 overlay](../../../linux/dts/piano-camera-interconnects.dtso)使用现有 SM8750 provider，补入 APPSS→CAMERA_CFG 的活动带宽路径和 CAMNOC_HF→EBI 的图像路径；runtime resume 提交驱动带宽票据，suspend 清零。两条路径与 44 clocks 在完整折叠节点上的定向 schema 检查通过，带宽投票仍需实机检查。缺少属性时 interconnect 核心返回 NULL 并跳过约束，不能据此将硬件带宽路径改为可选。
+SM8750 v7 的 [CAMSS binding](../../../patches/linux/7.3/0250-LOCAL-media-camss-bayer-clock-binding.patch)为普通板保留 21 项时钟。Piano 的 PIX 路径另用 Bayer、Bayer fast AHB 和 Bayer CAMNOC 时钟，以及 CAMNOC NRT AXI，共 31 项。[CSI PHY overlay](../../../linux/dts/piano-camera-csi2-phys.dtso)按原厂接线为两颗独立 PHY 描述各自的时钟和供电。CAMSS 在读取 VFE 寄存器前启用共用的 CPAS AHB 时钟，休眠时释放。
+
+[带宽 overlay](../../../linux/dts/piano-camera-interconnects.dtso)配置两条采集路径，分别从 APPSS 到 CAMERA_CFG，以及从 CAMNOC_HF 到 EBI。运行时恢复启用两条路径，挂起时清零。设备树需要声明两条路径，驱动才会向对应 interconnect provider 设置带宽。
 
 完整 TFE980 的处理和片上总线时钟按 D-PHY 链路频率、活动 lane 数和输入像素位宽选档；
 缺少链路信息时保留原像素率估算，其他 VFE 不变。它不要求传感器用 CSI 吞吐冒充
@@ -216,7 +218,7 @@ Qualcomm 的 [IFE BG 统计提案](https://lore.kernel.org/linux-media/202610062
 
 服务沿传感器发出的 enabled ancillary link 查找 `MEDIA_ENT_F_LENS`，不再按镜头驱动名称匹配。前摄没有该关联，保持固定焦距；关联指向不存在的设备或同一传感器关联多个镜头时，记录错误并关闭该路自动对焦，不猜测设备，也不影响另一颗相机。
 
-原厂 `OS3.0.309.0.WPYCNXM` 的后摄模块描述和 actuator 库标明马达为 GT9764BA，初始化依次写 `0x02 = 0`、`0x02 = 2`、`0x06 = 0x40`、`0x07 = 0x73`。[厂商产品表](https://www.giantec-semi.com/yqmd/164)将 GT9764BA 标为双向、GT9769 标为单向；两者不能因位置寄存器相同就视为完整兼容。主线 DW9768 驱动通过 [GT9764BA 变体](../../../patches/linux/7.3/0232-LOCAL-media-gt9764ba-lens.patch)和 [binding](../../../patches/linux/7.3/0231-LOCAL-media-gt9764ba-binding.patch)支持这颗双向马达，沿用原 V4L2 镜头实体名、`V4L2_CID_FOCUS_ABSOLUTE` 和运行时电源管理。模块为 `dw9768`，`gt9764` 可作为模块别名。
+原厂 `OS3.0.309.0.WPYCNXM` 的后摄模块描述和 actuator 库标明马达为 GT9764BA，初始化依次写 `0x02 = 0`、`0x02 = 2`、`0x06 = 0x40`、`0x07 = 0x73`。[厂商产品表](https://www.giantec-semi.com/yqmd/164)将 GT9764BA 标为双向、GT9769 标为单向；两者不能因位置寄存器相同就视为完整兼容。主线 DW9768 驱动通过 [GT9764BA 变体](../../../patches/linux/7.3/0259-LOCAL-media-gt9764ba-lens.patch)和 [binding](../../../patches/linux/7.3/0258-LOCAL-media-gt9764ba-binding.patch)支持这颗双向马达，沿用原 V4L2 镜头实体名、`V4L2_CID_FOCUS_ABSOLUTE` 和运行时电源管理。模块为 `dw9768`，`gt9764` 可作为模块别名。
 
 GT9764BA 使用 0–1023 的 DAC 范围，默认值和断电前的归位目标为 512。[MiCode 的 GPL GT9764 驱动](https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/a369d30bd5df3fcfb4304ee9e7ae10fa4f11899a/drivers/misc/mediatek/lens/vcm/v4l2/gt9764/gt9764.c)也使用该中点。归位每步最多移动 50，等待 10 ms，时序来自原厂 `GetParkLens` 回调及其 I²C 命令构造调用链。恢复供电后从 512 按相同步幅恢复 V4L2 已接受的焦点。运行时归位失败会保留供电。重试前先读回 DAC 档位，从该位置继续归位或恢复焦点。读回失败时保留供电并结束本次移动。解绑时归位失败仍释放驱动对稳压器的使能引用。手动移动后的光学稳定时间和对焦标定仍未实现。原厂 `0x73` 超出 DW9768 binding 的 6-bit timing 范围，驱动使用 GT9764BA 原厂寄存器值。
 
@@ -374,11 +376,13 @@ SOF/EOF 按既有双缓冲 FIFO 关联。标记缺失、不连续、接收端错
 VFE／CSID 中断处理完，再归还和清空队列，重开时不会用到上一次的槽位。
 平板前后摄均通过实际采集中退出和重新打开。这项修复只管软件队列，
 不将中断处理结束视为硬件 DMA 已排空。
-见[停流修复](../../../patches/linux/7.3/0248-LOCAL-media-camss-serialize-buffer-completion.patch)。
+见[停流修复](../../../patches/linux/7.3/0275-LOCAL-media-camss-serialize-buffer-completion.patch)。
 
-实现见[物理帧时序补丁](../../../patches/linux/7.3/0161-LOCAL-camss-frame-timestamps.patch)和 [TFE BUS 修复](../../../patches/linux/7.3/0162-LOCAL-camss-tfe-bus-errors.patch)。`camss_frame`、`camss_frame_error` trace 提供原始计数器、交叉采样和缓冲编号。
+内部测试图发生器（TPG）一启用就会出帧。CAMSS 先为 VFE 写主机提交缓冲，打开 CSID 接收端口，再启用 TPG，避免错过首帧的起始包。实体传感器沿用原有启流顺序。TPG 启动失败时，驱动先沿正常停流路径确认 DMA 已停止，再释放 kexec 保护。
 
-产品内核不提供 ISP 寄存器脚本或任意 MMIO 读写入口。TFE 默认设置、缩放和图像控件由驱动编程；诊断使用现有帧 trace 和错误日志。[PIX 采集补丁](../../../patches/linux/7.3/0081-EXTERNAL-media-camss-route-ipp-to-tfe-pixel-pipeline.patch)保留帧时序和错误诊断，前后摄分别维护自己的采集状态。
+实现见[物理帧时序补丁](../../../patches/linux/7.3/0188-LOCAL-camss-frame-timestamps.patch)和 [TFE BUS 修复](../../../patches/linux/7.3/0189-LOCAL-camss-tfe-bus-errors.patch)。`camss_frame`、`camss_frame_error` trace 提供原始计数器、交叉采样和缓冲编号。
+
+产品内核不提供 ISP 寄存器脚本或任意 MMIO 读写入口。TFE 默认设置、缩放和图像控件由驱动编程；诊断使用现有帧 trace 和错误日志。[PIX 采集补丁](../../../patches/linux/7.3/0109-EXTERNAL-media-camss-route-ipp-to-tfe-pixel-pipeline.patch)保留帧时序和错误诊断，前后摄分别维护自己的采集状态。
 
 ## 闪光灯
 

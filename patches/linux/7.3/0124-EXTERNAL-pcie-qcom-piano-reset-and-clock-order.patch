@@ -1,0 +1,679 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Sun, 8 Nov 2026 02:32:50 +0800
+Subject: [PATCH] PCI: qcom: sequence controller and PHY clocks before reset
+
+Keep the Piano-specific parts of the xiaomi-piano-nixos PCIe reset
+sequence after importing the original Qualcomm patches. Enable endpoint
+power before initializing the PHY, route CLKREQ# before PHY start and
+configure the remaining PARF registers with the PHY running. Preserve
+CSR programming when possible and stop the data path on power-off.
+Unwind only ports that acquired resources.
+
+This adaptation also carries forward slwyts's related PCIe bring-up
+changes from the SunUEFI platform port. The independently usable SID
+and suspend changes from that port are kept as separate commits.
+
+The upstream no-CSR reset regression fix is applied before the
+HPG PHY split. The board sequencing and retained-CSR handling here
+build on that reset policy.
+
+Link: https://github.com/Cryolitia/xiaomi-piano-nixos/commit/b06301d14f50ee09e995aae50ecbaac05e89f55e
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ drivers/pci/controller/dwc/pcie-qcom.c   | 217 +++++++++++++++++------
+ drivers/phy/qualcomm/phy-qcom-qmp-pcie.c | 131 +++++++-------
+ 2 files changed, 227 insertions(+), 121 deletions(-)
+
+diff --git a/drivers/pci/controller/dwc/pcie-qcom.c b/drivers/pci/controller/dwc/pcie-qcom.c
+index af3131acb..95850f91c 100644
+--- a/drivers/pci/controller/dwc/pcie-qcom.c
++++ b/drivers/pci/controller/dwc/pcie-qcom.c
+@@ -473,13 +473,13 @@ static void qcom_pcie_phy_exit(struct qcom_pcie *pcie)
+ {
+ 	struct qcom_pcie_port *port;
+ 
+-	list_for_each_entry(port, &pcie->ports, list)
++	list_for_each_entry_reverse(port, &pcie->ports, list)
+ 		phy_exit(port->phy);
+ }
+ 
+ static int qcom_pcie_phy_init(struct qcom_pcie *pcie)
+ {
+-	struct qcom_pcie_port *port, *failed_port = NULL;
++	struct qcom_pcie_port *port;
+ 	struct device *dev = pcie->pci->dev;
+ 	int ret;
+ 
+@@ -487,7 +487,6 @@ static int qcom_pcie_phy_init(struct qcom_pcie *pcie)
+ 		ret = phy_init(port->phy);
+ 		if (ret) {
+ 			dev_err(dev, "phy init failed (%d)\n", ret);
+-			failed_port = port;
+ 			goto err_exit_phy;
+ 		}
+ 	}
+@@ -495,11 +494,8 @@ static int qcom_pcie_phy_init(struct qcom_pcie *pcie)
+ 	return 0;
+ 
+ err_exit_phy:
+-	list_for_each_entry(port, &pcie->ports, list) {
+-		if (port == failed_port)
+-			break;
++	list_for_each_entry_continue_reverse(port, &pcie->ports, list)
+ 		phy_exit(port->phy);
+-	}
+ 
+ 	return ret;
+ }
+@@ -1081,7 +1077,8 @@ static int qcom_pcie_get_resources_2_7_0(struct qcom_pcie *pcie)
+ 	ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(res->supplies),
+ 				      res->supplies);
+ 	if (ret)
+-		return ret;
++		return dev_err_probe(dev, ret,
++				     "missing or unresolved vdda/vddpe-3v3 supplies\n");
+ 
+ 	res->num_clks = devm_clk_bulk_get_all(dev, &res->clks);
+ 	if (res->num_clks < 0) {
+@@ -1092,6 +1089,80 @@ static int qcom_pcie_get_resources_2_7_0(struct qcom_pcie *pcie)
+ 	return 0;
+ }
+ 
++/* Piano bring-up only: observe GCC without changing its power votes. */
++static int qcom_pcie_piano_check_gdsc(struct device *dev, const char *phase)
++{
++	void __iomem *core, *phy, *vote;
++	u32 core_cfg;
++	int ret = -ENOMEM;
++
++	if (!of_device_is_compatible(dev->of_node, "qcom,pcie-sm8750"))
++		return 0;
++
++	/* gcc-sm8750.c and downstream sun.dtsi agree on these addresses. */
++	core = ioremap(0x00100000 + 0x6b004, 8);
++	if (!core)
++		return ret;
++	phy = ioremap(0x00100000 + 0x6c000, 8);
++	if (!phy)
++		goto unmap_core;
++	vote = ioremap(0x00100000 + 0x5214c, 4);
++	if (!vote)
++		goto unmap_phy;
++
++	dev_info(dev, "piano-dbg: %s GCC snapshot begin\n", phase);
++	core_cfg = readl(core + 4);
++	dev_info(dev, "piano-dbg: %s core=%08x core_cfg=%08x phy=%08x phy_cfg=%08x vote=%08x\n",
++		 phase, readl(core), core_cfg, readl(phy),
++		 readl(phy + 4), readl(vote));
++	/* POLL_CFG_GDSCR checks power-up complete in CFG_GDSCR bit 16. */
++	ret = core_cfg & BIT(16) ? 0 : -EIO;
++	if (ret)
++		dev_err(dev, "piano-dbg: %s core GDSC not up; stopping before PARF\n",
++			phase);
++
++	iounmap(vote);
++unmap_phy:
++	iounmap(phy);
++unmap_core:
++	iounmap(core);
++	return ret;
++}
++
++/*
++ * Piano bring-up only: a marker followed by a short sleep, so that the
++ * console (fbcon/ramoops) has flushed it before the next risky access.
++ */
++#define PIANO_MARK(dev, fmt, ...)					\
++	do {								\
++		dev_info(dev, "piano-dbg: " fmt "\n", ##__VA_ARGS__);	\
++		msleep(30);						\
++	} while (0)
++
++/*
++ * Downstream pci-msm clears PARF_CESTA_CLKREQ_SEL (qcom,pcie-clkreq-offset
++ * = 0x2c48 on sun) whenever it runs without CESTA: on this SoC CLKREQ# is
++ * routed to the PCIe CESTA state manager by default, which nobody drives
++ * here.  Do the same before the PHY is brought up.
++ */
++#define PARF_PIANO_CESTA_CONFIG		0x2c48
++#define PARF_PIANO_CESTA_CLKREQ_SEL	BIT(0)
++
++static void qcom_pcie_piano_clkreq_to_sw(struct qcom_pcie *pcie)
++{
++	struct device *dev = pcie->pci->dev;
++	u32 val;
++
++	if (!of_device_is_compatible(dev->of_node, "qcom,pcie-sm8750"))
++		return;
++
++	val = readl(pcie->parf + PARF_PIANO_CESTA_CONFIG);
++	writel(val & ~PARF_PIANO_CESTA_CLKREQ_SEL,
++	       pcie->parf + PARF_PIANO_CESTA_CONFIG);
++	PIANO_MARK(dev, "PARF CESTA config %08x -> %08x", val,
++		   readl(pcie->parf + PARF_PIANO_CESTA_CONFIG));
++}
++
+ static int qcom_pcie_init_2_7_0(struct qcom_pcie *pcie)
+ {
+ 	struct qcom_pcie_resources_2_7_0 *res = &pcie->res.v2_7_0;
+@@ -1104,11 +1175,18 @@ static int qcom_pcie_init_2_7_0(struct qcom_pcie *pcie)
+ 		dev_err(dev, "cannot enable regulators\n");
+ 		return ret;
+ 	}
++	dev_info(dev, "piano-dbg: init regulators on\n");
+ 
+ 	ret = clk_bulk_prepare_enable(res->num_clks, res->clks);
+ 	if (ret < 0)
+ 		goto err_disable_regulators;
++	dev_info(dev, "piano-dbg: init clocks on (%d)\n", res->num_clks);
+ 
++	ret = qcom_pcie_piano_check_gdsc(dev, "before BCR");
++	if (ret)
++		goto err_disable_clocks;
++
++	/* PHY supplies and clocks are already enabled by phy_init(). */
+ 	ret = reset_control_assert(res->rst);
+ 	if (ret) {
+ 		dev_err(dev, "reset assert failed (%d)\n", ret);
+@@ -1124,16 +1202,24 @@ static int qcom_pcie_init_2_7_0(struct qcom_pcie *pcie)
+ 	ret = reset_control_deassert(res->rst);
+ 	if (ret) {
+ 		dev_err(dev, "reset deassert failed (%d)\n", ret);
+-		goto err_disable_clocks;
++		goto err_assert_reset;
+ 	}
+ 
+-	/* Wait for reset to complete, required on SM8450 */
+ 	usleep_range(1000, 1500);
+ 
+-	/* configure PCIe to RC mode */
++	ret = qcom_pcie_piano_check_gdsc(dev, "after BCR");
++	if (ret)
++		goto err_assert_reset;
++
+ 	writel(DEVICE_TYPE_RC, pcie->parf + PARF_DEVICE_TYPE);
+ 
++	/* Route CLKREQ# before the PHY starts, as the factory driver does. */
++	qcom_pcie_piano_clkreq_to_sw(pcie);
++
+ 	return 0;
++
++err_assert_reset:
++	reset_control_assert(res->rst);
+ err_disable_clocks:
+ 	clk_bulk_disable_unprepare(res->num_clks, res->clks);
+ err_disable_regulators:
+@@ -1148,14 +1234,13 @@ static int qcom_pcie_post_init_2_7_0(struct qcom_pcie *pcie)
+ 	struct dw_pcie *pci = pcie->pci;
+ 	u32 val;
+ 
+-	/* Force PHY out of lowest power state */
++	/* Configure the remaining PARF registers after the PHY is ready. */
+ 	val = readl(pcie->parf + PARF_PHY_CTRL);
+ 	val &= ~PHY_TEST_PWR_DOWN;
+ 	writel(val, pcie->parf + PARF_PHY_CTRL);
+ 
+ 	qcom_pcie_configure_dbi_atu_base(pcie);
+ 
+-	/* MAC PHY_POWERDOWN MUX DISABLE  */
+ 	val = readl(pcie->parf + PARF_SYS_CTRL);
+ 	val &= ~MAC_PHY_POWERDOWN_IN_P2_D_MUX_EN;
+ 	writel(val, pcie->parf + PARF_SYS_CTRL);
+@@ -1164,11 +1249,10 @@ static int qcom_pcie_post_init_2_7_0(struct qcom_pcie *pcie)
+ 	val |= BYPASS;
+ 	writel(val, pcie->parf + PARF_MHI_CLOCK_RESET_CTRL);
+ 
+-	/* Enable L1 and L1SS */
++	/* Enable L1 and L1SS. */
+ 	val = readl(pcie->parf + PARF_PM_CTRL);
+ 	val &= ~REQ_NOT_ENTR_L1;
+ 	writel(val, pcie->parf + PARF_PM_CTRL);
+-
+ 	pci->l1ss_support = true;
+ 
+ 	val = readl(pcie->parf + PARF_AXI_MSTR_WR_ADDR_HALT_V2);
+@@ -1179,7 +1263,7 @@ static int qcom_pcie_post_init_2_7_0(struct qcom_pcie *pcie)
+ 		writel(WR_NO_SNOOP_OVERRIDE_EN | RD_NO_SNOOP_OVERRIDE_EN,
+ 				pcie->parf + PARF_NO_SNOOP_OVERRIDE);
+ 
+-	qcom_pcie_set_slot_cap(pcie->pci);
++	qcom_pcie_set_slot_cap(pci);
+ 
+ 	return 0;
+ }
+@@ -1479,7 +1563,7 @@ static void qcom_pcie_phy_power_off(struct qcom_pcie *pcie)
+ {
+ 	struct qcom_pcie_port *port;
+ 
+-	list_for_each_entry(port, &pcie->ports, list)
++	list_for_each_entry_reverse(port, &pcie->ports, list)
+ 		phy_power_off(port->phy);
+ }
+ 
+@@ -1491,16 +1575,21 @@ static int qcom_pcie_phy_power_on(struct qcom_pcie *pcie)
+ 	list_for_each_entry(port, &pcie->ports, list) {
+ 		ret = phy_set_mode_ext(port->phy, PHY_MODE_PCIE, PHY_MODE_PCIE_RC);
+ 		if (ret)
+-			return ret;
++			goto err_power_off;
+ 
+ 		ret = phy_power_on(port->phy);
+-		if (ret) {
+-			qcom_pcie_phy_power_off(pcie);
+-			return ret;
+-		}
++		if (ret)
++			goto err_power_off;
+ 	}
+ 
+ 	return 0;
++
++err_power_off:
++	/* The failed port never acquired a PHY power reference. */
++	list_for_each_entry_continue_reverse(port, &pcie->ports, list)
++		phy_power_off(port->phy);
++
++	return ret;
+ }
+ 
+ static void qcom_pcie_configure_ports(struct qcom_pcie *pcie)
+@@ -1519,35 +1608,40 @@ static int qcom_pcie_host_init(struct dw_pcie_rp *pp)
+ 
+ 	qcom_pcie_perst_assert(pcie);
+ 
+-	ret = qcom_pcie_phy_init(pcie);
+-	if (ret)
+-		return ret;
+-
+-	ret = pcie->cfg->ops->init(pcie);
+-	if (ret)
+-		goto err_exit_phy;
+-
+-	ret = qcom_pcie_phy_power_on(pcie);
+-	if (ret)
+-		goto err_deinit;
+-
+ 	if (!pci->suspended) {
+ 		ret = pci_pwrctrl_create_devices(pci->dev);
+ 		if (ret)
+-			goto err_disable_phy;
++			return ret;
+ 	}
+ 
++	/* Endpoint power must precede the PHY clocks enabled by phy_init(). */
+ 	if (!pp->skip_pwrctrl_off) {
+ 		ret = pci_pwrctrl_power_on_devices(pci->dev);
+ 		if (ret)
+ 			goto err_pwrctrl_destroy;
+ 	}
++	PIANO_MARK(pci->dev, "endpoint power on");
++
++	ret = qcom_pcie_phy_init(pcie);
++	if (ret)
++		goto err_pwrctrl_power_off;
++
++	ret = pcie->cfg->ops->init(pcie);
++	if (ret)
++		goto err_exit_phy;
++
++	PIANO_MARK(pci->dev, "H1 phy power-on");
++	ret = qcom_pcie_phy_power_on(pcie);
++	if (ret)
++		goto err_deinit;
++	PIANO_MARK(pci->dev, "H2 phy up");
+ 
+ 	if (pcie->cfg->ops->post_init) {
+ 		ret = pcie->cfg->ops->post_init(pcie);
+ 		if (ret)
+-			goto err_pwrctrl_power_off;
++			goto err_disable_phy;
+ 	}
++	PIANO_MARK(pci->dev, "H4 post_init done (first DBI access passed)");
+ 
+ 	qcom_pcie_clear_aspm_l0s(pcie->pci);
+ 	dw_pcie_remove_capability(pcie->pci, PCI_CAP_ID_MSIX);
+@@ -1555,6 +1649,7 @@ static int qcom_pcie_host_init(struct dw_pcie_rp *pp)
+ 
+ 	qcom_pcie_configure_ports(pcie);
+ 
++	PIANO_MARK(pci->dev, "H5 PERST# deassert");
+ 	qcom_pcie_perst_deassert(pcie);
+ 
+ 	if (pcie->cfg->ops->config_sid) {
+@@ -1569,18 +1664,18 @@ static int qcom_pcie_host_init(struct dw_pcie_rp *pp)
+ 
+ err_assert_reset:
+ 	qcom_pcie_perst_assert(pcie);
+-err_pwrctrl_power_off:
+-	if (!pp->skip_pwrctrl_off)
+-		pci_pwrctrl_power_off_devices(pci->dev);
+-err_pwrctrl_destroy:
+-	if (ret != -EPROBE_DEFER && !pci->suspended)
+-		pci_pwrctrl_destroy_devices(pci->dev);
+ err_disable_phy:
+ 	qcom_pcie_phy_power_off(pcie);
+ err_deinit:
+ 	pcie->cfg->ops->deinit(pcie);
+ err_exit_phy:
+ 	qcom_pcie_phy_exit(pcie);
++err_pwrctrl_power_off:
++	if (!pp->skip_pwrctrl_off)
++		pci_pwrctrl_power_off_devices(pci->dev);
++err_pwrctrl_destroy:
++	if (ret != -EPROBE_DEFER && !pci->suspended)
++		pci_pwrctrl_destroy_devices(pci->dev);
+ 
+ 	return ret;
+ }
+@@ -1592,17 +1687,13 @@ static void qcom_pcie_host_deinit(struct dw_pcie_rp *pp)
+ 
+ 	qcom_pcie_perst_assert(pcie);
+ 
+-	if (!pci->pp.skip_pwrctrl_off) {
+-		/*
+-		 * No need to destroy pwrctrl devices as this function only
+-		 * gets called during system suspend as of now.
+-		 */
+-		pci_pwrctrl_power_off_devices(pci->dev);
+-	}
+-
+ 	qcom_pcie_phy_power_off(pcie);
+ 	pcie->cfg->ops->deinit(pcie);
+ 	qcom_pcie_phy_exit(pcie);
++
++	/* Preserve power-control devices for the following resume. */
++	if (!pp->skip_pwrctrl_off)
++		pci_pwrctrl_power_off_devices(pci->dev);
+ }
+ 
+ static void qcom_pcie_host_post_init(struct dw_pcie_rp *pp)
+@@ -2208,13 +2299,24 @@ static int qcom_pcie_parse_ports(struct qcom_pcie *pcie)
+ 			return PTR_ERR(pcie->reset);
+ 	}
+ 
++	int n_ports = 0;
++
+ 	for_each_available_child_of_node_scoped(dev->of_node, of_port) {
++		dev_info(dev, "piano-dbg: child %pOF type=%s\n", of_port,
++			 of_get_property(of_port, "device_type", NULL) ? : "(none)");
+ 		if (!of_node_is_type(of_port, "pci"))
+ 			continue;
++		n_ports++;
+ 		ret = qcom_pcie_parse_port(pcie, of_port);
+-		if (ret)
++		dev_info(dev, "piano-dbg: parse_port(%pOF) -> %d\n", of_port, ret);
++		if (ret) {
++			dev_err_probe(dev, ret, "failed to parse port %pOF\n",
++				      of_port);
+ 			goto err_port_del;
++		}
+ 	}
++	if (!n_ports)
++		dev_info(dev, "piano-dbg: no pci-type child port found\n");
+ 
+ 	return ret;
+ 
+@@ -2378,17 +2480,21 @@ static int qcom_pcie_probe(struct platform_device *pdev)
+ 	} else {
+ 		/* Skip ICC init if OPP is supported as it is handled by OPP */
+ 		ret = qcom_pcie_icc_init(pcie);
+-		if (ret)
++		if (ret) {
++			dev_info(dev, "piano-dbg: icc_init failed %d\n", ret);
+ 			goto err_pm_runtime_put;
++		}
+ 	}
+ 
+ 	ret = pcie->cfg->ops->get_resources(pcie);
+-	if (ret)
++	if (ret) {
++		dev_info(dev, "piano-dbg: get_resources failed %d\n", ret);
+ 		goto err_pm_runtime_put;
+-
++	}
+ 	pp->ops = &qcom_pcie_dw_ops;
+ 
+ 	ret = qcom_pcie_parse_ports(pcie);
++	dev_info(dev, "piano-dbg: parse_ports -> %d\n", ret);
+ 	if (ret) {
+ 		if (ret != -ENODEV) {
+ 			dev_err_probe(pci->dev, ret,
+@@ -2402,10 +2508,13 @@ static int qcom_pcie_probe(struct platform_device *pdev)
+ 		 * node. This is to maintain DT backwards compatibility.
+ 		 */
+ 		ret = qcom_pcie_parse_legacy_binding(pcie);
++		dev_info(dev, "piano-dbg: legacy binding -> %d\n", ret);
+ 		if (ret)
+ 			goto err_pm_runtime_put;
+ 	}
+ 
++	dev_info(dev, "piano-dbg: proceeding to dw_pcie_host_init\n");
++
+ 	platform_set_drvdata(pdev, pcie);
+ 
+ 	ret = dw_pcie_host_init(pp);
+diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-pcie.c b/drivers/phy/qualcomm/phy-qcom-qmp-pcie.c
+index bec5678b2..e75c6f732 100644
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-pcie.c
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-pcie.c
+@@ -5672,6 +5672,12 @@ static void qmp_pcie_init_registers(struct qmp_pcie *qmp, const struct qmp_phy_c
+ 	qmp_configure(qmp->dev, ln_shrd, tbls->ln_shrd, tbls->ln_shrd_num);
+ }
+ 
++#define PIANO_MARK(dev, fmt, ...)					\
++	do {								\
++		dev_info(dev, "piano-dbg: " fmt "\n", ##__VA_ARGS__);	\
++		msleep(30);						\
++	} while (0)
++
+ static int qmp_pcie_init(struct phy *phy)
+ {
+ 	struct qmp_pcie *qmp = phy_get_drvdata(phy);
+@@ -5693,15 +5699,7 @@ static int qmp_pcie_init(struct phy *phy)
+ 	if (ret)
+ 		goto err_disable_pipe_clks;
+ 
+-	/*
+-	 * We can skip PHY initialization if all of the following conditions
+-	 * are met:
+-	 *  1. The PHY supports the nocsr_reset that preserves the PHY config.
+-	 *  2. The PHY was started (and not powered down again) by the
+-	 *     bootloader, with all of the expected bits set correctly.
+-	 * In this case, we can continue without having the init sequence
+-	 * defined in the driver.
+-	 */
++	/* Inspect retained PHY configuration only with its clocks enabled. */
+ 	qmp->skip_init = qmp->nocsr_reset &&
+ 		qphy_checkbits(pcs, cfg->regs[QPHY_START_CTRL], SERDES_START | PCS_START) &&
+ 		qphy_checkbits(pcs, cfg->regs[QPHY_PCS_POWER_DOWN_CONTROL], cfg->pwrdn_ctrl);
+@@ -5712,6 +5710,8 @@ static int qmp_pcie_init(struct phy *phy)
+ 		goto err_disable_clks;
+ 	}
+ 
++	PIANO_MARK(qmp->dev, "PHY supplies and clocks on (skip_init=%d)", qmp->skip_init);
++
+ 	return 0;
+ 
+ err_disable_clks:
+@@ -5729,14 +5729,9 @@ static int qmp_pcie_exit(struct phy *phy)
+ 	struct qmp_pcie *qmp = phy_get_drvdata(phy);
+ 	const struct qmp_phy_cfg *cfg = qmp->cfg;
+ 
+-	if (qmp->nocsr_reset)
+-		reset_control_assert(qmp->nocsr_reset);
+-	else
+-		reset_control_bulk_assert(cfg->num_resets, qmp->resets);
+-
++	/* The PHY was stopped before the controller clocks were disabled. */
+ 	clk_bulk_disable_unprepare(ARRAY_SIZE(qmp_pciephy_clk_l), qmp->clks);
+ 	clk_bulk_disable_unprepare(qmp->num_pipe_clks, qmp->pipe_clks);
+-
+ 	regulator_bulk_disable(cfg->num_vregs, qmp->vregs);
+ 
+ 	return 0;
+@@ -5748,42 +5743,59 @@ static int qmp_pcie_reset(struct phy *phy)
+ 	const struct qmp_phy_cfg *cfg = qmp->cfg;
+ 	int ret;
+ 
+-	if (qmp->skip_init) {
+-		ret = reset_control_assert(qmp->nocsr_reset);
++	/* Preserve retained CSR programming, but always reset the data path. */
++	if (!qmp->skip_init) {
++		ret = reset_control_bulk_assert(cfg->num_resets, qmp->resets);
+ 		if (ret) {
+-			dev_err(qmp->dev, "no-csr reset assert failed\n");
++			dev_err(qmp->dev, "reset assert failed\n");
+ 			return ret;
+ 		}
++	}
++
++	ret = reset_control_assert(qmp->nocsr_reset);
++	if (ret) {
++		dev_err(qmp->dev, "no-csr reset assert failed\n");
++		goto err_assert_reset;
++	}
+ 
+-		usleep_range(200, 300);
++	usleep_range(200, 300);
+ 
+-		ret = reset_control_deassert(qmp->nocsr_reset);
++	if (!qmp->skip_init) {
++		ret = reset_control_bulk_deassert(cfg->num_resets, qmp->resets);
+ 		if (ret) {
+-			dev_err(qmp->dev, "no-csr reset deassert failed\n");
+-			return ret;
++			dev_err(qmp->dev, "reset deassert failed\n");
++			goto err_assert_reset;
+ 		}
+-
+-		return 0;
+ 	}
+ 
+-	/*
+-	 * Toggle BCR reset for PHY that doesn't support no_csr reset or has not
+-	 * been initialized.
+-	 */
+-	ret = reset_control_bulk_assert(cfg->num_resets, qmp->resets);
++	/* A full BCR reset must also release a previously asserted no-CSR reset. */
++	ret = reset_control_deassert(qmp->nocsr_reset);
+ 	if (ret) {
+-		dev_err(qmp->dev, "reset assert failed\n");
+-		return ret;
++		dev_err(qmp->dev, "no-csr reset deassert failed\n");
++		goto err_assert_reset;
+ 	}
+ 
+-	usleep_range(200, 300);
++	return 0;
+ 
+-	ret = reset_control_bulk_deassert(cfg->num_resets, qmp->resets);
+-	if (ret) {
+-		dev_err(qmp->dev, "reset deassert failed\n");
++err_assert_reset:
++	reset_control_assert(qmp->nocsr_reset);
++	if (!qmp->skip_init)
+ 		reset_control_bulk_assert(cfg->num_resets, qmp->resets);
+-		return ret;
+-	}
++
++	return ret;
++}
++
++static int qmp_pcie_quiesce(struct qmp_pcie *qmp)
++{
++	const struct qmp_phy_cfg *cfg = qmp->cfg;
++
++	/* Stop the data path without discarding retained CSR programming. */
++	if (qmp->nocsr_reset)
++		return reset_control_assert(qmp->nocsr_reset);
++
++	qphy_setbits(qmp->pcs, cfg->regs[QPHY_SW_RESET], SW_RESET);
++	qphy_clrbits(qmp->pcs, cfg->regs[QPHY_START_CTRL], SERDES_START | PCS_START);
++	qphy_clrbits(qmp->pcs, cfg->regs[QPHY_PCS_POWER_DOWN_CONTROL], cfg->pwrdn_ctrl);
+ 
+ 	return 0;
+ }
+@@ -5796,12 +5808,8 @@ static int qmp_pcie_power_on(struct phy *phy)
+ 	void __iomem *pcs = qmp->pcs;
+ 	void __iomem *status;
+ 	unsigned int mask, val;
+-	int ret;
++	int ret, stop_ret;
+ 
+-	/*
+-	 * Write CSR register for PHY that doesn't support no_csr reset or has not
+-	 * been initialized.
+-	 */
+ 	if (qmp->skip_init)
+ 		goto skip_serdes_start;
+ 
+@@ -5815,11 +5823,9 @@ static int qmp_pcie_power_on(struct phy *phy)
+ 
+ 	qmp_pcie_init_registers(qmp, &cfg->tbls);
+ 	qmp_pcie_init_registers(qmp, mode_tbls);
++	PIANO_MARK(qmp->dev, "Q4 phy tables written");
+ 
+-	/* Pull PHY out of reset state */
+ 	qphy_clrbits(pcs, cfg->regs[QPHY_SW_RESET], SW_RESET);
+-
+-	/* start SerDes and Phy-Coding-Sublayer */
+ 	qphy_setbits(pcs, cfg->regs[QPHY_START_CTRL], SERDES_START | PCS_START);
+ 
+ 	if (!cfg->skip_start_delay)
+@@ -5828,12 +5834,19 @@ static int qmp_pcie_power_on(struct phy *phy)
+ skip_serdes_start:
+ 	status = pcs + cfg->regs[QPHY_PCS_STATUS];
+ 	mask = cfg->phy_status;
++	PIANO_MARK(qmp->dev, "Q6 serdes started, polling PHYSTATUS");
+ 	ret = readl_poll_timeout(status, val, !(val & mask), 200,
+ 				 PHY_INIT_COMPLETE_TIMEOUT);
+ 	if (ret) {
+-		dev_err(qmp->dev, "phy initialization timed-out\n");
++		dev_err(qmp->dev, "phy initialization timed-out (status %08x)\n", val);
++		/* No generic PHY power reference was acquired on this error path. */
++		stop_ret = qmp_pcie_quiesce(qmp);
++		if (stop_ret)
++			dev_err(qmp->dev, "failed to stop PHY after initialization error: %d\n",
++				stop_ret);
+ 		return ret;
+ 	}
++	PIANO_MARK(qmp->dev, "Q7 PHY ready");
+ 
+ 	return 0;
+ }
+@@ -5841,29 +5854,13 @@ skip_serdes_start:
+ static int qmp_pcie_power_off(struct phy *phy)
+ {
+ 	struct qmp_pcie *qmp = phy_get_drvdata(phy);
+-	const struct qmp_phy_cfg *cfg = qmp->cfg;
+-
+-	/*
+-	 * While powering off the PHY, only qmp->nocsr_reset needs to be checked. In
+-	 * this way, no matter whether the PHY settings were initially programmed by
+-	 * bootloader or PHY driver itself, we can reuse them when PHY is powered on
+-	 * next time.
+-	 */
+-	if (qmp->nocsr_reset)
+-		return 0;
+-
+-	/* PHY reset */
+-	qphy_setbits(qmp->pcs, cfg->regs[QPHY_SW_RESET], SW_RESET);
+-
+-	/* stop SerDes and Phy-Coding-Sublayer */
+-	qphy_clrbits(qmp->pcs, cfg->regs[QPHY_START_CTRL],
+-			SERDES_START | PCS_START);
++	int ret;
+ 
+-	/* Put PHY into POWER DOWN state: active low */
+-	qphy_clrbits(qmp->pcs, cfg->regs[QPHY_PCS_POWER_DOWN_CONTROL],
+-			cfg->pwrdn_ctrl);
++	ret = qmp_pcie_quiesce(qmp);
++	if (ret)
++		dev_err(qmp->dev, "failed to stop PHY: %d\n", ret);
+ 
+-	return 0;
++	return ret;
+ }
+ 
+ static int qmp_pcie_set_mode(struct phy *phy, enum phy_mode mode, int submode)

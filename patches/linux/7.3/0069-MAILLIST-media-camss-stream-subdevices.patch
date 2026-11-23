@@ -1,0 +1,190 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Qianhui Xu <xiaqinghuan@mail.ustc.edu.cn>
+Date: Sat, 31 Oct 2026 12:11:54 +0800
+Subject: [PATCH] media: camss: video: factor pipeline stream on/off into a
+ helper
+
+When one subdevice fails to start, the ones already started further up the
+pipeline were left streaming, and the next start would try to start them
+again.  video_stop_streaming() returned early on the first subdevice that
+failed to stop, leaving the rest running while the pipeline was torn down.
+
+Factor the walk into camss_video_subdevs_set_stream(video, bool), used by
+both start and stop.  A start error now unwinds the partial start by
+disabling the pipeline again; streams already in the requested state report
+-EALREADY, so the subdevice that failed to start (never marked enabled) and
+the ones above it (never started) are left untouched.
+
+Locate each subdevice source pad with
+media_entity_remote_source_pad_unique() instead of assuming pads[0], and
+toggle it with v4l2_subdev_enable_streams() and
+v4l2_subdev_disable_streams() instead of the legacy .s_stream() call; the
+camss subdevices only implement .s_stream() so the helpers fall back to it.
+
+Suggested-by: Loic Poulain <loic.poulain@oss.qualcomm.com>
+Signed-off-by: Qianhui Xu <xiaqinghuan@mail.ustc.edu.cn>
+
+Link: https://lore.kernel.org/r/20261031041154.308030-3-xiaqinghuan@mail.ustc.edu.cn
+
+Keep walking the stop path after a subdevice fails, as the existing
+Piano cleanup did. The v2 patch exits at the first stop error and can
+leave the remaining subdevices streaming. Fold in the change proposed
+in the public reply so the replacement preserves that cleanup behavior.
+
+Co-developed-by: Jizhou Tong <fqwqf@fqwqf.xyz>
+Signed-off-by: Jizhou Tong <fqwqf@fqwqf.xyz>
+Link: https://lore.kernel.org/r/010601a1b1b4c10a-5e87fd76-771d-44aa-9a2e-0755e5e1ff0f-000000@ap-northeast-1.amazonses.com
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+---
+ .../media/platform/qcom/camss/camss-video.c   | 117 +++++++++++-------
+ 1 file changed, 73 insertions(+), 44 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-video.c b/drivers/media/platform/qcom/camss/camss-video.c
+index 0852eb6f13154cfae7147ce39d22de64d14a5cba..31d608d9a00f8b5db8b4e189627659cd02388b04 100644
+--- a/drivers/media/platform/qcom/camss/camss-video.c
++++ b/drivers/media/platform/qcom/camss/camss-video.c
+@@ -249,13 +249,74 @@ static int video_prepare_streaming(struct vb2_queue *q)
+ 	return ret;
+ }
+ 
++/*
++ * camss_video_subdevs_set_stream() - Enable or disable a video pipeline
++ * @video: The video node whose pipeline is toggled
++ * @enable: true to start the subdevices, false to stop them
++ *
++ * Walk the media pipeline upstream from the video node and toggle the stream on
++ * each subdevice.  Each subdevice source pad is located with
++ * media_entity_remote_source_pad_unique() instead of assuming pads[0], and the
++ * stream is toggled with v4l2_subdev_enable_streams()/
++ * v4l2_subdev_disable_streams() rather than the legacy .s_stream() call.  The
++ * camss subdevices only implement .s_stream(), so the helpers fall back to it.
++ *
++ * A stream that is already in the requested state reports -EALREADY.  On the
++ * teardown path this simply skips subdevices that were never started, so a
++ * partially started pipeline is unwound by disabling it again: the subdevice
++ * that failed to start was not marked enabled and is left untouched.  A
++ * subdevice without a streaming operation reports -ENOIOCTLCMD, which is
++ * ignored here to match the previous .s_stream() call sites.
++ *
++ * Start stops at the first error. Stop continues through the pipeline even if
++ * a subdevice fails, so one failure does not prevent cleanup of the others.
++ *
++ * Return: 0 on success, or the error code of the first subdevice that failed.
++ */
++static int camss_video_subdevs_set_stream(struct camss_video *video,
++					  bool enable)
++{
++	struct media_entity *entity = &video->vdev.entity;
++	int first_error = 0;
++
++	while (1) {
++		struct media_pad *pad;
++		struct v4l2_subdev *subdev;
++		int ret;
++
++		pad = media_entity_remote_source_pad_unique(entity);
++		if (IS_ERR(pad))
++			break;
++
++		if (!is_media_entity_v4l2_subdev(pad->entity))
++			break;
++
++		subdev = media_entity_to_v4l2_subdev(pad->entity);
++
++		if (enable)
++			ret = v4l2_subdev_enable_streams(subdev, pad->index,
++							 BIT_ULL(0));
++		else
++			ret = v4l2_subdev_disable_streams(subdev, pad->index,
++							  BIT_ULL(0));
++
++		if (ret && ret != -EALREADY && ret != -ENOIOCTLCMD) {
++			if (enable)
++				return ret;
++			if (!first_error)
++				first_error = ret;
++		}
++
++		entity = pad->entity;
++	}
++
++	return first_error;
++}
++
+ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
+ {
+ 	struct camss_video *video = vb2_get_drv_priv(q);
+ 	struct video_device *vdev = &video->vdev;
+-	struct media_entity *entity;
+-	struct media_pad *pad;
+-	struct v4l2_subdev *subdev;
+ 	int ret;
+ 
+ 	ret = video_device_pipeline_alloc_start(vdev);
+@@ -268,22 +329,11 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
+ 	if (ret < 0)
+ 		goto error;
+ 
+-	entity = &vdev->entity;
+-	while (1) {
+-		pad = &entity->pads[0];
+-		if (!(pad->flags & MEDIA_PAD_FL_SINK))
+-			break;
+-
+-		pad = media_pad_remote_pad_first(pad);
+-		if (!pad || !is_media_entity_v4l2_subdev(pad->entity))
+-			break;
+-
+-		entity = pad->entity;
+-		subdev = media_entity_to_v4l2_subdev(entity);
+-
+-		ret = v4l2_subdev_call(subdev, video, s_stream, 1);
+-		if (ret < 0 && ret != -ENOIOCTLCMD)
+-			goto error;
++	ret = camss_video_subdevs_set_stream(video, true);
++	if (ret < 0) {
++		camss_video_subdevs_set_stream(video, false);
++		dev_err(video->camss->dev, "Video pipeline start failed: %d\n", ret);
++		goto error;
+ 	}
+ 
+ 	return 0;
+@@ -300,34 +350,13 @@ flush_buffers:
+ static void video_stop_streaming(struct vb2_queue *q)
+ {
+ 	struct camss_video *video = vb2_get_drv_priv(q);
+-	struct video_device *vdev = &video->vdev;
+-	struct media_entity *entity;
+-	struct media_pad *pad;
+-	struct v4l2_subdev *subdev;
+ 	int ret;
+ 
+-	entity = &vdev->entity;
+-	while (1) {
+-		pad = &entity->pads[0];
+-		if (!(pad->flags & MEDIA_PAD_FL_SINK))
+-			break;
+-
+-		pad = media_pad_remote_pad_first(pad);
+-		if (!pad || !is_media_entity_v4l2_subdev(pad->entity))
+-			break;
+-
+-		entity = pad->entity;
+-		subdev = media_entity_to_v4l2_subdev(entity);
+-
+-		ret = v4l2_subdev_call(subdev, video, s_stream, 0);
+-
+-		if (ret) {
+-			dev_err(video->camss->dev, "Video pipeline stop failed: %d\n", ret);
+-			return;
+-		}
+-	}
++	ret = camss_video_subdevs_set_stream(video, false);
++	if (ret < 0)
++		dev_err(video->camss->dev, "Video pipeline stop failed: %d\n", ret);
+ 
+-	video_device_pipeline_stop(vdev);
++	video_device_pipeline_stop(&video->vdev);
+ 
+ 	video->ops->flush_buffers(video, VB2_BUF_STATE_ERROR);
+ }

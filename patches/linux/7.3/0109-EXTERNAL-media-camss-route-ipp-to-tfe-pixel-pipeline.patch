@@ -1,0 +1,1403 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: bluseliu50 <265648257+bluseliu50@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 22:07:45 +0800
+Subject: [PATCH] media: qcom: camss: route SM8750 IPP frames through the TFE
+ pixel pipeline
+
+Configure the CSID IPP port for the TFE pixel path: set the context
+index and the Bayer order (CAMIF_FRAME_CFG[26:24], from the sink media
+bus code) the TFE demosaics with, and issue a register update (RUP)
+along with the address update on the IPP port so that ISP settings
+changed while streaming latch on the next frame.
+
+Port the existing Piano PIX path to the v7 CSID/VFE 980 backends.
+Keep the v7 RDI route on other machines and select Piano-specific VFE
+resources, media pads and Bayer clocks only on Xiaomi Piano.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/6f3dc4ced0ed98f533f18f7e066f2cfcc05d1672
+Signed-off-by: bluseliu50 <bluseliu50@gmail.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/dc4d2e2737caf82b7ee59114c7110707c877085a
+
+Run the SM8750 TFE pixel (PIX) line: the Bayer clocks of each TFE,
+the 980 pixel formats, and an image pipeline programmed from kernel
+defaults: black level and white balance in the 14-bit Bayer stage,
+demosaic, an sRGB gamma LUT (with an optional S-curve blend), BT.601
+colour transform, MN downscaling from the sink compose rectangle and
+crop/round to 8-bit NV12.
+
+The PIX subdev exposes the white balance gains, digital gain,
+saturation, contrast and a driver-private colour correction matrix
+(folded into the colour transform) as controls; exposure, white
+balance and focus loops are left to userspace. A debugfs bring-up aid
+(camss_isp/) applies register scripts at pixel-path start and gives
+live register access while the path streams.
+
+Signed-off-by: bluseliu50 <bluseliu50@gmail.com>
+
+Link: https://github.com/blu-sharky/linux-piano/commit/84cb707e0a81e343f4c558c59858032e60eaeb5b
+
+Keep frame diagnostics and omit the short-lived raw-register debugfs interface.
+---
+ .../platform/qcom/camss/camss-csid-980.c      | 179 ++++++-
+ .../media/platform/qcom/camss/camss-csid.c    |   2 +-
+ .../media/platform/qcom/camss/camss-vfe-980.c | 439 +++++++++++++++++-
+ drivers/media/platform/qcom/camss/camss-vfe.c | 165 ++++++-
+ drivers/media/platform/qcom/camss/camss-vfe.h |  24 +
+ .../media/platform/qcom/camss/camss-video.c   |   6 +-
+ drivers/media/platform/qcom/camss/camss.c     | 156 +++++++
+ drivers/media/platform/qcom/camss/camss.h     |   1 +
+ 8 files changed, 942 insertions(+), 30 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-csid-980.c b/drivers/media/platform/qcom/camss/camss-csid-980.c
+index 38cbd67d35..350f4976cc 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid-980.c
++++ b/drivers/media/platform/qcom/camss/camss-csid-980.c
+@@ -66,11 +66,11 @@
+ /* CSI2 RX Configuration */
+ #define CSID_CSI2_RX_CFG0			(csid_is_lite(csid) ? 0x200 : 0x400)
+ #define		CSI2_RX_CFG0_NUM_ACTIVE_LANES		0
++#define		CSI2_RX_CFG0_PHY_SEL_BASE_IDX		1
+ #define		CSI2_RX_CFG0_DL0_INPUT_SEL		4
+ #define		CSI2_RX_CFG0_PHY_NUM_SEL		20
+ #define		CSI2_RX_CFG0_TPG_MUX_EN			BIT(27)
+ #define		CSI2_RX_CFG0_TPG_MUX_SEL		GENMASK(29, 28)
+-#define		CSI2_RX_CFG0_PHY_SEL_BASE_IDX		1
+ #define CSID_CSI2_RX_CFG1			(csid_is_lite(csid) ? 0x204 : 0x404)
+ #define		CSI2_RX_CFG1_ECC_CORRECTION_EN		BIT(0)
+ #define		CSI2_RX_CFG1_VC_MODE			BIT(2)
+@@ -118,18 +118,61 @@
+ #define		RDI_PIX_STORE_CFG0_EN			BIT(0)
+ #define		RDI_PIX_STORE_CFG0_MIN_HBI		1
+ 
++/*
++ * IPP (pixel path) of the full CSIDs, fed to the TFE pixel pipeline.  The
++ * fourth CSID source pad (port 3) drives the IPP, linked to the VFE PIX
++ * line; RDI3 is not exposed.  The TFE pixel pipeline is multi-context;
++ * everything here runs in hardware context 0.  CTXT_CFG selects the
++ * context whose banked registers (0x1800...) the following writes reach,
++ * and CAMIF_FRAME_CFG[4:0] tags the frames with their context; both take a
++ * context index, while the IRQ composition takes context masks.
++ * CAMIF_FRAME_CFG[26:24] tells the TFE the Bayer order of the frames.
++ */
++#define CSID_IPP_PORT				3
++#define CSID_IPP_CFG0				0x600
++#define CSID_IPP_CTRL				0x604
++#define CSID_IPP_CAMIF_FRAME_CFG		0x638
++#define		CAMIF_FRAME_CFG_CTXT			0
++#define		CAMIF_FRAME_CFG_CFA			24
++#define			IPP_CFA_RGGB				0
++#define			IPP_CFA_GRBG				1
++#define			IPP_CFA_BGGR				2
++#define			IPP_CFA_GBRG				3
++#define CSID_IPP_IRQ_SUBSAMPLE_PATTERN		0x688
++#define CSID_IPP_IRQ_SUBSAMPLE_PERIOD		0x68C
++#define CSID_IPP_CTXT_CFG			0x3F0
++#define CSID_IPP_CFG1				0x1800
++#define CSID_IPP_PIX_STORE_CFG			0x1804
++#define		IPP_PIX_STORE_EN			BIT(0)
++#define		IPP_PIX_STORE_MIN_HBI			1
++#define CSID_IPP_IRQ_COMP_CFG0			0x178
++#define		IPP_SRC_CTXT_MASK_SHIFT			4
++#define		IPP_DST_CTXT_MASK_SHIFT			0
++#define CSID_IPP_IRQ_STATUS			0xD4
++#define CSID_IPP_IRQ_MASK			0xD8
++#define CSID_IPP_IRQ_CLEAR			0xDC
++#define CSID_RUP_AUP_IPP			BIT(0)
++#define		IPP_CTXT_ID				0
++/* TFE bus composite group 1 (FD_Y + FD_C) done, in CSID_BUF_DONE_IRQ_* */
++#define BUF_DONE_IRQ_STATUS_IPP_FD		BIT(3)
++
++static bool csid_port_is_ipp(struct csid_device *csid, int port)
++{
++	return csid->camss->check_dma_stop && !csid_is_lite(csid) &&
++	       port == CSID_IPP_PORT;
++}
++
++static u32 csid_port_update_mask(struct csid_device *csid, int port)
++{
++	return csid_port_is_ipp(csid, port) ? CSID_RUP_AUP_IPP : CSID_RUP_AUP_RDI(port);
++}
++
+ /* RDI IRQ Status in wrapper */
+ #define CSID_CSI2_RDIN_IRQ_STATUS(rdi) \
+ 	((csid_is_lite(csid) ? 0xEC : 0x114) + 0x10 * (rdi))
+ #define CSID_CSI2_RDIN_IRQ_CLEAR(rdi) \
+ 	((csid_is_lite(csid) ? 0xF4 : 0x11C) + 0x10 * (rdi))
+-#define CSID_CSI2_RDIN_IRQ_MASK(rdi) \
+-	((csid_is_lite(csid) ? 0xF0 : 0x118) + 0x10 * (rdi))
+ #define		INFO_RUP_DONE				BIT(23)
+-#define		INFO_INPUT_SOF				BIT(12)
+-#define		INFO_INPUT_EOF				BIT(9)
+-#define		INFO_CAMIF_SOF				BIT(4)
+-#define		INFO_CAMIF_EOF				BIT(3)
+ 
+ static void __csid_full_aup_rup_trigger(struct csid_device *csid)
+ {
+@@ -146,7 +189,7 @@ static void __csid_addr_update(struct csid_device *csid, int port_id)
+ 		csid->reg_update |= CSID_LITE_AUP_RDI(port_id);
+ 		writel(csid->reg_update, csid->base + CSID_LITE_RUP_AUP_CMD);
+ 	} else {
+-		csid->addr_update |= CSID_RUP_AUP_RDI(port_id);
++		csid->addr_update |= csid_port_update_mask(csid, port_id);
+ 		writel(csid->addr_update, csid->base + CSID_AUP_CMD);
+ 
+ 		/* CSID Fulls in v980 split AUP and RUP commands, which requires
+@@ -166,7 +209,7 @@ static void __csid_reg_update(struct csid_device *csid, int port_id)
+ 		csid->reg_update |= CSID_LITE_RUP_RDI(port_id);
+ 		writel(csid->reg_update, csid->base + CSID_LITE_RUP_AUP_CMD);
+ 	} else {
+-		csid->reg_update |= CSID_RUP_AUP_RDI(port_id);
++		csid->reg_update |= csid_port_update_mask(csid, port_id);
+ 		writel(csid->reg_update, csid->base + CSID_RUP_CMD);
+ 
+ 		/* CSID Fulls in v980 split AUP and RUP commands, which requires
+@@ -183,7 +226,7 @@ static void __csid_addr_update_clear(struct csid_device *csid, int port_id)
+ 	if (csid_is_lite(csid))
+ 		csid->reg_update &= ~CSID_LITE_AUP_RDI(port_id);
+ 	else
+-		csid->addr_update &= ~CSID_RUP_AUP_RDI(port_id);
++		csid->addr_update &= ~csid_port_update_mask(csid, port_id);
+ }
+ 
+ static void __csid_reg_update_clear(struct csid_device *csid, int port_id)
+@@ -192,7 +235,7 @@ static void __csid_reg_update_clear(struct csid_device *csid, int port_id)
+ 	if (csid_is_lite(csid))
+ 		csid->reg_update &= ~CSID_LITE_RUP_RDI(port_id);
+ 	else
+-		csid->reg_update &= ~CSID_RUP_AUP_RDI(port_id);
++		csid->reg_update &= ~csid_port_update_mask(csid, port_id);
+ }
+ 
+ static void __csid_configure_rx(struct csid_device *csid,
+@@ -232,8 +275,8 @@ static void __csid_configure_rx_vc(struct csid_device *csid, int vc)
+ 
+ static void __csid_ctrl_rdi(struct csid_device *csid, int enable, u8 rdi)
+ {
+-	u32 rdi_ctrl_offset = CSID_RDI_CTRL(rdi);
+ 	int val = 0;
++	u32 rdi_ctrl_offset = CSID_RDI_CTRL(rdi);
+ 
+ 	if (enable)
+ 		val = RDI_CTRL_START_CMD;
+@@ -255,10 +298,11 @@ static void __csid_configure_rdi_pix_store(struct csid_device *csid, u8 rdi)
+ 	writel(val, csid->base + CSID_RDI_PIX_STORE_CFG0(rdi));
+ }
+ 
+-static void __csid_configure_rdi_stream(struct csid_device *csid, u8 enable, u8 port, u8 vc)
++static void __csid_configure_rdi_stream(struct csid_device *csid, u8 enable,
++					u8 port, u8 vc)
+ {
+-	u8 lane_cnt = csid->phy.lane_cnt;
+ 	u32 val;
++	u8 lane_cnt = csid->phy.lane_cnt;
+ 
+ 	/* Source pads matching RDI channels on hardware.
+ 	 * E.g. Pad 1 -> RDI0, Pad 2 -> RDI1, etc.
+@@ -310,13 +354,84 @@ static void __csid_configure_rdi_stream(struct csid_device *csid, u8 enable, u8
+ 	writel(val, csid->base + rdi_ctrl_offset);
+ 
+ 	val = readl(csid->base + rdi_cfg0_offset);
+-
+ 	if (enable)
+ 		val |= RDI_CFG0_EN;
+-
+ 	writel(val, csid->base + rdi_cfg0_offset);
+ }
+ 
++/* Bayer order the TFE demosaic works on, from the media bus code */
++static u32 __csid_ipp_cfa(u32 code)
++{
++	switch (code) {
++	case MEDIA_BUS_FMT_SGRBG8_1X8:
++	case MEDIA_BUS_FMT_SGRBG10_1X10:
++	case MEDIA_BUS_FMT_SGRBG12_1X12:
++	case MEDIA_BUS_FMT_SGRBG14_1X14:
++		return IPP_CFA_GRBG;
++	case MEDIA_BUS_FMT_SBGGR8_1X8:
++	case MEDIA_BUS_FMT_SBGGR10_1X10:
++	case MEDIA_BUS_FMT_SBGGR12_1X12:
++	case MEDIA_BUS_FMT_SBGGR14_1X14:
++		return IPP_CFA_BGGR;
++	case MEDIA_BUS_FMT_SGBRG8_1X8:
++	case MEDIA_BUS_FMT_SGBRG10_1X10:
++	case MEDIA_BUS_FMT_SGBRG12_1X12:
++	case MEDIA_BUS_FMT_SGBRG14_1X14:
++		return IPP_CFA_GBRG;
++	default:
++		return IPP_CFA_RGGB;
++	}
++}
++
++static void __csid_configure_ipp_stream(struct csid_device *csid, u8 enable,
++					u8 vc)
++{
++	struct v4l2_mbus_framefmt *input_format =
++		&csid->fmt[MSM_CSID_PAD_FIRST_SRC + CSID_IPP_PORT];
++	const struct csid_format_info *format =
++		csid_get_fmt_entry(csid->res->formats->formats,
++				   csid->res->formats->nformats,
++				   input_format->code);
++	u32 val;
++
++	writel(0, csid->base + CSID_IPP_CTRL);
++
++	if (!enable) {
++		val = readl(csid->base + CSID_IPP_CFG0) & ~RDI_CFG0_EN;
++		writel(val, csid->base + CSID_IPP_CFG0);
++		return;
++	}
++
++	val = RDI_CFG0_TIMESTAMP_EN | RDI_CFG0_TIMESTAMP_STB_SEL;
++	val |= RDI_CFG0_RETIME_BS;	/* SOF retiming off, as downstream */
++	val |= format->decode_format << RDI_CFG0_DECODE_FORMAT;
++	val |= vc << RDI_CFG0_VC;
++	val |= format->data_type << RDI_CFG0_DT;
++	val |= (vc & 0x03) << RDI_CFG0_DT_ID;
++	writel(val, csid->base + CSID_IPP_CFG0);
++
++	/* no crop/drop/binning; pixel store absorbs horizontal blanking */
++	writel(0, csid->base + CSID_IPP_CFG1);
++	writel((4 << IPP_PIX_STORE_MIN_HBI) | IPP_PIX_STORE_EN,
++	       csid->base + CSID_IPP_PIX_STORE_CFG);
++
++	/* frames go to hardware context 0 of the TFE pixel pipeline */
++	writel(IPP_CTXT_ID, csid->base + CSID_IPP_CTXT_CFG);
++	writel((IPP_CTXT_ID << CAMIF_FRAME_CFG_CTXT) |
++	       (__csid_ipp_cfa(input_format->code) << CAMIF_FRAME_CFG_CFA),
++	       csid->base + CSID_IPP_CAMIF_FRAME_CFG);
++	writel((BIT(IPP_CTXT_ID) << IPP_SRC_CTXT_MASK_SHIFT) |
++	       (BIT(IPP_CTXT_ID) << IPP_DST_CTXT_MASK_SHIFT),
++	       csid->base + CSID_IPP_IRQ_COMP_CFG0);
++	writel(1, csid->base + CSID_IPP_IRQ_SUBSAMPLE_PATTERN);
++	writel(0, csid->base + CSID_IPP_IRQ_SUBSAMPLE_PERIOD);
++	writel(INFO_RUP_DONE, csid->base + CSID_IPP_IRQ_MASK);
++
++
++	val = readl(csid->base + CSID_IPP_CFG0) | RDI_CFG0_EN;
++	writel(val, csid->base + CSID_IPP_CFG0);
++}
++
+ static void csid_configure_stream(struct csid_device *csid, u8 enable)
+ {
+ 	u8 i, k;
+@@ -325,7 +440,10 @@ static void csid_configure_stream(struct csid_device *csid, u8 enable)
+ 
+ 	for (i = 0; i < MSM_CSID_MAX_SRC_STREAMS_980; i++) {
+ 		if (csid->phy.en_vc & BIT(i)) {
+-			__csid_configure_rdi_stream(csid, enable, i, 0);
++			if (csid_port_is_ipp(csid, i))
++				__csid_configure_ipp_stream(csid, enable, 0);
++			else
++				__csid_configure_rdi_stream(csid, enable, i, 0);
+ 			__csid_configure_rx_vc(csid, 0);
+ 
+ 			for (k = 0; k < CAMSS_INIT_BUF_COUNT; k++) {
+@@ -333,7 +451,11 @@ static void csid_configure_stream(struct csid_device *csid, u8 enable)
+ 				__csid_reg_update(csid, i);
+ 			}
+ 
+-			__csid_ctrl_rdi(csid, enable, i);
++			if (csid_port_is_ipp(csid, i))
++				writel(enable ? RDI_CTRL_START_CMD : 0,
++				       csid->base + CSID_IPP_CTRL);
++			else
++				__csid_ctrl_rdi(csid, enable, i);
+ 		}
+ 	}
+ }
+@@ -348,7 +470,8 @@ static void csid_subdev_reg_update(struct csid_device *csid, int port_id,
+ {
+ 	if (clear)
+ 		__csid_reg_update_clear(csid, port_id);
+-	else
++	/* Piano RDI needs only an address update after initial RUP. */
++	else if (!csid->camss->check_dma_stop || csid_port_is_ipp(csid, port_id))
+ 		__csid_reg_update(csid, port_id);
+ }
+ 
+@@ -384,7 +507,18 @@ static irqreturn_t csid_isr(int irq, void *dev)
+ 	writel(buf_done_val, csid->base + CSID_BUF_DONE_IRQ_CLEAR);
+ 
+ 	for (i = 0; i < MSM_CSID_MAX_SRC_STREAMS_980; i++) {
+-		if (csid->phy.en_vc & BIT(i)) {
++		if (csid->phy.en_vc & BIT(i) && csid_port_is_ipp(csid, i)) {
++			val = readl(csid->base + CSID_IPP_IRQ_STATUS);
++			writel(val, csid->base + CSID_IPP_IRQ_CLEAR);
++
++			if (val & INFO_RUP_DONE) {
++				__csid_addr_update_clear(csid, i);
++				__csid_reg_update_clear(csid, i);
++			}
++
++			if (buf_done_val & BUF_DONE_IRQ_STATUS_IPP_FD)
++				camss_buf_done(csid->camss, csid->id, i);
++		} else if (csid->phy.en_vc & BIT(i)) {
+ 			val = readl(csid->base + CSID_CSI2_RDIN_IRQ_STATUS(i));
+ 			writel(val, csid->base + CSID_CSI2_RDIN_IRQ_CLEAR(i));
+ 
+@@ -433,7 +567,10 @@ static int csid_reset(struct csid_device *csid)
+ 			 * RUP done IRQ status will be cleared once isr
+ 			 * strobe generated by CSID_RST_CMD
+ 			 */
+-			val |= BIT(BUF_DONE_IRQ_STATUS_RDI_OFFSET + i);
++			if (csid_port_is_ipp(csid, i))
++				val |= BUF_DONE_IRQ_STATUS_IPP_FD;
++			else
++				val |= BIT(BUF_DONE_IRQ_STATUS_RDI_OFFSET + i);
+ 		}
+ 	}
+ 	writel(val, csid->base + CSID_BUF_DONE_IRQ_CLEAR);
+diff --git a/drivers/media/platform/qcom/camss/camss-csid.c b/drivers/media/platform/qcom/camss/camss-csid.c
+index 3af7a2eea7..0e64339407 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid.c
++++ b/drivers/media/platform/qcom/camss/camss-csid.c
+@@ -901,7 +901,7 @@ static int csid_set_stream(struct v4l2_subdev *sd, int enable)
+ 			return -ENOLINK;
+ 	}
+ 
+-	if (csid->phy.need_vc_update) {
++	if (csid->phy.need_vc_update && csid->res->hw_ops->configure_stream) {
+ 		csid->res->hw_ops->configure_stream(csid, enable);
+ 		csid->phy.need_vc_update = false;
+ 	}
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe-980.c b/drivers/media/platform/qcom/camss/camss-vfe-980.c
+index 47f6c18190..998c19c1cc 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe-980.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe-980.c
+@@ -14,7 +14,7 @@
+ #include "camss-vfe.h"
+ 
+ /* VFE-980 Bus Register Base Addresses */
+-#define BUS_REG_BASE				(vfe_is_lite(vfe) ? 0x200 : 0x800)
++#define BUS_REG_BASE			(vfe_is_lite(vfe) ? 0x200 : 0x800)
+ 
+ #define VFE_BUS_WM_CGC_OVERRIDE			(BUS_REG_BASE + 0x08)
+ #define		WM_CGC_OVERRIDE_ALL			(0x7FFFFFF)
+@@ -29,6 +29,7 @@
+ #define VFE_BUS_WM_FRAME_INCR(n)		(BUS_REG_BASE + 0x508 + (n) * 0x100)
+ #define VFE_BUS_WM_IMAGE_CFG_0(n)		(BUS_REG_BASE + 0x50C + (n) * 0x100)
+ #define		WM_IMAGE_CFG_0_DEFAULT_WIDTH		(0xFFFF)
++#define VFE_BUS_WM_IMAGE_CFG_1(n)		(BUS_REG_BASE + 0x510 + (n) * 0x100)
+ #define VFE_BUS_WM_IMAGE_CFG_2(n)		(BUS_REG_BASE + 0x514 + (n) * 0x100)
+ #define		WM_IMAGE_CFG_2_DEFAULT_STRIDE		(0xFFFF)
+ #define VFE_BUS_WM_PACKER_CFG(n)		(BUS_REG_BASE + 0x518 + (n) * 0x100)
+@@ -42,6 +43,10 @@
+ 
+ #define VFE_BUS_WM_MMU_PREFETCH_CFG(n)		(BUS_REG_BASE + 0x560 + (n) * 0x100)
+ #define VFE_BUS_WM_MMU_PREFETCH_MAX_OFFSET(n)	(BUS_REG_BASE + 0x564 + (n) * 0x100)
++#define VFE_BUS_WM_CTXT_CFG(n)			(BUS_REG_BASE + 0x578 + (n) * 0x100)
++#define VFE_BUS_CTXT_SEL			(BUS_REG_BASE + 0x124)
++
++#define		WM_PACKER_PLAIN_8_LSB_MSB_10		3
+ 
+ /*
+  * IFE write master client IDs
+@@ -55,7 +60,7 @@
+  * DISPLAY_DS2_C		6
+  * FD_Y				7
+  * FD_C				8
+- * IR_OUT			9
++ * IR_OUT	9
+  * STATS_AEC_BG			10
+  * STATS_AEC_BHIST		11
+  * STATS_TINTLESS_BG		12
+@@ -85,12 +90,419 @@
+  * STATES_BE		5
+  */
+ #define RDI_WM(n) ((vfe_is_lite(vfe) ? 0x0 : 0x17) + (n))
++#define FD_Y_WM		7
++#define FD_C_WM		8
++
++/*
++ * TFE 980 pixel pipeline (IPP): demux -> ... -> white balance -> BDS2/demosaic
++ * -> colour correct -> GTM -> gamma LUT -> colour transform (RGB to YCbCr)
++ * -> MN downscaler -> crop/round/clamp -> FD_Y/FD_C write masters.
++ *
++ * The IQ modules sit in the TFE Bayer clock domain (TFE_n_BAYER clocks).
++ * They are not documented; register layouts come from the CamX
++ * hardware-setting code and were checked against sensor test patterns.
++ * Each module keeps per-hardware-context register banks, selected by its
++ * CTXT_SEL register (module base + 0x1f4).  Modules not listed stay disabled
++ * (bypassed).
++ *
++ * The Bayer stage carries 14 bit data (10 bit sensor data << 4), but the
++ * stages after the demosaic clamp to 10 bits, so white balance scales the
++ * data down by 16.  Its offsets subtract the sensor black level before the
++ * gains.  The colour stages see the channels in (G, B, R) order.  The gamma
++ * LUT then maps the linear 10 bit data to sRGB, the colour transform
++ * (with the colour correction matrix folded in) produces full range BT.601
++ * YCbCr and the FD crop/round/clamp blocks round
++ * that to 8 bits.  The white balance and digital gains come from the PIX
++ * subdev controls; exposure and white balance control is left to userspace.
++ */
++struct vfe_reg_val {
++	u32 reg;
++	u32 val;
++};
++
++#define TFE_CTXT_SEL_SINGLE		0x400
++
++/*
++ * Sensor black level (64 at 10 bits) in Bayer stage units, and the Q10 white
++ * balance gain that maps the remaining range to 10 bits: 1023 / 959 / 16
++ */
++#define TFE_BLACK_LEVEL			(64 << 4)
++#define TFE_WB_GAIN_UNITY		68
++#define TFE_WB_GAIN_MAX			0x7fff
++#define TFE_WB_GAIN_G			0xe068
++#define TFE_WB_GAIN_B			0xe06c
++#define TFE_WB_GAIN_R			0xe070
++
++static const struct vfe_reg_val vfe_pix_980_defaults[] = {
++	/* demux: enabled, plain Bayer */
++	{ 0xd060, 0x1 },
++	/* white balance: black level offsets (gains: vfe_isp_update()) */
++	{ 0xe1f4, TFE_CTXT_SEL_SINGLE },
++	{ 0xe074, TFE_BLACK_LEVEL },
++	{ 0xe078, TFE_BLACK_LEVEL },
++	{ 0xe07c, TFE_BLACK_LEVEL },
++	{ 0xe080, 0x0 },
++	{ 0xe084, 0x0 },
++	{ 0xe088, 0x0 },
++	{ 0xe060, 0x1 },
++	/* BDS2 + demosaic: demosaic only (BDS2 off below 7008 pixels) */
++	{ 0x78f4, 0x1 },	/* ctxt sel */
++	{ 0x7794, 0x100 },
++	{ 0x78a0, 0x4001 },
++	{ 0x78a4, 0x80 },
++	{ 0x78a8, 0x80 },
++	{ 0x78ac, 0x66 },
++	{ 0x78e4, 0x1 },
++	{ 0x7760, 0x1 },
++	/*
++	 * colour space transform, RGB to YCbCr (BT.601 full range), Q10
++	 * coefficients in 13 bit two's complement; per output channel: input
++	 * coefficients (G | B << 16, R), output offset, input offset, clamps
++	 */
++	{ 0x6ef4, TFE_CTXT_SEL_SINGLE },
++	/* coefficients of all rows: vfe_isp_update() (CCM, saturation) */
++	{ 0x6d70, 0x0 },
++	{ 0x6d74, 0x0 },
++	{ 0x6d78, 0x0 },
++	{ 0x6d7c, 0x3ff },
++	{ 0x6d88, 0x200 },
++	{ 0x6d8c, 0x0 },
++	{ 0x6d90, 0x0 },
++	{ 0x6d94, 0x3ff },
++	{ 0x6da0, 0x200 },
++	{ 0x6da4, 0x0 },
++	{ 0x6da8, 0x0 },
++	{ 0x6dac, 0x3ff },
++	{ 0x6d60, 0x1 },
++};
++
++static u32 vfe_isp_wb_gain(u32 gain, u32 digital_gain)
++{
++	u64 val = (u64)TFE_WB_GAIN_UNITY * gain * digital_gain;
++
++	return min_t(u64, DIV_ROUND_CLOSEST_ULL(val, 1024 * 1024),
++		     TFE_WB_GAIN_MAX);
++}
++
++/*
++ * Colour transform rows (Y, Cb, Cr), each at TFE_CST_ROW(i): G | B << 16,
++ * then R. BT.601 full range, Q10, in (R, G, B) order.
++ */
++#define TFE_CST_ROW(i)			(0x6d68 + 0x18 * (i))
++
++static const s16 vfe_pix_cst_bt601[3][3] = {
++	{ 306, 601, 117 },	/* Y:  0.299 R, 0.587 G, 0.114 B */
++	{ -173, -339, 512 },	/* Cb: -0.169 R, -0.331 G, 0.5 B */
++	{ 512, -429, -83 },	/* Cr: 0.5 R, -0.419 G, -0.081 B */
++};
++
++static u32 vfe_pix_cst_coef(s32 coef)
++{
++	return clamp(coef, -4096, 4095) & GENMASK(12, 0);
++}
++
++/*
++ * The CST runs after the gamma LUT; the colour correction matrix is folded
++ * into it (BT.601 x CCM), an approximation of a linear-light correction.
++ * Saturation scales the chroma rows.
++ */
++static void vfe_pix_cst_config(struct vfe_device *vfe,
++			       const struct vfe_isp_params *isp)
++{
++	static const s32 identity[9] = { 1024, 0, 0, 0, 1024, 0, 0, 0, 1024 };
++	const s32 *ccm = memchr_inv(isp->ccm, 0, sizeof(isp->ccm)) ?
++			 isp->ccm : identity;
++	unsigned int i, j, k;
++
++	for (i = 0; i < 3; i++) {
++		s32 c[3];
++
++		for (k = 0; k < 3; k++) {
++			s64 v = 0;
++
++			for (j = 0; j < 3; j++)
++				v += (s64)vfe_pix_cst_bt601[i][j] * ccm[3 * j + k];
++			if (i)
++				v *= isp->saturation;
++			else
++				v *= 256;
++			c[k] = div_s64(v + (v < 0 ? -1 : 1) * (1 << 17), 1 << 18);
++		}
++		/* (R, G, B) -> (G, B, R) inputs */
++		writel(vfe_pix_cst_coef(c[2]) << 16 | vfe_pix_cst_coef(c[1]),
++		       vfe->base + TFE_CST_ROW(i));
++		writel(vfe_pix_cst_coef(c[0]), vfe->base + TFE_CST_ROW(i) + 4);
++	}
++}
++
++static void vfe_pix_glut_load(struct vfe_device *vfe, u32 contrast);
++
++/* settings behind the PIX line controls */
++static void vfe_isp_update(struct vfe_device *vfe, struct vfe_line *line)
++{
++	struct vfe_isp_params *isp = &line->isp;
++
++	writel(vfe_isp_wb_gain(1024, isp->digital_gain),
++	       vfe->base + TFE_WB_GAIN_G);
++	writel(vfe_isp_wb_gain(isp->blue_gain, isp->digital_gain),
++	       vfe->base + TFE_WB_GAIN_B);
++	writel(vfe_isp_wb_gain(isp->red_gain, isp->digital_gain),
++	       vfe->base + TFE_WB_GAIN_R);
++
++	vfe_pix_cst_config(vfe, isp);
++
++	if (isp->lut_contrast != (s32)isp->contrast) {
++		vfe_pix_glut_load(vfe, isp->contrast);
++		isp->lut_contrast = isp->contrast;
++	}
++}
++
++/*
++ * Gamma LUT: 64 linearly interpolated segments per colour channel over the
++ * 10 bit input, written through the module DMI port.  Each entry holds the
++ * segment start value and its delta to the next one.
++ */
++#define TFE_GLUT_DMI_ADDR		0x6b08
++#define TFE_GLUT_DMI_SEL		0x6b0c
++#define TFE_GLUT_DMI_DATA		0x6b14
++#define TFE_GLUT_BANK_SEL0		0x6b58
++#define TFE_GLUT_BANK_SEL1		0x6b5c
++#define TFE_GLUT_EN			0x6b60
++#define TFE_GLUT_CTXT_SEL		0x6cf4
++#define TFE_GLUT_ENTRIES		64
++
++/* sRGB transfer function, sampled at the segment boundaries */
++static const u16 vfe_pix_980_srgb[TFE_GLUT_ENTRIES + 1] = {
++	   0,  135,  199,  245,  284,  317,  346,  373,  398,  421,
++	 442,  462,  481,  499,  517,  534,  550,  565,  580,  595,
++	 609,  622,  636,  649,  661,  674,  686,  697,  709,  720,
++	 731,  742,  753,  763,  773,  783,  793,  803,  813,  822,
++	 831,  841,  850,  859,  867,  876,  885,  893,  901,  910,
++	 918,  926,  934,  942,  950,  957,  965,  973,  980,  987,
++	 995, 1002, 1009, 1016, 1023,
++};
++
++/*
++ * Tone curve: the sRGB curve blended towards a smoothstep S curve of
++ * itself, by contrast / 256, for deeper shadows and brighter highlights.
++ */
++static u32 vfe_pix_tone(unsigned int i, u32 contrast)
++{
++	s64 x = vfe_pix_980_srgb[i];
++	s64 sc = div_s64(x * x * (3 * 1023 - 2 * x), 1023 * 1023);
++
++	return x + div_s64((sc - x) * contrast, 256);
++}
++
++static void vfe_pix_glut_load(struct vfe_device *vfe, u32 contrast)
++{
++	u32 pts[TFE_GLUT_ENTRIES + 1];
++	unsigned int sel, i;
++
++	for (i = 0; i <= TFE_GLUT_ENTRIES; i++)
++		pts[i] = vfe_pix_tone(i, contrast);
++
++	writel(TFE_CTXT_SEL_SINGLE, vfe->base + TFE_GLUT_CTXT_SEL);
++
++	/* one LUT per colour channel: 1 = G, 2 = B, 3 = R */
++	for (sel = 1; sel <= 3; sel++) {
++		writel(sel, vfe->base + TFE_GLUT_DMI_SEL);
++		writel(0, vfe->base + TFE_GLUT_DMI_ADDR);
++		for (i = 0; i < TFE_GLUT_ENTRIES; i++)
++			writel(pts[i] | ((pts[i + 1] - pts[i]) & 0x3ff) << 10,
++			       vfe->base + TFE_GLUT_DMI_DATA);
++	}
++	writel(0, vfe->base + TFE_GLUT_DMI_SEL);
++	writel(0, vfe->base + TFE_GLUT_DMI_ADDR);
++
++	writel(0, vfe->base + TFE_GLUT_BANK_SEL0);
++	writel(0, vfe->base + TFE_GLUT_BANK_SEL1);
++	writel(1, vfe->base + TFE_GLUT_EN);
++}
++
++/*
++ * MN downscalers (Y and C): the sink compose rectangle.  The C scaler also
++ * does the 4:2:0 subsampling, at twice the luma ratio.  Phase steps are
++ * input/output ratios in Q21; the top two bits pick the filter range.
++ */
++#define TFE_MNDS_Y			0x6f00
++#define TFE_MNDS_C			0x7100
++#define TFE_MNDS_EN(b)			((b) + 0x60)
++#define TFE_MNDS_CFG(b)			((b) + 0x64)
++#define		TFE_MNDS_CFG_H_EN		BIT(9)
++#define		TFE_MNDS_CFG_V_EN		BIT(10)
++#define TFE_MNDS_IN_SIZE(b)		((b) + 0x68)
++#define TFE_MNDS_H_STEP(b)		((b) + 0x6c)
++#define TFE_MNDS_H_PHASE(b)		((b) + 0x70)
++#define TFE_MNDS_V_STEP(b)		((b) + 0x74)
++#define TFE_MNDS_V_PHASE(b)		((b) + 0x78)
++#define TFE_MNDS_PAD0(b)		((b) + 0x7c)
++#define TFE_MNDS_PAD1(b)		((b) + 0x80)
++#define TFE_MNDS_ROUND(b)		((b) + 0x84)
++#define TFE_MNDS_STEP_SHIFT		21
++
++static u32 vfe_pix_mnds_step(u32 in, u32 out)
++{
++	u64 step = div_u64((u64)in << TFE_MNDS_STEP_SHIFT, out);
++	u32 range;
++
++	if (step <= 16ULL << TFE_MNDS_STEP_SHIFT)
++		range = 3;
++	else if (step <= 32ULL << TFE_MNDS_STEP_SHIFT)
++		range = 2;
++	else if (step <= 64ULL << TFE_MNDS_STEP_SHIFT)
++		range = 1;
++	else
++		range = 0;
++
++	return range << 30 | (step & GENMASK(28, 0));
++}
++
++static void vfe_pix_mnds_config(struct vfe_device *vfe, u32 base, u32 in_w,
++				u32 in_h, u32 out_w, u32 out_h, bool enable)
++{
++	void __iomem *b = vfe->base;
++
++	if (!enable) {
++		writel(0, b + TFE_MNDS_EN(base));
++		return;
++	}
++
++	writel(TFE_MNDS_CFG_H_EN | TFE_MNDS_CFG_V_EN, b + TFE_MNDS_CFG(base));
++	writel((in_w - 1) << 16 | (in_h - 1), b + TFE_MNDS_IN_SIZE(base));
++	writel(vfe_pix_mnds_step(in_w, out_w), b + TFE_MNDS_H_STEP(base));
++	writel(0, b + TFE_MNDS_H_PHASE(base));
++	writel(vfe_pix_mnds_step(in_h, out_h), b + TFE_MNDS_V_STEP(base));
++	writel(0, b + TFE_MNDS_V_PHASE(base));
++	writel(0, b + TFE_MNDS_PAD0(base));
++	writel(0, b + TFE_MNDS_PAD1(base));
++	writel(0, b + TFE_MNDS_ROUND(base));
++	writel(1, b + TFE_MNDS_EN(base));
++}
++
++static void vfe_pix_scaler_config(struct vfe_device *vfe,
++				  struct vfe_line *line)
++{
++	const struct v4l2_mbus_framefmt *in = &line->fmt[MSM_VFE_PAD_SINK];
++	const struct v4l2_rect *out = &line->compose;
++	bool scale = out->width != in->width || out->height != in->height;
++
++	vfe_pix_mnds_config(vfe, TFE_MNDS_Y, in->width, in->height,
++			    out->width, out->height, scale);
++	vfe_pix_mnds_config(vfe, TFE_MNDS_C, in->width, in->height,
++			    out->width / 2, out->height / 2, scale);
++}
++
++/*
++ * FD crop/round/clamp: the source crop rectangle (in the scaled frame), 10
++ * to 8 bit rounding.  Y and C blocks, C at half resolution in both
++ * directions for NV12.  Ranges are first << 16 | last.
++ */
++#define TFE_CRC_FD_Y			0x7300
++#define TFE_CRC_FD_C			0x7500
++#define TFE_CRC_EN(b)			((b) + 0x60)
++#define		TFE_CRC_Y_EN			0xe01
++#define		TFE_CRC_C_EN			0x3e01
++#define TFE_CRC_LINES(b)		((b) + 0x68)
++#define TFE_CRC_PIXELS(b)		((b) + 0x6c)
++#define TFE_CRC_MIN0(b)			((b) + 0x70)
++#define TFE_CRC_SHIFT0(b)		((b) + 0x74)
++#define TFE_CRC_MIN1(b)			((b) + 0x78)
++#define TFE_CRC_SHIFT1(b)		((b) + 0x7c)
++#define TFE_CRC_MAX0(b)			((b) + 0x88)
++#define TFE_CRC_MAX1(b)			((b) + 0x8c)
++#define		TFE_CRC_SHIFT_10_TO_8		(2 << 3)
++
++static u32 vfe_pix_crc_range(u32 first, u32 len)
++{
++	return first << 16 | (first + len - 1);
++}
++
++static void vfe_pix_crc_config(struct vfe_device *vfe,
++			       const struct v4l2_rect *r)
++{
++	void __iomem *base = vfe->base;
++
++	writel(vfe_pix_crc_range(r->top, r->height),
++	       base + TFE_CRC_LINES(TFE_CRC_FD_Y));
++	writel(vfe_pix_crc_range(r->left, r->width),
++	       base + TFE_CRC_PIXELS(TFE_CRC_FD_Y));
++	writel(0, base + TFE_CRC_MIN0(TFE_CRC_FD_Y));
++	writel(TFE_CRC_SHIFT_10_TO_8, base + TFE_CRC_SHIFT0(TFE_CRC_FD_Y));
++	writel(0xff, base + TFE_CRC_MAX0(TFE_CRC_FD_Y));
++	writel(TFE_CRC_Y_EN, base + TFE_CRC_EN(TFE_CRC_FD_Y));
++
++	writel(vfe_pix_crc_range(r->top / 2, r->height / 2),
++	       base + TFE_CRC_LINES(TFE_CRC_FD_C));
++	writel(vfe_pix_crc_range(r->left / 2, r->width / 2),
++	       base + TFE_CRC_PIXELS(TFE_CRC_FD_C));
++	writel(0, base + TFE_CRC_MIN0(TFE_CRC_FD_C));
++	writel(TFE_CRC_SHIFT_10_TO_8, base + TFE_CRC_SHIFT0(TFE_CRC_FD_C));
++	writel(0, base + TFE_CRC_MIN1(TFE_CRC_FD_C));
++	writel(TFE_CRC_SHIFT_10_TO_8, base + TFE_CRC_SHIFT1(TFE_CRC_FD_C));
++	writel(0xff, base + TFE_CRC_MAX0(TFE_CRC_FD_C));
++	writel(0xff, base + TFE_CRC_MAX1(TFE_CRC_FD_C));
++	writel(TFE_CRC_C_EN, base + TFE_CRC_EN(TFE_CRC_FD_C));
++}
++
++static void vfe_pix_wm_start(struct vfe_device *vfe, u8 wm, u32 width,
++			     u32 height, u32 stride)
++{
++	writel(0, vfe->base + VFE_BUS_WM_IMAGE_CFG_1(wm));
++	writel((height << 16) | width, vfe->base + VFE_BUS_WM_IMAGE_CFG_0(wm));
++	writel(stride, vfe->base + VFE_BUS_WM_IMAGE_CFG_2(wm));
++	writel(stride * height >> 8, vfe->base + VFE_BUS_WM_FRAME_INCR(wm));
++	writel(WM_PACKER_PLAIN_8_LSB_MSB_10, vfe->base + VFE_BUS_WM_PACKER_CFG(wm));
++
++	writel(0, vfe->base + VFE_BUS_WM_FRAMEDROP_PERIOD(wm));
++	writel(1, vfe->base + VFE_BUS_WM_FRAMEDROP_PATTERN(wm));
++	writel(0, vfe->base + VFE_BUS_WM_IRQ_SUBSAMPLE_PERIOD(wm));
++	writel(1, vfe->base + VFE_BUS_WM_IRQ_SUBSAMPLE_PATTERN(wm));
++
++	writel(1, vfe->base + VFE_BUS_WM_MMU_PREFETCH_CFG(wm));
++	writel(0xFFFFFFFF, vfe->base + VFE_BUS_WM_MMU_PREFETCH_MAX_OFFSET(wm));
++
++	/* hardware context 0 only */
++	writel(BIT(0), vfe->base + VFE_BUS_WM_CTXT_CFG(wm));
++
++	/* line based mode */
++	writel(WM_CFG_EN, vfe->base + VFE_BUS_WM_CFG(wm));
++}
++
++static void vfe_pix_start(struct vfe_device *vfe, struct vfe_line *line)
++{
++	struct v4l2_pix_format_mplane *pix =
++		&line->video_out.active_fmt.fmt.pix_mp;
++	u32 stride = pix->plane_fmt[0].bytesperline;
++	unsigned int i;
++
++	writel(WM_CGC_OVERRIDE_ALL, vfe->base + VFE_BUS_WM_CGC_OVERRIDE);
++	writel(0x0, vfe->base + VFE_BUS_WM_TEST_BUS_CTRL);
++	writel(0, vfe->base + VFE_BUS_CTXT_SEL);
++
++	for (i = 0; i < ARRAY_SIZE(vfe_pix_980_defaults); i++)
++		writel(vfe_pix_980_defaults[i].val,
++		       vfe->base + vfe_pix_980_defaults[i].reg);
++	line->isp.lut_contrast = -1;
++	vfe_isp_update(vfe, line);
++	vfe_pix_scaler_config(vfe, line);
++	vfe_pix_crc_config(vfe, &line->crop);
++
++	vfe_pix_wm_start(vfe, FD_Y_WM, pix->width, pix->height, stride);
++	vfe_pix_wm_start(vfe, FD_C_WM, pix->width, pix->height / 2, stride);
++}
+ 
+ static void vfe_wm_start(struct vfe_device *vfe, u8 wm, struct vfe_line *line)
+ {
+ 	struct v4l2_pix_format_mplane *pix =
+ 		&line->video_out.active_fmt.fmt.pix_mp;
+ 
++	if (vfe->camss->check_dma_stop && !vfe_is_lite(vfe) &&
++	    line->id == VFE_LINE_PIX) {
++		vfe_pix_start(vfe, line);
++		return;
++	}
++
+ 	wm = RDI_WM(wm);
+ 
+ 	/* no clock gating at bus input */
+@@ -123,6 +535,13 @@ static void vfe_wm_start(struct vfe_device *vfe, u8 wm, struct vfe_line *line)
+ 
+ static void vfe_wm_stop(struct vfe_device *vfe, u8 wm)
+ {
++	if (vfe->camss->check_dma_stop && !vfe_is_lite(vfe) &&
++	    wm == VFE_LINE_PIX) {
++		writel(0, vfe->base + VFE_BUS_WM_CFG(FD_Y_WM));
++		writel(0, vfe->base + VFE_BUS_WM_CFG(FD_C_WM));
++		return;
++	}
++
+ 	wm = RDI_WM(wm);
+ 	writel(0, vfe->base + VFE_BUS_WM_CFG(wm));
+ }
+@@ -130,6 +549,17 @@ static void vfe_wm_stop(struct vfe_device *vfe, u8 wm)
+ static void vfe_wm_update(struct vfe_device *vfe, u8 wm, u32 addr,
+ 			  struct vfe_line *line)
+ {
++	if (vfe->camss->check_dma_stop && !vfe_is_lite(vfe) &&
++	    line->id == VFE_LINE_PIX) {
++		struct v4l2_pix_format_mplane *pix =
++			&line->video_out.active_fmt.fmt.pix_mp;
++		u32 c_addr = addr + pix->plane_fmt[0].bytesperline * pix->height;
++
++		writel(addr >> 8, vfe->base + VFE_BUS_WM_IMAGE_ADDR(FD_Y_WM));
++		writel(c_addr >> 8, vfe->base + VFE_BUS_WM_IMAGE_ADDR(FD_C_WM));
++		return;
++	}
++
+ 	wm = RDI_WM(wm);
+ 	writel(addr >> 8, vfe->base + VFE_BUS_WM_IMAGE_ADDR(wm));
+ 
+@@ -143,8 +573,8 @@ static void vfe_reg_update(struct vfe_device *vfe, enum vfe_line_id line_id)
+ 	camss_reg_update(vfe->camss, vfe->id, port_id, false);
+ }
+ 
+-static void vfe_reg_update_clear(struct vfe_device *vfe,
+-				 enum vfe_line_id line_id)
++static inline void vfe_reg_update_clear(struct vfe_device *vfe,
++					enum vfe_line_id line_id)
+ {
+ 	int port_id = line_id;
+ 
+@@ -210,4 +640,5 @@ const struct vfe_hw_ops vfe_ops_980 = {
+ 	.vfe_wm_stop = vfe_wm_stop,
+ 	.vfe_buf_done = vfe_buf_done,
+ 	.vfe_wm_update = vfe_wm_update,
++	.vfe_isp_update = vfe_isp_update,
+ };
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index fba07a799c..6040b82b53 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -20,6 +20,7 @@
+ #include <linux/spinlock.h>
+ #include <media/media-entity.h>
+ #include <media/v4l2-device.h>
++#include <media/v4l2-event.h>
+ #include <media/v4l2-subdev.h>
+ 
+ #include "camss-vfe.h"
+@@ -283,11 +284,38 @@ const struct camss_formats vfe_formats_pix_845 = {
+ 	.formats = formats_rdi_845
+ };
+ 
++/*
++ * SM8750 TFE pixel path: Bayer in, demosaiced and colour-converted by the
++ * TFE, NV12 out of the FD (full-resolution YUV) write masters.
++ */
++static const struct camss_format_info formats_pix_980[] = {
++	{ MEDIA_BUS_FMT_SBGGR10_1X10, 10, V4L2_PIX_FMT_SBGGR10P, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 10) },
++	{ MEDIA_BUS_FMT_SGBRG10_1X10, 10, V4L2_PIX_FMT_SGBRG10P, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 10) },
++	{ MEDIA_BUS_FMT_SGRBG10_1X10, 10, V4L2_PIX_FMT_SGRBG10P, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 10) },
++	{ MEDIA_BUS_FMT_SRGGB10_1X10, 10, V4L2_PIX_FMT_SRGGB10P, 1,
++	  PER_PLANE_DATA(0, 1, 1, 1, 1, 10) },
++	{ MEDIA_BUS_FMT_YUYV8_1_5X8, 8, V4L2_PIX_FMT_NV12, 1,
++	  PER_PLANE_DATA(0, 1, 1, 2, 3, 8) },
++};
++
++const struct camss_formats vfe_formats_pix_980 = {
++	.nformats = ARRAY_SIZE(formats_pix_980),
++	.formats = formats_pix_980
++};
++
+ static u32 vfe_src_pad_code(struct vfe_line *line, u32 sink_code,
+ 			    unsigned int index, u32 src_req_code)
+ {
+ 	struct vfe_device *vfe = to_vfe(line);
+ 
++	/* the SM8750 pixel path always produces NV12 */
++	if (vfe->camss->res->version == CAMSS_8750 &&
++	    line->id == VFE_LINE_PIX)
++		return index ? 0 : MEDIA_BUS_FMT_YUYV8_1_5X8;
++
+ 	switch (vfe->camss->res->version) {
+ 	case CAMSS_8x16:
+ 	case CAMSS_8x39:
+@@ -558,6 +586,7 @@ int vfe_enable_output_v2(struct vfe_line *line)
+ 		output->gen2.active_num++;
+ 		ops->vfe_wm_update(vfe, output->wm_idx[0],
+ 				   output->buf[i]->addr[0], line);
++
+ 		if (!ops->addr_update)
+ 			ops->reg_update(vfe, line->id);
+ 	}
+@@ -978,7 +1007,11 @@ static int vfe_set_clock_rates(struct vfe_device *vfe)
+ 				u32 tmp;
+ 				u8 bpp;
+ 
+-				if (j == VFE_LINE_PIX) {
++				if (j == VFE_LINE_PIX &&
++				    vfe->camss->res->version == CAMSS_8750) {
++					/* TFE IPP takes two pixels per clock */
++					tmp = pixel_clock[j] / 2;
++				} else if (j == VFE_LINE_PIX) {
+ 					tmp = pixel_clock[j];
+ 				} else {
+ 					struct vfe_line *l = &vfe->line[j];
+@@ -1059,7 +1092,11 @@ static int vfe_check_clock_rates(struct vfe_device *vfe)
+ 				u32 tmp;
+ 				u8 bpp;
+ 
+-				if (j == VFE_LINE_PIX) {
++				if (j == VFE_LINE_PIX &&
++				    vfe->camss->res->version == CAMSS_8750) {
++					/* TFE IPP takes two pixels per clock */
++					tmp = pixel_clock[j] / 2;
++				} else if (j == VFE_LINE_PIX) {
+ 					tmp = pixel_clock[j];
+ 				} else {
+ 					struct vfe_line *l = &vfe->line[j];
+@@ -1977,6 +2014,8 @@ static int vfe_link_setup(struct media_entity *entity,
+ 
+ static const struct v4l2_subdev_core_ops vfe_core_ops = {
+ 	.s_power = vfe_set_power,
++	.subscribe_event = v4l2_ctrl_subdev_subscribe_event,
++	.unsubscribe_event = v4l2_event_subdev_unsubscribe,
+ };
+ 
+ static const struct v4l2_subdev_video_ops vfe_video_ops = {
+@@ -1998,6 +2037,115 @@ static const struct v4l2_subdev_ops vfe_v4l2_ops = {
+ 	.pad = &vfe_pad_ops,
+ };
+ 
++static int vfe_s_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct vfe_line *line = container_of(ctrl->handler, struct vfe_line,
++					     ctrls);
++	struct vfe_device *vfe = to_vfe(line);
++	const struct vfe_hw_ops *ops = vfe->res->hw_ops;
++	unsigned long flags;
++
++	spin_lock_irqsave(&vfe->output_lock, flags);
++
++	switch (ctrl->id) {
++	case V4L2_CID_RED_BALANCE:
++		line->isp.red_gain = ctrl->val;
++		break;
++	case V4L2_CID_BLUE_BALANCE:
++		line->isp.blue_gain = ctrl->val;
++		break;
++	case V4L2_CID_DIGITAL_GAIN:
++		line->isp.digital_gain = ctrl->val;
++		break;
++	case V4L2_CID_SATURATION:
++		line->isp.saturation = ctrl->val;
++		break;
++	case V4L2_CID_CONTRAST:
++		line->isp.contrast = ctrl->val;
++		break;
++	case V4L2_CID_CAMSS_CCM:
++		memcpy(line->isp.ccm, ctrl->p_new.p_s32, sizeof(line->isp.ccm));
++		break;
++	}
++
++	/* otherwise applied when the line starts streaming */
++	if (line->output.state == VFE_OUTPUT_ON) {
++		ops->vfe_isp_update(vfe, line);
++		ops->reg_update(vfe, line->id);
++	}
++
++	spin_unlock_irqrestore(&vfe->output_lock, flags);
++
++	return 0;
++}
++
++static const struct v4l2_ctrl_ops vfe_ctrl_ops = {
++	.s_ctrl = vfe_s_ctrl,
++};
++
++/*
++ * ISP line controls: white balance and digital gains, Q10 (1024 = 1.0);
++ * saturation, Q8 (256 = 1.0); contrast, the S curve share of the tone curve
++ * (0 = plain sRGB, 256 = full S curve); colour correction matrix, see
++ * V4L2_CID_CAMSS_CCM.
++ */
++#define VFE_ISP_GAIN_UNITY	1024
++#define VFE_ISP_GAIN_MAX	(16 * VFE_ISP_GAIN_UNITY - 1)
++#define VFE_ISP_SAT_UNITY	256
++#define VFE_ISP_CONTRAST_MAX	256
++
++static const struct v4l2_ctrl_config vfe_ccm_ctrl = {
++	.ops = &vfe_ctrl_ops,
++	.id = V4L2_CID_CAMSS_CCM,
++	.name = "Colour Correction Matrix",
++	.type = V4L2_CTRL_TYPE_INTEGER,
++	.min = -8 * VFE_ISP_GAIN_UNITY,
++	.max = 8 * VFE_ISP_GAIN_UNITY - 1,
++	.step = 1,
++	.def = 0,
++	.dims = { 3, 3 },
++};
++
++static int vfe_init_isp_ctrls(struct vfe_line *line)
++{
++	struct v4l2_ctrl_handler *hdl = &line->ctrls;
++
++	v4l2_ctrl_handler_init(hdl, 6);
++	v4l2_ctrl_new_std(hdl, &vfe_ctrl_ops, V4L2_CID_RED_BALANCE,
++			  0, VFE_ISP_GAIN_MAX, 1, VFE_ISP_GAIN_UNITY);
++	v4l2_ctrl_new_std(hdl, &vfe_ctrl_ops, V4L2_CID_BLUE_BALANCE,
++			  0, VFE_ISP_GAIN_MAX, 1, VFE_ISP_GAIN_UNITY);
++	v4l2_ctrl_new_std(hdl, &vfe_ctrl_ops, V4L2_CID_DIGITAL_GAIN,
++			  VFE_ISP_GAIN_UNITY, VFE_ISP_GAIN_MAX, 1,
++			  VFE_ISP_GAIN_UNITY);
++	v4l2_ctrl_new_std(hdl, &vfe_ctrl_ops, V4L2_CID_SATURATION,
++			  0, 2 * VFE_ISP_SAT_UNITY, 1, VFE_ISP_SAT_UNITY);
++	v4l2_ctrl_new_std(hdl, &vfe_ctrl_ops, V4L2_CID_CONTRAST,
++			  0, VFE_ISP_CONTRAST_MAX, 1, 0);
++	v4l2_ctrl_new_custom(hdl, &vfe_ccm_ctrl, NULL);
++	if (hdl->error) {
++		int ret = hdl->error;
++
++		v4l2_ctrl_handler_free(hdl);
++		return ret;
++	}
++
++	line->isp.red_gain = VFE_ISP_GAIN_UNITY;
++	line->isp.blue_gain = VFE_ISP_GAIN_UNITY;
++	line->isp.digital_gain = VFE_ISP_GAIN_UNITY;
++	line->isp.saturation = VFE_ISP_SAT_UNITY;
++	line->isp.contrast = 0;
++	line->subdev.ctrl_handler = hdl;
++
++	return 0;
++}
++
++static bool vfe_line_has_isp(struct vfe_device *vfe, int i)
++{
++	return i == VFE_LINE_PIX && !vfe->res->is_lite &&
++	       vfe->res->hw_ops->vfe_isp_update;
++}
++
+ static const struct v4l2_subdev_internal_ops vfe_v4l2_internal_ops = {
+ 	.open = vfe_init_formats,
+ };
+@@ -2084,6 +2232,15 @@ int msm_vfe_register_entities(struct vfe_device *vfe,
+ 		v4l2_subdev_init(sd, &vfe_v4l2_ops);
+ 		sd->internal_ops = &vfe_v4l2_internal_ops;
+ 		sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
++		if (vfe_line_has_isp(vfe, i)) {
++			ret = vfe_init_isp_ctrls(&vfe->line[i]);
++			if (ret < 0) {
++				dev_err(dev, "Failed to init controls: %d\n",
++					ret);
++				goto error_init;
++			}
++			sd->flags |= V4L2_SUBDEV_FL_HAS_EVENTS;
++		}
+ 		if (i == VFE_LINE_PIX && vfe->res->is_lite == false)
+ 			snprintf(sd->name, ARRAY_SIZE(sd->name), "%s%d_%s",
+ 				 MSM_VFE_NAME, vfe->id, "pix");
+@@ -2162,6 +2319,8 @@ int msm_vfe_register_entities(struct vfe_device *vfe,
+ 	media_entity_cleanup(&sd->entity);
+ 
+ error_init:
++	if (sd->ctrl_handler)
++		v4l2_ctrl_handler_free(sd->ctrl_handler);
+ 	for (i--; i >= 0; i--) {
+ 		sd = &vfe->line[i].subdev;
+ 		video_out = &vfe->line[i].video_out;
+@@ -2169,6 +2328,7 @@ int msm_vfe_register_entities(struct vfe_device *vfe,
+ 		msm_video_unregister(video_out);
+ 		v4l2_device_unregister_subdev(sd);
+ 		media_entity_cleanup(&sd->entity);
++		v4l2_ctrl_handler_free(sd->ctrl_handler);
+ 	}
+ 
+ 	return ret;
+@@ -2192,6 +2352,7 @@ void msm_vfe_unregister_entities(struct vfe_device *vfe)
+ 		msm_video_unregister(video_out);
+ 		v4l2_device_unregister_subdev(sd);
+ 		media_entity_cleanup(&sd->entity);
++		v4l2_ctrl_handler_free(sd->ctrl_handler);
+ 	}
+ }
+ 
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.h b/drivers/media/platform/qcom/camss/camss-vfe.h
+index c8afa0dc96..4161a2ad12 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.h
++++ b/drivers/media/platform/qcom/camss/camss-vfe.h
+@@ -13,6 +13,7 @@
+ #include <linux/clk.h>
+ #include <linux/spinlock_types.h>
+ #include <media/media-entity.h>
++#include <media/v4l2-ctrls.h>
+ #include <media/v4l2-device.h>
+ #include <media/v4l2-subdev.h>
+ 
+@@ -83,9 +84,29 @@ struct vfe_output {
+ 	struct completion reg_update;
+ };
+ 
++/*
++ * Colour correction matrix of a PIX line: 3x3 s32 array, row-major, camera
++ * RGB to sRGB, Q10 (1024 = 1.0); all zero (the default) is the identity.
++ * Driver-private control ID.
++ */
++#define V4L2_CID_CAMSS_CCM	(V4L2_CID_USER_BASE | 0x1ff0)
++
++/* Pixel pipeline (ISP) settings of a PIX line */
++struct vfe_isp_params {
++	u32 red_gain;		/* Q10 */
++	u32 blue_gain;		/* Q10 */
++	u32 digital_gain;	/* Q10 */
++	u32 saturation;		/* Q8 */
++	s32 ccm[9];		/* Q10, row-major RGB; all zero: identity */
++	u32 contrast;		/* tone curve S blend, 0..256 */
++	s32 lut_contrast;	/* curve in the gamma LUT, -1: none */
++};
++
+ struct vfe_line {
+ 	enum vfe_line_id id;
+ 	struct v4l2_subdev subdev;
++	struct v4l2_ctrl_handler ctrls;
++	struct vfe_isp_params isp;
+ 	struct media_pad pads[MSM_VFE_PADS_NUM];
+ 	struct v4l2_mbus_framefmt fmt[MSM_VFE_PADS_NUM];
+ 	struct v4l2_rect compose;
+@@ -123,6 +144,8 @@ struct vfe_hw_ops {
+ 	void (*vfe_buf_done)(struct vfe_device *vfe, int port_id);
+ 	void (*vfe_wm_update)(struct vfe_device *vfe, u8 wm, u32 addr,
+ 			      struct vfe_line *line);
++	/* PIX lines with an ISP: apply vfe_line.isp (called locked, streaming) */
++	void (*vfe_isp_update)(struct vfe_device *vfe, struct vfe_line *line);
+ };
+ 
+ struct vfe_isr_ops {
+@@ -243,6 +266,7 @@ extern const struct camss_formats vfe_formats_rdi_8x96;
+ extern const struct camss_formats vfe_formats_pix_8x96;
+ extern const struct camss_formats vfe_formats_rdi_845;
+ extern const struct camss_formats vfe_formats_pix_845;
++extern const struct camss_formats vfe_formats_pix_980;
+ 
+ extern const struct vfe_hw_ops vfe_ops_4_1;
+ extern const struct vfe_hw_ops vfe_ops_4_7;
+diff --git a/drivers/media/platform/qcom/camss/camss-video.c b/drivers/media/platform/qcom/camss/camss-video.c
+index 31d608d9a0..4a2979666f 100644
+--- a/drivers/media/platform/qcom/camss/camss-video.c
++++ b/drivers/media/platform/qcom/camss/camss-video.c
+@@ -23,6 +23,8 @@
+ #define CAMSS_FRAME_MIN_HEIGHT		1
+ #define CAMSS_FRAME_MAX_HEIGHT_RDI	8191
+ #define CAMSS_FRAME_MAX_HEIGHT_PIX	4096
++/* luma plus chroma lines of a 4:2:2 semi-planar frame */
++#define CAMSS_FRAME_MAX_LINES_PIX	(2 * CAMSS_FRAME_MAX_HEIGHT_PIX)
+ 
+ /* -----------------------------------------------------------------------------
+  * Helper functions
+@@ -510,7 +512,7 @@ static int __video_try_fmt(struct camss_video *video, struct v4l2_format *f)
+ 						  1, 65528);
+ 			sizeimage[i] = clamp_t(u32, p->sizeimage,
+ 					       bytesperline[i],
+-					       bytesperline[i] * CAMSS_FRAME_MAX_HEIGHT_PIX);
++					       bytesperline[i] * CAMSS_FRAME_MAX_LINES_PIX);
+ 		}
+ 
+ 	for (j = 0; j < video->nformats; j++)
+@@ -557,7 +559,7 @@ static int __video_try_fmt(struct camss_video *video, struct v4l2_format *f)
+ 						  1, 65528);
+ 			p->sizeimage = clamp_t(u32, p->sizeimage,
+ 					       p->bytesperline,
+-					       p->bytesperline * CAMSS_FRAME_MAX_HEIGHT_PIX);
++					       p->bytesperline * CAMSS_FRAME_MAX_LINES_PIX);
+ 			lines = p->sizeimage / p->bytesperline;
+ 
+ 			if (p->bytesperline < bytesperline[i])
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index 83fa569545..610a34ccff 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -4576,6 +4576,149 @@ static const struct camss_subdev_resources csid_res_sm8750[] = {
+ 	}
+ };
+ 
++static const struct camss_subdev_resources vfe_res_sm8750_piano[] = {
++	/* VFE0 - TFE Full */
++	{
++		.clock = { "gcc_axi_hf", "vfe0_fast_ahb", "vfe0",
++			   "cpas_vfe0", "cpas_vfe1", "cpas_vfe2",
++			   "camnoc_rt_axi", "camnoc_nrt_axi", "qdss_debug_xo",
++			   "vfe0_bayer_fast_ahb", "vfe0_bayer",
++			   "cpas_vfe0_bayer" },
++		.clock_rate = { { 0 },
++				{ 0 },
++				{ 360280000, 480000000, 630000000, 716000000,
++				  833000000 },
++				{ 0 },
++				{ 0 },
++				{ 0 },
++				{ 200000000, 300000000, 400000000, 480000000 },
++				{ 0 },
++				{ 0 },
++				{ 0 },
++				{ 0 },
++				{ 0 } },
++		.reg = { "vfe0" },
++		.interrupt = { "vfe0" },
++		.vfe = {
++			.line_num = 4,
++			.is_lite = false,
++			.has_pd = true,
++			.pd_name = "ife0",
++			.hw_ops = &vfe_ops_980,
++			.formats_rdi = &vfe_formats_rdi_845,
++			.formats_pix = &vfe_formats_pix_980
++		}
++	},
++	/* VFE1 - TFE Full */
++	{
++		.clock = { "gcc_axi_hf", "vfe1_fast_ahb", "vfe1",
++			   "cpas_vfe0", "cpas_vfe1", "cpas_vfe2",
++			   "camnoc_rt_axi", "camnoc_nrt_axi", "qdss_debug_xo",
++			   "vfe1_bayer_fast_ahb", "vfe1_bayer",
++			   "cpas_vfe1_bayer" },
++		.clock_rate = { { 0 },
++				{ 0 },
++				{ 360280000, 480000000, 630000000, 716000000,
++				  833000000 },
++				{ 0 },
++				{ 0 },
++				{ 0 },
++				{ 200000000, 300000000, 400000000, 480000000 },
++				{ 0 },
++				{ 0 },
++				{ 0 },
++				{ 0 },
++				{ 0 } },
++		.reg = { "vfe1" },
++		.interrupt = { "vfe1" },
++		.vfe = {
++			.line_num = 4,
++			.is_lite = false,
++			.has_pd = true,
++			.pd_name = "ife1",
++			.hw_ops = &vfe_ops_980,
++			.formats_rdi = &vfe_formats_rdi_845,
++			.formats_pix = &vfe_formats_pix_980
++		}
++	},
++	/* VFE2 - TFE Full */
++	{
++		.clock = { "gcc_axi_hf", "vfe2_fast_ahb", "vfe2",
++			   "cpas_vfe0", "cpas_vfe1", "cpas_vfe2",
++			   "camnoc_rt_axi", "camnoc_nrt_axi", "qdss_debug_xo",
++			   "vfe2_bayer_fast_ahb", "vfe2_bayer",
++			   "cpas_vfe2_bayer" },
++		.clock_rate = { { 0 },
++				{ 0 },
++				{ 360280000, 480000000, 630000000, 716000000,
++				  833000000 },
++				{ 0 },
++				{ 0 },
++				{ 0 },
++				{ 200000000, 300000000, 400000000, 480000000 },
++				{ 0 },
++				{ 0 },
++				{ 0 },
++				{ 0 },
++				{ 0 } },
++		.reg = { "vfe2" },
++		.interrupt = { "vfe2" },
++		.vfe = {
++			.line_num = 4,
++			.is_lite = false,
++			.has_pd = true,
++			.pd_name = "ife2",
++			.hw_ops = &vfe_ops_980,
++			.formats_rdi = &vfe_formats_rdi_845,
++			.formats_pix = &vfe_formats_pix_980
++		}
++	},
++	/* VFE_LITE0 */
++	{
++		.clock = { "gcc_axi_hf", "vfe_lite_ahb", "vfe_lite",
++			   "cpas_vfe_lite", "camnoc_rt_axi",
++			   "camnoc_nrt_axi", "qdss_debug_xo" },
++		.clock_rate = { { 0 },
++				{ 0 },
++				{ 266666667, 400000000, 480000000 },
++				{ 0 },
++				{ 200000000, 300000000, 400000000, 480000000 },
++				{ 0 },
++				{ 0 } },
++		.reg = { "vfe_lite0" },
++		.interrupt = { "vfe_lite0" },
++		.vfe = {
++			.line_num = 4,
++			.is_lite = true,
++			.hw_ops = &vfe_ops_980,
++			.formats_rdi = &vfe_formats_rdi_845,
++			.formats_pix = &vfe_formats_pix_980
++		}
++	},
++	/* VFE_LITE1 */
++	{
++		.clock = { "gcc_axi_hf", "vfe_lite_ahb", "vfe_lite",
++			   "cpas_vfe_lite", "camnoc_rt_axi",
++			   "camnoc_nrt_axi", "qdss_debug_xo" },
++		.clock_rate = { { 0 },
++				{ 0 },
++				{ 266666667, 400000000, 480000000 },
++				{ 0 },
++				{ 200000000, 300000000, 400000000, 480000000 },
++				{ 0 },
++				{ 0 } },
++		.reg = { "vfe_lite1" },
++		.interrupt = { "vfe_lite1" },
++		.vfe = {
++			.line_num = 4,
++			.is_lite = true,
++			.hw_ops = &vfe_ops_980,
++			.formats_rdi = &vfe_formats_rdi_845,
++			.formats_pix = &vfe_formats_pix_980
++		}
++	}
++};
++
+ static const struct resources_icc icc_res_sm8750[] = {
+ 	{
+ 		.name = "ahb",
+@@ -5895,6 +6038,19 @@ static int camss_probe(struct platform_device *pdev)
+ 		return -ENOMEM;
+ 
+ 	camss->res = of_device_get_match_data(dev);
++	camss->check_dma_stop = camss->res->version == CAMSS_8750 &&
++				of_machine_is_compatible("xiaomi,piano");
++	if (camss->check_dma_stop) {
++		struct camss_resources *res;
++
++		static_assert(ARRAY_SIZE(vfe_res_sm8750) ==
++			      ARRAY_SIZE(vfe_res_sm8750_piano));
++		res = devm_kmemdup(dev, camss->res, sizeof(*res), GFP_KERNEL);
++		if (!res)
++			return -ENOMEM;
++		res->vfe_res = vfe_res_sm8750_piano;
++		camss->res = res;
++	}
+ 
+ 	atomic_set(&camss->ref_count, 0);
+ 	camss->dev = dev;
+diff --git a/drivers/media/platform/qcom/camss/camss.h b/drivers/media/platform/qcom/camss/camss.h
+index d9212e3ef9..5c9eb1bca8 100644
+--- a/drivers/media/platform/qcom/camss/camss.h
++++ b/drivers/media/platform/qcom/camss/camss.h
+@@ -136,6 +136,7 @@ struct camss {
+ 	struct vfe_device *vfe;
+ 	void __iomem *csid_wrapper_base;
+ 	atomic_t ref_count;
++	bool check_dma_stop;
+ 	int genpd_num;
+ 	struct device *genpd;
+ 	struct device_link *genpd_link;
+-- 
+2.55.0
+

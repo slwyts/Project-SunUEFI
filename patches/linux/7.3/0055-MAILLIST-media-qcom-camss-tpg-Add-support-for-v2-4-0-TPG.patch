@@ -1,0 +1,133 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+Date: Thu, 12 Nov 2026 21:33:43 -0800
+Subject: [PATCH] media: qcom: camss: tpg: Add support for v2.4.0 TPG
+
+Add support for the TPG found on Kaanapali. This TPG uses hardware
+version 2.4.0, which drives test-enable and reset through the
+TPG_CTRL_CMD register at offset 0x1f4 instead of the TEST_EN bit in
+TPG_CTRL and the TPG_CLEAR register. Its output is routed into the
+CSID 1080 RX through the CSI2 TPG mux, so the CSID selects the TPG as
+the data source when a test pattern is selected. Read the hardware
+version before resetting, because the reset sequence depends on it.
+
+Link: https://lore.kernel.org/r/20261112-kaanapali-camss-v25-11-1d709f57f370@oss.qualcomm.com
+Reviewed-by: Bryan O'Donoghue <bryan.odonoghue@linaro.org>
+Signed-off-by: Hangxiang Ma <hangxiang.ma@oss.qualcomm.com>
+---
+ .../platform/qcom/camss/camss-csid-1080.c     | 15 ++++++++++--
+ .../platform/qcom/camss/camss-tpg-gen1.c      | 23 ++++++++++++++-----
+ drivers/media/platform/qcom/camss/camss-tpg.c |  4 ++--
+ 3 files changed, 32 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-csid-1080.c b/drivers/media/platform/qcom/camss/camss-csid-1080.c
+index 3d90d31201fa5d0c622651256bbf8ddf59e08556..ec56ba85a0fa3ca28d69c033c4d4dcd61adde942 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid-1080.c
++++ b/drivers/media/platform/qcom/camss/camss-csid-1080.c
+@@ -64,6 +64,8 @@
+ #define		CSI2_RX_CFG0_NUM_ACTIVE_LANES		0
+ #define		CSI2_RX_CFG0_DL0_INPUT_SEL		4
+ #define		CSI2_RX_CFG0_PHY_NUM_SEL		20
++#define		CSI2_RX_CFG0_TPG_MUX_EN			BIT(27)
++#define		CSI2_RX_CFG0_TPG_MUX_SEL		GENMASK(29, 28)
+ #define		CSI2_RX_CFG0_PHY_SEL_BASE_IDX		1
+ #define CSID_CSI2_RX_CFG1			0x884
+ #define		CSI2_RX_CFG1_ECC_CORRECTION_EN		BIT(0)
+@@ -148,6 +150,7 @@ static void __csid_reg_update_clear(struct csid_device *csid, int port_id)
+ static void __csid_configure_rx(struct csid_device *csid,
+ 				struct csid_phy_config *phy)
+ {
++	struct camss *camss = csid->camss;
+ 	u8 lane_cnt = phy->lane_cnt;
+ 	int val;
+ 
+@@ -156,8 +159,16 @@ static void __csid_configure_rx(struct csid_device *csid,
+ 
+ 	val = (lane_cnt - 1) << CSI2_RX_CFG0_NUM_ACTIVE_LANES;
+ 	val |= phy->lane_assign << CSI2_RX_CFG0_DL0_INPUT_SEL;
+-	val |= (phy->csiphy_id + CSI2_RX_CFG0_PHY_SEL_BASE_IDX)
+-	       << CSI2_RX_CFG0_PHY_NUM_SEL;
++
++	if (camss->tpg && csid->tpg_linked &&
++	    camss->tpg[phy->csiphy_id].testgen.mode != TPG_PAYLOAD_MODE_DISABLED) {
++		val |= FIELD_PREP(CSI2_RX_CFG0_TPG_MUX_SEL, phy->csiphy_id + 1);
++		val |= CSI2_RX_CFG0_TPG_MUX_EN;
++	} else {
++		val |= (phy->csiphy_id + CSI2_RX_CFG0_PHY_SEL_BASE_IDX)
++			<< CSI2_RX_CFG0_PHY_NUM_SEL;
++	}
++
+ 	writel(val, csid->base + CSID_CSI2_RX_CFG0);
+ 
+ 	val = CSI2_RX_CFG1_ECC_CORRECTION_EN;
+diff --git a/drivers/media/platform/qcom/camss/camss-tpg-gen1.c b/drivers/media/platform/qcom/camss/camss-tpg-gen1.c
+index d29de5f93c18ee3c1778dc0626e8c198f354eb1f..cabbb2638cf38ddfd333d2c2c6a04984f223d66b 100644
+--- a/drivers/media/platform/qcom/camss/camss-tpg-gen1.c
++++ b/drivers/media/platform/qcom/camss/camss-tpg-gen1.c
+@@ -22,6 +22,7 @@
+ 
+ #define TPG_HW_VER_2_0_0                TPG_HW_VER(2, 0, 0)
+ #define TPG_HW_VER_2_1_0                TPG_HW_VER(2, 1, 0)
++#define TPG_HW_VER_2_4_0                TPG_HW_VER(2, 4, 0)
+ 
+ #define TPG_HW_STATUS		0x4
+ 
+@@ -33,7 +34,9 @@
+ # define TPG_CTRL_OVERLAP_SHDR_EN	BIT(10)
+ # define TPG_CTRL_NUM_ACTIVE_VC		GENMASK(31, 30)
+ 
+-#define TPG_CLEAR		0x1F4
++#define TPG_CTRL_CMD		0x1F4
++# define TPG_CTRL_CMD_TEST_EN		BIT(4)
++# define TPG_CTRL_CMD_HW_RESET		BIT(0)
+ 
+ /* TPG VC-based registers */
+ #define TPG_VC_n_GAIN_CFG(n)		(0x60 + (n) * 0x60)
+@@ -164,18 +167,26 @@ static int tpg_stream_on(struct tpg_device *tpg)
+ 	}
+ 
+ 	/* Global TPG control */
+-	val = FIELD_PREP(TPG_CTRL_TEST_EN, 1) |
+-	      FIELD_PREP(TPG_CTRL_NUM_ACTIVE_LANES, lane_cnt - 1) |
++	val = FIELD_PREP(TPG_CTRL_NUM_ACTIVE_LANES, lane_cnt - 1) |
+ 	      FIELD_PREP(TPG_CTRL_NUM_ACTIVE_VC, last_vc);
+-	writel(val, tpg->base + TPG_CTRL);
++
++	if (tpg->hw_version < TPG_HW_VER_2_4_0) {
++		val |= FIELD_PREP(TPG_CTRL_TEST_EN, 1);
++		writel(val, tpg->base + TPG_CTRL);
++	} else {
++		writel(val, tpg->base + TPG_CTRL);
++		writel(TPG_CTRL_CMD_TEST_EN, tpg->base + TPG_CTRL_CMD);
++	}
+ 
+ 	return 0;
+ }
+ 
+ static int tpg_reset(struct tpg_device *tpg)
+ {
+-	writel(0, tpg->base + TPG_CTRL);
+-	writel(1, tpg->base + TPG_CLEAR);
++	if (tpg->hw_version < TPG_HW_VER_2_4_0)
++		writel(0, tpg->base + TPG_CTRL);
++
++	writel(TPG_CTRL_CMD_HW_RESET, tpg->base + TPG_CTRL_CMD);
+ 
+ 	return 0;
+ }
+diff --git a/drivers/media/platform/qcom/camss/camss-tpg.c b/drivers/media/platform/qcom/camss/camss-tpg.c
+index c5b75132add44b1392806e65a1985a1e28da3b0b..b52bccdb99fe862852ac8c082820a1f4850ed709 100644
+--- a/drivers/media/platform/qcom/camss/camss-tpg.c
++++ b/drivers/media/platform/qcom/camss/camss-tpg.c
+@@ -176,9 +176,9 @@ static int tpg_set_power(struct v4l2_subdev *sd, int on)
+ 			return ret;
+ 		}
+ 
+-		tpg->res->hw_ops->reset(tpg);
+-
+ 		tpg->res->hw_ops->hw_version(tpg);
++
++		tpg->res->hw_ops->reset(tpg);
+ 	} else {
+ 		camss_disable_clocks(tpg->nclocks, tpg->clock);
+ 

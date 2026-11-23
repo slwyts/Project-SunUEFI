@@ -1,6 +1,6 @@
 # Piano 实体摄像头隐私灯
 
-隐私灯通过当前 [media 补丁](../../../patches/linux/7.3/0121-LOCAL-media-i2c-keep-piano-privacy-led-on-until-sensors-quiesce.patch)与 [设备树 overlay](../../../linux/dts/piano-camera-privacy-led.dtso)接入默认产品，版本以 [Linux 补丁链](../../../patches/linux/7.3/series.json)为准。Linux 下前后摄像头开流、停流与共享灯的驱动和脉宽调制（PWM）行为已经验证；实体发光尚未进行光学确认。
+隐私灯通过当前 [media 补丁](../../../patches/linux/7.3/0149-LOCAL-media-i2c-keep-piano-privacy-led-on-until-sensors-quiesce.patch)与 [设备树 overlay](../../../linux/dts/piano-camera-privacy-led.dtso)接入默认产品，版本以 [Linux 补丁链](../../../patches/linux/7.3/series.json)为准。Linux 下前后摄像头开流、停流与共享灯的驱动和脉宽调制（PWM）行为已经验证；实体发光尚未进行光学确认。
 
 原厂 Android 的相机预览使 PM8550 LPG2 的 `green` 亮度从 0 变成 4，回到 Home、相机关闭后变回 0；满量程为 255。其间 LightsService 的八个灯颜色全部保持 0， lights HAL 也只提供类型 0～7。这里直接使用已对应的 LED 硬件通道，不模拟 Android framework，也不增加后台守护进程。Linux 使用同样的 255 级硬件 PWM 换算，将 LED class 的亮度上限设为 4。
 
