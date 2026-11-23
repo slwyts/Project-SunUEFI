@@ -144,6 +144,8 @@ jobs:
           path: |
             build/logs/
             build/distros/overlays/*.build.log
+            build/distros/overlays/${{ matrix.target }}/build.log
+            build/distros/overlays/${{ matrix.target }}/FAILED.json
             build/distros/overlays/${{ matrix.target }}/packages/*/build.log
             build/distros/overlays/${{ matrix.target }}/packages/*/SOURCE.json
             artifacts/packages/overlays/${{ matrix.target }}/manifest.json
