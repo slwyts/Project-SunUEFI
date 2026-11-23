@@ -127,22 +127,18 @@ def upload_zip(client, location, path, metadata, *, cache_control=RELEASE_CACHE)
 
 
 def copy_zip(client, source, target, size, metadata):
-    source_object = already_uploaded(client, source, size, metadata)
-    if not source_object:
+    if not already_uploaded(client, source, size, metadata):
         raise ValueError(f"The build download is missing: {source['Key']}.")
-    condition = {'CopySource': source, 'CopySourceIfMatch': source_object['ETag']}
     headers = download_headers(Path(target['Key']).name, metadata, RELEASE_CACHE)
-    if size <= 5 * 1024 ** 3:
-        client.copy_object(**target, **headers, **condition,
-                           MetadataDirective='REPLACE', IfNoneMatch='*')
-        return
 
     def write_parts(reference):
+        # R2 enforces the destination condition on multipart completion.
+        # Small source objects must be copied without a byte range.
         for number, start in enumerate(range(0, size, PART_BYTES), 1):
             last = min(start + PART_BYTES, size) - 1
+            extent = {'CopySourceRange': f'bytes={start}-{last}'} if size > PART_BYTES else {}
             part = client.upload_part_copy(
-                **reference, **condition, PartNumber=number,
-                CopySourceRange=f'bytes={start}-{last}',
+                **reference, CopySource=source, PartNumber=number, **extent,
             )
             yield {'ETag': part['CopyPartResult']['ETag'], 'PartNumber': number}
 

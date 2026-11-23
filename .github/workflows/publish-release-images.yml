@@ -38,6 +38,10 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/r2"
           "$RUNNER_TEMP/r2/bin/pip" install "$(awk '/^boto3==/ { print }' requirements-build.txt)"
+      - name: Check multipart copy for immutable release downloads
+        run: |
+          PATH="$RUNNER_TEMP/r2/bin:$PATH" ./build.sh check --group python-all \
+            --no-skips --pattern test_publish_release_images.py
       - name: Upload verified system images and check their public downloads
         env:
           GH_TOKEN: ${{ github.token }}
