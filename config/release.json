@@ -90,7 +90,7 @@
   },
   "camera_package": {
     "version": "1.0",
-    "revision": "1",
+    "revision": "2",
     "source_date_epoch": 1794996428,
     "minimum_kernel_package_version": "7.3.3+1794994463.1794996428.ed8beaf66a2d-1"
   },
