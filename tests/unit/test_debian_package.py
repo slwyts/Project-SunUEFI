@@ -119,8 +119,8 @@ class DebianPackageTests(unittest.TestCase):
         from desktop import build_pipewire_packages
 
         name = debian_package.PIPEWIRE_ABI_PACKAGE
-        official = {'Package': name, 'Source': 'pipewire', 'Version': '1.6.9-2'}
-        version = '1.6.9-2+sunuefi' + str(build_pipewire_packages.DEBIAN_REVISION)
+        official = {'Package': name, 'Source': 'pipewire', 'Version': '1.6.11-2'}
+        version = '1.6.11-2+sunuefi' + str(build_pipewire_packages.DEBIAN_REVISION)
         installed = {'version': version, 'source': 'pipewire',
                      'source_version': version, 'architecture': 'arm64'}
         output = ROOT / 'build/packages/pipewire'
@@ -130,7 +130,7 @@ class DebianPackageTests(unittest.TestCase):
         self.assertIn('patches/pipewire/1.6.9/0009-client-node-empty-params.patch',
                       {row['path'] for row in patches})
         with self.assertRaisesRegex(ValueError, 'declared local revision'):
-            debian_package.local_package_spec(name, {**installed, 'version': '1.6.9-2+unknown'}, official)
+            debian_package.local_package_spec(name, {**installed, 'version': '1.6.11-2+unknown'}, official)
 
     def test_gbm_cache_comparison_preserves_actual_local_identity(self):
         baseline = {'package': 'libgbm1', 'version': '26.2.6-1', 'source': 'mesa',

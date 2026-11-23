@@ -14,16 +14,6 @@
     "spandsp": {
       "minimum_version": "3.1.1-1",
       "soname": "libspandsp.so=4-64"
-    },
-    "libcamera_patches": {
-      "series": "1.6.9",
-      "files": [
-        "0009-client-node-empty-params.patch",
-        "0011-libcamera-0.8-camera-location.patch",
-        "0012-libcamera-apply-negotiated-framerate.patch",
-        "0014-libcamera-report-validated-format.patch",
-        "0015-libcamera-enumerate-formats-by-index.patch"
-      ]
     }
   },
   "steamos": {

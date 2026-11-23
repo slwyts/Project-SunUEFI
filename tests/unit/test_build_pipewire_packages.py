@@ -160,14 +160,27 @@ class ArchPipeWirePolicyTests(unittest.TestCase):
                     pipewire_arch.build(root / 'chroot', output, 1, library)
             self.assertEqual(receipt.read_text(), 'input receipt')
 
-    def test_arch_recipe_reuses_the_versioned_patch_lists(self):
+    def test_debian_and_arch_share_pipewire_code_but_not_debian_packaging(self):
         arch = pipewire_arch.policy()
-        _, base = builder.arch_policy(arch['upstream_package_version'])
-        selected = pipewire_arch.patch_records(base, arch['libcamera_patches'])
-        self.assertEqual(selected[:len(base)], base)
-        self.assertEqual([Path(row['path']).name for row in selected[len(base):]],
-                         arch['libcamera_patches']['files'])
-        self.assertEqual(len({Path(row['path']).resolve() for row in selected}), len(selected))
+        version = arch['upstream_package_version'].split(':', 1)[-1]
+        data, arch_patches = builder.arch_policy(arch['upstream_package_version'])
+        _, _, debian_patches = builder.debian_series(version)
+        transition = '0010-debian-v4l2-source-transition.patch'
+        self.assertEqual([path.relative_to(ROOT).as_posix() for path in debian_patches
+                          if path.name != transition], [row['path'] for row in arch_patches])
+        self.assertIn(transition, {path.name for path in debian_patches})
+        self.assertTrue({'0012-libcamera-apply-negotiated-framerate.patch',
+                         '0015-libcamera-enumerate-formats-by-index.patch'} <=
+                        {path.name for path in debian_patches})
+        official = data['debian_source']['sha256']
+        self.assertNotEqual(data['source']['sha256'], official)
+        archive = {'source_checksums': {'pipewire.orig.tar.gz': {'sha256': official}},
+                   'binary': {'source_version': version}}
+        with patch.object(builder.debian, 'target_identity', return_value=archive):
+            self.assertEqual(builder.debian_inputs(None, None)[2], debian_patches)
+            archive['source_checksums']['pipewire.orig.tar.gz']['sha256'] = data['source']['sha256']
+            with self.assertRaisesRegex(ValueError, 'not based on the signed Debian source'):
+                builder.debian_inputs(None, None)
 
     def test_steamos_recipe_is_verified_without_downloading_a_valve_archive(self):
         data = pipewire_arch.policy('steamos')

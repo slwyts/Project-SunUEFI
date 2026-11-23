@@ -19,6 +19,8 @@ from desktop import debian_package as debian, package_build
 DEBIAN_REVISION = 7
 DEBIAN_LIBCAMERA_REVISION = 10
 DEBIAN_V4L2_TRANSITION = 'pipewire-v4l2-source'
+DEBIAN_TARGETS = {'debian-gnome', 'debian-kde'}
+PACMAN_TARGETS = {'steamos', 'nyarch-gnome'}
 DEBIAN_DEFAULT = frozenset((
     'gstreamer1.0-pipewire', 'libpipewire-0.3-0t64', 'libpipewire-0.3-common',
     'libpipewire-0.3-modules', 'libspa-0.2-bluetooth', 'libspa-0.2-modules',
@@ -28,9 +30,10 @@ DEBIAN_DEFAULT = frozenset((
 DEBIAN_PACKAGES = {
     **dict.fromkeys((
         'gstreamer1.0-pipewire', 'libpipewire-0.3-0t64', 'libpipewire-0.3-dev',
-        'libpipewire-0.3-modules', 'libpipewire-0.3-modules-x11',
+        'libpipewire-0.3-modules', 'libpipewire-0.3-modules-extra', 'libpipewire-0.3-modules-x11',
         'libspa-0.2-bluetooth', 'libspa-0.2-dev', 'libspa-0.2-jack',
-        'libspa-0.2-libcamera', 'libspa-0.2-modules', 'pipewire', 'pipewire-alsa',
+        'libspa-0.2-libcamera', 'libspa-0.2-modules', 'libspa-0.2-modules-extra',
+        'pipewire', 'pipewire-alsa',
         'pipewire-bin', 'pipewire-jack', 'pipewire-pulse', 'pipewire-tests', 'pipewire-v4l2',
     ), 'arm64'),
     **dict.fromkeys((
@@ -48,21 +51,27 @@ def patch_series(version):
     return series
 
 
+def target_patches(series, data, targets):
+    paths = source_patches(series)
+    return [path.resolve() for entry, path in zip(data['patches'], paths, strict=True)
+            if targets.intersection(entry.get('targets', data['targets']))]
+
+
 def arch_policy(version):
     series = patch_series(version)
     data = json.loads(series.read_text())
-    if {'steamos', 'nyarch-gnome'}.isdisjoint(data['targets']):
+    if PACMAN_TARGETS.isdisjoint(data['targets']):
         raise ValueError('Select the PipeWire patch series for pacman')
-    patches = source_patches(series)
+    patches = target_patches(series, data, PACMAN_TARGETS)
     return data, [{'path': p.relative_to(ROOT).as_posix(), 'sha256': debian.sha(p)} for p in patches]
 
 
 def debian_series(version):
     series = patch_series(version)
     data = json.loads(series.read_text())
-    if not {'debian-gnome', 'debian-kde'} <= set(data['targets']):
+    if not DEBIAN_TARGETS <= set(data['targets']):
         raise ValueError('Select the PipeWire patch series for Debian')
-    return series, data, [path.resolve() for path in source_patches(series)]
+    return series, data, target_patches(series, data, DEBIAN_TARGETS)
 
 
 def debian_inputs(root, output):
@@ -70,7 +79,7 @@ def debian_inputs(root, output):
     target = debian.target_identity(root, debian.PIPEWIRE_ABI_PACKAGE, package_output=output)
     series, data, patches = debian_series(target['binary']['source_version'])
     archive = next(row for name, row in target['source_checksums'].items() if '.orig.tar.' in name)
-    if archive['sha256'] != data['source']['sha256']:
+    if archive['sha256'] != data.get('debian_source', data['source'])['sha256']:
         raise ValueError('PipeWire patches are not based on the signed Debian source')
     return target, series, patches
 

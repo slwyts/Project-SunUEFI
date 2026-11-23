@@ -8,7 +8,6 @@ import subprocess
 import sys
 
 import build_arch_package
-from build_piano_runtime_helpers import source_patches
 from build import overlay_packages, overlay_release
 from package.archive import pacman_info
 from desktop import libcamera_arch, package_build
@@ -35,14 +34,6 @@ def policy(target='arch'):
 def v4l2_replacement(data):
     since = data.get('v4l2_source_replaces_since')
     return f'{V4L2_PACKAGE}>={since}' if since else V4L2_PACKAGE
-
-
-def patch_records(base, selected):
-    series = ROOT / 'patches/pipewire' / selected['series'] / 'series.json'
-    shared = {path.name: path.resolve() for path in source_patches(series)}
-    paths = [shared[name] for name in selected['files']]
-    return [*base, *[{'path': path.relative_to(ROOT).as_posix(), 'sha256': package_build.sha(path)}
-                     for path in paths]]
 
 
 def recipe_inputs(cache, recipe, data):
@@ -159,8 +150,6 @@ def build(root, output, jobs, libcamera):
     base = data['upstream_package_version']
     upstream, patches = arch_policy(base)
     version = base.rsplit('-', 1)[0] + '-' + overlay_release.pacman_release(data['package_release'])
-    if extra := data.get('libcamera_patches'):
-        patches = patch_records(patches, extra)
     output.mkdir(parents=True, exist_ok=True)
     with (output / 'build.lock').open('a') as lock, (output / 'build.log').open('a') as log:
         fcntl.flock(lock, fcntl.LOCK_EX)

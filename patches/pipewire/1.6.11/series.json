@@ -2,11 +2,17 @@
   "schema_version": 1,
   "version": "1.6.11",
   "targets": [
+    "debian-gnome",
+    "debian-kde",
     "nyarch-gnome"
   ],
   "source": {
     "url": "https://codeload.github.com/PipeWire/pipewire/tar.gz/refs/tags/1.6.11",
     "sha256": "f3f70c4af173cc93d05070a9d412efe3ef5889bdf4ac32298e2c0d9ae1350559"
+  },
+  "debian_source": {
+    "url": "https://deb.debian.org/debian/pool/main/p/pipewire/pipewire_1.6.11.orig.tar.gz",
+    "sha256": "e7efc0d64e850daac1a0069a4aabfcb9a147af0cf0ab985a652983da16062339"
   },
   "patches": [
     {
@@ -46,6 +52,31 @@
     {
       "file": "../1.6.9/0013-gst-report-incompatible-capture-format.patch",
       "sha256": "7e564fb33afefdf90df251526342d717f101737df838d260ce8273a332db4c09"
+    },
+    {
+      "file": "../1.6.9/0009-client-node-empty-params.patch",
+      "sha256": "feb6656afe05eef8b5503e241c10b7ea06c0df05dbbed5c41dab523e9503a7f1"
+    },
+    {
+      "file": "../1.6.9/0010-debian-v4l2-source-transition.patch",
+      "sha256": "e7743c849e168ec16492c8759835ed5d4ef14634c0245ea38cead19cf2b40ebb",
+      "targets": ["debian-gnome", "debian-kde"]
+    },
+    {
+      "file": "../1.6.9/0011-libcamera-0.8-camera-location.patch",
+      "sha256": "a35b4e9d829f974126e197395507dbaf10945bbd8cf0b17c80673202e330ebe2"
+    },
+    {
+      "file": "../1.6.9/0012-libcamera-apply-negotiated-framerate.patch",
+      "sha256": "f038abdf22fa9663b9fefdab75d45b81ca6e4d1eddb0983031e7f5a3869f3a6f"
+    },
+    {
+      "file": "../1.6.9/0014-libcamera-report-validated-format.patch",
+      "sha256": "889454a60dd38ddc65a7930bd64630217d6a8823fc05a983e58703a583c8341f"
+    },
+    {
+      "file": "../1.6.9/0015-libcamera-enumerate-formats-by-index.patch",
+      "sha256": "e2c5851b1d0ab0921a24b55f9029735bdfe6f0e97246cad72ba2b21e96370952"
     }
   ]
 }
