@@ -53,16 +53,17 @@ def patched_source_hashes(patches):
     if not patches:
         return {}
     patch_files = [ROOT / row['path'] for row in patches]
-    files = set()
-    for patch in patch_files:
-        diffstat = subprocess.check_output(['git', 'apply', '--numstat', '-z', patch], cwd=ROOT)
-        entries = iter(diffstat.split(b'\0')[:-1])
-        for entry in entries:
-            name = entry.split(b'\t', 2)[2]
-            files.update([name.decode()] if name else [next(entries).decode(), next(entries).decode()])
     prefix = 'mesa-' + policy()['source']['commit'] + '/'
     with tempfile.TemporaryDirectory(prefix='mesa-patches-') as folder:
         expected = Path(folder)
+        # git apply skips paths outside the working directory inside a checkout.
+        files = set()
+        for patch in patch_files:
+            diffstat = subprocess.check_output(['git', 'apply', '--numstat', '-z', patch], cwd=expected)
+            entries = iter(diffstat.split(b'\0')[:-1])
+            for entry in entries:
+                name = entry.split(b'\t', 2)[2]
+                files.update([name.decode()] if name else [next(entries).decode(), next(entries).decode()])
         with tarfile.open(source_archive()) as archive:
             for name in sorted(files):
                 try:
