@@ -157,7 +157,9 @@
     "patches": [
       "patches/piano-sensors/0001-import-vendor-reg-config.patch",
       "patches/piano-sensors/0002-fix-libssc-property-types.patch",
-      "patches/piano-sensors/0003-libssc-raw-vector-reports.patch"
+      "patches/piano-sensors/0003-libssc-raw-vector-reports.patch",
+      "patches/piano-sensors/5/libssc/0005-bound-sensor-open.patch",
+      "patches/piano-sensors/5/iio-sensor-proxy/ssc-report-polling-failure.patch"
     ]
   },
   "storage": {

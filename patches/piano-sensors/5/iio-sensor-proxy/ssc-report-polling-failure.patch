@@ -1,0 +1,748 @@
+Description: Complete waiting D-Bus claims when an SSC sensor cannot start
+ Use the existing asynchronous SSC stream operations so D-Bus and device
+ changes remain responsive. On failure remove the measurement listener,
+ return the error to pending claims, and let clients claim the sensor
+ again. A release cancels an unfinished start before destroying the device.
+Forwarded: no
+---
+diff --git a/src/drivers.c b/src/drivers.c
+index 1afb7f0..f43f044 100644
+--- a/src/drivers.c
++++ b/src/drivers.c
+@@ -9,6 +9,142 @@
+ #include "drivers.h"
+ #include <gudev/gudev.h>
+ 
++#define FIRST_READING_TIMEOUT_S 10
++
++struct SensorPollingStart {
++	grefcount refs;
++	SensorDevice *device;
++	GCancellable *cancellable;
++	GBytes *first_reading;
++	guint timeout_id;
++	gboolean opened;
++};
++
++void
++sensor_polling_start_unref (SensorPollingStart *start)
++{
++	if (!g_ref_count_dec (&start->refs))
++		return;
++	g_clear_pointer (&start->first_reading, g_bytes_unref);
++	g_object_unref (start->cancellable);
++	g_free (start);
++}
++
++static void
++sensor_polling_detach (SensorPollingStart *start)
++{
++	g_clear_handle_id (&start->timeout_id, g_source_remove);
++	start->device->polling_start = NULL;
++	start->device = NULL;
++	sensor_polling_start_unref (start);
++}
++
++static gboolean
++sensor_polling_timed_out (gpointer user_data)
++{
++	SensorPollingStart *start = user_data;
++	SensorDevice *device = start->device;
++	g_autoptr (GError) error = g_error_new_literal (G_IO_ERROR, G_IO_ERROR_TIMED_OUT,
++						     "Sensor did not send a measurement");
++
++	start->timeout_id = 0;
++	sensor_polling_detach (start);
++	device->polling_start_failed = TRUE;
++	driver_set_polling (device, FALSE);
++	device->polling_failed (device, error, device->user_data);
++	return G_SOURCE_REMOVE;
++}
++
++static void
++sensor_polling_publish_first_reading (SensorPollingStart *start)
++{
++	SensorDevice *device = start->device;
++	g_autoptr (GBytes) reading = g_steal_pointer (&start->first_reading);
++
++	sensor_polling_detach (start);
++	device->callback_func (device, (gpointer) g_bytes_get_data (reading, NULL),
++			       device->user_data);
++}
++
++SensorPollingStart *
++sensor_polling_start (SensorDevice *device)
++{
++	SensorPollingStart *start = g_new0 (SensorPollingStart, 1);
++
++	g_ref_count_init (&start->refs);
++	start->device = device;
++	start->cancellable = g_cancellable_new ();
++	device->polling_start = start;
++	device->polling_start_failed = FALSE;
++
++	/* The device and the caller's open callback each hold one reference. */
++	g_ref_count_inc (&start->refs);
++	return start;
++}
++
++GCancellable *
++sensor_polling_cancellable (SensorPollingStart *start)
++{
++	return start->cancellable;
++}
++
++SensorDevice *
++sensor_polling_device (SensorPollingStart *start)
++{
++	return start->device;
++}
++
++void
++sensor_polling_opened (SensorPollingStart *start, const GError *error)
++{
++	SensorDevice *device = start->device;
++
++	if (!device)
++		return;
++	if (error) {
++		sensor_polling_detach (start);
++		device->polling_start_failed = TRUE;
++		device->polling_failed (device, error, device->user_data);
++		return;
++	}
++
++	start->opened = TRUE;
++	if (start->first_reading)
++		sensor_polling_publish_first_reading (start);
++	else
++		start->timeout_id = g_timeout_add_seconds (FIRST_READING_TIMEOUT_S,
++							  sensor_polling_timed_out, start);
++}
++
++void
++sensor_polling_cancel (SensorDevice *device)
++{
++	SensorPollingStart *start = device->polling_start;
++	g_autoptr (GCancellable) cancellable = NULL;
++
++	if (!start)
++		return;
++	cancellable = g_object_ref (start->cancellable);
++	sensor_polling_detach (start);
++	g_cancellable_cancel (cancellable);
++}
++
++void
++sensor_polling_report (SensorDevice *device, gpointer readings, gsize size)
++{
++	SensorPollingStart *start = device->polling_start;
++
++	if (!start) {
++		device->callback_func (device, readings, device->user_data);
++		return;
++	}
++
++	if (!start->first_reading)
++		start->first_reading = g_bytes_new (readings, size);
++	if (start->opened)
++		sensor_polling_publish_first_reading (start);
++}
++
+ gboolean drv_check_udev_sensor_type (GUdevDevice *device,
+ 				     const gchar *match,
+ 				     const gchar *name)
+diff --git a/src/drivers.h b/src/drivers.h
+index 5e0347c..7d856c7 100644
+--- a/src/drivers.h
++++ b/src/drivers.h
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <glib.h>
++#include <gio/gio.h>
+ #include <gudev/gudev.h>
+ 
+ #include "accel-attributes.h"
+@@ -26,6 +27,7 @@ typedef enum {
+ } ProximityNear;
+ 
+ typedef struct SensorDevice SensorDevice;
++typedef struct SensorPollingStart SensorPollingStart;
+ 
+ typedef struct {
+ 	int accel_x;
+@@ -50,6 +52,9 @@ typedef struct {
+ typedef void (*ReadingsUpdateFunc) (SensorDevice *sensor_device,
+ 				    gpointer      readings,
+ 				    gpointer      user_data);
++typedef void (*PollingFailedFunc) (SensorDevice *sensor_device,
++				   const GError *error,
++				   gpointer      user_data);
+ 
+ 
+ typedef struct {
+@@ -70,9 +75,23 @@ struct SensorDevice {
+ 
+ 	/* Callback function and data as pass to driver_open() */
+ 	ReadingsUpdateFunc   callback_func;
++	PollingFailedFunc    polling_failed;
+ 	gpointer             user_data;
++	SensorPollingStart  *polling_start;
++	gboolean             polling_start_failed;
++	gboolean             closing;
+ };
+ 
++SensorPollingStart *sensor_polling_start (SensorDevice *device);
++GCancellable *sensor_polling_cancellable (SensorPollingStart *start);
++SensorDevice *sensor_polling_device (SensorPollingStart *start);
++void sensor_polling_opened (SensorPollingStart *start, const GError *error);
++void sensor_polling_cancel (SensorDevice *device);
++void sensor_polling_report (SensorDevice *device, gpointer readings, gsize size);
++void sensor_polling_start_unref (SensorPollingStart *start);
++
++G_DEFINE_AUTOPTR_CLEANUP_FUNC (SensorPollingStart, sensor_polling_start_unref)
++
+ static inline gboolean
+ driver_discover (SensorDriver *driver,
+ 		 GUdevDevice  *device)
+@@ -102,6 +121,7 @@ static inline SensorDevice *
+ driver_open (SensorDriver       *driver,
+ 	     GUdevDevice        *device,
+ 	     ReadingsUpdateFunc  callback_func,
++	     PollingFailedFunc   polling_failed,
+ 	     gpointer            user_data)
+ {
+ 	SensorDevice *sensor_device;
+@@ -116,6 +136,7 @@ driver_open (SensorDriver       *driver,
+ 		return NULL;
+ 	sensor_device->drv = driver;
+ 	sensor_device->callback_func = callback_func;
++	sensor_device->polling_failed = polling_failed;
+ 	sensor_device->user_data = user_data;
+ 	return sensor_device;
+ }
+@@ -142,6 +163,7 @@ driver_close (SensorDevice *sensor_device)
+ 	SensorDriver *driver;
+ 
+ 	g_return_if_fail (sensor_device);
++	sensor_device->closing = TRUE;
+ 	driver_set_polling (sensor_device, FALSE);
+ 	g_clear_pointer (&sensor_device->name, g_free);
+ 	driver = sensor_device->drv;
+diff --git a/src/drv-ssc-accel.c b/src/drv-ssc-accel.c
+index 4130657..0d29af8 100644
+--- a/src/drv-ssc-accel.c
++++ b/src/drv-ssc-accel.c
+@@ -68,7 +68,7 @@ measurement_cb (SSCSensorAccelerometer *sensor, gfloat accel_x, gfloat accel_y,
+ 	readings.accel_z = tmp.z;
+ 	copy_accel_scale (&readings.scale, drv_data->scale);
+ 
+-	sensor_device->callback_func (sensor_device, (gpointer) &readings, sensor_device->user_data);
++	sensor_polling_report (sensor_device, &readings, sizeof (readings));
+ }
+ 
+ static SensorDevice *
+@@ -98,12 +98,42 @@ ssc_accelerometer_open (GUdevDevice *device)
+ 	return sensor_device;
+ }
+ 
++static void
++ssc_accelerometer_open_ready (GObject *source, GAsyncResult *result, gpointer user_data)
++{
++	g_autoptr (SensorPollingStart) start = user_data;
++	g_autoptr (GError) error = NULL;
++	SensorDevice *device = sensor_polling_device (start);
++
++	if (!device)
++		return;
++	if (!ssc_sensor_accelerometer_open_finish (SSC_SENSOR_ACCELEROMETER (source), result, &error)) {
++		DrvData *drv_data = device->priv;
++
++		if (!error)
++			error = g_error_new_literal (G_IO_ERROR, G_IO_ERROR_FAILED, "Sensor did not start");
++		g_clear_signal_handler (&drv_data->measurement_id, drv_data->sensor);
++		g_warning ("Opening SSC accelerometer sensor failed: %s", error->message);
++	}
++	sensor_polling_opened (start, error);
++}
++
++static void
++ssc_accelerometer_close_ready (GObject *source, GAsyncResult *result, gpointer user_data)
++{
++	g_autoptr (GError) error = NULL;
++
++	if (!ssc_sensor_accelerometer_close_finish (SSC_SENSOR_ACCELEROMETER (source), result, &error))
++		g_warning ("Closing SSC accelerometer sensor failed: %s", error ? error->message : "Unknown error");
++}
++
+ static void
+ ssc_accelerometer_set_polling (SensorDevice *sensor_device, gboolean state)
+ {
+ 	DrvData *drv_data = (DrvData *) sensor_device->priv;
+-	g_autoptr(GError) error = NULL;
+ 	if (state) {
++		SensorPollingStart *start;
++
+ 		if (drv_data->measurement_id)
+ 			return;
+ 
+@@ -113,20 +143,27 @@ ssc_accelerometer_set_polling (SensorDevice *sensor_device, gboolean state)
+ 							     G_CALLBACK (measurement_cb),
+ 							     sensor_device);
+ 		/* Enable sensor */
+-		if (!ssc_sensor_accelerometer_open_sync (drv_data->sensor, NULL, &error)) {
+-			g_warning ("Opening SSC accelerometer sensor failed: %s", error->message);
+-			return;
+-		}
++		start = sensor_polling_start (sensor_device);
++
++		ssc_sensor_accelerometer_open (drv_data->sensor, sensor_polling_cancellable (start),
++					 ssc_accelerometer_open_ready, start);
+ 	} else {
+ 		if (!drv_data->measurement_id)
+ 			return;
+ 
+ 		/* Stop listening for measurements */
+ 		g_clear_signal_handler (&drv_data->measurement_id, drv_data->sensor);
++		sensor_polling_cancel (sensor_device);
+ 
+ 		/* Disable sensor */
+-		if (!ssc_sensor_accelerometer_close_sync (drv_data->sensor, NULL, &error))
+-			g_warning ("Closing SSC accelerometer sensor failed: %s", error->message);
++		if (sensor_device->closing) {
++			g_autoptr (GError) error = NULL;
++
++			if (!ssc_sensor_accelerometer_close_sync (drv_data->sensor, NULL, &error))
++				g_warning ("Closing SSC accelerometer sensor failed: %s", error ? error->message : "Unknown error");
++		} else {
++			ssc_sensor_accelerometer_close (drv_data->sensor, NULL, ssc_accelerometer_close_ready, NULL);
++		}
+ 	}
+ }
+ 
+diff --git a/src/drv-ssc-compass.c b/src/drv-ssc-compass.c
+index 3b1a5c1..909f474 100644
+--- a/src/drv-ssc-compass.c
++++ b/src/drv-ssc-compass.c
+@@ -52,7 +52,7 @@ measurement_cb (SSCSensorCompass *sensor, gfloat azimuth, gpointer user_data)
+ 
+ 	readings.heading = azimuth;
+ 
+-	sensor_device->callback_func (sensor_device, (gpointer) &readings, sensor_device->user_data);
++	sensor_polling_report (sensor_device, &readings, sizeof (readings));
+ }
+ 
+ static SensorDevice *
+@@ -78,13 +78,43 @@ ssc_compass_open (GUdevDevice *device)
+ 	return sensor_device;
+ }
+ 
++static void
++ssc_compass_open_ready (GObject *source, GAsyncResult *result, gpointer user_data)
++{
++	g_autoptr (SensorPollingStart) start = user_data;
++	g_autoptr (GError) error = NULL;
++	SensorDevice *device = sensor_polling_device (start);
++
++	if (!device)
++		return;
++	if (!ssc_sensor_compass_open_finish (SSC_SENSOR_COMPASS (source), result, &error)) {
++		DrvData *drv_data = device->priv;
++
++		if (!error)
++			error = g_error_new_literal (G_IO_ERROR, G_IO_ERROR_FAILED, "Sensor did not start");
++		g_clear_signal_handler (&drv_data->measurement_id, drv_data->sensor);
++		g_warning ("Opening SSC compass sensor failed: %s", error->message);
++	}
++	sensor_polling_opened (start, error);
++}
++
++static void
++ssc_compass_close_ready (GObject *source, GAsyncResult *result, gpointer user_data)
++{
++	g_autoptr (GError) error = NULL;
++
++	if (!ssc_sensor_compass_close_finish (SSC_SENSOR_COMPASS (source), result, &error))
++		g_warning ("Closing SSC compass sensor failed: %s", error ? error->message : "Unknown error");
++}
++
+ static void
+ ssc_compass_set_polling (SensorDevice *sensor_device, gboolean state)
+ {
+ 	DrvData *drv_data = (DrvData *) sensor_device->priv;
+-	g_autoptr(GError) error = NULL;
+ 
+ 	if (state) {
++		SensorPollingStart *start;
++
+ 		if (drv_data->measurement_id)
+ 			return;
+ 		/* Start listening for measurements */
+@@ -94,18 +124,27 @@ ssc_compass_set_polling (SensorDevice *sensor_device, gboolean state)
+ 							     sensor_device);
+ 
+ 		/* Enable sensor */
+-		if (!ssc_sensor_compass_open_sync (drv_data->sensor, NULL, &error))
+-			g_warning ("Opening SSC compass sensor failed: %s", error->message);
++		start = sensor_polling_start (sensor_device);
++
++		ssc_sensor_compass_open (drv_data->sensor, sensor_polling_cancellable (start),
++					 ssc_compass_open_ready, start);
+ 	} else {
+ 		if (!drv_data->measurement_id)
+ 			return;
+ 
+ 		/* Stop listening for measurements */
+ 		g_clear_signal_handler (&drv_data->measurement_id, drv_data->sensor);
++		sensor_polling_cancel (sensor_device);
+ 
+ 		/* Disable sensor */
+-		if (!ssc_sensor_compass_close_sync (drv_data->sensor, NULL, &error))
+-			g_warning ("Closing SSC compass sensor failed: %s", error->message);
++		if (sensor_device->closing) {
++			g_autoptr (GError) error = NULL;
++
++			if (!ssc_sensor_compass_close_sync (drv_data->sensor, NULL, &error))
++				g_warning ("Closing SSC compass sensor failed: %s", error ? error->message : "Unknown error");
++		} else {
++			ssc_sensor_compass_close (drv_data->sensor, NULL, ssc_compass_close_ready, NULL);
++		}
+ 	}
+ }
+ 
+diff --git a/src/drv-ssc-light.c b/src/drv-ssc-light.c
+index 27c819f..381fcd8 100644
+--- a/src/drv-ssc-light.c
++++ b/src/drv-ssc-light.c
+@@ -52,7 +52,7 @@ measurement_cb (SSCSensorLight *sensor, gfloat intensity, gpointer user_data)
+ 
+ 	readings.level = intensity;
+ 	readings.uses_lux = TRUE;
+-	sensor_device->callback_func (sensor_device, (gpointer) &readings, sensor_device->user_data);
++	sensor_polling_report (sensor_device, &readings, sizeof (readings));
+ }
+ 
+ static SensorDevice *
+@@ -77,12 +77,42 @@ ssc_light_open (GUdevDevice *device)
+ 	return sensor_device;
+ }
+ 
++static void
++ssc_light_open_ready (GObject *source, GAsyncResult *result, gpointer user_data)
++{
++	g_autoptr (SensorPollingStart) start = user_data;
++	g_autoptr (GError) error = NULL;
++	SensorDevice *device = sensor_polling_device (start);
++
++	if (!device)
++		return;
++	if (!ssc_sensor_light_open_finish (SSC_SENSOR_LIGHT (source), result, &error)) {
++		DrvData *drv_data = device->priv;
++
++		if (!error)
++			error = g_error_new_literal (G_IO_ERROR, G_IO_ERROR_FAILED, "Sensor did not start");
++		g_clear_signal_handler (&drv_data->measurement_id, drv_data->sensor);
++		g_warning ("Opening SSC light sensor failed: %s", error->message);
++	}
++	sensor_polling_opened (start, error);
++}
++
++static void
++ssc_light_close_ready (GObject *source, GAsyncResult *result, gpointer user_data)
++{
++	g_autoptr (GError) error = NULL;
++
++	if (!ssc_sensor_light_close_finish (SSC_SENSOR_LIGHT (source), result, &error))
++		g_warning ("Closing SSC light sensor failed: %s", error ? error->message : "Unknown error");
++}
++
+ static void
+ ssc_light_set_polling (SensorDevice *sensor_device, gboolean state)
+ {
+ 	DrvData *drv_data = (DrvData *) sensor_device->priv;
+-	g_autoptr (GError) error = NULL;
+ 	if (state) {
++		SensorPollingStart *start;
++
+ 		if (drv_data->measurement_id)
+ 			return;
+ 		/* Start listening for measurements */
+@@ -91,18 +121,27 @@ ssc_light_set_polling (SensorDevice *sensor_device, gboolean state)
+ 							     G_CALLBACK (measurement_cb),
+ 							     sensor_device);
+ 		/* Enable sensor */
+-		if (!ssc_sensor_light_open_sync (drv_data->sensor, NULL, &error))
+-			g_warning ("Opening SSC light sensor failed: %s", error->message);
++		start = sensor_polling_start (sensor_device);
++
++		ssc_sensor_light_open (drv_data->sensor, sensor_polling_cancellable (start),
++					 ssc_light_open_ready, start);
+ 	} else {
+ 		if (!drv_data->measurement_id)
+ 			return;
+ 
+ 		/* Stop listening for measurements */
+ 		g_clear_signal_handler (&drv_data->measurement_id, drv_data->sensor);
++		sensor_polling_cancel (sensor_device);
+ 
+ 		/* Disable sensor */
+-		if (!ssc_sensor_light_close_sync (drv_data->sensor, NULL, &error))
+-			g_warning ("Closing SSC light sensor failed: %s", error->message);
++		if (sensor_device->closing) {
++			g_autoptr (GError) error = NULL;
++
++			if (!ssc_sensor_light_close_sync (drv_data->sensor, NULL, &error))
++				g_warning ("Closing SSC light sensor failed: %s", error ? error->message : "Unknown error");
++		} else {
++			ssc_sensor_light_close (drv_data->sensor, NULL, ssc_light_close_ready, NULL);
++		}
+ 	}
+ }
+ 
+diff --git a/src/drv-ssc-proximity.c b/src/drv-ssc-proximity.c
+index fbb4482..479024a 100644
+--- a/src/drv-ssc-proximity.c
++++ b/src/drv-ssc-proximity.c
+@@ -55,7 +55,7 @@ measurement_cb (SSCSensorProximity *sensor, gboolean near, gpointer user_data)
+ 	ProximityReadings readings;
+ 
+ 	readings.is_near = near ? PROXIMITY_NEAR_TRUE : PROXIMITY_NEAR_FALSE;
+-	sensor_device->callback_func (sensor_device, (gpointer) &readings, sensor_device->user_data);
++	sensor_polling_report (sensor_device, &readings, sizeof (readings));
+ }
+ 
+ static SensorDevice *
+@@ -79,12 +79,42 @@ ssc_proximity_open (GUdevDevice *device)
+ 	return sensor_device;
+ }
+ 
++static void
++ssc_proximity_open_ready (GObject *source, GAsyncResult *result, gpointer user_data)
++{
++	g_autoptr (SensorPollingStart) start = user_data;
++	g_autoptr (GError) error = NULL;
++	SensorDevice *device = sensor_polling_device (start);
++
++	if (!device)
++		return;
++	if (!ssc_sensor_proximity_open_finish (SSC_SENSOR_PROXIMITY (source), result, &error)) {
++		DrvData *drv_data = device->priv;
++
++		if (!error)
++			error = g_error_new_literal (G_IO_ERROR, G_IO_ERROR_FAILED, "Sensor did not start");
++		g_clear_signal_handler (&drv_data->measurement_id, drv_data->sensor);
++		g_warning ("Opening SSC proximity sensor failed: %s", error->message);
++	}
++	sensor_polling_opened (start, error);
++}
++
++static void
++ssc_proximity_close_ready (GObject *source, GAsyncResult *result, gpointer user_data)
++{
++	g_autoptr (GError) error = NULL;
++
++	if (!ssc_sensor_proximity_close_finish (SSC_SENSOR_PROXIMITY (source), result, &error))
++		g_warning ("Closing SSC proximity sensor failed: %s", error ? error->message : "Unknown error");
++}
++
+ static void
+ ssc_proximity_set_polling (SensorDevice *sensor_device, gboolean state)
+ {
+ 	DrvData *drv_data = (DrvData *) sensor_device->priv;
+-	g_autoptr(GError) error = NULL;
+ 	if (state) {
++		SensorPollingStart *start;
++
+ 		if (drv_data->measurement_id)
+ 			return;
+ 		/* Start listening for measurements */
+@@ -94,18 +124,25 @@ ssc_proximity_set_polling (SensorDevice *sensor_device, gboolean state)
+ 							     sensor_device);
+ 
+ 		/* Enable sensor */
+-		if (!ssc_sensor_proximity_open_sync (drv_data->sensor, NULL, &error)) {
+-			g_warning ("Opening SSC proximity sensor failed: %s", error ? error->message : "UNKNOWN");
+-			return;
+-		}
++		start = sensor_polling_start (sensor_device);
++
++		ssc_sensor_proximity_open (drv_data->sensor, sensor_polling_cancellable (start),
++					 ssc_proximity_open_ready, start);
+ 	} else {
+ 		if (!drv_data->measurement_id)
+ 			return;
+ 		/* Stop listening for measurements */
+ 		g_clear_signal_handler (&drv_data->measurement_id, drv_data->sensor);
++		sensor_polling_cancel (sensor_device);
+ 		/* Disable sensor */
+-		if (!ssc_sensor_proximity_close_sync (drv_data->sensor, NULL, &error))
+-			g_warning ("Closing SSC proximity sensor failed: %s", error->message);
++		if (sensor_device->closing) {
++			g_autoptr (GError) error = NULL;
++
++			if (!ssc_sensor_proximity_close_sync (drv_data->sensor, NULL, &error))
++				g_warning ("Closing SSC proximity sensor failed: %s", error ? error->message : "Unknown error");
++		} else {
++			ssc_sensor_proximity_close (drv_data->sensor, NULL, ssc_proximity_close_ready, NULL);
++		}
+ 	}
+ }
+ 
+diff --git a/src/iio-sensor-proxy.c b/src/iio-sensor-proxy.c
+index b635f29..91134e5 100644
+--- a/src/iio-sensor-proxy.c
++++ b/src/iio-sensor-proxy.c
+@@ -389,6 +389,31 @@ send_driver_changed_dbus_event (SensorData   *data,
+ 		g_assert_not_reached ();
+ }
+ 
++static void
++sensor_polling_failed (SensorDevice *device, const GError *error, gpointer user_data)
++{
++	SensorData *data = user_data;
++	DriverType type = device->drv->type;
++	g_autofree GDBusMethodInvocation **invocations = NULL;
++	gsize count, i;
++
++	invocations = (GDBusMethodInvocation **) g_ptr_array_steal (
++		data->sensor_startup_dbus_invocations_delayed[type], &count);
++	for (i = 0; i < count; i++) {
++		const char *sender = g_dbus_method_invocation_get_sender (invocations[i]);
++
++		if (!g_object_get_data (G_OBJECT (invocations[i]), "existing-sensor-claim"))
++			g_hash_table_remove (data->clients[type], sender);
++		g_dbus_method_invocation_return_error (invocations[i], G_DBUS_ERROR,
++						       G_DBUS_ERROR_FAILED, "%s", error->message);
++	}
++
++	if (data->sensor_startup_dbus_event_delayed[type]) {
++		data->sensor_startup_dbus_event_delayed[type] = FALSE;
++		send_driver_changed_dbus_event (data, type);
++	}
++}
++
+ static gboolean
+ any_sensors_left (SensorData *data)
+ {
+@@ -411,6 +436,7 @@ client_release (SensorData            *data,
+ 		DriverType             driver_type)
+ {
+ 	GHashTable *ht;
++	GPtrArray *pending;
+ 	guint watch_id;
+ 
+ 	ht = data->clients[driver_type];
+@@ -423,7 +449,21 @@ client_release (SensorData            *data,
+ 
+ 	g_hash_table_remove (ht, sender);
+ 
+-	if (driver_type_exists (data, driver_type) &&
++	pending = data->sensor_startup_dbus_invocations_delayed[driver_type];
++	for (guint i = 0; pending && i < pending->len;) {
++		GDBusMethodInvocation *invocation = g_ptr_array_index (pending, i);
++
++		if (g_strcmp0 (g_dbus_method_invocation_get_sender (invocation), sender) != 0) {
++			i++;
++			continue;
++		}
++		g_ptr_array_remove_index (pending, i);
++		g_dbus_method_invocation_return_error_literal (
++			invocation, G_DBUS_ERROR, G_DBUS_ERROR_FAILED, "Sensor claim released");
++	}
++
++	if (driver_type_exists (data, driver_type) && DEVICE_FOR_TYPE(driver_type) &&
++	    !DEVICE_FOR_TYPE(driver_type)->closing &&
+ 	    g_hash_table_size (ht) == 0) {
+ 		SensorDevice *sensor_device = DEVICE_FOR_TYPE(driver_type);
+ 		driver_set_polling (sensor_device, FALSE);
+@@ -506,40 +546,47 @@ handle_generic_method_call (SensorData            *data,
+ 	ht = data->clients[driver_type];
+ 
+ 	if (g_str_has_prefix (method_name, "Claim")) {
++		SensorDevice *sensor_device = DEVICE_FOR_TYPE(driver_type);
++		GPtrArray *pending = data->sensor_startup_dbus_invocations_delayed[driver_type];
++
+ 		watch_id = GPOINTER_TO_UINT (g_hash_table_lookup (ht, sender));
+ 		if (watch_id > 0) {
+-			g_debug ("Sender '%s' already claimed device, no-op", sender);
+-			g_dbus_method_invocation_return_value (invocation, NULL);
+-			return;
++			if (sensor_device && !sensor_device->closing && sensor_device->polling_start) {
++				g_object_set_data (G_OBJECT (invocation), "existing-sensor-claim",
++						   GINT_TO_POINTER (1));
++				g_ptr_array_add (pending, invocation);
++				return;
++			}
++			if (!sensor_device || sensor_device->closing || !sensor_device->polling_start_failed) {
++				g_dbus_method_invocation_return_value (invocation, NULL);
++				return;
++			}
++			g_object_set_data (G_OBJECT (invocation), "existing-sensor-claim",
++					   GINT_TO_POINTER (1));
++		} else {
++			watch_id = g_bus_watch_name_on_connection (data->connection,
++								   sender,
++								   G_BUS_NAME_WATCHER_FLAGS_NONE,
++								   NULL,
++								   client_vanished_cb,
++								   data,
++								   NULL);
++			g_hash_table_insert (ht, g_strdup (sender), GUINT_TO_POINTER (watch_id));
+ 		}
+ 
+-		watch_id = g_bus_watch_name_on_connection (data->connection,
+-							   sender,
+-							   G_BUS_NAME_WATCHER_FLAGS_NONE,
+-							   NULL,
+-							   client_vanished_cb,
+-							   data,
+-							   NULL);
+-		g_hash_table_insert (ht, g_strdup (sender), GUINT_TO_POINTER (watch_id));
+-
+-		if (driver_type_exists (data, driver_type)) {
+-			SensorDevice *sensor_device = DEVICE_FOR_TYPE(driver_type);
+-
+-			/* No other clients for this sensor? Start it */
+-			if (g_hash_table_size (ht) == 1) {
++		if (sensor_device && !sensor_device->closing) {
++			if (g_hash_table_size (ht) == 1 || sensor_device->polling_start_failed) {
+ 				/* Return the dbus invocation only after we receive the first
+ 				 * reading from the sensor, so that the client has a valid
+ 				 * measurement to work with right after calling Claim(). */
+-				g_ptr_array_add (data->sensor_startup_dbus_invocations_delayed[driver_type],
+-						 invocation);
++				g_ptr_array_add (pending, invocation);
+ 
+ 				driver_set_polling (sensor_device, TRUE);
+-			} else if (data->sensor_startup_dbus_invocations_delayed[driver_type]->len > 0 ||
++			} else if (sensor_device->polling_start || pending->len > 0 ||
+ 				   data->sensor_startup_dbus_event_delayed[driver_type]) {
+ 				/* Client added while the sensor is still starting up, add it to
+ 				 * the delayed invocation list. */
+-				g_ptr_array_add (data->sensor_startup_dbus_invocations_delayed[driver_type],
+-						 invocation);
++				g_ptr_array_add (pending, invocation);
+ 			} else {
+ 				/* Client added while sensor is active already, can return the
+ 				 * invocation immediately. */
+@@ -771,7 +818,8 @@ name_acquired_handler (GDBusConnection *connection,
+ 			continue;
+ 
+ 		sensor_device = driver_open (DRIVER_FOR_TYPE(i), UDEV_DEVICE_FOR_TYPE(i),
+-					     driver_type_to_callback_func (data->drivers[i]->type), data);
++					     driver_type_to_callback_func (data->drivers[i]->type),
++					     sensor_polling_failed, data);
+ 		if (!sensor_device) {
+ 			DRIVER_FOR_TYPE(i) = NULL;
+ 			g_clear_object (&UDEV_DEVICE_FOR_TYPE(i));
+@@ -1098,7 +1146,8 @@ sensor_changes (GUdevClient *client,
+ 					 driver->driver_name);
+ 
+ 				sensor_device = driver_open (driver, device,
+-					driver_type_to_callback_func (driver->type), data);
++							     driver_type_to_callback_func (driver->type),
++							     sensor_polling_failed, data);
+ 
+ 				if (sensor_device) {
+ 					GHashTable *ht;

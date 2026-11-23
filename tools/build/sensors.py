@@ -17,6 +17,7 @@ from desktop import package_build
 RUNTIME = {'fastrpc-support', 'libfastrpc1', 'libssc2', 'libssc-bin',
            'iio-sensor-proxy', 'piano-sensors'}
 POLICY = ROOT / 'patches/piano-sensors/5/build.json'
+PATCH_SERIES = POLICY.with_name('series.json')
 ARCH_PACKAGE = 'piano-sensors'
 SSC_DEPENDENCY = 'iio-sensor-proxy-ssc>=3.9'
 ARCH_RUNTIME = {
@@ -51,7 +52,21 @@ def source_workspace(workspace, config):
     dirty = debian.capture(['git', '-C', source, 'status', '--porcelain'])
     if head != config['commit'] or dirty:
         raise ValueError('Sensors source HEAD/cleanliness mismatch; run ./build.sh sources')
-    patches = [{'path': name, 'sha256': package_build.sha(ROOT / name)} for name in config['patches']]
+    patches = []
+    source_packages = {}
+    for row in json.loads(PATCH_SERIES.read_text())['patches']:
+        path = (PATCH_SERIES.parent / row['file']).resolve()
+        digest = package_build.sha(path)
+        if digest != row['sha256']:
+            raise ValueError('Sensors patch checksum differs: ' + str(path))
+        name = path.relative_to(ROOT).as_posix()
+        patches.append({'path': name, 'sha256': digest})
+        if package := row.get('source_package'):
+            if package not in ('libssc', 'iio-sensor-proxy'):
+                raise ValueError('Unknown sensors source package: ' + package)
+            source_packages[name] = package
+    if [patch['path'] for patch in patches] != config['patches']:
+        raise ValueError('Sensors configuration differs from the selected patch series')
     record = {'source_url': config['source_url'], 'source_commit': head, 'patches': patches}
     if workspace.exists():
         if json.loads((workspace / 'SOURCE').read_text()) != record:
@@ -59,8 +74,14 @@ def source_workspace(workspace, config):
     else:
         shutil.copytree(source, workspace, ignore=shutil.ignore_patterns('.git'))
         for patch in patches:
-            debian.run(['patch', '--batch', '--forward', '--fuzz=0', '-p1', '-i', ROOT / patch['path']],
-                       cwd=workspace)
+            path = ROOT / patch['path']
+            if package := source_packages.get(patch['path']):
+                directory = workspace / 'patches' / package
+                directory.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, directory / path.name)
+            else:
+                debian.run(['patch', '--batch', '--forward', '--fuzz=0', '-p1', '-i', path],
+                           cwd=workspace)
         (workspace / 'SOURCE').write_text(json.dumps(record, indent=2) + '\n')
     return workspace, record
 
@@ -197,7 +218,7 @@ def build(output, sysroot=None, jobs=None, libssc_only=False, resume=False):
             version = runtime_versions['libssc2' if name == 'libssc' else name]
             patches = sorted((workspace / 'patches' / name).glob('*.patch'))
             debian.add_patches(work, patches, name, version,
-                               'Preserve SSC property types, raw reports and sensor claim ordering.')
+                               'Handle failed SSC stream startup without blocking the desktop.')
             if name == 'libssc':
                 install = work / 'debian/libssc-bin.install'
                 if 'usr/bin/piano-ssc-vector' not in install.read_text().splitlines():

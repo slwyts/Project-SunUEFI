@@ -1,0 +1,972 @@
+Description: Bound sensor enable waits and preserve open and close errors
+ The QMI response only confirms delivery. A sensor may not send a
+ configuration or measurement report, so give a pending enable a
+ deadline. Dispatch completion in the caller's main context without
+ polling, tear down listeners, and ignore late transport callbacks.
+ The derived callbacks include Felix Niederer's upstream GError fixes
+ f54187cd601260415b47efba7fc2985d28c3e810 and
+ f6dfbfa5f34ef22f3d47ef346c22834e79c60df1.
+Origin: other
+Forwarded: no
+---
+diff --git a/src/libssc-common-private.h b/src/libssc-common-private.h
+index e427c11..96ab1f5 100644
+--- a/src/libssc-common-private.h
++++ b/src/libssc-common-private.h
+@@ -76,6 +76,5 @@ typedef struct {
+ 	GMutex mutex;
+-	GCond condition;
++	GMainContext *context;
+ 	GAsyncResult *result;
+ 	gboolean finished;
+-	GObject *object;
+ } SyncContext;
+diff --git a/src/libssc-common.c b/src/libssc-common.c
+index 3648f47..d8eebde 100644
+--- a/src/libssc-common.c
++++ b/src/libssc-common.c
+@@ -45,3 +45,3 @@ ssc_common_init_sync_context (SyncContext *ctx) {
+ 	g_mutex_init (&ctx->mutex);
+-	g_cond_init (&ctx->condition);
++	ctx->context = g_main_context_ref_thread_default ();
+ 	ctx->finished = FALSE;
+@@ -55,3 +55,3 @@ ssc_common_wait_sync_context (SyncContext *ctx) {
+ 		g_mutex_unlock (&ctx->mutex);
+-		g_main_context_iteration (g_main_context_default (), FALSE);
++		g_main_context_iteration (ctx->context, TRUE);
+ 		g_mutex_lock (&ctx->mutex);
+@@ -69,3 +69,3 @@ ssc_common_callback_sync_context (GObject *source, GAsyncResult *result, gpointe
+ 	ctx->finished = TRUE;
+-	g_cond_signal (&ctx->condition);
++	g_main_context_wakeup (ctx->context);
+ 	g_mutex_unlock (&ctx->mutex);
+@@ -76,3 +76,3 @@ ssc_common_clear_sync_context (SyncContext *ctx) {
+ 	g_mutex_clear (&ctx->mutex);
+-	g_cond_clear (&ctx->condition);
++	g_main_context_unref (ctx->context);
+ 	g_object_unref (ctx->result);
+diff --git a/src/libssc-sensor-accelerometer.c b/src/libssc-sensor-accelerometer.c
+index a4102ea..51979c3 100644
+--- a/src/libssc-sensor-accelerometer.c
++++ b/src/libssc-sensor-accelerometer.c
+@@ -31,3 +31,3 @@ static guint signals[N_SIGNALS];
+ typedef struct _SSCSensorAccelerometerPrivate {
+-	guint report_id;
++	gulong report_id;
+ } SSCSensorAccelerometerPrivate;
+@@ -38,3 +38,4 @@ G_DEFINE_TYPE_WITH_CODE (SSCSensorAccelerometer, ssc_sensor_accelerometer, SSC_T
+ typedef struct {
+-	SSCSensorAccelerometer *sensor;
++	GWeakRef sensor;
++	gulong report_id;
+ 	gfloat x;
+@@ -47,2 +48,3 @@ signal_context_free (SignalContext *ctx)
+ {
++	g_weak_ref_clear (&ctx->sensor);
+ 	g_slice_free (SignalContext, ctx);
+@@ -55,4 +57,10 @@ emit_signal (gpointer user_data) {
+ 	SignalContext *ctx = user_data;
++	g_autoptr (SSCSensorAccelerometer) sensor = g_weak_ref_get (&ctx->sensor);
++	SSCSensorAccelerometerPrivate *priv;
+ 
+-	g_signal_emit (ctx->sensor, signals[SIGNAL_MEASUREMENT], 0, ctx->x, ctx->y, ctx->z);
++	if (!sensor)
++		return G_SOURCE_REMOVE;
++	priv = ssc_sensor_accelerometer_get_instance_private (sensor);
++	if (priv->report_id == ctx->report_id)
++		g_signal_emit (sensor, signals[SIGNAL_MEASUREMENT], 0, ctx->x, ctx->y, ctx->z);
+ 
+@@ -66,2 +74,3 @@ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_
+ 	SSCSensorAccelerometer *sensor = SSC_SENSOR_ACCELEROMETER (user_data);
++	SSCSensorAccelerometerPrivate *priv = ssc_sensor_accelerometer_get_instance_private (sensor);
+ 	SignalContext *ctx = NULL;
+@@ -95,3 +104,4 @@ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_
+ 			ctx = g_slice_new0 (SignalContext);
+-			ctx->sensor = sensor;
++			g_weak_ref_init (&ctx->sensor, sensor);
++			ctx->report_id = priv->report_id;
+ 
+@@ -114,3 +124,3 @@ accelerometer_close_ready (SSCSensor *sensor, GAsyncResult *result, gpointer use
+ {
+-	GTask *task = G_TASK (user_data);
++	g_autoptr (GTask) task = G_TASK (user_data);
+ 	g_autoptr (GError) error = NULL;
+@@ -118,4 +128,3 @@ accelerometer_close_ready (SSCSensor *sensor, GAsyncResult *result, gpointer use
+ 	if (!SSC_SENSOR_CLASS (ssc_sensor_accelerometer_parent_class)->close_finish (sensor, result, &error)) {
+-		g_task_return_boolean (task, FALSE);
+-		g_object_unref (task);
++		g_task_return_error (task, g_steal_pointer (&error));
+ 		return;
+@@ -124,3 +133,2 @@ accelerometer_close_ready (SSCSensor *sensor, GAsyncResult *result, gpointer use
+ 	g_task_return_boolean (task, TRUE);
+-	g_object_unref (task);
+ }
+@@ -137,3 +145,3 @@ ssc_sensor_accelerometer_close (SSCSensorAccelerometer *self, GCancellable *canc
+ 	GTask *task = NULL;
+-	SSCClient *client = NULL;
++	g_autoptr (SSCClient) client = NULL;
+ 	SSCSensorAccelerometerPrivate *priv = NULL;
+@@ -151,4 +159,3 @@ ssc_sensor_accelerometer_close (SSCSensorAccelerometer *self, GCancellable *canc
+ 
+-	if (priv->report_id)
+-		g_signal_handler_disconnect (client, priv->report_id);
++	g_clear_signal_handler (&priv->report_id, client);
+ 
+@@ -178,3 +185,3 @@ accelerometer_open_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user
+ {
+-	GTask *task = G_TASK (user_data);
++	g_autoptr (GTask) task = G_TASK (user_data);
+ 	g_autoptr (GError) error = NULL;
+@@ -182,4 +189,9 @@ accelerometer_open_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user
+ 	if (!SSC_SENSOR_CLASS (ssc_sensor_accelerometer_parent_class)->open_finish (sensor, result, &error)) {
+-		g_task_return_boolean (task, FALSE);
+-		g_object_unref (task);
++		SSCSensorAccelerometerPrivate *priv = ssc_sensor_accelerometer_get_instance_private (SSC_SENSOR_ACCELEROMETER (sensor));
++		g_autoptr (SSCClient) client = NULL;
++
++		g_object_get (sensor, SSC_SENSOR_CLIENT, &client, NULL);
++		if (priv->report_id == GPOINTER_TO_SIZE (g_task_get_task_data (task)))
++			g_clear_signal_handler (&priv->report_id, client);
++		g_task_return_error (task, g_steal_pointer (&error));
+ 		return;
+@@ -188,3 +200,2 @@ accelerometer_open_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user
+ 	g_task_return_boolean (task, TRUE);
+-	g_object_unref (task);
+ }
+@@ -200,3 +211,3 @@ ssc_sensor_accelerometer_open (SSCSensorAccelerometer *self, GCancellable *cance
+ {
+-	SSCClient *client = NULL;
++	g_autoptr (SSCClient) client = NULL;
+ 	SSCSensorAccelerometerPrivate *priv = NULL;
+@@ -210,2 +221,9 @@ ssc_sensor_accelerometer_open (SSCSensorAccelerometer *self, GCancellable *cance
+ 	task = g_task_new (self, cancellable, callback, user_data);
++	g_task_set_check_cancellable (task, FALSE);
++	if (priv->report_id) {
++		g_task_return_new_error (task, G_IO_ERROR, G_IO_ERROR_PENDING,
++					 "Sensor is already open or opening");
++		g_object_unref (task);
++		return;
++	}
+ 
+@@ -215,6 +233,5 @@ ssc_sensor_accelerometer_open (SSCSensorAccelerometer *self, GCancellable *cance
+ 		      NULL);
+-	priv->report_id = g_signal_connect (client,
+-					    "report",
+-					    G_CALLBACK (report_received),
+-					    self);
++	priv->report_id = g_signal_connect_object (client, "report",
++						   G_CALLBACK (report_received), self, 0);
++	g_task_set_task_data (task, GSIZE_TO_POINTER (priv->report_id), NULL);
+ 
+diff --git a/src/libssc-sensor-compass.c b/src/libssc-sensor-compass.c
+index 332d8ca..8a94175 100644
+--- a/src/libssc-sensor-compass.c
++++ b/src/libssc-sensor-compass.c
+@@ -31,3 +31,3 @@ static guint signals[N_SIGNALS];
+ typedef struct _SSCSensorCompassPrivate {
+-	guint report_id;
++	gulong report_id;
+ } SSCSensorCompassPrivate;
+@@ -38,3 +38,4 @@ G_DEFINE_TYPE_WITH_CODE (SSCSensorCompass, ssc_sensor_compass, SSC_TYPE_SENSOR,
+ typedef struct {
+-	SSCSensorCompass *sensor;
++	GWeakRef sensor;
++	gulong report_id;
+ 	gfloat azimuth;
+@@ -45,2 +46,3 @@ signal_context_free (SignalContext *ctx)
+ {
++	g_weak_ref_clear (&ctx->sensor);
+ 	g_slice_free (SignalContext, ctx);
+@@ -85,4 +87,10 @@ emit_signal (gpointer user_data) {
+ 	SignalContext *ctx = user_data;
++	g_autoptr (SSCSensorCompass) sensor = g_weak_ref_get (&ctx->sensor);
++	SSCSensorCompassPrivate *priv;
+ 
+-	g_signal_emit (ctx->sensor, signals[SIGNAL_MEASUREMENT], 0, ctx->azimuth);
++	if (!sensor)
++		return G_SOURCE_REMOVE;
++	priv = ssc_sensor_compass_get_instance_private (sensor);
++	if (priv->report_id == ctx->report_id)
++		g_signal_emit (sensor, signals[SIGNAL_MEASUREMENT], 0, ctx->azimuth);
+ 
+@@ -96,2 +104,3 @@ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_
+ 	SSCSensorCompass *sensor = SSC_SENSOR_COMPASS (user_data);
++	SSCSensorCompassPrivate *priv = ssc_sensor_compass_get_instance_private (sensor);
+ 	SignalContext *ctx = NULL;
+@@ -127,3 +136,4 @@ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_
+ 			ctx = g_slice_new0 (SignalContext);
+-			ctx->sensor = sensor;
++			g_weak_ref_init (&ctx->sensor, sensor);
++			ctx->report_id = priv->report_id;
+ 			ctx->azimuth = azimuth;
+@@ -141,3 +151,3 @@ compass_close_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_data
+ {
+-	GTask *task = G_TASK (user_data);
++	g_autoptr (GTask) task = G_TASK (user_data);
+ 	g_autoptr (GError) error = NULL;
+@@ -145,4 +155,3 @@ compass_close_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_data
+ 	if (!SSC_SENSOR_CLASS (ssc_sensor_compass_parent_class)->close_finish (sensor, result, &error)) {
+-		g_task_return_boolean (task, FALSE);
+-		g_object_unref (task);
++		g_task_return_error (task, g_steal_pointer (&error));
+ 		return;
+@@ -151,3 +160,2 @@ compass_close_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_data
+ 	g_task_return_boolean (task, TRUE);
+-	g_object_unref (task);
+ }
+@@ -164,3 +172,3 @@ ssc_sensor_compass_close (SSCSensorCompass *self, GCancellable *cancellable, GAs
+ 	GTask *task = NULL;
+-	SSCClient *client = NULL;
++	g_autoptr (SSCClient) client = NULL;
+ 	SSCSensorCompassPrivate *priv = NULL;
+@@ -178,4 +186,3 @@ ssc_sensor_compass_close (SSCSensorCompass *self, GCancellable *cancellable, GAs
+ 
+-	if (priv->report_id)
+-		g_signal_handler_disconnect (client, priv->report_id);
++	g_clear_signal_handler (&priv->report_id, client);
+ 
+@@ -205,3 +212,3 @@ compass_open_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_data)
+ {
+-	GTask *task = G_TASK (user_data);
++	g_autoptr (GTask) task = G_TASK (user_data);
+ 	g_autoptr (GError) error = NULL;
+@@ -209,4 +216,9 @@ compass_open_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_data)
+ 	if (!SSC_SENSOR_CLASS (ssc_sensor_compass_parent_class)->open_finish (sensor, result, &error)) {
+-		g_task_return_boolean (task, FALSE);
+-		g_object_unref (task);
++		SSCSensorCompassPrivate *priv = ssc_sensor_compass_get_instance_private (SSC_SENSOR_COMPASS (sensor));
++		g_autoptr (SSCClient) client = NULL;
++
++		g_object_get (sensor, SSC_SENSOR_CLIENT, &client, NULL);
++		if (priv->report_id == GPOINTER_TO_SIZE (g_task_get_task_data (task)))
++			g_clear_signal_handler (&priv->report_id, client);
++		g_task_return_error (task, g_steal_pointer (&error));
+ 		return;
+@@ -215,3 +227,2 @@ compass_open_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_data)
+ 	g_task_return_boolean (task, TRUE);
+-	g_object_unref (task);
+ }
+@@ -228,3 +239,3 @@ ssc_sensor_compass_open (SSCSensorCompass *self, GCancellable *cancellable, GAsy
+ 	SSCSensorCompassPrivate *priv = NULL;
+-	SSCClient *client = NULL;
++	g_autoptr (SSCClient) client = NULL;
+ 	GTask *task = NULL;
+@@ -237,2 +248,9 @@ ssc_sensor_compass_open (SSCSensorCompass *self, GCancellable *cancellable, GAsy
+ 	task = g_task_new (self, cancellable, callback, user_data);
++	g_task_set_check_cancellable (task, FALSE);
++	if (priv->report_id) {
++		g_task_return_new_error (task, G_IO_ERROR, G_IO_ERROR_PENDING,
++					 "Sensor is already open or opening");
++		g_object_unref (task);
++		return;
++	}
+ 
+@@ -242,6 +260,5 @@ ssc_sensor_compass_open (SSCSensorCompass *self, GCancellable *cancellable, GAsy
+ 		      NULL);
+-	priv->report_id = g_signal_connect (client,
+-			"report",
+-			G_CALLBACK (report_received),
+-			self);
++	priv->report_id = g_signal_connect_object (client, "report",
++						   G_CALLBACK (report_received), self, 0);
++	g_task_set_task_data (task, GSIZE_TO_POINTER (priv->report_id), NULL);
+ 
+diff --git a/src/libssc-sensor-gyroscope.c b/src/libssc-sensor-gyroscope.c
+index 1b45d32..b890e09 100644
+--- a/src/libssc-sensor-gyroscope.c
++++ b/src/libssc-sensor-gyroscope.c
+@@ -31,3 +31,3 @@ static guint signals[N_SIGNALS];
+ typedef struct _SSCSensorGyroscopePrivate {
+-	guint report_id;
++	gulong report_id;
+ } SSCSensorGyroscopePrivate;
+@@ -38,3 +38,4 @@ G_DEFINE_TYPE_WITH_CODE (SSCSensorGyroscope, ssc_sensor_gyroscope, SSC_TYPE_SENS
+ typedef struct {
+-	SSCSensorGyroscope *sensor;
++	GWeakRef sensor;
++	gulong report_id;
+ 	gfloat x;
+@@ -47,2 +48,3 @@ signal_context_free (SignalContext *ctx)
+ {
++	g_weak_ref_clear (&ctx->sensor);
+ 	g_slice_free (SignalContext, ctx);
+@@ -55,4 +57,10 @@ emit_signal (gpointer user_data) {
+ 	SignalContext *ctx = user_data;
++	g_autoptr (SSCSensorGyroscope) sensor = g_weak_ref_get (&ctx->sensor);
++	SSCSensorGyroscopePrivate *priv;
+ 
+-	g_signal_emit (ctx->sensor, signals[SIGNAL_MEASUREMENT], 0, ctx->x, ctx->y, ctx->z);
++	if (!sensor)
++		return G_SOURCE_REMOVE;
++	priv = ssc_sensor_gyroscope_get_instance_private (sensor);
++	if (priv->report_id == ctx->report_id)
++		g_signal_emit (sensor, signals[SIGNAL_MEASUREMENT], 0, ctx->x, ctx->y, ctx->z);
+ 
+@@ -66,2 +74,3 @@ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_
+ 	SSCSensorGyroscope *sensor = SSC_SENSOR_GYROSCOPE (user_data);
++	SSCSensorGyroscopePrivate *priv = ssc_sensor_gyroscope_get_instance_private (sensor);
+ 	SignalContext *ctx = NULL;
+@@ -93,3 +102,4 @@ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_
+ 			ctx = g_slice_new0 (SignalContext);
+-			ctx->sensor = sensor;
++			g_weak_ref_init (&ctx->sensor, sensor);
++			ctx->report_id = priv->report_id;
+ 			ctx->x = x;
+@@ -109,3 +119,3 @@ gyroscope_close_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_da
+ {
+-	GTask *task = G_TASK (user_data);
++	g_autoptr (GTask) task = G_TASK (user_data);
+ 	g_autoptr (GError) error = NULL;
+@@ -113,4 +123,3 @@ gyroscope_close_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_da
+ 	if (!SSC_SENSOR_CLASS (ssc_sensor_gyroscope_parent_class)->close_finish (sensor, result, &error)) {
+-		g_task_return_boolean (task, FALSE);
+-		g_object_unref (task);
++		g_task_return_error (task, g_steal_pointer (&error));
+ 		return;
+@@ -119,3 +128,2 @@ gyroscope_close_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_da
+ 	g_task_return_boolean (task, TRUE);
+-	g_object_unref (task);
+ }
+@@ -132,3 +140,3 @@ ssc_sensor_gyroscope_close (SSCSensorGyroscope *self, GCancellable *cancellable,
+ 	GTask *task = NULL;
+-	SSCClient *client = NULL;
++	g_autoptr (SSCClient) client = NULL;
+ 	SSCSensorGyroscopePrivate *priv = NULL;
+@@ -146,4 +154,3 @@ ssc_sensor_gyroscope_close (SSCSensorGyroscope *self, GCancellable *cancellable,
+ 
+-	if (priv->report_id)
+-		g_signal_handler_disconnect (client, priv->report_id);
++	g_clear_signal_handler (&priv->report_id, client);
+ 
+@@ -173,3 +180,3 @@ gyroscope_open_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_dat
+ {
+-	GTask *task = G_TASK (user_data);
++	g_autoptr (GTask) task = G_TASK (user_data);
+ 	g_autoptr (GError) error = NULL;
+@@ -177,4 +184,9 @@ gyroscope_open_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_dat
+ 	if (!SSC_SENSOR_CLASS (ssc_sensor_gyroscope_parent_class)->open_finish (sensor, result, &error)) {
+-		g_task_return_boolean (task, FALSE);
+-		g_object_unref (task);
++		SSCSensorGyroscopePrivate *priv = ssc_sensor_gyroscope_get_instance_private (SSC_SENSOR_GYROSCOPE (sensor));
++		g_autoptr (SSCClient) client = NULL;
++
++		g_object_get (sensor, SSC_SENSOR_CLIENT, &client, NULL);
++		if (priv->report_id == GPOINTER_TO_SIZE (g_task_get_task_data (task)))
++			g_clear_signal_handler (&priv->report_id, client);
++		g_task_return_error (task, g_steal_pointer (&error));
+ 		return;
+@@ -183,3 +195,2 @@ gyroscope_open_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_dat
+ 	g_task_return_boolean (task, TRUE);
+-	g_object_unref (task);
+ }
+@@ -195,3 +206,3 @@ ssc_sensor_gyroscope_open (SSCSensorGyroscope *self, GCancellable *cancellable,
+ {
+-	SSCClient *client = NULL;
++	g_autoptr (SSCClient) client = NULL;
+ 	SSCSensorGyroscopePrivate *priv = NULL;
+@@ -205,2 +216,9 @@ ssc_sensor_gyroscope_open (SSCSensorGyroscope *self, GCancellable *cancellable,
+ 	task = g_task_new (self, cancellable, callback, user_data);
++	g_task_set_check_cancellable (task, FALSE);
++	if (priv->report_id) {
++		g_task_return_new_error (task, G_IO_ERROR, G_IO_ERROR_PENDING,
++					 "Sensor is already open or opening");
++		g_object_unref (task);
++		return;
++	}
+ 
+@@ -210,6 +228,5 @@ ssc_sensor_gyroscope_open (SSCSensorGyroscope *self, GCancellable *cancellable,
+ 		      NULL);
+-	priv->report_id = g_signal_connect (client,
+-					    "report",
+-					    G_CALLBACK (report_received),
+-					    self);
++	priv->report_id = g_signal_connect_object (client, "report",
++						   G_CALLBACK (report_received), self, 0);
++	g_task_set_task_data (task, GSIZE_TO_POINTER (priv->report_id), NULL);
+ 
+diff --git a/src/libssc-sensor-light.c b/src/libssc-sensor-light.c
+index e0bd99a..7d6816e 100644
+--- a/src/libssc-sensor-light.c
++++ b/src/libssc-sensor-light.c
+@@ -31,3 +31,3 @@ static guint signals[N_SIGNALS];
+ typedef struct _SSCSensorLightPrivate {
+-	guint report_id;
++	gulong report_id;
+ } SSCSensorLightPrivate;
+@@ -38,3 +38,4 @@ G_DEFINE_TYPE_WITH_CODE (SSCSensorLight, ssc_sensor_light, SSC_TYPE_SENSOR,
+ typedef struct {
+-	SSCSensorLight *sensor;
++	GWeakRef sensor;
++	gulong report_id;
+ 	gfloat intensity;
+@@ -45,2 +46,3 @@ signal_context_free (SignalContext *ctx)
+ {
++	g_weak_ref_clear (&ctx->sensor);
+ 	g_slice_free (SignalContext, ctx);
+@@ -53,4 +55,10 @@ emit_signal (gpointer user_data) {
+ 	SignalContext *ctx = user_data;
++	g_autoptr (SSCSensorLight) sensor = g_weak_ref_get (&ctx->sensor);
++	SSCSensorLightPrivate *priv;
+ 
+-	g_signal_emit (ctx->sensor, signals[SIGNAL_MEASUREMENT], 0, ctx->intensity);
++	if (!sensor)
++		return G_SOURCE_REMOVE;
++	priv = ssc_sensor_light_get_instance_private (sensor);
++	if (priv->report_id == ctx->report_id)
++		g_signal_emit (sensor, signals[SIGNAL_MEASUREMENT], 0, ctx->intensity);
+ 
+@@ -64,2 +72,3 @@ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_
+ 	SSCSensorLight *sensor = SSC_SENSOR_LIGHT (user_data);
++	SSCSensorLightPrivate *priv = ssc_sensor_light_get_instance_private (sensor);
+ 	SignalContext *ctx = NULL;
+@@ -89,3 +98,4 @@ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_
+ 				ctx = g_slice_new0 (SignalContext);
+-				ctx->sensor = sensor;
++				g_weak_ref_init (&ctx->sensor, sensor);
++				ctx->report_id = priv->report_id;
+ 				ctx->intensity = intensity;
+@@ -104,3 +114,3 @@ light_close_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_data)
+ {
+-	GTask *task = G_TASK (user_data);
++	g_autoptr (GTask) task = G_TASK (user_data);
+ 	g_autoptr (GError) error = NULL;
+@@ -108,4 +118,3 @@ light_close_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_data)
+ 	if (!SSC_SENSOR_CLASS (ssc_sensor_light_parent_class)->close_finish (sensor, result, &error)) {
+-		g_task_return_boolean (task, FALSE);
+-		g_object_unref (task);
++		g_task_return_error (task, g_steal_pointer (&error));
+ 		return;
+@@ -114,3 +123,2 @@ light_close_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_data)
+ 	g_task_return_boolean (task, TRUE);
+-	g_object_unref (task);
+ }
+@@ -127,3 +135,3 @@ ssc_sensor_light_close (SSCSensorLight *self, GCancellable *cancellable, GAsyncR
+ 	GTask *task = NULL;
+-	SSCClient *client = NULL;
++	g_autoptr (SSCClient) client = NULL;
+ 	SSCSensorLightPrivate *priv = NULL;
+@@ -141,4 +149,3 @@ ssc_sensor_light_close (SSCSensorLight *self, GCancellable *cancellable, GAsyncR
+ 
+-	if (priv->report_id)
+-		g_signal_handler_disconnect (client, priv->report_id);
++	g_clear_signal_handler (&priv->report_id, client);
+ 
+@@ -169,3 +176,3 @@ light_open_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_data)
+ {
+-	GTask *task = G_TASK (user_data);
++	g_autoptr (GTask) task = G_TASK (user_data);
+ 	g_autoptr (GError) error = NULL;
+@@ -174,4 +181,9 @@ light_open_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_data)
+ 	if (!SSC_SENSOR_CLASS (ssc_sensor_light_parent_class)->open_finish (sensor, result, &error)) {
+-		g_task_return_boolean (task, FALSE);
+-		g_object_unref (task);
++		SSCSensorLightPrivate *priv = ssc_sensor_light_get_instance_private (SSC_SENSOR_LIGHT (sensor));
++		g_autoptr (SSCClient) client = NULL;
++
++		g_object_get (sensor, SSC_SENSOR_CLIENT, &client, NULL);
++		if (priv->report_id == GPOINTER_TO_SIZE (g_task_get_task_data (task)))
++			g_clear_signal_handler (&priv->report_id, client);
++		g_task_return_error (task, g_steal_pointer (&error));
+ 		return;
+@@ -180,3 +192,2 @@ light_open_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_data)
+ 	g_task_return_boolean (task, TRUE);
+-	g_object_unref (task);
+ }
+@@ -193,3 +204,3 @@ ssc_sensor_light_open (SSCSensorLight *self, GCancellable *cancellable, GAsyncRe
+ 	SSCSensorLightPrivate *priv = NULL;
+-	SSCClient *client = NULL;
++	g_autoptr (SSCClient) client = NULL;
+ 	GTask *task = NULL;
+@@ -202,2 +213,9 @@ ssc_sensor_light_open (SSCSensorLight *self, GCancellable *cancellable, GAsyncRe
+ 	task = g_task_new (self, cancellable, callback, user_data);
++	g_task_set_check_cancellable (task, FALSE);
++	if (priv->report_id) {
++		g_task_return_new_error (task, G_IO_ERROR, G_IO_ERROR_PENDING,
++					 "Sensor is already open or opening");
++		g_object_unref (task);
++		return;
++	}
+ 
+@@ -207,6 +225,5 @@ ssc_sensor_light_open (SSCSensorLight *self, GCancellable *cancellable, GAsyncRe
+ 		      NULL);
+-	priv->report_id = g_signal_connect (client,
+-					    "report",
+-					    G_CALLBACK (report_received),
+-					    self);
++	priv->report_id = g_signal_connect_object (client, "report",
++						   G_CALLBACK (report_received), self, 0);
++	g_task_set_task_data (task, GSIZE_TO_POINTER (priv->report_id), NULL);
+ 
+diff --git a/src/libssc-sensor-magnetometer.c b/src/libssc-sensor-magnetometer.c
+index 4517f08..aee0371 100644
+--- a/src/libssc-sensor-magnetometer.c
++++ b/src/libssc-sensor-magnetometer.c
+@@ -31,3 +31,3 @@ static guint signals[N_SIGNALS];
+ typedef struct _SSCSensorMagnetometerPrivate {
+-	guint report_id;
++	gulong report_id;
+ } SSCSensorMagnetometerPrivate;
+@@ -38,3 +38,4 @@ G_DEFINE_TYPE_WITH_CODE (SSCSensorMagnetometer, ssc_sensor_magnetometer, SSC_TYP
+ typedef struct {
+-	SSCSensorMagnetometer *sensor;
++	GWeakRef sensor;
++	gulong report_id;
+ 	gfloat x;
+@@ -47,2 +48,3 @@ signal_context_free (SignalContext *ctx)
+ {
++	g_weak_ref_clear (&ctx->sensor);
+ 	g_slice_free (SignalContext, ctx);
+@@ -55,4 +57,10 @@ emit_signal (gpointer user_data) {
+ 	SignalContext *ctx = user_data;
++	g_autoptr (SSCSensorMagnetometer) sensor = g_weak_ref_get (&ctx->sensor);
++	SSCSensorMagnetometerPrivate *priv;
+ 
+-	g_signal_emit (ctx->sensor, signals[SIGNAL_MEASUREMENT], 0, ctx->x, ctx->y, ctx->z);
++	if (!sensor)
++		return G_SOURCE_REMOVE;
++	priv = ssc_sensor_magnetometer_get_instance_private (sensor);
++	if (priv->report_id == ctx->report_id)
++		g_signal_emit (sensor, signals[SIGNAL_MEASUREMENT], 0, ctx->x, ctx->y, ctx->z);
+ 
+@@ -66,2 +74,3 @@ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_
+ 	SSCSensorMagnetometer *sensor = SSC_SENSOR_MAGNETOMETER (user_data);
++	SSCSensorMagnetometerPrivate *priv = ssc_sensor_magnetometer_get_instance_private (sensor);
+ 	SignalContext *ctx = NULL;
+@@ -93,3 +102,4 @@ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_
+ 			ctx = g_slice_new0 (SignalContext);
+-			ctx->sensor = sensor;
++			g_weak_ref_init (&ctx->sensor, sensor);
++			ctx->report_id = priv->report_id;
+ 			ctx->x = x;
+@@ -109,3 +119,3 @@ magnetometer_close_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user
+ {
+-	GTask *task = G_TASK (user_data);
++	g_autoptr (GTask) task = G_TASK (user_data);
+ 	g_autoptr (GError) error = NULL;
+@@ -113,4 +123,3 @@ magnetometer_close_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user
+ 	if (!SSC_SENSOR_CLASS (ssc_sensor_magnetometer_parent_class)->close_finish (sensor, result, &error)) {
+-		g_task_return_boolean (task, FALSE);
+-		g_object_unref (task);
++		g_task_return_error (task, g_steal_pointer (&error));
+ 		return;
+@@ -119,3 +128,2 @@ magnetometer_close_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user
+ 	g_task_return_boolean (task, TRUE);
+-	g_object_unref (task);
+ }
+@@ -132,3 +140,3 @@ ssc_sensor_magnetometer_close (SSCSensorMagnetometer *self, GCancellable *cancel
+ 	GTask *task = NULL;
+-	SSCClient *client = NULL;
++	g_autoptr (SSCClient) client = NULL;
+ 	SSCSensorMagnetometerPrivate *priv = NULL;
+@@ -146,4 +154,3 @@ ssc_sensor_magnetometer_close (SSCSensorMagnetometer *self, GCancellable *cancel
+ 
+-	if (priv->report_id)
+-		g_signal_handler_disconnect (client, priv->report_id);
++	g_clear_signal_handler (&priv->report_id, client);
+ 
+@@ -173,3 +180,3 @@ magnetometer_open_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_
+ {
+-	GTask *task = G_TASK (user_data);
++	g_autoptr (GTask) task = G_TASK (user_data);
+ 	g_autoptr (GError) error = NULL;
+@@ -177,4 +184,9 @@ magnetometer_open_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_
+ 	if (!SSC_SENSOR_CLASS (ssc_sensor_magnetometer_parent_class)->open_finish (sensor, result, &error)) {
+-		g_task_return_boolean (task, FALSE);
+-		g_object_unref (task);
++		SSCSensorMagnetometerPrivate *priv = ssc_sensor_magnetometer_get_instance_private (SSC_SENSOR_MAGNETOMETER (sensor));
++		g_autoptr (SSCClient) client = NULL;
++
++		g_object_get (sensor, SSC_SENSOR_CLIENT, &client, NULL);
++		if (priv->report_id == GPOINTER_TO_SIZE (g_task_get_task_data (task)))
++			g_clear_signal_handler (&priv->report_id, client);
++		g_task_return_error (task, g_steal_pointer (&error));
+ 		return;
+@@ -183,3 +195,2 @@ magnetometer_open_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_
+ 	g_task_return_boolean (task, TRUE);
+-	g_object_unref (task);
+ }
+@@ -196,3 +207,3 @@ ssc_sensor_magnetometer_open (SSCSensorMagnetometer *self, GCancellable *cancell
+ 	SSCSensorMagnetometerPrivate *priv = NULL;
+-	SSCClient *client = NULL;
++	g_autoptr (SSCClient) client = NULL;
+ 	GTask *task = NULL;
+@@ -205,2 +216,9 @@ ssc_sensor_magnetometer_open (SSCSensorMagnetometer *self, GCancellable *cancell
+ 	task = g_task_new (self, cancellable, callback, user_data);
++	g_task_set_check_cancellable (task, FALSE);
++	if (priv->report_id) {
++		g_task_return_new_error (task, G_IO_ERROR, G_IO_ERROR_PENDING,
++					 "Sensor is already open or opening");
++		g_object_unref (task);
++		return;
++	}
+ 
+@@ -210,6 +228,5 @@ ssc_sensor_magnetometer_open (SSCSensorMagnetometer *self, GCancellable *cancell
+ 		      NULL);
+-	priv->report_id = g_signal_connect (client,
+-			"report",
+-			G_CALLBACK (report_received),
+-			self);
++	priv->report_id = g_signal_connect_object (client, "report",
++						   G_CALLBACK (report_received), self, 0);
++	g_task_set_task_data (task, GSIZE_TO_POINTER (priv->report_id), NULL);
+ 
+diff --git a/src/libssc-sensor-proximity.c b/src/libssc-sensor-proximity.c
+index fc46408..12ca72b 100644
+--- a/src/libssc-sensor-proximity.c
++++ b/src/libssc-sensor-proximity.c
+@@ -35,3 +35,3 @@ static guint signals[N_SIGNALS];
+ typedef struct _SSCSensorProximityPrivate {
+-	guint report_id;
++	gulong report_id;
+ 	gboolean near;
+@@ -44,3 +44,4 @@ G_DEFINE_TYPE_WITH_CODE (SSCSensorProximity, ssc_sensor_proximity, SSC_TYPE_SENS
+ typedef struct {
+-	SSCSensorProximity *sensor;
++	GWeakRef sensor;
++	gulong report_id;
+ 	gboolean near;
+@@ -51,2 +52,3 @@ signal_context_free (SignalContext *ctx)
+ {
++	g_weak_ref_clear (&ctx->sensor);
+ 	g_slice_free (SignalContext, ctx);
+@@ -59,4 +61,10 @@ emit_signal (gpointer user_data) {
+ 	SignalContext *ctx = user_data;
++	g_autoptr (SSCSensorProximity) sensor = g_weak_ref_get (&ctx->sensor);
++	SSCSensorProximityPrivate *priv;
+ 
+-	g_signal_emit (ctx->sensor, signals[SIGNAL_MEASUREMENT], 0, ctx->near);
++	if (!sensor)
++		return G_SOURCE_REMOVE;
++	priv = ssc_sensor_proximity_get_instance_private (sensor);
++	if (priv->report_id == ctx->report_id)
++		g_signal_emit (sensor, signals[SIGNAL_MEASUREMENT], 0, ctx->near);
+ 
+@@ -143,3 +151,4 @@ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_
+ 			ctx = g_slice_new0 (SignalContext);
+-			ctx->sensor = sensor;
++			g_weak_ref_init (&ctx->sensor, sensor);
++			ctx->report_id = priv->report_id;
+ 			ctx->near = near;
+@@ -155,3 +164,3 @@ proximity_close_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_da
+ {
+-	GTask *task = G_TASK (user_data);
++	g_autoptr (GTask) task = G_TASK (user_data);
+ 	g_autoptr (GError) error = NULL;
+@@ -159,4 +168,3 @@ proximity_close_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_da
+ 	if (!SSC_SENSOR_CLASS (ssc_sensor_proximity_parent_class)->close_finish (sensor, result, &error)) {
+-		g_task_return_boolean (task, FALSE);
+-		g_object_unref (task);
++		g_task_return_error (task, g_steal_pointer (&error));
+ 		return;
+@@ -165,3 +173,2 @@ proximity_close_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_da
+ 	g_task_return_boolean (task, TRUE);
+-	g_object_unref (task);
+ }
+@@ -178,3 +185,3 @@ ssc_sensor_proximity_close (SSCSensorProximity *self, GCancellable *cancellable,
+ 	GTask *task = NULL;
+-	SSCClient *client = NULL;
++	g_autoptr (SSCClient) client = NULL;
+ 	SSCSensorProximityPrivate *priv = NULL;
+@@ -191,4 +198,3 @@ ssc_sensor_proximity_close (SSCSensorProximity *self, GCancellable *cancellable,
+ 		      NULL);
+-	if (priv->report_id)
+-		g_signal_handler_disconnect (client, priv->report_id);
++	g_clear_signal_handler (&priv->report_id, client);
+ 
+@@ -218,3 +224,3 @@ proximity_open_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_dat
+ {
+-	GTask *task = G_TASK (user_data);
++	g_autoptr (GTask) task = G_TASK (user_data);
+ 	g_autoptr (GError) error = NULL;
+@@ -222,4 +228,9 @@ proximity_open_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_dat
+ 	if (!SSC_SENSOR_CLASS (ssc_sensor_proximity_parent_class)->open_finish (sensor, result, &error)) {
+-		g_task_return_boolean (task, FALSE);
+-		g_object_unref (task);
++		SSCSensorProximityPrivate *priv = ssc_sensor_proximity_get_instance_private (SSC_SENSOR_PROXIMITY (sensor));
++		g_autoptr (SSCClient) client = NULL;
++
++		g_object_get (sensor, SSC_SENSOR_CLIENT, &client, NULL);
++		if (priv->report_id == GPOINTER_TO_SIZE (g_task_get_task_data (task)))
++			g_clear_signal_handler (&priv->report_id, client);
++		g_task_return_error (task, g_steal_pointer (&error));
+ 		return;
+@@ -228,3 +239,2 @@ proximity_open_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_dat
+ 	g_task_return_boolean (task, TRUE);
+-	g_object_unref (task);
+ }
+@@ -240,3 +250,3 @@ ssc_sensor_proximity_open (SSCSensorProximity *self, GCancellable *cancellable,
+ {
+-	SSCClient *client = NULL;
++	g_autoptr (SSCClient) client = NULL;
+ 	SSCSensorProximityPrivate *priv = NULL;
+@@ -251,2 +261,9 @@ ssc_sensor_proximity_open (SSCSensorProximity *self, GCancellable *cancellable,
+ 	task = g_task_new (self, cancellable, callback, user_data);
++	g_task_set_check_cancellable (task, FALSE);
++	if (priv->report_id) {
++		g_task_return_new_error (task, G_IO_ERROR, G_IO_ERROR_PENDING,
++					 "Sensor is already open or opening");
++		g_object_unref (task);
++		return;
++	}
+ 
+@@ -256,6 +273,5 @@ ssc_sensor_proximity_open (SSCSensorProximity *self, GCancellable *cancellable,
+ 		      NULL);
+-	priv->report_id = g_signal_connect (client,
+-					    "report",
+-					    G_CALLBACK (report_received),
+-					    self);
++	priv->report_id = g_signal_connect_object (client, "report",
++						   G_CALLBACK (report_received), self, 0);
++	g_task_set_task_data (task, GSIZE_TO_POINTER (priv->report_id), NULL);
+ 
+diff --git a/src/libssc-sensor.c b/src/libssc-sensor.c
+index b3cd7f5..dc94c59 100644
+--- a/src/libssc-sensor.c
++++ b/src/libssc-sensor.c
+@@ -24,2 +24,3 @@
+ 
++#define SENSOR_OPEN_TIMEOUT_S 10
+ #define MAX_RETRIES 100
+@@ -53,2 +54,12 @@ typedef struct {
+ 
++typedef struct {
++	ReportReceivedContext report;
++	GCancellable *request;
++	GSource *timeout_source;
++	GSource *cancel_source;
++	gboolean acknowledged;
++	gboolean reported;
++	gboolean closing;
++} SensorOpen;
++
+ typedef struct _SSCSensorPrivate {
+@@ -64,2 +75,3 @@ typedef struct _SSCSensorPrivate {
+ 
++	SensorOpen *opening;
+ 	SSCClient *client;
+@@ -132,9 +144,8 @@ sensor_close_ready (SSCClient *self, GAsyncResult *result, gpointer user_data)
+ {
+-	GTask *task = G_TASK (user_data);
+-	GError *error = NULL;
++	g_autoptr (GTask) task = G_TASK (user_data);
++	g_autoptr (GError) error = NULL;
+ 
+ 	if (!ssc_client_send_finish (self, result, &error)) {
+-		g_task_return_error (task, error);
+-		g_clear_object (&task);
+ 		g_debug ("Sensor disable request failed: %s", error->message);
++		g_task_return_error (task, g_steal_pointer (&error));
+ 		return;
+@@ -144,5 +155,6 @@ sensor_close_ready (SSCClient *self, GAsyncResult *result, gpointer user_data)
+ 	g_task_return_boolean (task, TRUE);
+-	g_object_unref (task);
+ }
+ 
++static void sensor_open_completed (GTask *task, GError *error);
++
+ static void
+@@ -156,2 +168,9 @@ sensor_close (SSCSensor *self, GCancellable *cancellable, GAsyncReadyCallback ca
+ 
++	if (priv->opening) {
++		priv->opening->closing = TRUE;
++		sensor_open_completed (priv->opening->report.task,
++				       g_error_new_literal (G_IO_ERROR, G_IO_ERROR_CANCELLED,
++							    "Sensor was closed while opening"));
++	}
++
+ 	g_info ("Disabling sensor (%" G_GUINT64_FORMAT " %" G_GUINT64_FORMAT ")", priv->uid_high, priv->uid_low);
+@@ -192,11 +211,78 @@ sensor_open_finish (SSCSensor *self, GAsyncResult *result, GError **error)
+ static void
+-sensor_open_ready (SSCClient *self, GAsyncResult *result, gpointer user_data)
++clear_source (GSource **source)
++{
++	if (!*source)
++		return;
++	g_source_destroy (*source);
++	g_clear_pointer (source, g_source_unref);
++}
++
++static void
++sensor_open_completed (GTask *task, GError *error)
++{
++	g_autoptr (GError) failure = error;
++	SSCSensor *sensor = g_task_get_source_object (task);
++	SSCSensorPrivate *priv = ssc_sensor_get_instance_private (sensor);
++	SensorOpen *opening = priv->opening;
++
++	if (!opening || opening->report.task != task)
++		return;
++
++	priv->opening = NULL;
++	if (priv->report_id) {
++		g_signal_handler_disconnect (priv->client, priv->report_id);
++		priv->report_id = 0;
++	}
++	clear_source (&opening->timeout_source);
++	clear_source (&opening->cancel_source);
++
++	if (!failure && g_task_get_cancellable (task))
++		g_cancellable_set_error_if_cancelled (g_task_get_cancellable (task), &failure);
++
++	if (failure) {
++		g_cancellable_cancel (opening->request);
++		/* The device may have accepted the request before the failure. */
++		if (!opening->closing)
++			ssc_client_send (priv->client, priv->uid_high, priv->uid_low,
++					 SSC_MSG_REQUEST_DISABLE_REPORT, NULL, NULL, NULL, NULL);
++		g_task_return_error (task, g_steal_pointer (&failure));
++	} else {
++		g_task_return_boolean (task, TRUE);
++	}
++
++	g_object_unref (opening->request);
++	g_object_unref (opening->report.task);
++	g_free (opening);
++}
++
++static gboolean
++sensor_open_timed_out (gpointer user_data)
++{
++	sensor_open_completed (G_TASK (user_data),
++			       g_error_new_literal (G_IO_ERROR, G_IO_ERROR_TIMED_OUT,
++						    "Sensor did not confirm that it started"));
++	return G_SOURCE_REMOVE;
++}
++
++static gboolean
++sensor_open_cancelled (GCancellable *cancellable, gpointer user_data)
+ {
+-	GTask *task = G_TASK (user_data);
+ 	GError *error = NULL;
+ 
++	g_cancellable_set_error_if_cancelled (cancellable, &error);
++	sensor_open_completed (G_TASK (user_data), error);
++	return G_SOURCE_REMOVE;
++}
++
++static void
++sensor_open_ready (SSCClient *self, GAsyncResult *result, gpointer user_data)
++{
++	g_autoptr (GTask) task = G_TASK (user_data);
++	SSCSensor *sensor = g_task_get_source_object (task);
++	SSCSensorPrivate *priv = ssc_sensor_get_instance_private (sensor);
++	g_autoptr (GError) error = NULL;
++
+ 	if (!ssc_client_send_finish (self, result, &error)) {
+-		g_task_return_error (task, error);
+-		g_clear_object (&task);
+ 		g_debug ("Sensor enable request failed: %s", error->message);
++		sensor_open_completed (task, g_steal_pointer (&error));
+ 		return;
+@@ -204,3 +290,18 @@ sensor_open_ready (SSCClient *self, GAsyncResult *result, gpointer user_data)
+ 
+-	g_debug ("Sensor enable request sent successfully");
++	if (!priv->opening || priv->opening->report.task != task)
++		return;
++
++	priv->opening->acknowledged = TRUE;
++	if (priv->opening->reported)
++		sensor_open_completed (task, NULL);
++}
++
++static void
++sensor_open_reported (ReportReceivedContext *ctx)
++{
++	SSCSensorPrivate *priv = ssc_sensor_get_instance_private (ctx->sensor);
++
++	priv->opening->reported = TRUE;
++	if (priv->opening->acknowledged)
++		sensor_open_completed (ctx->task, NULL);
+ }
+@@ -214,3 +315,3 @@ sensor_open (SSCSensor *self, GCancellable *cancellable, GAsyncReadyCallback cal
+ 	g_autoptr (GArray) buf = NULL;
+-	ReportReceivedContext *ctx;
++	SensorOpen *opening;
+ 	guint32 msg_id;
+@@ -221,2 +322,15 @@ sensor_open (SSCSensor *self, GCancellable *cancellable, GAsyncReadyCallback cal
+ 
++	if (g_task_return_error_if_cancelled (task)) {
++		g_object_unref (task);
++		return;
++	}
++	g_task_set_check_cancellable (task, FALSE);
++
++	if (priv->opening) {
++		g_task_return_new_error (task, G_IO_ERROR, G_IO_ERROR_PENDING,
++					 "Sensor is already opening");
++		g_object_unref (task);
++		return;
++	}
++
+ 	if (!priv->available) {
+@@ -261,5 +375,7 @@ sensor_open (SSCSensor *self, GCancellable *cancellable, GAsyncReadyCallback cal
+ 
+-	ctx = g_slice_new (ReportReceivedContext);
+-	ctx->task = task;
+-	ctx->sensor = self;
++	opening = g_new0 (SensorOpen, 1);
++	opening->report.task = task;
++	opening->report.sensor = self;
++	opening->request = g_cancellable_new ();
++	priv->opening = opening;
+ 
+@@ -269,3 +385,14 @@ sensor_open (SSCSensor *self, GCancellable *cancellable, GAsyncReadyCallback cal
+ 			G_CALLBACK (report_received),
+-			ctx);
++			&opening->report);
++
++	opening->timeout_source = g_timeout_source_new_seconds (SENSOR_OPEN_TIMEOUT_S);
++	g_source_set_callback (opening->timeout_source, sensor_open_timed_out,
++			       g_object_ref (task), g_object_unref);
++	g_source_attach (opening->timeout_source, g_task_get_context (task));
++	if (cancellable) {
++		opening->cancel_source = g_cancellable_source_new (cancellable);
++		g_source_set_callback (opening->cancel_source, (GSourceFunc)sensor_open_cancelled,
++				       g_object_ref (task), g_object_unref);
++		g_source_attach (opening->cancel_source, g_task_get_context (task));
++	}
+ 
+@@ -276,5 +403,5 @@ sensor_open (SSCSensor *self, GCancellable *cancellable, GAsyncReadyCallback cal
+ 			 buf,
+-			 g_task_get_cancellable (task),
++			 opening->request,
+ 			 (GAsyncReadyCallback)sensor_open_ready,
+-			 task);
++			 g_object_ref (task));
+ }
+@@ -314,3 +441,3 @@ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_
+ 	/* Discover response */
+-	if (uid_high == SSC_SENSOR_UID_SUID_HIGH && uid_low == SSC_SENSOR_UID_SUID_LOW && msg_id == SSC_MSG_RESPONSE_SUID) {
++	if (!priv->opening && uid_high == SSC_SENSOR_UID_SUID_HIGH && uid_low == SSC_SENSOR_UID_SUID_LOW && msg_id == SSC_MSG_RESPONSE_SUID) {
+ 		suid_msg = ssc_suid_response__unpack (NULL, buf->len, (const uint8_t *) buf->data);
+@@ -391,3 +518,3 @@ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_
+ 	/* Attributes populating response */
+-	} else if (uid_high == priv->uid_high && uid_low == priv->uid_low && msg_id == SSC_MSG_RESPONSE_GET_ATTRIBUTES) {
++	} else if (!priv->opening && uid_high == priv->uid_high && uid_low == priv->uid_low && msg_id == SSC_MSG_RESPONSE_GET_ATTRIBUTES) {
+ 		attr_msg = ssc_attr_response__unpack (NULL, buf->len, (const uint8_t *) buf->data);
+@@ -484,3 +611,3 @@ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_
+ 	 */
+-	} else if (uid_high == priv->uid_high && uid_low == priv->uid_low && msg_id == SSC_MSG_RESPONSE_ENABLE_REPORT) {
++	} else if (priv->opening && uid_high == priv->uid_high && uid_low == priv->uid_low && msg_id == SSC_MSG_RESPONSE_ENABLE_REPORT) {
+ 		config_msg = ssc_config_response__unpack (NULL, buf->len, (const uint8_t *) buf->data);
+@@ -496,3 +623,2 @@ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_
+ 
+-		/* Configuration updated, complete task and stop listening */
+ 		if (ctx->task) {
+@@ -501,4 +627,2 @@ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_
+-			g_task_return_boolean (ctx->task, TRUE);
+-			g_clear_object (&ctx->task);
+-			g_slice_free (ReportReceivedContext, ctx);
++			sensor_open_reported (ctx);
+ 		}
+@@ -513,3 +637,3 @@ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_
+ 	 */
+-	} else if (uid_high == priv->uid_high && uid_low == priv->uid_low && (msg_id == SSC_MSG_REPORT_MEASUREMENT || msg_id == SSC_MSG_REPORT_MEASUREMENT_PROXIMITY)) {
++	} else if (priv->opening && uid_high == priv->uid_high && uid_low == priv->uid_low && (msg_id == SSC_MSG_REPORT_MEASUREMENT || msg_id == SSC_MSG_REPORT_MEASUREMENT_PROXIMITY)) {
+ 		g_debug ("Measurement received for '%s' sensor (%" G_GUINT64_FORMAT " %" G_GUINT64_FORMAT "), assuming enabled", priv->data_type, priv->uid_high, priv->uid_low);
+@@ -520,4 +644,2 @@ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_
+-			g_task_return_boolean (ctx->task, TRUE);
+-			g_clear_object (&ctx->task);
+-			g_slice_free (ReportReceivedContext, ctx);
++			sensor_open_reported (ctx);
+ 		}

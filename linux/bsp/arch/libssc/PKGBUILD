@@ -1,6 +1,6 @@
 pkgname=libssc
 pkgver=0.4.4
-pkgrel=1.1
+pkgrel=1.2
 pkgdesc='Qualcomm Sensor Core library with Piano property and vector support'
 arch=(aarch64)
 url='https://libssc.dylanvanassche.be/'
@@ -12,12 +12,14 @@ source=('libssc_0.4.4.orig.tar.gz'
         '0001-fix-sensor-property-types.patch'
         '0002-raw-vector-reports.patch'
         '0003-piano-ssc-vector-cli.patch'
-        '0004-meson-1.4-target-dependency.patch')
+        '0004-meson-1.4-target-dependency.patch'
+        '0005-bound-sensor-open.patch')
 sha256sums=('716d6bd6b34d2d753060c6b54c9a87e34fae75b724c763bf9ef487efa3621587'
             '5df924dfd755bab6ba6ea7e39bc6e14aa6e3ea2ae51dcec382e6b492d24826df'
             '8c58a6c40de803a308c666ba64cd26b97d7715b1b75bc9f3b6f585eba6b5b8cf'
             '4480a787612d99274a0ebee0cd452134a8ddeb9c51238c0b65536c451c5d181d'
-            'f8be6fb76e70e048d547de017412e8ea516b2d59e5d69d9b999247a6045d3175')
+            'f8be6fb76e70e048d547de017412e8ea516b2d59e5d69d9b999247a6045d3175'
+            'ae2c85dbe3956065a77b6f0f20b82f4de71196d467b7c12ab533e86fbd3cf7b5')
 
 prepare() {
   cd libssc

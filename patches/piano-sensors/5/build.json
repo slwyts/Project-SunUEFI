@@ -5,8 +5,8 @@
     "fastrpc": "1.0.9-1"
   },
   "local_revisions": {
-    "libssc": "piano1+sunuefi3",
-    "iio-sensor-proxy": "piano1+sunuefi1"
+    "libssc": "piano1+sunuefi4",
+    "iio-sensor-proxy": "piano1+sunuefi2"
   },
-  "native_version": "5+sunuefi2"
+  "native_version": "5+sunuefi3"
 }

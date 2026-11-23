@@ -28,6 +28,26 @@
         "url": "https://codeberg.org/DylanVanAssche/libssc",
         "drop_when": "The selected libssc provides immutable original event payloads, bounded public vector decoding and the same source-built client with a matching symbol-version dependency. Verify unknown events and malformed payloads fail normally without inventing physical units or adding a daemon before replacing this API."
       }
+    },
+    {
+      "file": "libssc/0005-bound-sensor-open.patch",
+      "sha256": "ae2c85dbe3956065a77b6f0f20b82f4de71196d467b7c12ab533e86fbd3cf7b5",
+      "source_package": "libssc",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://codeberg.org/DylanVanAssche/libssc",
+        "drop_when": "The selected libssc waits for a sensor's first report without polling and completes timed out or cancelled stream requests exactly once."
+      }
+    },
+    {
+      "file": "iio-sensor-proxy/ssc-report-polling-failure.patch",
+      "sha256": "07ed0f93948c7cc1702064792f4ab71163699f1cd732bf31ba87f4306a60dc48",
+      "source_package": "iio-sensor-proxy",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://gitlab.freedesktop.org/hadess/iio-sensor-proxy",
+        "drop_when": "The selected SensorProxy reports SSC startup errors to pending D-Bus clients and allows a new claim without restarting the service."
+      }
     }
   ]
 }
