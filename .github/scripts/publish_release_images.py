@@ -23,7 +23,9 @@ from repo.publish import Store, sha
 PART_BYTES = 64 * 1024 * 1024
 SHA256 = r'[0-9a-f]{64}'
 RELEASE_CACHE = 'public, max-age=31536000, immutable'
-RANGE_RETRY_DELAYS = (2, 5, 10)
+# The public domain can still serve a cached 404 after R2 accepts the upload.
+# Allow the default three-minute lifetime for a cached 404 to elapse.
+RANGE_RETRY_DELAYS = (2, 5, 10, 30, 60, 120)
 ROOT_ARTIFACTS = {target: f'SunUEFI-Root-{target}' for target in DISTROS}
 REQUIRED_ARTIFACTS = {
     *ROOT_ARTIFACTS.values(), 'logs', 'SunUEFI-ESP', 'SunUEFI-Module', 'SunUEFI-UEFI-Fastboot',

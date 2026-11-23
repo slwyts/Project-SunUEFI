@@ -137,15 +137,19 @@ def stage_downloads(store, index_path, index, artifacts, repository):
     prefix = build_location(index['run_id'], index['run_attempt'])
     with TemporaryDirectory(dir=index_path.parent) as directory:
         for name, file in index['files'].items():
-            print(f"Checking {file['file']}", flush=True)
             location = {'Bucket': store.bucket, 'Key': prefix + file['file']}
             metadata = object_metadata(index, file['sha256'])
-            if not already_uploaded(store.client, location, file['size'], metadata):
-                path = Path(directory) / file['file']
-                download_zip(repository, artifacts[name], path)
-                upload_zip(store.client, location, path, metadata, cache_control='public, max-age=300')
-                path.unlink()
-            verify_download(file['url'], file['size'])
+            if already_uploaded(store.client, location, file['size'], metadata):
+                print(f"Reusing {file['file']}", flush=True)
+                continue
+            print(f"Uploading {file['file']}", flush=True)
+            path = Path(directory) / file['file']
+            download_zip(repository, artifacts[name], path)
+            upload_zip(store.client, location, path, metadata, cache_control='public, max-age=300')
+            path.unlink()
+    for file in index['files'].values():
+        print(f"Checking {file['file']}", flush=True)
+        verify_download(file['url'], file['size'])
     index_path.write_text(json.dumps(index, indent=2) + '\n')
 
 
