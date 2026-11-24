@@ -3,6 +3,7 @@ import hashlib
 from io import BytesIO
 import json
 from pathlib import Path
+import re
 import sys
 import unittest
 from unittest.mock import patch
@@ -123,6 +124,26 @@ class BuildDownloadsTests(unittest.TestCase):
                          'https://sunuefi-repo.okassets.uk/builds/100/2/SunUEFI-Module.zip')
         index['files']['logs']['url'] = 'https://sunuefi-repo.okassets.uk/releases/v1.0.0/logs.zip'
         self.assertFalse(downloads.valid_index(index, 100, 2))
+
+    def test_download_summary_links_only_this_builds_downloads(self):
+        url = downloads.public_url('builds/100/2/downloads.json')
+        for targets in ([], ['debian-denial'], downloads.DISTROS):
+            with self.subTest(targets=targets):
+                archives = {name: github_artifact(name, artifact_id)
+                            for artifact_id, name in enumerate(downloads.artifact_names(targets), 1)}
+                index = downloads.make_index(archives, 100, 2, COMMIT)
+                summary = downloads.download_summary(index, url)
+                links = re.findall(r'\]\(([^)]+)\)', summary)
+                self.assertCountEqual(links, [url, *(file['url'] for file in index['files'].values())])
+                self.assertIn('Cloudflare R2', summary)
+                self.assertIn('[引导助手]', summary)
+                self.assertIn('其他下载：[临时启动 UEFI]', summary)
+                if targets:
+                    self.assertIn('[启动镜像]', summary)
+                    self.assertEqual(sum(line.startswith('- ') for line in summary.splitlines()),
+                                     len(targets))
+                else:
+                    self.assertIn('本轮没有系统镜像', summary)
 
     def test_prune_keeps_three_valid_attempts_by_completion_and_ignores_other_objects(self):
         store = BuildBucket()

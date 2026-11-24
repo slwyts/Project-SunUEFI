@@ -28,6 +28,14 @@ BUILD_OBJECT = re.compile(
     rf'{BUILD_PREFIX}([1-9][0-9]*)/([1-9][0-9]*)/({re.escape(INDEX)}|(?:logs|{PRODUCT_NAME})\.zip)'
 )
 NOT_FOUND = ('404', 'NotFound', 'NoSuchKey')
+SYSTEM_TITLES = {
+    'debian-gnome': 'Debian GNOME',
+    'debian-kde': 'Debian KDE',
+    'debian-denial': 'Debian Denial',
+    'nyarch-gnome': 'Arch Linux ARM + GNOME（Nyarch）',
+    'arch-denial': 'Arch Linux ARM + Denial',
+    'steamos': 'SteamOS（实验版）',
+}
 
 
 def artifact_names(targets):
@@ -153,6 +161,32 @@ def stage_downloads(store, index_path, index, artifacts, repository):
     index_path.write_text(json.dumps(index, indent=2) + '\n')
 
 
+def download_summary(index, index_url):
+    files = index['files']
+
+    def link(name, title):
+        return f'[{title}]({files[name]["url"]})'
+
+    lines = ['## 成品下载（Cloudflare R2）', '']
+    module = link('SunUEFI-Module', '引导助手')
+    if 'SunUEFI-ESP' in files:
+        boot = link('SunUEFI-ESP', '启动镜像')
+        lines.extend([f'安装时下载{module}、{boot}，再选一个系统：', ''])
+        for target in DISTROS:
+            name = f'SunUEFI-Root-{target}'
+            if name in files:
+                lines.append('- ' + link(name, SYSTEM_TITLES.get(target, target)))
+    else:
+        lines.append(f'本轮没有系统镜像。可下载{module}。')
+    other = [
+        link('SunUEFI-UEFI-Fastboot', '临时启动 UEFI'),
+        link('logs', '构建日志'),
+        f'[下载清单（{INDEX}）]({index_url})',
+    ]
+    lines.extend(['', '其他下载：' + ' · '.join(other), ''])
+    return '\n'.join(lines)
+
+
 def publish_index(store, index_path, run_id, attempt, source_sha):
     data = index_path.read_bytes()
     index = json.loads(data)
@@ -176,7 +210,7 @@ def publish_index(store, index_path, run_id, attempt, source_sha):
     with Path(os.environ['GITHUB_OUTPUT']).open('a') as outputs:
         outputs.write(f'attempt={attempt}\n')
     with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as summary:
-        summary.write(f'[Download list ({INDEX})]({url})\n')
+        summary.write(download_summary(index, url))
 
 
 def read_index(store, key, run_id, attempt):
