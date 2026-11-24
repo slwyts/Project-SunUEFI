@@ -3812,7 +3812,7 @@
       "sha256": "567f2cee7d638bc21b63c71342a85348684348f481dda57704d31d63dadc6f77",
       "upstream": {
         "status": "downstream",
-        "url": "https://github.com/sakimidare/Project-SunUEFI",
+        "url": "https://github.com/slwyts/Project-SunUEFI/pull/28",
         "drop_when": "Remove once the nt36532e driver no longer flushes its ordered event workqueue from the DRM panel follower callbacks."
       }
     }
