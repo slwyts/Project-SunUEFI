@@ -54,7 +54,7 @@ Linux 使用独立的 `sunuefi_esp`（FAT32 启动分区）和 `sunuefi_root`（
 | 麦克风 | 录音、原生单声道 ALSA / PipeWire 输入及睡眠恢复，硬件增益 +40 dB | — |
 | 相机 | 前后预览、录像、自动曝光／对焦／白平衡及首帧恢复，CAMSS/TFE 硬件 ISP | 实现见[相机与闪光灯](devel/hardware/camera-flash.md)，手动接口见[相机控制](devel/hardware/camera-controls.md) |
 | 相机隐私灯 | 摄像头工作时实体绿色指示灯亮起，随视频流和前后摄像头切换启停 | — |
-| 闪光灯 | 两路标准 LED 接受手电筒开关请求，关闭后读回零，无故障标志 | 实际发光和曝光同步还没有确认，见[实现说明](devel/hardware/camera-flash.md) |
+| 闪光灯 | 两路灯已实测可通过标准 LED 接口常亮、通过 V4L2 控件短闪 | 普通相机应用还不支持自动闪光，见[实现说明](devel/hardware/camera-flash.md) |
 | 传感器 | 自动旋转、光线、距离、罗盘及标准 SensorProxy 接口 | 实现见[传感器](devel/hardware/sensors.md) |
 | 自动亮度 | 桌面联动可用，GNOME 策略沿用原厂 lux 阈值与延迟，传感器数据不做修改 | 见[自动亮度](devel/hardware/auto-brightness.md) |
 | 夜灯 / 色温 | GNOME 夜灯可用，自动生成内置屏幕的颜色配置 | 通用 sRGB 配置，不是原厂校准 |

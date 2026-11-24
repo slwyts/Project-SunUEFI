@@ -68,7 +68,8 @@ Combined BOOT supports both Chinese and international Xiaomi Pad 8 Pro units. Th
 | Focus Pen Pro | Position and pressure at 120 Hz. GNOME recognizes it in its tablet settings. [Some gestures and palm rejection features](docs/user/known-issues.md#触控笔) are limited. |
 | Audio | Four speakers and native mono microphone capture. |
 | Wi-Fi and Bluetooth | Bluetooth uses the device's factory address. |
-| Cameras | Front and rear preview and recording, auto exposure and focus, and a physical camera indicator. See [known issues](docs/user/known-issues.md) for flash use. |
+| Cameras | Front and rear preview and recording, auto exposure and focus, and a physical camera indicator. |
+| Camera flash | Both LED groups support torch and short flashes through standard Linux interfaces. |
 | Sensors and Night Light | Rotation, light, proximity, compass, and automatic brightness. Night Light uses a generic sRGB profile. |
 | Power | Dual batteries, USB PD and Xiaomi fast charging, charging through a dock, USB OTG, lid detection, suspend, and wake. GNOME offers power saver, balanced, and performance modes. No hibernation. |
 | USB and external storage | Type-C role and orientation switching, 5 Gbit/s USB networking, and read/write access to FAT32, exFAT, and NTFS drives and cards. |
