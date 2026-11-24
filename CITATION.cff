@@ -1,0 +1,9 @@
+cff-version: "1.2.0"
+message: "If you use Project SunUEFI in your work, please cite this repository."
+title: "Project SunUEFI"
+type: software
+authors:
+  - name: "Project SunUEFI contributors"
+abstract: "UEFI firmware and Linux hardware support for the Xiaomi Pad 8 Pro (piano)."
+repository-code: "https://github.com/slwyts/Project-SunUEFI"
+url: "https://github.com/slwyts/Project-SunUEFI"
