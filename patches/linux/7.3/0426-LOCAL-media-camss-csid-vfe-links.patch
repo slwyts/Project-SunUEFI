@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Sun, 15 Nov 2026 00:40:18 +0800
+Subject: [PATCH] media: camss: expose only implemented SM8750 CSID to VFE
+ links
+
+SM8750 register updates select a CSID with the VFE hardware ID. CSID
+buffer completion and frame timing callbacks similarly select a VFE
+with the CSID hardware ID. The driver does not maintain a configurable
+mapping between these blocks.
+
+The all-to-all graph nevertheless lets userspace connect a CSID to a
+different VFE. Such a connection sends updates and completions to the
+wrong devices and cannot implement the advertised capture route.
+
+Only create CSID to VFE links between matching hardware IDs on SM8750.
+Keep CSIPHY selection, per-line source pads and other SoCs unchanged.
+The existing rear CSID0/VFE0 and front CSID1/VFE1 routes are preserved.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/media/platform/qcom/camss/camss.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index d17f84ade81d93f85ea0a221ec3806185895a084..842bcf16339ddd70d4aecd87ad92a97f34a2fc56 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -5738,7 +5738,11 @@ static int camss_link_entities(struct camss *camss)
+ 				}
+ 	} else {
+ 		for (i = 0; i < camss->res->csid_num; i++)
+-			for (k = 0; k < camss->res->vfe_num; k++)
++			for (k = 0; k < camss->res->vfe_num; k++) {
++				/* SM8750 updates and completions use matching IDs. */
++				if (camss->res->version == CAMSS_8750 && i != k)
++					continue;
++
+ 				for (j = 0; j < camss->vfe[k].res->line_num; j++) {
+ 					struct v4l2_subdev *csid = &camss->csid[i].subdev;
+ 					struct v4l2_subdev *vfe = &camss->vfe[k].line[j].subdev;
+@@ -5755,6 +5759,7 @@ static int camss_link_entities(struct camss *camss)
+ 						return ret;
+ 					}
+ 				}
++			}
+ 	}
+ 
+ 	return 0;
+-- 
+2.56.1
+

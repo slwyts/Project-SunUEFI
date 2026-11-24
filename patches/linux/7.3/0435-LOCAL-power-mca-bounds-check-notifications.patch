@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@tuta.io>
+Date: Wed, 18 Nov 2026 02:42:00 +0800
+Subject: power: supply: piano_mca: require a complete notification header and
+ ID
+
+A PMIC notification needs the complete GLINK header and property ID.
+Check the received length before reading those fields or queuing
+policy work. Exercise truncated and complete packets with KUnit.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/651ca98865044e591f748a0c41dbe1fabf7fda98
+Signed-off-by: slwyts <slwyts@tuta.io>
+---
+ drivers/power/supply/piano_mca.c      |  4 ++++
+ drivers/power/supply/piano_mca_test.c | 25 +++++++++++++++++++++++++
+ 2 files changed, 29 insertions(+)
+
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index 0719950317ea6052b45b43c57fcdb0ebf926553e..f6652d3524681d908ad4eca4e24c66b846463bae 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -780,6 +780,10 @@ static void piano_mca_callback(const void *data, size_t len, void *priv)
+ 	struct piano_mca *mca = priv;
+ 	const struct mca_resp *resp = data;
+ 
++	/* Notifications contain a header and property ID, but no full response. */
++	if (len < offsetof(struct mca_resp, retcode))
++		return;
++
+ 	if (le32_to_cpu(resp->type) == PMIC_GLINK_NOTIFY) {
+ 		/* notification: id at +0xc, payload from +0x10 */
+ 		dev_dbg(mca->dev, "notify %#x len %zu\n",
+diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
+index e45cbcd2791ad0f2ee50565834cf5286d276fd77..bafc4de27f869b3b4d7c9b064e486f3d126ee6d3 100644
+--- a/drivers/power/supply/piano_mca_test.c
++++ b/drivers/power/supply/piano_mca_test.c
+@@ -2994,6 +2994,30 @@ static int piano_mca_full_prepare(struct kunit *test)
+ 	return 0;
+ }
+ 
++static void piano_mca_short_notification_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	u8 *packet;
++	size_t len;
++
++	/* Allocate the exact wire length so KASAN can detect a property overread. */
++	for (len = 12; len < 16; len++) {
++		packet = kunit_kzalloc(test, len, GFP_KERNEL);
++		KUNIT_ASSERT_NOT_NULL(test, packet);
++		put_unaligned_le32(PMIC_GLINK_NOTIFY, packet + 4);
++		piano_mca_callback(packet, len, &f->mca);
++		flush_delayed_work(&f->mca.poll);
++		KUNIT_EXPECT_FALSE(test, delayed_work_pending(&f->mca.poll));
++		KUNIT_EXPECT_EQ(test, atomic_read(&f->work_runs), 0);
++	}
++	packet = kunit_kzalloc(test, 16, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(test, packet);
++	put_unaligned_le32(PMIC_GLINK_NOTIFY, packet + 4);
++	piano_mca_callback(packet, 16, &f->mca);
++	flush_delayed_work(&f->mca.poll);
++	KUNIT_EXPECT_EQ(test, atomic_read(&f->work_runs), 1);
++}
++
+ static void piano_mca_inhibit_does_not_create_full_test(struct kunit *test)
+ {
+ 	struct piano_mca_test *f = test->priv;
+@@ -4314,6 +4338,7 @@ static void piano_mca_cp_entry_gate_test(struct kunit *test)
+ }
+ 
+ static struct kunit_case piano_mca_test_cases[] = {
++	KUNIT_CASE(piano_mca_short_notification_test),
+ 	KUNIT_CASE(piano_mca_inhibit_does_not_create_full_test),
+ 	KUNIT_CASE(piano_mca_auto_preserves_real_full_test),
+ 	KUNIT_CASE(piano_mca_pps_conversion_selection_test),

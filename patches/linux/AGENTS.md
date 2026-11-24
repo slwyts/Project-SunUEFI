@@ -1,11 +1,11 @@
 # 下游仓库的Linux内核补丁维护要求
 
-所有 Linux 内核补丁按以下顺序分类、排列并连续编号。同一类别内按依赖关系排序。上游补丁所需的必要上游前置补丁应一并回移，排在依赖它的补丁之前，不依靠后续本地补丁补齐其编译前提。
+所有 Linux 内核补丁按以下顺序分类。每类按依赖关系排序并连续编号。`UPSTREAM` 从 `0000` 起编，后续每类从上一类末号之后的第一个整百起编。当前系列的起点依次为 `0000`、`0100`、`0200`、`0300`。上游补丁所需的必要上游前置补丁应一并回移，排在依赖它的补丁之前，不依靠后续本地补丁补齐其编译前提。
 
-1. 已被 Linux 主线、stable/LTS 维护树或对应子系统维护者集成树接受的补丁，文件名使用 `00xx-UPSTREAM-TITLE.patch`。补丁中通过 `Link:` 给出包含完整提交哈希的上游 commit 链接，并保留原有相关链接。接受状态必须有实际集成提交作为依据，仅有 `Reviewed-by`、`Acked-by` 或准备应用的回复不算已接受。
-2. 已在 Linux 相关邮件列表发布、尚未被上游接受的补丁，文件名使用 `00xx-MAILLIST-TITLE.patch`。补丁中通过 `Link:` 给出所采用版本的具体邮件链接，优先使用 `lore.kernel.org` 的 Message-ID 链接，不使用搜索结果页或仅指向 cover letter 的链接。
-3. 来自其他项目仓库的补丁，文件名使用 `00xx-EXTERNAL-TITLE.patch`。补丁中通过 `Link:` 给出原仓库的具体 commit 链接，不使用可变的分支链接。
-4. 本项目自行撰写、尚未投稿或被上游接受的补丁，文件名使用 `00xx-LOCAL-TITLE.patch`。
+1. 已被 Linux 主线、stable/LTS 维护树或对应子系统维护者集成树接受的补丁，文件名使用 `NNNN-UPSTREAM-TITLE.patch`。补丁中通过 `Link:` 给出包含完整提交哈希的上游 commit 链接，并保留原有相关链接。接受状态必须有实际集成提交作为依据，仅有 `Reviewed-by`、`Acked-by` 或准备应用的回复不算已接受。
+2. 已在 Linux 相关邮件列表发布、尚未被上游接受的补丁，文件名使用 `NNNN-MAILLIST-TITLE.patch`。补丁中通过 `Link:` 给出所采用版本的具体邮件链接，优先使用 `lore.kernel.org` 的 Message-ID 链接，不使用搜索结果页或仅指向 cover letter 的链接。
+3. 来自其他项目仓库的补丁，文件名使用 `NNNN-EXTERNAL-TITLE.patch`。补丁中通过 `Link:` 给出原仓库的具体 commit 链接，不使用可变的分支链接。
+4. 本项目自行撰写、尚未投稿或被上游接受的补丁，文件名使用 `NNNN-LOCAL-TITLE.patch`。
 
 分类前缀只用于补丁文件名，不写入提交标题。第三方补丁保留原提交标题；本项目补丁采用对应 Linux 子系统的标题格式和语言习惯。
 
@@ -24,8 +24,10 @@
 
 4. 新增本项目自行撰写的下游补丁时，必须以实际人类提交者的姓名和邮箱作为内核提交的作者身份，并在导出的邮件补丁中体现为 `From: 姓名 <邮箱>`。 \
    入库前，提交者本人须确认满足开发者来源证明（DCO），然后用同一姓名和邮箱在补丁的提交说明末尾添加 `Signed-off-by: 姓名 <邮箱>`。DCO 条款见 [Linux 内核补丁提交指南](https://docs.kernel.org/process/submitting-patches.html#sign-your-work-the-developer-s-certificate-of-origin)。 \
-   所有第三方来源的补丁保留原作者、原有 `Signed-off-by`，以及必要的版权和许可证声明。不得将他人的补丁改署为本项目作者，不得代原作者补加其未提供的 `Signed-off-by`。 \
-   回移或适配者在能够满足 DCO 的情况下，可以添加自己的 `Signed-off-by`，并注明所作调整。不得将多作者补丁系列压成仅署一个作者的聚合补丁。
+   收录第三方补丁或修改已有补丁时，保留原作者、已有署名和签署，以及适用的版权和许可证声明。不得代原作者补加其未提供的签署，也不得将多作者补丁系列压成仅署一个作者的聚合补丁。 \
+   常规回移或适配时，在补丁的提交说明中写清与原补丁的差异及原因。回移或适配者本人确认满足 DCO 后，追加自己的 `Signed-off-by:`。见 [Linux 回移指南](https://docs.kernel.org/process/backporting.html#submitting-backports-to-stable)。 \
+   实质参与当前补丁的实现时，例如补写或重写其中一部分逻辑，共同开发者本人确认满足 DCO 后，追加 `Co-developed-by: 姓名 <邮箱>`，下一行紧跟同一姓名和邮箱的 `Signed-off-by: 姓名 <邮箱>`。首次适配和后续修改都按此判断。见 [Linux 补丁提交指南](https://docs.kernel.org/process/submitting-patches.html)。 \
+   AI 实质参与编写代码或提交说明，或参与发现问题、验证修复时，在补丁的提交说明中交代所用工具、参与的部分和验证方式。下游补丁同时添加 `Assisted-by: LLM`。向 Linux 上游投稿时，按主线指南和目标子系统的要求披露。见 [Linux 7.3 的 AI 披露格式](https://docs.kernel.org/7.3/process/coding-assistants.html#attribution)和 [Linux 工具生成内容指南](https://docs.kernel.org/process/generated-content.html#guidelines)。
 
 5. 每枚补丁只包含一个逻辑改动，按主线 Linux 及对应子系统的规范和习惯拆分。大量代码应触发拆分审查，但不按行数机械切割。 \
    新驱动或新模块的主体可以较大，但设备树绑定、驱动、设备树及独立功能仍应合理拆分。“新增模块”不构成混入多个独立改动的例外。补丁系列应在每一步保持可构建，不引入已知故障，便于定位回归。

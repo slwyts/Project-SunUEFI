@@ -16,11 +16,11 @@ Debian GNOME 和 KDE 镜像都允许挂起到内存（`mem/deep`）。磁盘休�
 
 ## 内核适配
 
-- 显示 PLL 保存恢复、双 DSI 关闭顺序和 PHY 运行时时钟由 `patches/linux/7.3/0097-EXTERNAL-drm-msm-dsi-bonded-piano.patch` 处理。DPU 停止顺序由 `patches/linux/7.3/0102-EXTERNAL-drm-msm-dpu-video-stop-order.patch` 处理。
-- `0029-sm8750-pcie-active-wakeup.patch` 在唤醒链路上保留 PCIe 电源域，避免恢复后 Wi-Fi 的 PCI 配置不可读。
-- `0030-soc-qcom-smp2p-sleepstate.patch` 向原厂固件通知 AP 睡眠状态；它不能单独解决全部 ADSP 恢复问题。
-- `0032-asoc-q6apm-clear-global-on-remove.patch` 修正 ADSP 重启时的全局对象生命周期。
-- `0033-fastrpc-freeze-inflight-invoke.patch` 处理睡眠时等待中的 FastRPC 调用。
+- 显示 PLL 保存恢复、双 DSI 关闭顺序和 PHY 运行时时钟由 `patches/linux/7.3/0224-EXTERNAL-drm-msm-dsi-bonded-piano.patch` 处理。DPU 停止顺序由 `patches/linux/7.3/0229-EXTERNAL-drm-msm-dpu-video-stop-order.patch` 处理。
+- [PCIe 唤醒补丁](../../../patches/linux/7.3/0352-LOCAL-pcie-qcom-keep-retained-links-awake.patch)在唤醒链路上保留 PCIe 电源域，避免恢复后 Wi-Fi 的 PCI 配置不可读。
+- [SMP2P 睡眠通知](../../../patches/linux/7.3/0311-LOCAL-qcom-smp2p-sleepstate.patch)向原厂固件通知 AP 睡眠状态；它不能单独解决全部 ADSP 恢复问题。
+- Q6APM 修正 ADSP 重启时的全局对象生命周期。
+- FastRPC 处理睡眠时仍在等待的调用。
 
 设备已完成 RTC 和电源键唤醒。内核在当前充电保护无法跨挂起持续监测时会拒绝挂起。核对完整链路时先拔下充电线，分别测试电源键和合盖进入挂起、开盖或按键唤醒、恢复后锁屏。调试睡眠时以同一启动 ID、恢复错误和触控／网络状态判断结果。
 

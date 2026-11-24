@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: Input: document the Novatek touch control ABI
+
+Document the board-local touch control interface retained by the port.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ .../ABI/testing/procfs-nvt-thp-control        | 63 +++++++++++++++++++
+ 1 file changed, 63 insertions(+)
+ create mode 100644 Documentation/ABI/testing/procfs-nvt-thp-control
+
+diff --git a/Documentation/ABI/testing/procfs-nvt-thp-control b/Documentation/ABI/testing/procfs-nvt-thp-control
+new file mode 100644
+index 0000000000000000000000000000000000000000..84487392392970a227361673e354fe4b58011a05
+--- /dev/null
++++ b/Documentation/ABI/testing/procfs-nvt-thp-control
+@@ -0,0 +1,63 @@
++What:           /proc/nvt_thp_controller_state
++Date:           October 2026
++Description:
++                Explicitly query the NT36532 THP firmware host mailbox. Reading
++                this file sends the vendor getter commands, temporarily pauses
++                the IRQ thread, and returns game_mode (0x0f), scan_freq_no
++                (0x08), scan_freq (0x09), hand_scan_rate (0x0a), pen_scan_rate
++                (0x0b), firmware identity and the validated game/rollback cache.
++
++                A failed query returns its errno without presenting initialized
++                zero values as controller state. Before a successful firmware
++                download/info read, or during suspend, reads return EAGAIN.
++                The frequency-selection number has no documented Hz mapping.
++                No scan-rate setter or 360-Hz command is exposed here.
++
++                /proc/nvt_thp_status remains passive: reading its frame, IRQ and
++                error counters never sends a firmware command.
++
++What:           /proc/nvt_thp_game_mode
++Date:           October 2026
++Description:
++                Reading queries the controller's game_mode and reports whether
++                a requested mode and a rollback baseline are known. Values for
++                unknown cached states are omitted.
++
++                Writing the integer 0 or 1 selects the vendor game-mode setting.
++                The driver reads the old mode, sends the setting, and reads it
++                back. A successful write requires the returned mode to match.
++                A timeout, SPI error or mismatching readback returns an errno
++                and attempts to restore and verify the mode read before writing.
++                An unconfirmed recovery invalidates the cached requested mode
++                and rollback baseline.
++
++                The first successful write saves the verified prior mode.
++                Further writes, including idempotent writes, retain that
++                baseline until explicit rollback succeeds. Firmware reloading
++                restores a requested mode only if a prior write was confirmed
++                for the same downloaded firmware CRC32, reported version and
++                project ID. With no validated request, no game-mode command is
++                automatically sent. Firmware identity mismatch forgets both
++                cached states. An untracked 0x0f write through nvt_thp_cmd also
++                invalidates both states.
++
++                Command acknowledgement and game-mode readback do not prove a
++                particular scan, raw-frame or coordinate-report frequency.
++
++What:           /proc/nvt_thp_game_rollback
++Date:           October 2026
++Description:
++                Writing the integer 1 restores and verifies the saved baseline
++                for the current firmware, then consumes the rollback snapshot.
++                It returns ENODATA if no matching snapshot exists. Other input
++                values return EINVAL. A failed rollback retains the snapshot
++                only if recovery to the immediate pre-write mode was confirmed.
++
++                These interfaces use the Piano p81/NT36532 extended command ABI
++                from MiCode/vendor_xiaomi_proprietary_touch-driver, piano-w-oss,
++                p81/nt36532/nt36xxx_ext_proc.c. The ABI was also checked against
++                the captured stock nt36532_touch.ko. Root-only proc permissions
++                restrict explicit controller operations.
++
++                Host verification without hardware:
++                python3 drivers/input/touchscreen/nt36532e/test_thp_control.py

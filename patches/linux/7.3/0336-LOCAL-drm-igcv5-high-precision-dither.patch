@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Thu, 22 Oct 2026 05:39:50 +0800
+Subject: [PATCH] drm/msm/dpu: match Piano IGC high-precision dithering
+
+Both factory Piano QDCM profiles enable IGC dithering at strength 4 for SDR and HDR color transforms. Match the documented IGC control layout while preserving standard LUT sampling and null-LUT bypass. This does not change DSC bpc or establish panel 12-bit FRC.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_hw_igcv5.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_igcv5.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_igcv5.c
+index b083083ba48..5f1bc673338 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_igcv5.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_igcv5.c
+@@ -12,6 +12,8 @@
+ #define REGDMA_SINGLE_WRITE BIT(28)
+ #define REGDMA_LUTBUS_WRITE (BIT(30) | BIT(29))
+ #define IGC_CONTROL_OFFSET 0x4
++#define IGC_DITHER_ENABLE BIT(4)
++#define IGC_DITHER_STRENGTH 4
+ #define IGC_ENABLE BIT(8)
+ #define IGC_HIGH_PRECISION BIT(16)
+ #define IGC_TRANSFER_WORDS 3
+@@ -74,7 +76,10 @@ int dpu_hw_igcv5_pack_regdma(__le32 *words, size_t capacity,
+ 	}
+ 	words[n++] = cpu_to_le32(REGDMA_SINGLE_WRITE |
+ 				(DPU_IGCV5_REG_BASE + IGC_CONTROL_OFFSET));
+-	/* Dither remains disabled; this mode changes LUT sampling, not DSC bpc. */
+-	words[n++] = cpu_to_le32(lut ? IGC_ENABLE | IGC_HIGH_PRECISION : 0);
++	/* Factory Piano profiles use strength 4 with the high-precision LUT.
++	 * This dithers internal color processing; DSC transport stays 10 bpc.
++	 */
++	words[n++] = cpu_to_le32(lut ? IGC_ENABLE | IGC_HIGH_PRECISION |
++				IGC_DITHER_ENABLE | IGC_DITHER_STRENGTH : 0);
+ 	return n;
+ }

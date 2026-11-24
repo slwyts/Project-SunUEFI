@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Mon, 9 Nov 2026 03:55:38 +0800
+Subject: rtc: allow drivers to opt out of initial calendar setup
+
+RTC devices without a valid calendar epoch can provide alarm and
+counter services. Add a driver flag to skip the initial system
+wall-clock update for these devices.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/9c93f788af20a4cd686852626270a0fcf4cbe8fc
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/rtc/class.c | 3 ++-
+ include/linux/rtc.h | 5 +++--
+ 2 files changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/rtc/class.c b/drivers/rtc/class.c
+index 01ba04028f1f11d5b94a43e2e70d16009e6c7847..6df7e0fb0bb44608ec7daf3be89571dbaf7a8ad7 100644
+--- a/drivers/rtc/class.c
++++ b/drivers/rtc/class.c
+@@ -431,7 +431,8 @@ int __devm_rtc_register_device(struct module *owner, struct rtc_device *rtc)
+ 		 dev_name(&rtc->dev));
+ 
+ #ifdef CONFIG_RTC_HCTOSYS_DEVICE
+-	if (!strcmp(dev_name(&rtc->dev), CONFIG_RTC_HCTOSYS_DEVICE))
++	if (!test_bit(RTC_NO_HCTOSYS, &rtc->flags) &&
++	    !strcmp(dev_name(&rtc->dev), CONFIG_RTC_HCTOSYS_DEVICE))
+ 		rtc_hctosys(rtc);
+ #endif
+ 
+diff --git a/include/linux/rtc.h b/include/linux/rtc.h
+index c09fc22819d0cf92e32a474162ab13c03f47b6f1..7a6757ffc819d5d62d8e29114e415ee6f95e7786 100644
+--- a/include/linux/rtc.h
++++ b/include/linux/rtc.h
+@@ -81,8 +81,9 @@ struct rtc_timer {
+ };
+ 
+ /* flags */
+-#define RTC_DEV_BUSY 0
+-#define RTC_NO_CDEV  1
++#define RTC_DEV_BUSY	0
++#define RTC_NO_CDEV	1
++#define RTC_NO_HCTOSYS	2 /* Counter has no valid calendar epoch. */
+ 
+ struct rtc_device {
+ 	struct device dev;

@@ -1,0 +1,105 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@tuta.io>
+Date: Wed, 18 Nov 2026 04:18:12 +0800
+Subject: power: supply: bq27xxx: convert BQ27Z561 average power for known
+ firmware
+
+TI SLUUC54C specifies signed milliwatts for the standard 0x22/0x23
+command. Piano vendor firmware uses different power commands, so
+omit average power for it until the command semantics are known.
+Check the vendor and standard firmware paths with KUnit.
+
+Link: https://www.ti.com/lit/ug/sluuc54c/sluuc54c.pdf
+Signed-off-by: slwyts <slwyts@tuta.io>
+---
+ drivers/power/supply/bq27xxx_battery.c      | 13 ++++++-
+ drivers/power/supply/bq27xxx_battery_test.c | 38 +++++++++++++++++++++
+ 2 files changed, 50 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/power/supply/bq27xxx_battery.c b/drivers/power/supply/bq27xxx_battery.c
+index 71abf99cf4fdbe21e68be2882c5f420ab638d8ef..0726da5fb0abcad4c6278c1e675f2299631e0d1e 100644
+--- a/drivers/power/supply/bq27xxx_battery.c
++++ b/drivers/power/supply/bq27xxx_battery.c
+@@ -2015,6 +2015,14 @@ static int bq27xxx_battery_pwr_avg(struct bq27xxx_device_info *di,
+ {
+ 	int power;
+ 
++	/*
++	 * Piano's vendor gauge firmware has private power commands. Its 0x22
++	 * semantics have not been established, so do not publish a guessed
++	 * scale or substitute instantaneous voltage/current for average power.
++	 */
++	if (di->chip == BQ27Z561 && di->health_alerts)
++		return -ENODATA;
++
+ 	power = bq27xxx_read(di, BQ27XXX_REG_AP, false);
+ 	if (power < 0) {
+ 		dev_err(di->dev,
+@@ -2023,7 +2031,10 @@ static int bq27xxx_battery_pwr_avg(struct bq27xxx_device_info *di,
+ 		return power;
+ 	}
+ 
+-	if (di->opts & BQ27XXX_O_ZERO)
++	if (di->chip == BQ27Z561)
++		/* TI SLUUC54C, section 12.1.15: signed milliwatts. */
++		val->intval = (s16)power * 1000;
++	else if (di->opts & BQ27XXX_O_ZERO)
+ 		val->intval = (power * BQ27XXX_POWER_CONSTANT) / BQ27XXX_RS;
+ 	else
+ 		/* Other gauges return a signed value in units of 10mW */
+diff --git a/drivers/power/supply/bq27xxx_battery_test.c b/drivers/power/supply/bq27xxx_battery_test.c
+index 3c592a9a879de310aefc8239ff01dc604a4b3a10..f18106e47e2e0f063219dfcafdd2695470b1bd46 100644
+--- a/drivers/power/supply/bq27xxx_battery_test.c
++++ b/drivers/power/supply/bq27xxx_battery_test.c
+@@ -362,6 +362,43 @@ static void bq27xxx_health_alert_test(struct kunit *test)
+ 	KUNIT_EXPECT_EQ(test, f->writes, 0U);
+ }
+ 
++static int bq27xxx_power_test_read(struct bq27xxx_device_info *di, u8 reg,
++				  bool single)
++{
++	struct bq27xxx_suspend_test *f =
++		container_of(di, struct bq27xxx_suspend_test, di);
++
++	f->health_reads++;
++	if (reg != 0x22 || single)
++		return -EINVAL;
++	return (u16)(s16)-123;
++}
++
++static void bq27xxx_vendor_average_power_test(struct kunit *test)
++{
++	struct bq27xxx_suspend_test *f = test->priv;
++	union power_supply_propval value = { .intval = 42 };
++
++	f->di.chip = BQ27Z561;
++	f->di.regs = bq27z561_regs;
++	f->di.bus.read = bq27xxx_power_test_read;
++	f->di.health_alerts = true;
++	KUNIT_EXPECT_EQ(test, bq27xxx_battery_pwr_avg(&f->di, &value), -ENODATA);
++	KUNIT_EXPECT_EQ(test, f->health_reads, 0U);
++	KUNIT_EXPECT_EQ(test, value.intval, 42);
++	/* The standard BQ27Z561 command uses signed milliwatts. */
++	f->di.health_alerts = false;
++	KUNIT_ASSERT_EQ(test, bq27xxx_battery_pwr_avg(&f->di, &value), 0);
++	KUNIT_EXPECT_EQ(test, value.intval, -123000);
++	KUNIT_EXPECT_EQ(test, f->health_reads, 1U);
++	f->di.health_alerts = true;
++	f->di.chip = BQ27500;
++	KUNIT_ASSERT_EQ(test, bq27xxx_battery_pwr_avg(&f->di, &value), 0);
++	KUNIT_EXPECT_EQ(test, value.intval, -1230000);
++	KUNIT_EXPECT_EQ(test, f->health_reads, 2U);
++	KUNIT_EXPECT_EQ(test, f->writes, 0U);
++}
++
+ static int bq27xxx_current_test_read(struct bq27xxx_device_info *di, u8 reg, bool single)
+ {
+ 	struct bq27xxx_suspend_test *f =
+@@ -449,6 +486,7 @@ static void bq27z561_current_properties_test(struct kunit *test)
+ }
+ 
+ static struct kunit_case bq27xxx_suspend_cases[] = {
++	KUNIT_CASE(bq27xxx_vendor_average_power_test),
+ 	KUNIT_CASE(bq27z561_current_properties_test),
+ 	KUNIT_CASE(bq27xxx_health_alert_test),
+ #if IS_ENABLED(CONFIG_BATTERY_BQ27XXX_IIO)

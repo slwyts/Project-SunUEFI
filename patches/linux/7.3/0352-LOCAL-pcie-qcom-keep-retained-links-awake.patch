@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: [PATCH] PCI: qcom: keep power domains for retained links during
+ suspend
+
+Mark the controller and PHY as part of the wake-up path when the PCIe
+link stays up through suspend. Their power domains are still needed by
+the retained link.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/pci/controller/dwc/pcie-qcom.c   |  4 ++++
+ drivers/phy/qualcomm/phy-qcom-qmp-pcie.c | 18 ++++++++++++++++++
+ 2 files changed, 22 insertions(+)
+
+diff --git a/drivers/pci/controller/dwc/pcie-qcom.c b/drivers/pci/controller/dwc/pcie-qcom.c
+index 094f80af023c155ca1a98e7c0bc12d5b48e0ef45..3a72f0bcfa1faa9bc1bea147fb2c9c8a5c93c177 100644
+--- a/drivers/pci/controller/dwc/pcie-qcom.c
++++ b/drivers/pci/controller/dwc/pcie-qcom.c
+@@ -27,6 +27,7 @@
+ #include <linux/pci-pwrctrl.h>
+ #include <linux/pm_opp.h>
+ #include <linux/pm_runtime.h>
++#include <linux/pm_wakeup.h>
+ #include <linux/platform_device.h>
+ #include <linux/phy/pcie.h>
+ #include <linux/phy/phy.h>
+@@ -2588,6 +2589,9 @@ static int qcom_pcie_suspend_noirq(struct device *dev)
+ 		if (pcie->use_pm_opp)
+ 			dev_pm_opp_set_opp(pcie->pci->dev, NULL);
+ 	} else {
++		/* The active controller still needs its power domain. */
++		device_set_awake_path(dev);
++
+ 		/*
+ 		 * Set minimum bandwidth required to keep data path
+ 		 * functional during suspend.
+diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-pcie.c b/drivers/phy/qualcomm/phy-qcom-qmp-pcie.c
+index e75c6f73239508ea8155404c13231b6ae02fd085..39179e3e0e09b48030c3e41a3bff00d1d44e529d 100644
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-pcie.c
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-pcie.c
+@@ -17,6 +17,7 @@
+ #include <linux/phy/pcie.h>
+ #include <linux/phy/phy.h>
+ #include <linux/platform_device.h>
++#include <linux/pm_wakeup.h>
+ #include <linux/regmap.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/reset.h>
+@@ -6265,6 +6266,7 @@ static int qmp_pcie_probe(struct platform_device *pdev)
+ 		return -ENOMEM;
+ 
+ 	qmp->dev = dev;
++	dev_set_drvdata(dev, qmp);
+ 
+ 	qmp->cfg = of_device_get_match_data(dev);
+ 	if (!qmp->cfg)
+@@ -6475,11 +6477,27 @@ static const struct of_device_id qmp_pcie_of_match_table[] = {
+ };
+ MODULE_DEVICE_TABLE(of, qmp_pcie_of_match_table);
+ 
++static int qmp_pcie_suspend_noirq(struct device *dev)
++{
++	struct qmp_pcie *qmp = dev_get_drvdata(dev);
++
++	/* A retained link still needs its PHY power domain. */
++	if (qmp->phy->power_count)
++		device_set_awake_path(dev);
++
++	return 0;
++}
++
++static const struct dev_pm_ops qmp_pcie_pm_ops = {
++	.suspend_noirq = qmp_pcie_suspend_noirq,
++};
++
+ static struct platform_driver qmp_pcie_driver = {
+ 	.probe		= qmp_pcie_probe,
+ 	.driver = {
+ 		.name	= "qcom-qmp-pcie-phy",
+ 		.of_match_table = qmp_pcie_of_match_table,
++		.pm = pm_ptr(&qmp_pcie_pm_ops),
+ 	},
+ };
+ 

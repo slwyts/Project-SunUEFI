@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Thu, 22 Oct 2026 17:59:50 +0800
+Subject: [PATCH] drm/msm/dpu: flush shared video CTLs once per kickoff
+
+Bonded video interfaces on SM8750 share an active CTL, but the kickoff
+loop triggers the same pending mask twice and increments a slave counter
+that has no vblank callback. Device tracing confirms one master pending
+kickoff while the slave count grows beyond 600000 for the same CTL.
+
+Submit the shared video CTL through its master only. Keep independent
+CTLs and non-video paths unchanged. Retain the existing flush timeout
+condition and include CTL, interface and pending mask in its diagnostic.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c          | 12 ++++++++++++
+ drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c |  5 ++++-
+ 2 files changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
+index d3c07019b1c..416f15afc7d 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
+@@ -1856,6 +1856,18 @@ static void _dpu_encoder_kickoff_phys(struct dpu_encoder_virt *dpu_enc)
+ 
+ 		ctl = phys->hw_ctl;
+ 
++		/*
++		 * Bonded video interfaces can share one active CTL. Its pending
++		 * mask already includes both interfaces, and only the master
++		 * receives the vblank that completes this kickoff. Flushing the
++		 * slave again races the same CTL and leaves its count unretired.
++		 */
++		if (phys->intf_mode == INTF_MODE_VIDEO &&
++		    phys->split_role == ENC_ROLE_SLAVE &&
++		    dpu_enc->cur_master &&
++		    ctl == dpu_enc->cur_master->hw_ctl)
++			continue;
++
+ 		/*
+ 		 * This is cleared in frame_done worker, which isn't invoked
+ 		 * for async commits. So don't set this for async, since it'll
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c
+index 0c190eb86fb..a40baca2f8d 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c
+@@ -547,7 +547,10 @@ static int dpu_encoder_phys_vid_wait_for_commit_done(
+ 		(hw_ctl->ops.get_flush_register(hw_ctl) == 0),
+ 		msecs_to_jiffies(50));
+ 	if (ret <= 0) {
+-		DPU_ERROR("vblank timeout: %x\n", hw_ctl->ops.get_flush_register(hw_ctl));
++		DPU_ERROR("vblank timeout: ctl=%d intf=%d flush=%x pending=%x\n",
++			  hw_ctl->idx, phys_enc->hw_intf->idx,
++			  hw_ctl->ops.get_flush_register(hw_ctl),
++			  hw_ctl->ops.get_pending_flush(hw_ctl));
+ 		return -ETIMEDOUT;
+ 	}
+ 

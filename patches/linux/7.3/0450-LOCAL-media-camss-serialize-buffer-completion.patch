@@ -1,0 +1,550 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Fri, 20 Nov 2026 04:10:27 +0800
+Subject: [PATCH] media: camss: Serialize buffer completion with stream-off
+
+Prevent the completion interrupt from programming new addresses after
+the write masters stop. Wait for in-flight VFE or forwarded CSID
+completions before returning the remaining buffers, and clear the
+returned slots before the next stream.
+
+This synchronizes the software queue. It does not add a hardware DMA
+drain. Verified normal cancellation and stream reopening on both SM8750
+camera paths.
+
+Assisted-by: LLM
+
+Wait for the whole SM8750 pipeline to start before handing capture buffers to DMA.
+Keep the per-queue startup and completion ordering with the v7
+address-update callbacks, including the distinct RAW and PIX updates.
+
+Arm the write masters and CSID port before starting an internal test
+pattern generator, which can output a frame immediately. Preserve the
+existing startup order for external sensors.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ .../platform/qcom/camss/camss-csid-980.c      |  64 ++++++---
+ .../media/platform/qcom/camss/camss-csid.c    |   4 +
+ .../media/platform/qcom/camss/camss-csid.h    |   3 +
+ .../media/platform/qcom/camss/camss-vfe-980.c |   2 +
+ drivers/media/platform/qcom/camss/camss-vfe.c | 124 +++++++++++++-----
+ drivers/media/platform/qcom/camss/camss-vfe.h |   1 +
+ .../media/platform/qcom/camss/camss-video.c   |  52 +++++++-
+ .../media/platform/qcom/camss/camss-video.h   |   1 +
+ 8 files changed, 192 insertions(+), 59 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-csid-980.c b/drivers/media/platform/qcom/camss/camss-csid-980.c
+index d620851ed7911cfbb2bf89caa9768cea9757ba51..90a331c56ad0d54424cfbbec247ada03babd3b72 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid-980.c
++++ b/drivers/media/platform/qcom/camss/camss-csid-980.c
+@@ -538,7 +538,7 @@ static void __csid_configure_rdi_stream(struct csid_device *csid, u8 enable,
+ 
+ 	val = 0;
+ 	writel(val, csid->base + rdi_ctrl_offset);
+-	if (frame_timing && enable) {
++	if (frame_timing) {
+ 		/* Record the old latch values while the path is still disabled.
+ 		 * The same FIFO continuity checks used by IPP then detect even a
+ 		 * lost first SOF. Every physical frame must produce its markers.
+@@ -589,8 +589,7 @@ static u32 __csid_ipp_cfa(u32 code)
+ 	}
+ }
+ 
+-static void __csid_configure_ipp_stream(struct csid_device *csid, u8 enable,
+-					u8 vc)
++static void __csid_configure_ipp_stream(struct csid_device *csid, u8 vc)
+ {
+ 	struct v4l2_mbus_framefmt *input_format =
+ 		&csid->fmt[MSM_CSID_PAD_FIRST_SRC + CSID_IPP_PORT];
+@@ -602,15 +601,6 @@ static void __csid_configure_ipp_stream(struct csid_device *csid, u8 enable,
+ 
+ 	writel(0, csid->base + CSID_IPP_CTRL);
+ 
+-	if (!enable) {
+-		writel(0, csid->base + CSID_IPP_IRQ_MASK);
+-		val = readl(csid->base + CSID_TOP_IRQ_MASK) & ~CSID_IPP_TOP_IRQ;
+-		writel(val, csid->base + CSID_TOP_IRQ_MASK);
+-		val = readl(csid->base + CSID_IPP_CFG0) & ~RDI_CFG0_EN;
+-		writel(val, csid->base + CSID_IPP_CFG0);
+-		return;
+-	}
+-
+ 	val = RDI_CFG0_TIMESTAMP_EN | CSID_TIMESTAMP_STROBE;
+ 	val |= RDI_CFG0_RETIME_BS;	/* SOF retiming off, as downstream */
+ 	val |= format->decode_format << RDI_CFG0_DECODE_FORMAT;
+@@ -650,6 +640,45 @@ static void __csid_configure_ipp_stream(struct csid_device *csid, u8 enable,
+ 	writel(val, csid->base + CSID_IPP_CFG0);
+ }
+ 
++void csid_980_prepare_port(struct csid_device *csid, int port)
++{
++	if (csid->phy.need_vc_update) {
++		__csid_configure_rx(csid, &csid->phy);
++		__csid_configure_rx_vc(csid, 0);
++		csid->phy.need_vc_update = false;
++	}
++	if (csid_port_is_ipp(csid, port))
++		__csid_configure_ipp_stream(csid, 0);
++	else
++		__csid_configure_rdi_stream(csid, true, port, 0);
++}
++
++void csid_980_start_port(struct csid_device *csid, int port, unsigned int buffers)
++{
++	unsigned int i;
++
++	/* Each address needs an AUP before resuming at a frame boundary. */
++	for (i = 0; i < buffers; i++) {
++		__csid_addr_update(csid, port);
++		__csid_reg_update(csid, port);
++	}
++	if (!buffers)
++		__csid_reg_update(csid, port);
++
++	if (csid_port_is_ipp(csid, port))
++		writel(RDI_CTRL_START_CMD, csid->base + CSID_IPP_CTRL);
++	else
++		__csid_ctrl_rdi(csid, true, port);
++}
++
++void csid_980_stop_port(struct csid_device *csid, int port)
++{
++	if (csid_port_is_ipp(csid, port))
++		writel(0, csid->base + CSID_IPP_CTRL);
++	else
++		__csid_ctrl_rdi(csid, false, port);
++}
++
+ static void csid_configure_stream(struct csid_device *csid, u8 enable)
+ {
+ 	u8 i, k;
+@@ -658,10 +687,7 @@ static void csid_configure_stream(struct csid_device *csid, u8 enable)
+ 
+ 	for (i = 0; i < MSM_CSID_MAX_SRC_STREAMS_980; i++) {
+ 		if (csid->phy.en_vc & BIT(i)) {
+-			if (csid_port_is_ipp(csid, i))
+-				__csid_configure_ipp_stream(csid, enable, 0);
+-			else
+-				__csid_configure_rdi_stream(csid, enable, i, 0);
++			__csid_configure_rdi_stream(csid, enable, i, 0);
+ 			__csid_configure_rx_vc(csid, 0);
+ 
+ 			for (k = 0; k < CAMSS_INIT_BUF_COUNT; k++) {
+@@ -669,11 +695,7 @@ static void csid_configure_stream(struct csid_device *csid, u8 enable)
+ 				__csid_reg_update(csid, i);
+ 			}
+ 
+-			if (csid_port_is_ipp(csid, i))
+-				writel(enable ? RDI_CTRL_START_CMD : 0,
+-				       csid->base + CSID_IPP_CTRL);
+-			else
+-				__csid_ctrl_rdi(csid, enable, i);
++			__csid_ctrl_rdi(csid, enable, i);
+ 		}
+ 	}
+ }
+diff --git a/drivers/media/platform/qcom/camss/camss-csid.c b/drivers/media/platform/qcom/camss/camss-csid.c
+index 487c0e3810bbee14ca49d88d2b89b48a3cbcbb7b..01d86a046b8032d797f357d7c92ca4d337788565 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid.c
++++ b/drivers/media/platform/qcom/camss/camss-csid.c
+@@ -901,6 +901,10 @@ static int csid_set_stream(struct v4l2_subdev *sd, int enable)
+ 			return -ENOLINK;
+ 	}
+ 
++	/* Piano publishes the first capture addresses before opening CSID. */
++	if (csid->camss->check_dma_stop && csid->res->hw_ops == &csid_ops_980)
++		return 0;
++
+ 	if (csid->phy.need_vc_update && csid->res->hw_ops->configure_stream) {
+ 		csid->res->hw_ops->configure_stream(csid, enable);
+ 		csid->phy.need_vc_update = false;
+diff --git a/drivers/media/platform/qcom/camss/camss-csid.h b/drivers/media/platform/qcom/camss/camss-csid.h
+index c0aa3ef054588a1a434932ce8e38ad0d84690858..eff56e2b8572b81b743bc77eccfb5c9778e603f9 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid.h
++++ b/drivers/media/platform/qcom/camss/camss-csid.h
+@@ -227,6 +227,9 @@ extern const struct csid_hw_ops csid_ops_340;
+ extern const struct csid_hw_ops csid_ops_680;
+ extern const struct csid_hw_ops csid_ops_980;
+ extern const struct csid_hw_ops csid_ops_1080;
++void csid_980_prepare_port(struct csid_device *csid, int port);
++void csid_980_start_port(struct csid_device *csid, int port, unsigned int buffers);
++void csid_980_stop_port(struct csid_device *csid, int port);
+ extern const struct csid_hw_ops csid_ops_gen2;
+ extern const struct csid_hw_ops csid_ops_gen3;
+ 
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe-980.c b/drivers/media/platform/qcom/camss/camss-vfe-980.c
+index a3aa0d1e656b1ff812bf3568e256d4548573b52c..a7fcda94e81a380a374e5358bdc22f24bc1eb5b8 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe-980.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe-980.c
+@@ -733,6 +733,8 @@ static const struct camss_video_ops vfe_video_ops_980 = {
+ static void vfe_subdev_init(struct device *dev, struct vfe_device *vfe)
+ {
+ 	vfe->video_ops = vfe_video_ops_980;
++	if (vfe->camss->check_dma_stop)
++		vfe->video_ops.start_output = vfe_start_output_980;
+ }
+ 
+ static void vfe_global_reset(struct vfe_device *vfe)
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index 1316f506a13ab281fb9af0f3e9de24d2410d9bff..2f23aa0e759ccc04d2e6f383de30623d8fd89378 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -648,6 +648,8 @@ void vfe_buf_done(struct vfe_device *vfe, int wm)
+ 	}
+ 	line = &vfe->line[vfe->wm_output_map[wm]];
+ 	output = &line->output;
++	if (output->state != VFE_OUTPUT_ON)
++		goto out_unlock;
+ 
+ 	/* CSID forwards DMA completion independently of the VFE BUS error IRQ.
+ 	 * Serialize both paths so a delayed error IRQ cannot publish a bad frame.
+@@ -714,6 +716,56 @@ void vfe_buf_done(struct vfe_device *vfe, int wm)
+ 	spin_unlock_irqrestore(&vfe->output_lock, flags);
+ }
+ 
++static void vfe_arm_output_v2(struct vfe_line *line)
++{
++	struct vfe_device *vfe = to_vfe(line);
++	struct vfe_output *output = &line->output;
++	const struct vfe_hw_ops *ops = vfe->res->hw_ops;
++	unsigned int i;
++
++	lockdep_assert_held(&vfe->output_lock);
++	output->state = VFE_OUTPUT_ON;
++	ops->vfe_wm_start(vfe, output->wm_idx[0], line);
++
++	for (i = 0; i < CAMSS_INIT_BUF_COUNT; i++) {
++		output->buf[i] = vfe_buf_get_pending(output);
++		if (!output->buf[i])
++			break;
++		output->gen2.active_num++;
++		ops->vfe_wm_update(vfe, output->wm_idx[0],
++				   output->buf[i]->addr[0], line);
++
++		if (!ops->addr_update)
++			ops->reg_update(vfe, line->id);
++	}
++}
++
++int vfe_start_output_980(struct camss_video *vid)
++{
++	struct vfe_line *line = container_of(vid, struct vfe_line, video_out);
++	struct vfe_device *vfe = to_vfe(line);
++	struct vfe_output *output = &line->output;
++	struct csid_device *csid = &vfe->camss->csid[vfe->id];
++	unsigned long flags;
++
++	mutex_lock(&vfe->stream_lock);
++	if (WARN_ON(output->state != VFE_OUTPUT_RESERVED)) {
++		mutex_unlock(&vfe->stream_lock);
++		return -EINVAL;
++	}
++
++	/* Configure the receiver with its path closed, then arm the WM. */
++	csid_980_prepare_port(csid, line->id);
++	spin_lock_irqsave(&vfe->output_lock, flags);
++	vfe_arm_output_v2(line);
++	csid_980_start_port(csid, line->id, output->gen2.active_num);
++	vfe->was_streaming = 1;
++	spin_unlock_irqrestore(&vfe->output_lock, flags);
++	mutex_unlock(&vfe->stream_lock);
++
++	return 0;
++}
++
+ int vfe_enable_output_v2(struct vfe_line *line)
+ {
+ 	struct vfe_device *vfe = to_vfe(line);
+@@ -722,7 +774,6 @@ int vfe_enable_output_v2(struct vfe_line *line)
+ 	struct media_pad *sensor_pad;
+ 	unsigned long flags;
+ 	unsigned int frame_skip = 0;
+-	unsigned int i;
+ 
+ 	sensor_pad = camss_find_sensor_pad(&line->subdev.entity);
+ 	if (sensor_pad) {
+@@ -751,8 +802,6 @@ int vfe_enable_output_v2(struct vfe_line *line)
+ 
+ 	WARN_ON(output->gen2.active_num);
+ 
+-	output->state = VFE_OUTPUT_ON;
+-
+ 	output->sequence = 0;
+ 	output->frame_sequence = 0;
+ 	output->last_sof_ticks = 0;
+@@ -762,19 +811,8 @@ int vfe_enable_output_v2(struct vfe_line *line)
+ 	output->wait_reg_update = 0;
+ 	reinit_completion(&output->reg_update);
+ 
+-	ops->vfe_wm_start(vfe, output->wm_idx[0], line);
+-
+-	for (i = 0; i < CAMSS_INIT_BUF_COUNT; i++) {
+-		output->buf[i] = vfe_buf_get_pending(output);
+-		if (!output->buf[i])
+-			break;
+-		output->gen2.active_num++;
+-		ops->vfe_wm_update(vfe, output->wm_idx[0],
+-				   output->buf[i]->addr[0], line);
+-
+-		if (!ops->addr_update)
+-			ops->reg_update(vfe, line->id);
+-	}
++	if (!vfe->video_ops.start_output)
++		vfe_arm_output_v2(line);
+ 
+ 	spin_unlock_irqrestore(&vfe->output_lock, flags);
+ 
+@@ -850,7 +888,8 @@ int vfe_enable_v2(struct vfe_line *line)
+ 	if (ret < 0)
+ 		goto error_enable_output;
+ 
+-	vfe->was_streaming = 1;
++	if (!vfe->video_ops.start_output)
++		vfe->was_streaming = 1;
+ 
+ 	return 0;
+ 
+@@ -1035,17 +1074,35 @@ static int vfe_disable_output(struct vfe_line *line)
+ {
+ 	struct vfe_device *vfe = to_vfe(line);
+ 	struct vfe_output *output = &line->output;
++	struct camss *camss = vfe->camss;
++	const struct vfe_hw_ops *ops = vfe->res->hw_ops;
+ 	unsigned long flags;
+ 	unsigned int i;
+ 
+ 	spin_lock_irqsave(&vfe->output_lock, flags);
++	if (vfe->video_ops.start_output && output->state == VFE_OUTPUT_RESERVED) {
++		/* An upstream start failed before publishing any buffer. */
++		spin_unlock_irqrestore(&vfe->output_lock, flags);
++		return 0;
++	}
++	output->state = VFE_OUTPUT_STOPPING;
+ 	for (i = 0; i < output->wm_num; i++)
+-		vfe->res->hw_ops->vfe_wm_stop(vfe, output->wm_idx[i]);
++		ops->vfe_wm_stop(vfe, output->wm_idx[i]);
++	if (vfe->video_ops.start_output)
++		csid_980_stop_port(&camss->csid[vfe->id], line->id);
+ 	output->gen2.active_num = 0;
+ 	output->frame_timeline_error = true;
+ 	output->frame_timeline_initialized = false;
+ 	spin_unlock_irqrestore(&vfe->output_lock, flags);
+ 
++	/*
++	 * A completion may still be returning a buffer removed from the FIFO
++	 * before STOPPING. Wait for it before the capture queue is flushed.
++	 */
++	synchronize_irq(vfe->irq);
++	if (ops->vfe_buf_done && vfe->id < camss->res->csid_num)
++		synchronize_irq(camss->csid[vfe->id].irq);
++
+ 	return vfe_reset(vfe);
+ }
+ 
+@@ -1060,19 +1117,15 @@ int vfe_disable(struct vfe_line *line)
+ 	struct vfe_device *vfe = to_vfe(line);
+ 	int ret;
+ 
+-	ret = vfe_disable_output(line);
+-	if (ret)
+-		goto error;
+-
+-	vfe_put_output(line);
+-
+ 	mutex_lock(&vfe->stream_lock);
+-
+-	vfe->stream_count--;
++	ret = vfe_disable_output(line);
++	if (!ret) {
++		vfe_put_output(line);
++		vfe->stream_count--;
++	}
+ 
+ 	mutex_unlock(&vfe->stream_lock);
+ 
+-error:
+ 	return ret;
+ }
+ 
+@@ -1437,6 +1490,7 @@ int vfe_flush_buffers(struct camss_video *vid,
+ 	struct vfe_device *vfe = to_vfe(line);
+ 	struct vfe_output *output;
+ 	unsigned long flags;
++	unsigned int i;
+ 
+ 	output = &line->output;
+ 
+@@ -1444,11 +1498,15 @@ int vfe_flush_buffers(struct camss_video *vid,
+ 
+ 	vfe_buf_flush_pending(output, state);
+ 
+-	if (output->buf[0])
+-		vb2_buffer_done(&output->buf[0]->vb.vb2_buf, state);
++	for (i = 0; i < ARRAY_SIZE(output->buf); i++) {
++		struct camss_buffer *buffer = output->buf[i];
++
++		if (!buffer)
++			continue;
+ 
+-	if (output->buf[1])
+-		vb2_buffer_done(&output->buf[1]->vb.vb2_buf, state);
++		output->buf[i] = NULL;
++		vb2_buffer_done(&buffer->vb.vb2_buf, state);
++	}
+ 
+ 	if (output->last_buffer) {
+ 		vb2_buffer_done(&output->last_buffer->vb.vb2_buf, state);
+@@ -2100,6 +2158,8 @@ int msm_vfe_subdev_init(struct camss *camss, struct vfe_device *vfe,
+ 	if (!res->vfe.line_num)
+ 		return -EINVAL;
+ 
++	vfe->camss = camss;
++	vfe->id = id;
+ 	vfe->res = &res->vfe;
+ 	vfe->res->hw_ops->subdev_init(dev, vfe);
+ 
+@@ -2152,8 +2212,6 @@ int msm_vfe_subdev_init(struct camss *camss, struct vfe_device *vfe,
+ 	 * Its zero active-line mask prevents MMIO until clocked WM start.
+ 	 */
+ 	spin_lock_init(&vfe->output_lock);
+-	vfe->camss = camss;
+-	vfe->id = id;
+ 	vfe->bus_active_lines = 0;
+ 
+ 	/* Interrupt */
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.h b/drivers/media/platform/qcom/camss/camss-vfe.h
+index 459fe3150ab3145b14f138f1a0ed64b05ed5e4fc..d74f9ae3e2775f3bf4846b2532a66ab4b6dcd164 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.h
++++ b/drivers/media/platform/qcom/camss/camss-vfe.h
+@@ -350,6 +350,7 @@ int vfe_get_output_v2(struct vfe_line *line);
+  * Return 0 on success or a negative error code otherwise
+  */
+ int vfe_enable_output_v2(struct vfe_line *line);
++int vfe_start_output_980(struct camss_video *vid);
+ 
+ /*
+  * vfe_queue_buffer_v2 - Add empty buffer
+diff --git a/drivers/media/platform/qcom/camss/camss-video.c b/drivers/media/platform/qcom/camss/camss-video.c
+index fa680df10234594c491f7d165769fa4be1687826..639c0f800fdbe311ec755542412f49f0c4df2423 100644
+--- a/drivers/media/platform/qcom/camss/camss-video.c
++++ b/drivers/media/platform/qcom/camss/camss-video.c
+@@ -269,10 +269,23 @@ static int video_prepare_streaming(struct vb2_queue *q)
+ 	return ret;
+ }
+ 
++static bool camss_video_is_tpg_pad(const struct camss *camss,
++				   const struct media_pad *pad)
++{
++	unsigned int i;
++
++	for (i = 0; i < camss->res->tpg_num; i++)
++		if (pad == &camss->tpg[i].pad)
++			return true;
++
++	return false;
++}
++
+ /*
+  * camss_video_subdevs_set_stream() - Enable or disable a video pipeline
+  * @video: The video node whose pipeline is toggled
+  * @enable: true to start the subdevices, false to stop them
++ * @tpg_pad: if supplied, return the TPG source pad without starting it
+  *
+  * Walk the media pipeline upstream from the video node and toggle the stream on
+  * each subdevice.  Each subdevice source pad is located with
+@@ -294,7 +307,8 @@ static int video_prepare_streaming(struct vb2_queue *q)
+  * Return: 0 on success, or the error code of the first subdevice that failed.
+  */
+ static int camss_video_subdevs_set_stream(struct camss_video *video,
+-					  bool enable)
++					 bool enable,
++					 struct media_pad **tpg_pad)
+ {
+ 	struct media_entity *entity = &video->vdev.entity;
+ 	int first_error = 0;
+@@ -311,6 +325,11 @@ static int camss_video_subdevs_set_stream(struct camss_video *video,
+ 		if (!is_media_entity_v4l2_subdev(pad->entity))
+ 			break;
+ 
++		if (tpg_pad && camss_video_is_tpg_pad(video->camss, pad)) {
++			*tpg_pad = pad;
++			break;
++		}
++
+ 		subdev = media_entity_to_v4l2_subdev(pad->entity);
+ 
+ 		if (enable)
+@@ -337,6 +356,7 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
+ {
+ 	struct camss_video *video = vb2_get_drv_priv(q);
+ 	struct video_device *vdev = &video->vdev;
++	struct media_pad *tpg_pad = NULL;
+ 	int ret;
+ 
+ 	ret = video_device_pipeline_alloc_start(vdev);
+@@ -349,15 +369,37 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
+ 	if (ret < 0)
+ 		goto error;
+ 
+-	ret = camss_video_subdevs_set_stream(video, true);
++	/*
++	 * The TPG starts producing data immediately. Wait until the output
++	 * has armed DMA and opened CSID before starting the generator.
++	 */
++	ret = camss_video_subdevs_set_stream(video, true,
++					    video->ops->start_output ? &tpg_pad : NULL);
+ 	if (ret < 0) {
+-		camss_video_subdevs_set_stream(video, false);
+ 		dev_err(video->camss->dev, "Video pipeline start failed: %d\n", ret);
+-		goto error;
++		goto stop_subdevs;
++	}
++
++	if (video->ops->start_output) {
++		ret = video->ops->start_output(video);
++		if (ret)
++			goto stop_subdevs;
++	}
++
++	if (tpg_pad) {
++		struct v4l2_subdev *tpg = media_entity_to_v4l2_subdev(tpg_pad->entity);
++
++		ret = v4l2_subdev_enable_streams(tpg, tpg_pad->index, BIT_ULL(0));
++		if (ret && ret != -EALREADY && ret != -ENOIOCTLCMD) {
++			dev_err(video->camss->dev, "Video TPG start failed: %d\n", ret);
++			goto stop_subdevs;
++		}
+ 	}
+ 
+ 	return 0;
+ 
++stop_subdevs:
++	camss_video_subdevs_set_stream(video, false, NULL);
+ error:
+ 	video_device_pipeline_stop(vdev);
+ 
+@@ -372,7 +414,7 @@ static void video_stop_streaming(struct vb2_queue *q)
+ 	struct camss_video *video = vb2_get_drv_priv(q);
+ 	int ret;
+ 
+-	ret = camss_video_subdevs_set_stream(video, false);
++	ret = camss_video_subdevs_set_stream(video, false, NULL);
+ 	if (ret < 0)
+ 		dev_err(video->camss->dev, "Video pipeline stop failed: %d\n", ret);
+ 
+diff --git a/drivers/media/platform/qcom/camss/camss-video.h b/drivers/media/platform/qcom/camss/camss-video.h
+index dc62c1400e4d3bc8b60c271d9fc207d651aeb03b..344f688eece73935ec489d4b73b5a3c82e57b4f4 100644
+--- a/drivers/media/platform/qcom/camss/camss-video.h
++++ b/drivers/media/platform/qcom/camss/camss-video.h
+@@ -37,6 +37,7 @@ struct camss_video_ops {
+ 	int (*queue_buffer)(struct camss_video *vid, struct camss_buffer *buf);
+ 	int (*flush_buffers)(struct camss_video *vid,
+ 			     enum vb2_buffer_state state);
++	int (*start_output)(struct camss_video *vid);
+ };
+ 
+ struct camss_video {
+-- 
+2.55.0
+

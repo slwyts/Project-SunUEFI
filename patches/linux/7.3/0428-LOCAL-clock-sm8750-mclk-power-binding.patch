@@ -1,0 +1,102 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Sun, 15 Nov 2026 01:21:54 +0800
+Subject: [PATCH] dt-bindings: clock: qcom: describe SM8750 MCLK Titan
+ dependency
+
+The SM8750 sensor MCLK branches require the CAMCC Titan top domain to
+be powered, in addition to the MMCX and MX supplies of CAMBISTMCLKCC.
+Describe that dependency on the clock provider rather than requiring
+every external image sensor to describe an on-SoC power domain.
+
+Require the third domain only for SM8750 CAMBISTMCLKCC and keep the
+two-domain limit for other controllers. Add an example for MCLK and
+use SM8750 clock IDs for both examples to avoid conflicting GCC macro
+definitions in the combined example translation unit.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ .../bindings/clock/qcom,sm8450-camcc.yaml     | 43 +++++++++++++++++--
+ 1 file changed, 40 insertions(+), 3 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/clock/qcom,sm8450-camcc.yaml b/Documentation/devicetree/bindings/clock/qcom,sm8450-camcc.yaml
+index b41247b25..34394d554 100644
+--- a/Documentation/devicetree/bindings/clock/qcom,sm8450-camcc.yaml
++++ b/Documentation/devicetree/bindings/clock/qcom,sm8450-camcc.yaml
+@@ -46,9 +46,11 @@ properties:
+   power-domains:
+     description:
+       Power domains required for the clock controller to operate
++    minItems: 2
+     items:
+       - description: MMCX power domain
+-      - description: MXC power domain
++      - description: MXC or MX power domain
++      - description: Titan top power domain required for the sensor MCLK outputs
+ 
+   required-opps:
+     description:
+@@ -67,6 +69,19 @@ required:
+ 
+ allOf:
+   - $ref: qcom,gcc.yaml#
++  - if:
++      properties:
++        compatible:
++          const: qcom,sm8750-cambistmclkcc
++    then:
++      properties:
++        power-domains:
++          minItems: 3
++    else:
++      properties:
++        power-domains:
++          maxItems: 2
++
+   - if:
+       properties:
+         compatible:
+@@ -83,11 +98,11 @@ unevaluatedProperties: false
+ 
+ examples:
+   - |
+-    #include <dt-bindings/clock/qcom,gcc-sm8450.h>
++    #include <dt-bindings/clock/qcom,sm8750-gcc.h>
+     #include <dt-bindings/clock/qcom,rpmh.h>
+     #include <dt-bindings/power/qcom,rpmhpd.h>
+     clock-controller@ade0000 {
+-      compatible = "qcom,sm8450-camcc";
++      compatible = "qcom,sm8750-camcc";
+       reg = <0xade0000 0x20000>;
+       clocks = <&gcc GCC_CAMERA_AHB_CLK>,
+                <&rpmhcc RPMH_CXO_CLK>,
+@@ -101,4 +116,26 @@ examples:
+       #reset-cells = <1>;
+       #power-domain-cells = <1>;
+     };
++
++  - |
++    #include <dt-bindings/clock/qcom,sm8750-camcc.h>
++    #include <dt-bindings/clock/qcom,sm8750-gcc.h>
++    #include <dt-bindings/clock/qcom,rpmh.h>
++    #include <dt-bindings/power/qcom,rpmhpd.h>
++
++    clock-controller@1760000 {
++      compatible = "qcom,sm8750-cambistmclkcc";
++      reg = <0x1760000 0x6000>;
++      clocks = <&gcc GCC_CAM_BIST_MCLK_AHB_CLK>,
++               <&rpmhcc RPMH_CXO_CLK>,
++               <&rpmhcc RPMH_CXO_CLK_A>,
++               <&sleep_clk>;
++      power-domains = <&rpmhpd RPMHPD_MMCX>,
++                      <&rpmhpd RPMHPD_MX>,
++                      <&camcc CAM_CC_TITAN_TOP_GDSC>;
++      required-opps = <&rpmhpd_opp_low_svs>,
++                      <&rpmhpd_opp_low_svs>;
++      #clock-cells = <1>;
++      #reset-cells = <1>;
++    };
+ ...
+-- 
+2.56.1
+

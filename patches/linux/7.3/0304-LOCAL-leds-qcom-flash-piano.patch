@@ -1,0 +1,77 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: leds: flash: carry the Piano QCOM flash adaptations
+
+Keep the flash driver resource cleanup and current handling used by the device.
+
+The cited SunUEFI changes were carried through the 7.3 port.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/0000000000000000000000000000000000000000
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/leds/flash/leds-qcom-flash.c | 29 +++++++++++++++++++++-------
+ 1 file changed, 22 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/leds/flash/leds-qcom-flash.c b/drivers/leds/flash/leds-qcom-flash.c
+index b03a6833e3e3a076980bfcb46d5bbde4f4183a19..a51d7662a7c35cb7d60802a5543a44b1ca324dcc 100644
+--- a/drivers/leds/flash/leds-qcom-flash.c
++++ b/drivers/leds/flash/leds-qcom-flash.c
+@@ -654,16 +654,31 @@ qcom_flash_intensity_to_led_brightness(struct v4l2_flash *v4l2_flash, s32 intens
+ 	if (!current_ma)
+ 		return LED_OFF;
+ 
+-	return (current_ma * LED_FULL) / led->max_torch_current_ma;
++	/* brightness_set() converts back with integer division. Round this
++	 * encoding up so an exact 5mA/channel control step is not lost to a
++	 * second truncation. The PMIC still rounds current down to its step.
++	 */
++	return DIV_ROUND_UP(current_ma * LED_FULL, led->max_torch_current_ma);
+ }
+ 
+ static s32 qcom_flash_brightness_to_led_intensity(struct v4l2_flash *v4l2_flash,
+-					enum led_brightness brightness)
++						enum led_brightness brightness)
+ {
+ 	struct led_classdev_flash *fled_cdev = v4l2_flash->fled_cdev;
+ 	struct qcom_flash_led *led = flcdev_to_qcom_fled(fled_cdev);
++	u32 current_ma, steps;
+ 
+-	return (brightness * led->max_torch_current_ma * UA_PER_MA) / LED_FULL;
++	if (!brightness)
++		return 0;
++
++	/* Mirror brightness_set() then set_flash_current(): the total mA are
++	 * split per channel, and ITARGET=0 is a nonzero 5mA minimum. Return the
++	 * quantized total, not the unrepresentable LED scale fraction. Thermal
++	 * limiting can still reduce the current during brightness_set().
++	 */
++	current_ma = brightness * led->max_torch_current_ma / LED_FULL;
++	steps = (current_ma * UA_PER_MA / led->chan_count + 1) / TORCH_IRES_UA;
++	return max_t(u32, steps, 1) * TORCH_IRES_UA * led->chan_count;
+ }
+ 
+ static const struct v4l2_flash_ops qcom_v4l2_flash_ops = {
+@@ -953,8 +968,8 @@ static int qcom_flash_led_probe(struct platform_device *pdev)
+ 
+ 	return regmap_field_write(flash_data->r_fields[REG_TORCH_CLAMP], flash_data->torch_clamp);
+ release:
+-	while (flash_data->v4l2_flash[flash_data->leds_count] && flash_data->leds_count)
+-		v4l2_flash_release(flash_data->v4l2_flash[flash_data->leds_count--]);
++	while (flash_data->leds_count)
++		v4l2_flash_release(flash_data->v4l2_flash[--flash_data->leds_count]);
+ 	return rc;
+ }
+ 
+@@ -962,8 +977,8 @@ static void qcom_flash_led_remove(struct platform_device *pdev)
+ {
+ 	struct qcom_flash_data *flash_data = platform_get_drvdata(pdev);
+ 
+-	while (flash_data->v4l2_flash[flash_data->leds_count] && flash_data->leds_count)
+-		v4l2_flash_release(flash_data->v4l2_flash[flash_data->leds_count--]);
++	while (flash_data->leds_count)
++		v4l2_flash_release(flash_data->v4l2_flash[--flash_data->leds_count]);
+ 
+ 	mutex_destroy(&flash_data->lock);
+ }

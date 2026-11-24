@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Thu, 22 Oct 2026 12:27:17 +0800
+Subject: [PATCH] usb: typec: ucsi: set USB mux mode for a partner present at
+ boot
+
+The normal partner-change path switches the Type-C mux to USB. Initial port registration only sets direction and USB role, leaving a boot-attached cable in the PHY default mode until a later alternate-mode event. Apply USB mode before initial orientation and role notifications, so the first gadget connection does not race a delayed PHY reconfiguration.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/usb/typec/ucsi/ucsi.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/drivers/usb/typec/ucsi/ucsi.c b/drivers/usb/typec/ucsi/ucsi.c
+index 0a7ceb5b5d0..04c86185c3d 100644
+--- a/drivers/usb/typec/ucsi/ucsi.c
++++ b/drivers/usb/typec/ucsi/ucsi.c
+@@ -1939,6 +1939,13 @@ static int ucsi_register_port(struct ucsi *ucsi, struct ucsi_connector *con)
+ 		goto out;
+ 	}
+ 
++	/* Match the hotplug path when the cable was attached before boot.
++	 * Configure the PHY's USB mode before reporting orientation/roles.
++	 */
++	if (UCSI_CONSTAT(con, CONNECTED) &&
++	    UCSI_CONSTAT(con, PARTNER_FLAG_USB))
++		typec_set_mode(con->port, TYPEC_STATE_USB);
++
+ 	if (ucsi->ops->connector_status)
+ 		ucsi->ops->connector_status(con);
+ 

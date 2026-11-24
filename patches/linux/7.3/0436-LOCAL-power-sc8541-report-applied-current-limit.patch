@@ -1,0 +1,124 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@tuta.io>
+Date: Wed, 18 Nov 2026 02:42:00 +0800
+Subject: power: supply: sc8541: report the applied input current limit
+
+Update the reported bus overcurrent limit after verified register
+writes and retain the previous value on error. Return the register
+encoding in microamps and serialize reads with writes. Cover write
+failure and quantization in the SC8541 KUnit suite.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/651ca98865044e591f748a0c41dbe1fabf7fda98
+Signed-off-by: slwyts <slwyts@tuta.io>
+---
+ drivers/power/supply/sc8541_charger.c      | 16 +++++---
+ drivers/power/supply/sc8541_charger_test.c | 45 ++++++++++++++++++++++
+ 2 files changed, 56 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/power/supply/sc8541_charger.c b/drivers/power/supply/sc8541_charger.c
+index 4ef9e0d07a182eba5488560f5b5c478e9ead5b15..da90a5336231900be21735f77b4b2a1bb4f30346 100644
+--- a/drivers/power/supply/sc8541_charger.c
++++ b/drivers/power/supply/sc8541_charger.c
+@@ -346,7 +346,9 @@ static int sc8541_get_property(struct power_supply *psy,
+ 		val->intval = !!(reg & SC8541_CHG_EN);
+ 		return 0;
+ 	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
++		mutex_lock(&sc->lock);
+ 		val->intval = sc->busocp_ma * 1000;
++		mutex_unlock(&sc->lock);
+ 		return 0;
+ 	case POWER_SUPPLY_PROP_CHARGE_TYPE:
+ 		ret = regmap_read(sc->regmap, SC8541_CTRL2, &reg);
+@@ -411,12 +413,16 @@ static int sc8541_set_property(struct power_supply *psy,
+ 	if (psp == POWER_SUPPLY_PROP_CHARGE_TYPE)
+ 		return sc8541_set_charge_type(sc, val->intval);
+ 	if (psp == POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT) {
++		int ma = clamp(val->intval / 1000, SC8541_BUSOCP_MIN_MA,
++			       SC8541_BUSOCP_MAX_MA);
++		unsigned int code = (ma - SC8541_BUSOCP_OFFSET_MA) /
++				    SC8541_BUSOCP_STEP_MA;
++
+ 		mutex_lock(&sc->lock);
+-		sc->busocp_ma = clamp(val->intval / 1000, SC8541_BUSOCP_MIN_MA,
+-				      SC8541_BUSOCP_MAX_MA);
+-		ret = sc8541_write_check(sc, SC8541_BUSOCP, 0x9f,
+-				(sc->busocp_ma - SC8541_BUSOCP_OFFSET_MA) /
+-				SC8541_BUSOCP_STEP_MA);
++		ret = sc8541_write_check(sc, SC8541_BUSOCP, 0x9f, code);
++		if (!ret)
++			sc->busocp_ma = SC8541_BUSOCP_OFFSET_MA +
++					code * SC8541_BUSOCP_STEP_MA;
+ 		mutex_unlock(&sc->lock);
+ 		return ret;
+ 	}
+diff --git a/drivers/power/supply/sc8541_charger_test.c b/drivers/power/supply/sc8541_charger_test.c
+index eb49459fb986a7549c3c33d598cf5550b75cf41c..065f412c432c6ff082fb9ea143087d12c180a1ee 100644
+--- a/drivers/power/supply/sc8541_charger_test.c
++++ b/drivers/power/supply/sc8541_charger_test.c
+@@ -8,6 +8,7 @@ struct sc8541_test {
+ 	u8 regs[SC8541_MAX_REG + 1];
+ 	unsigned int writes;
+ 	int read_error;
++	int write_error;
+ 	bool ignore_write;
+ };
+ 
+@@ -25,6 +26,8 @@ static int sc8541_test_write(void *context, unsigned int reg, unsigned int val)
+ {
+ 	struct sc8541_test *f = context;
+ 
++	if (f->write_error)
++		return f->write_error;
+ 	f->writes++;
+ 	if (!f->ignore_write)
+ 		f->regs[reg] = val;
+@@ -156,7 +159,49 @@ static void sc8541_mode_waits_for_stop_confirmation_test(struct kunit *test)
+ 		POWER_SUPPLY_CHARGE_TYPE_BYPASS), 0);
+ }
+ 
++static void sc8541_current_limit_rounding_test(struct kunit *test)
++{
++	struct sc8541_test *f = test->priv;
++	union power_supply_propval value;
++	const int requested[] = { 2950000, 500000, 8000000 };
++	const int expected[] = { 2750000, 1000000, 7000000 };
++	int n;
++
++	for (n = 0; n < ARRAY_SIZE(requested); n++) {
++		KUNIT_ASSERT_EQ(test, sc8541_test_set(f,
++			POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT, requested[n]), 0);
++		KUNIT_ASSERT_EQ(test, power_supply_get_property(f->sc.psy,
++			POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT, &value), 0);
++		KUNIT_EXPECT_EQ(test, value.intval, expected[n]);
++		KUNIT_EXPECT_EQ(test,
++			(f->regs[SC8541_BUSOCP] & 0x1f) * SC8541_BUSOCP_STEP_MA +
++			SC8541_BUSOCP_OFFSET_MA, expected[n] / 1000);
++	}
++}
++
++static void sc8541_current_limit_write_error_test(struct kunit *test)
++{
++	struct sc8541_test *f = test->priv;
++	union power_supply_propval value;
++
++	KUNIT_ASSERT_EQ(test, sc8541_test_set(f,
++		POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT, 3000000), 0);
++	f->write_error = -EREMOTEIO;
++	KUNIT_EXPECT_EQ(test, sc8541_test_set(f,
++		POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT, 2950000), -EREMOTEIO);
++	KUNIT_ASSERT_EQ(test, power_supply_get_property(f->sc.psy,
++		POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT, &value), 0);
++	KUNIT_EXPECT_EQ(test, value.intval, 3000000);
++	f->write_error = 0;
++	f->ignore_write = true;
++	KUNIT_EXPECT_EQ(test, sc8541_test_set(f,
++		POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT, 2950000), -EIO);
++	KUNIT_EXPECT_EQ(test, f->sc.busocp_ma, 3000);
++}
++
+ static struct kunit_case sc8541_test_cases[] = {
++	KUNIT_CASE(sc8541_current_limit_rounding_test),
++	KUNIT_CASE(sc8541_current_limit_write_error_test),
+ 	KUNIT_CASE(sc8541_conversion_modes_test),
+ 	KUNIT_CASE(sc8541_mode_requires_stopped_stage_test),
+ 	KUNIT_CASE(sc8541_mode_readback_error_test),

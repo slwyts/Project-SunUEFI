@@ -1,0 +1,132 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Sat, 14 Nov 2026 23:04:09 +0800
+Subject: [PATCH] dt-bindings: media: describe SM8750 TFE Bayer clocks
+
+The TFE980 pixel path uses separate Bayer processing, fast AHB and CAMNOC clocks for each full TFE. Describe those nine clocks and the near-real-time CAMNOC clock used for Piano pixel capture.
+
+Keep the 21-clock SM8750 v7 configuration and allow the 31-clock pixel configuration with the corresponding clock names. Require the exact number of clock specifiers for each configuration.
+
+The SM8750 v7 binding limits interconnects to the two capture paths.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ .../bindings/media/qcom,sm8750-camss.yaml     | 96 ++++++++++++++-----
+ 1 file changed, 73 insertions(+), 23 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/media/qcom,sm8750-camss.yaml b/Documentation/devicetree/bindings/media/qcom,sm8750-camss.yaml
+index e7ab61d71ffbdf653f8a3b92b26035a2b29093df..35ef7cd2e6b1683553dbe3150c81e217162de33b 100644
+--- a/Documentation/devicetree/bindings/media/qcom,sm8750-camss.yaml
++++ b/Documentation/devicetree/bindings/media/qcom,sm8750-camss.yaml
+@@ -37,31 +37,67 @@ properties:
+       - const: vfe_lite1
+ 
+   clocks:
+-    maxItems: 21
++    minItems: 21
++    maxItems: 31
+ 
+   clock-names:
+-    items:
+-      - const: camnoc_rt_axi
+-      - const: cpas_ahb
+-      - const: cpas_fast_ahb
+-      - const: cpas_vfe0
+-      - const: cpas_vfe1
+-      - const: cpas_vfe2
+-      - const: cpas_vfe_lite
+-      - const: csid
+-      - const: csiphy_rx
+-      - const: gcc_axi_hf
+-      - const: vfe0
+-      - const: vfe0_fast_ahb
+-      - const: vfe1
+-      - const: vfe1_fast_ahb
+-      - const: vfe2
+-      - const: vfe2_fast_ahb
+-      - const: vfe_lite
+-      - const: vfe_lite_ahb
+-      - const: vfe_lite_cphy_rx
+-      - const: vfe_lite_csid
+-      - const: qdss_debug_xo
++    oneOf:
++      # SM8750 CSI-2 capture without the TFE Bayer processing clocks.
++      - items:
++          - const: camnoc_rt_axi
++          - const: cpas_ahb
++          - const: cpas_fast_ahb
++          - const: cpas_vfe0
++          - const: cpas_vfe1
++          - const: cpas_vfe2
++          - const: cpas_vfe_lite
++          - const: csid
++          - const: csiphy_rx
++          - const: gcc_axi_hf
++          - const: vfe0
++          - const: vfe0_fast_ahb
++          - const: vfe1
++          - const: vfe1_fast_ahb
++          - const: vfe2
++          - const: vfe2_fast_ahb
++          - const: vfe_lite
++          - const: vfe_lite_ahb
++          - const: vfe_lite_cphy_rx
++          - const: vfe_lite_csid
++          - const: qdss_debug_xo
++      # Piano TFE pixel processing with NRT CAMNOC and Bayer clocks.
++      - items:
++          - const: camnoc_nrt_axi
++          - const: camnoc_rt_axi
++          - const: cpas_ahb
++          - const: cpas_fast_ahb
++          - const: cpas_vfe0
++          - const: cpas_vfe1
++          - const: cpas_vfe2
++          - const: cpas_vfe_lite
++          - const: cpas_vfe0_bayer
++          - const: cpas_vfe1_bayer
++          - const: cpas_vfe2_bayer
++          - const: csid
++          - const: csiphy_rx
++          - const: gcc_axi_hf
++          - const: vfe0
++          - const: vfe0_fast_ahb
++          - const: vfe1
++          - const: vfe1_fast_ahb
++          - const: vfe2
++          - const: vfe2_fast_ahb
++          - const: vfe0_bayer
++          - const: vfe0_bayer_fast_ahb
++          - const: vfe1_bayer
++          - const: vfe1_bayer_fast_ahb
++          - const: vfe2_bayer
++          - const: vfe2_bayer_fast_ahb
++          - const: vfe_lite
++          - const: vfe_lite_ahb
++          - const: vfe_lite_cphy_rx
++          - const: vfe_lite_csid
++          - const: qdss_debug_xo
+ 
+   interrupts:
+     maxItems: 10
+@@ -151,6 +187,20 @@ required:
+   - power-domain-names
+   - ports
+ 
++allOf:
++  - if:
++      properties:
++        clock-names:
++          maxItems: 21
++    then:
++      properties:
++        clocks:
++          maxItems: 21
++    else:
++      properties:
++        clocks:
++          minItems: 31
++
+ additionalProperties: false
+ 
+ examples:

@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Thu, 22 Oct 2026 11:42:46 +0800
+Subject: [PATCH] usb: typec: ucsi_glink: ignore non-connector GLINK resources
+
+The same PMIC node exposes a firmware pen regulator. Only connector children have the port index consumed by UCSI; do not reject the controller when an unrelated resource lacks reg.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/usb/typec/ucsi/ucsi_glink.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/usb/typec/ucsi/ucsi_glink.c b/drivers/usb/typec/ucsi/ucsi_glink.c
+index 1db0c88d817..fa7c2534b3a 100644
+--- a/drivers/usb/typec/ucsi/ucsi_glink.c
++++ b/drivers/usb/typec/ucsi/ucsi_glink.c
+@@ -431,6 +431,9 @@ static int pmic_glink_ucsi_probe(struct auxiliary_device *adev,
+ 		struct gpio_desc *desc;
+ 		u32 port;
+ 
++		if (!fwnode_device_is_compatible(fwnode, "usb-c-connector"))
++			continue;
++
+ 		ret = fwnode_property_read_u32(fwnode, "reg", &port);
+ 		if (ret < 0) {
+ 			dev_err(dev, "missing reg property of %pOFn\n", fwnode);

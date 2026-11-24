@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Mon, 9 Nov 2026 03:55:38 +0800
+Subject: rtc: pm8xxx: keep protected counters out of hctosys without an epoch
+
+Keep relative alarms and suspend accounting available on PM8xxx
+devices with a protected counter and no epoch offset. Exclude
+that counter from the initial system wall-clock update.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/9c93f788af20a4cd686852626270a0fcf4cbe8fc
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/rtc/rtc-pm8xxx.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/drivers/rtc/rtc-pm8xxx.c b/drivers/rtc/rtc-pm8xxx.c
+index e624f848c22b5799d23107518bbfd01b2e93d150..36fcb3908acc00ba6300c90cc1da14568dae6832 100644
+--- a/drivers/rtc/rtc-pm8xxx.c
++++ b/drivers/rtc/rtc-pm8xxx.c
+@@ -639,6 +639,11 @@ static int pm8xxx_rtc_probe(struct platform_device *pdev)
+ 
+ 	rtc_dd->rtc->ops = &pm8xxx_rtc_ops;
+ 	rtc_dd->rtc->range_max = U32_MAX;
++	/* Without an epoch offset, the protected counter is only useful for
++	 * relative alarms and suspend accounting, not setting wall time.
++	 */
++	if (!rtc_dd->allow_set_time && !rtc_dd->offset)
++		set_bit(RTC_NO_HCTOSYS, &rtc_dd->rtc->flags);
+ 
+ 	if (rtc_dd->alarm_irq) {
+ 		rc = devm_request_any_context_irq(&pdev->dev, rtc_dd->alarm_irq,

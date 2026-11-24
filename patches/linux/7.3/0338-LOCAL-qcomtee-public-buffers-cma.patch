@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Thu, 22 Oct 2026 10:18:53 +0800
+Subject: [PATCH] tee: qcomtee: use the declared CMA pool for application
+ buffers
+
+The Goodix QSEECom-compatible application on SM8750 rejects a small shared buffer allocated above 4 GiB, even though its command interface uses 64-bit addresses. The board default CMA pool already expresses the supported allocation range and works for signed application images.
+
+Allocate public shared buffers from that pool too, keeping small private invocation buffers on the buddy path. Allocate only the requested page count, retain secure-world bridge registration, and select the matching release path from immutable pool/SHM properties.
+
+Verified the factory signed gfpia device-info command with an ordinary 4 KiB allocation: transport, application and buffer status all succeeded and returned sensor type 5.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/tee/qcomtee/shm.c | 30 ++++++++++++++++++++----------
+ 1 file changed, 20 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/tee/qcomtee/shm.c b/drivers/tee/qcomtee/shm.c
+index 8e68d64a98d..13cf72cec13 100644
+--- a/drivers/tee/qcomtee/shm.c
++++ b/drivers/tee/qcomtee/shm.c
+@@ -122,6 +122,13 @@ static bool qcomtee_large_shm(size_t size)
+ 	return get_order(size) > MAX_PAGE_ORDER;
+ }
+ 
++static bool qcomtee_cma_shm(struct tee_shm_pool *pool, struct tee_shm *shm,
++			   size_t size)
++{
++	return IS_ENABLED(CONFIG_DMA_CMA) && pool->private_data &&
++		(!(shm->flags & TEE_SHM_PRIV) || qcomtee_large_shm(size));
++}
++
+ static int pool_op_alloc(struct tee_shm_pool *pool, struct tee_shm *shm,
+ 			 size_t size, size_t align)
+ {
+@@ -133,18 +140,19 @@ static int pool_op_alloc(struct tee_shm_pool *pool, struct tee_shm *shm,
+ 
+ 	if (!size || check_add_overflow(size, PAGE_SIZE - 1, &rounded))
+ 		return -EINVAL;
+-	if (!qcomtee_large_shm(size))
++	if (!qcomtee_cma_shm(pool, shm, size)) {
++		if (qcomtee_large_shm(size))
++			return -ENOMEM;
+ 		return tee_dyn_shm_alloc_helper(shm, size, align, qcomtee_shm_register);
+-
+-	if (!IS_ENABLED(CONFIG_DMA_CMA))
+-		return -ENOMEM;
++	}
+ 
+ 	/*
+-	 * Large signed TAs exceed the buddy allocator's maximum order.
+-	 * Keep a genuinely contiguous range for QTEE's memory-object ABI.
++	 * Use the declared contiguous pool for application-visible buffers.
++	 * Its DT allocation range also describes the legacy TA address limit.
++	 * Private invocation buffers keep the ordinary small-allocation path.
+ 	 */
+ 	nr_pages = rounded >> PAGE_SHIFT;
+-	page = cma_alloc(dev_get_cma_area(NULL), nr_pages, 0, false);
++	page = cma_alloc(pool->private_data, nr_pages, 0, false);
+ 	if (!page)
+ 		return -ENOMEM;
+ 	pages = kcalloc(nr_pages, sizeof(*pages), GFP_KERNEL);
+@@ -168,18 +176,18 @@ static int pool_op_alloc(struct tee_shm_pool *pool, struct tee_shm *shm,
+ 	shm->pages = NULL;
+ 	kfree(pages);
+ release_cma:
+-	cma_release(dev_get_cma_area(NULL), page, nr_pages);
++	cma_release(pool->private_data, page, nr_pages);
+ 	return ret;
+ }
+ 
+ static void pool_op_free(struct tee_shm_pool *pool, struct tee_shm *shm)
+ {
+-	if (!qcomtee_large_shm(shm->size)) {
++	if (!qcomtee_cma_shm(pool, shm, shm->size)) {
+ 		tee_dyn_shm_free_helper(shm, qcomtee_shm_unregister);
+ 		return;
+ 	}
+ 	qcomtee_shm_unregister(shm->ctx, shm);
+-	cma_release(dev_get_cma_area(NULL), shm->pages[0], shm->num_pages);
++	cma_release(pool->private_data, shm->pages[0], shm->num_pages);
+ 	kfree(shm->pages);
+ 	shm->pages = NULL;
+ 	shm->kaddr = NULL;
+@@ -205,6 +213,8 @@ struct tee_shm_pool *qcomtee_shm_pool_alloc(void)
+ 		return ERR_PTR(-ENOMEM);
+ 
+ 	pool->ops = &pool_ops;
++	if (IS_ENABLED(CONFIG_DMA_CMA))
++		pool->private_data = dev_get_cma_area(NULL);
+ 
+ 	return pool;
+ }

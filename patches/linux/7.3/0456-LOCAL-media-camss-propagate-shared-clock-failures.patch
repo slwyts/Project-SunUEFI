@@ -1,0 +1,222 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Tue, 24 Nov 2026 14:20:55 +0800
+Subject: [PATCH] media: qcom: camss: Stop resume when shared clocks cannot
+ start
+
+SM8750 needs the shared CPAS AHB clocks before a subdevice can read its registers. The generic PM clock API logs individual clock errors and can still return success, including when a clock lookup or prepare failed.
+
+Use the clock bulk API to acquire and enable the same clock list with error propagation. Restore prior interconnect requests if a later path fails, retain shared clocks if suspend fails, and release clock references on probe unwind and driver removal.
+
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+---
+ drivers/media/platform/qcom/camss/camss.c | 126 ++++++++++++++--------
+ drivers/media/platform/qcom/camss/camss.h |   4 +
+ 2 files changed, 84 insertions(+), 46 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index 6eeaf779e9..9a14c854d4 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -21,7 +21,6 @@
+ #include <linux/overflow.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/pm_domain.h>
+-#include <linux/pm_clock.h>
+ #include <linux/slab.h>
+ #include <linux/videodev2.h>
+ 
+@@ -6051,37 +6050,54 @@ static void camss_genpd_cleanup(struct camss *camss)
+ 	dev_pm_domain_detach(camss->genpd, true);
+ }
+ 
+-/*
+- * camss_init_pm_clks - set up shared CAMSS clocks
+- *
+- * Clocks listed in res->pm_clks are shared across all CAMSS sub-devices
+- * (e.g. top_ahb, axi).
+- */
++static int camss_enable_pm_clks(struct camss *camss)
++{
++	int ret;
++
++	if (!camss->num_pm_clks || camss->pm_clks_enabled)
++		return 0;
++
++	ret = clk_bulk_prepare_enable(camss->num_pm_clks, camss->pm_clks);
++	if (ret)
++		return ret;
++
++	camss->pm_clks_enabled = true;
++	return 0;
++}
++
++static void camss_disable_pm_clks(void *data)
++{
++	struct camss *camss = data;
++
++	if (!camss->pm_clks_enabled)
++		return;
++
++	clk_bulk_disable_unprepare(camss->num_pm_clks, camss->pm_clks);
++	camss->pm_clks_enabled = false;
++}
++
+ static int camss_init_pm_clks(struct camss *camss)
+ {
+ 	struct device *dev = camss->dev;
+ 	unsigned int i;
+ 	int ret;
+ 
+-	if (!camss->res->pm_clks[0])
++	for (i = 0; i < CAMSS_RES_MAX && camss->res->pm_clks[i]; i++)
++		camss->pm_clks[i].id = camss->res->pm_clks[i];
++	camss->num_pm_clks = i;
++	if (!camss->num_pm_clks)
+ 		return 0;
+ 
+-	if (IS_ENABLED(CONFIG_PM_CLK)) {
+-		ret = devm_pm_clk_create(dev);
+-		if (ret)
+-			return ret;
+-	}
++	ret = devm_clk_bulk_get(dev, camss->num_pm_clks, camss->pm_clks);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to get shared CAMSS clocks\n");
+ 
+-	for (i = 0; i < CAMSS_RES_MAX && camss->res->pm_clks[i]; i++) {
+-		if (IS_ENABLED(CONFIG_PM_CLK))
+-			ret = pm_clk_add(dev, camss->res->pm_clks[i]);
+-		else
+-			ret = PTR_ERR_OR_ZERO(devm_clk_get_enabled(dev, camss->res->pm_clks[i]));
+-		if (ret)
+-			return dev_err_probe(dev, ret, "failed to set up pm clock %s\n",
+-					     camss->res->pm_clks[i]);
+-	}
++	ret = devm_add_action_or_reset(dev, camss_disable_pm_clks, camss);
++	if (ret)
++		return ret;
+ 
++	if (!IS_ENABLED(CONFIG_PM))
++		return camss_enable_pm_clks(camss);
+ 	return 0;
+ }
+ 
+@@ -6631,49 +6647,67 @@ static const struct of_device_id camss_dt_match[] = {
+ 
+ MODULE_DEVICE_TABLE(of, camss_dt_match);
+ 
+-static int __maybe_unused camss_runtime_suspend(struct device *dev)
++static int camss_set_icc_path_bw(struct camss *camss, unsigned int i, bool enable)
+ {
+-	struct camss *camss = dev_get_drvdata(dev);
+-	int i;
+-	int ret;
++	const struct icc_bw_tbl *bw = &camss->res->icc_res[i].icc_bw_tbl;
++
++	return icc_set_bw(camss->icc_path[i], enable ? bw->avg : 0,
++			  enable ? bw->peak : 0);
++}
++
++static int camss_set_icc_bw(struct camss *camss, bool enable)
++{
++	unsigned int i;
++	int ret, restore_ret;
+ 
+ 	for (i = 0; i < camss->res->icc_path_num; i++) {
+-		ret = icc_set_bw(camss->icc_path[i], 0, 0);
++		ret = camss_set_icc_path_bw(camss, i, enable);
+ 		if (ret)
+-			return ret;
++			goto restore;
+ 	}
+ 
+-#if IS_ENABLED(CONFIG_PM_CLK)
+-	return pm_clk_suspend(dev);
+-#else
+ 	return 0;
+-#endif
++
++restore:
++	/* The interconnect core already restores the request that failed. */
++	while (i > 0) {
++		i--;
++		restore_ret = camss_set_icc_path_bw(camss, i, !enable);
++		if (restore_ret)
++			dev_err(camss->dev, "failed to restore interconnect %s: %d\n",
++				camss->res->icc_res[i].name, restore_ret);
++	}
++	return ret;
+ }
+ 
+-static int __maybe_unused camss_runtime_resume(struct device *dev)
++static int __maybe_unused camss_runtime_suspend(struct device *dev)
+ {
+ 	struct camss *camss = dev_get_drvdata(dev);
+-	const struct resources_icc *icc_res = camss->res->icc_res;
+-	int i;
+ 	int ret;
+ 
+-#if IS_ENABLED(CONFIG_PM_CLK)
+-	ret = pm_clk_resume(dev);
++	ret = camss_set_icc_bw(camss, false);
+ 	if (ret)
+ 		return ret;
+-#endif
+-
+-	for (i = 0; i < camss->res->icc_path_num; i++) {
+-		ret = icc_set_bw(camss->icc_path[i],
+-				 icc_res[i].icc_bw_tbl.avg,
+-				 icc_res[i].icc_bw_tbl.peak);
+-		if (ret)
+-			return ret;
+-	}
+ 
++	camss_disable_pm_clks(camss);
+ 	return 0;
+ }
+ 
++static int __maybe_unused camss_runtime_resume(struct device *dev)
++{
++	struct camss *camss = dev_get_drvdata(dev);
++	int ret;
++
++	ret = camss_enable_pm_clks(camss);
++	if (ret)
++		return ret;
++
++	ret = camss_set_icc_bw(camss, true);
++	if (ret)
++		camss_disable_pm_clks(camss);
++	return ret;
++}
++
+ static int __maybe_unused camss_suspend(struct device *dev)
+ {
+ 	struct camss *camss = dev_get_drvdata(dev);
+diff --git a/drivers/media/platform/qcom/camss/camss.h b/drivers/media/platform/qcom/camss/camss.h
+index 78cf32c895..115c50cd56 100644
+--- a/drivers/media/platform/qcom/camss/camss.h
++++ b/drivers/media/platform/qcom/camss/camss.h
+@@ -10,6 +10,7 @@
+ #ifndef QC_MSM_CAMSS_H
+ #define QC_MSM_CAMSS_H
+ 
++#include <linux/clk.h>
+ #include <linux/device.h>
+ #include <linux/types.h>
+ #include <media/v4l2-async.h>
+@@ -144,6 +145,9 @@ struct camss {
+ 	int genpd_num;
+ 	struct device *genpd;
+ 	struct device_link *genpd_link;
++	struct clk_bulk_data pm_clks[CAMSS_RES_MAX];
++	unsigned int num_pm_clks;
++	bool pm_clks_enabled;
+ 	struct icc_path *icc_path[ICC_SM8250_COUNT];
+ 	const struct camss_resources *res;
+ 	bool legacy_phy;
+-- 
+2.55.0
+

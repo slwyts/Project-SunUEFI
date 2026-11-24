@@ -1,0 +1,122 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@tuta.io>
+Date: Wed, 18 Nov 2026 03:10:00 +0800
+Subject: power: supply: reject mismatched MCA property replies
+
+Match the response type, opcode and wire property to the outstanding request before completing it. A same-sequence reply for another operation must not acknowledge a charger setting or supply unrelated read data.
+
+Exercise mismatched replies before valid read and write responses in the actual driver KUnit transport.
+
+Signed-off-by: slwyts <slwyts@tuta.io>
+---
+ drivers/power/supply/piano_mca.c      |  8 +++++
+ drivers/power/supply/piano_mca_test.c | 42 +++++++++++++++++++++++++++
+ 2 files changed, 50 insertions(+)
+
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index 61b9df866a79e2598387287c0873113f0efac065..a1338c61c5b9a0f6ffcaacc5dd6c56df33d89882 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -595,6 +595,8 @@ struct piano_mca {
+ 	bool policy_suspended;
+ 	struct completion ack;
+ 	u32 seq;
++	u32 request_opcode;
++	u32 request_property;
+ 	bool service_up;
+ 	int retcode;
+ 	u8 data[MCA_DATA_LEN];
+@@ -811,6 +813,10 @@ static void piano_mca_callback(const void *data, size_t len, void *priv)
+ 			le32_to_cpu(resp->seq), mca->seq);
+ 		return;
+ 	}
++	if (le32_to_cpu(resp->type) != PMIC_GLINK_REQ_RESP ||
++	    le32_to_cpu(resp->opcode) != mca->request_opcode ||
++	    le32_to_cpu(resp->property) != mca->request_property)
++		return;
+ 
+ 	mca->retcode = le32_to_cpu(resp->retcode);
+ 	if (!mca->retcode && le32_to_cpu(resp->opcode) == MCA_OP_READ)
+@@ -987,6 +993,8 @@ static int piano_mca_xfer(struct piano_mca *mca, u32 opcode, u32 prop,
+ 		goto out;
+ 	}
+ 
++	mca->request_opcode = le32_to_cpu(req.opcode);
++	mca->request_property = le32_to_cpu(req.property);
+ 	mca->seq++;
+ 	req.seq = cpu_to_le32(mca->seq);
+ 	reinit_completion(&mca->ack);
+diff --git a/drivers/power/supply/piano_mca_test.c b/drivers/power/supply/piano_mca_test.c
+index bafc4de27f869b3b4d7c9b064e486f3d126ee6d3..7b79362b5b3bc5f8b0787a01a0ce66b82808b8ae 100644
+--- a/drivers/power/supply/piano_mca_test.c
++++ b/drivers/power/supply/piano_mca_test.c
+@@ -169,6 +169,8 @@ struct piano_mca_test {
+ 	int cp_current_ua;
+ 	int cp_temp;
+ 	int cp_read_error_property;
++	unsigned int mismatched_response;
++	bool mismatched_ack;
+ };
+ 
+ static void piano_mca_test_work(struct work_struct *work)
+@@ -511,6 +513,24 @@ static int piano_mca_test_send(struct pmic_glink_client *client, void *data,
+ 	}
+ 
+ 	/* Exercise actual length, sequence, reply copy and completion handling. */
++	if (fixture->mismatched_response) {
++		struct mca_resp bad = response;
++
++		switch (fixture->mismatched_response) {
++		case 1:
++			bad.type = cpu_to_le32(PMIC_GLINK_REQ_RESP + 2);
++			break;
++		case 2:
++			bad.opcode = cpu_to_le32(le32_to_cpu(request->opcode) ^ 1);
++			break;
++		case 3:
++			bad.property = cpu_to_le32(property ^ 1);
++			break;
++		}
++		memset(bad.data, 0xa5, sizeof(bad.data));
++		piano_mca_callback(&bad, sizeof(bad), &fixture->mca);
++		fixture->mismatched_ack = completion_done(&fixture->mca.ack);
++	}
+ 	piano_mca_callback(&response, sizeof(response), &fixture->mca);
+ 	return 0;
+ }
+@@ -2994,6 +3014,27 @@ static int piano_mca_full_prepare(struct kunit *test)
+ 	return 0;
+ }
+ 
++static void piano_mca_response_identity_test(struct kunit *test)
++{
++	struct piano_mca_test *f = test->priv;
++	__le32 value;
++	int kind;
++
++	KUNIT_ASSERT_EQ(test, piano_mca_api_prepare(test), 0);
++	for (kind = 1; kind <= 3; kind++) {
++		f->mismatched_response = kind;
++		f->mismatched_ack = true;
++		KUNIT_ASSERT_EQ(test, piano_mca_read(&f->mca, MCA_PROP_BUS_VOLT,
++			&value, sizeof(value)), 0);
++		KUNIT_EXPECT_FALSE(test, f->mismatched_ack);
++		KUNIT_EXPECT_EQ(test, le32_to_cpu(value), f->vbus_uv);
++		f->mismatched_ack = true;
++		KUNIT_ASSERT_EQ(test, piano_mca_write_u32_session(&f->mca,
++			MCA_PROP_FCC, 0, f->remote_generation, 0), 0);
++		KUNIT_EXPECT_FALSE(test, f->mismatched_ack);
++	}
++}
++
+ static void piano_mca_short_notification_test(struct kunit *test)
+ {
+ 	struct piano_mca_test *f = test->priv;
+@@ -4338,6 +4379,7 @@ static void piano_mca_cp_entry_gate_test(struct kunit *test)
+ }
+ 
+ static struct kunit_case piano_mca_test_cases[] = {
++	KUNIT_CASE(piano_mca_response_identity_test),
+ 	KUNIT_CASE(piano_mca_short_notification_test),
+ 	KUNIT_CASE(piano_mca_inhibit_does_not_create_full_test),
+ 	KUNIT_CASE(piano_mca_auto_preserves_real_full_test),

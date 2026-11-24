@@ -1,0 +1,144 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Fri, 20 Nov 2026 20:58:07 +0800
+Subject: [PATCH] media: videobuf2: share the mapped DMA contiguous prefix
+ check
+
+The DMA-contig allocator's import paths walk the mapped scatter-gather
+list to check how much of the buffer the hardware can address from one
+base address. A driver using the DMA-SG allocator needs the same check
+when its hardware only accepts one address per plane.
+
+Move the DMA-contig allocator's scan to the common VB2 memory helpers.
+Stop after the requested size, reject an empty table, and stop at an
+invalid or overflowing segment. Limiting the scan also leaves unused
+tail segments out of the decision.
+
+Both DMA allocator configurations already select VIDEOBUF2_MEMOPS.
+
+Link: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/drivers/media/common/videobuf2/videobuf2-dma-contig.c?id=65e4fd942f72a9dba0e4e257290c4fa1aa756854
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ .../common/videobuf2/videobuf2-dma-contig.c   | 24 +-----------
+ .../media/common/videobuf2/videobuf2-memops.c | 39 +++++++++++++++++++
+ include/media/videobuf2-memops.h              |  4 ++
+ 3 files changed, 45 insertions(+), 22 deletions(-)
+
+diff --git a/drivers/media/common/videobuf2/videobuf2-dma-contig.c b/drivers/media/common/videobuf2/videobuf2-dma-contig.c
+index 9ce6284cd5f266c5c6993c1f3fc68446ff1494d8..898145c5929954daac99a1c4c9c1dbad7599ada3 100644
+--- a/drivers/media/common/videobuf2/videobuf2-dma-contig.c
++++ b/drivers/media/common/videobuf2/videobuf2-dma-contig.c
+@@ -46,26 +46,6 @@ struct vb2_dc_buf {
+ 	bool				non_coherent_mem;
+ };
+ 
+-/*********************************************/
+-/*        scatterlist table functions        */
+-/*********************************************/
+-
+-static unsigned long vb2_dc_get_contiguous_size(struct sg_table *sgt)
+-{
+-	struct scatterlist *s;
+-	dma_addr_t expected = sg_dma_address(sgt->sgl);
+-	unsigned int i;
+-	unsigned long size = 0;
+-
+-	for_each_sgtable_dma_sg(sgt, s, i) {
+-		if (sg_dma_address(s) != expected)
+-			break;
+-		expected += sg_dma_len(s);
+-		size += sg_dma_len(s);
+-	}
+-	return size;
+-}
+-
+ /*********************************************/
+ /*         callbacks for all buffers         */
+ /*********************************************/
+@@ -649,7 +629,7 @@ static void *vb2_dc_get_userptr(struct vb2_buffer *vb, struct device *dev,
+ 		goto fail_sgt_init;
+ 	}
+ 
+-	contig_size = vb2_dc_get_contiguous_size(sgt);
++	contig_size = vb2_dma_contiguous_prefix(sgt, size);
+ 	if (contig_size < size) {
+ 		pr_err("contiguous mapping is too small %lu/%lu\n",
+ 			contig_size, size);
+@@ -712,7 +692,7 @@ static int vb2_dc_map_dmabuf(void *mem_priv)
+ 	}
+ 
+ 	/* checking if dmabuf is big enough to store contiguous chunk */
+-	contig_size = vb2_dc_get_contiguous_size(sgt);
++	contig_size = vb2_dma_contiguous_prefix(sgt, buf->size);
+ 	if (contig_size < buf->size) {
+ 		pr_err("contiguous chunk is too small %lu/%lu\n",
+ 		       contig_size, buf->size);
+diff --git a/drivers/media/common/videobuf2/videobuf2-memops.c b/drivers/media/common/videobuf2/videobuf2-memops.c
+index f9a4ec44422eb36ffe9c1a9758b7d71d8c9dcb9a..ea74df5cdf37ef1f6745ea9d51f7fa31c3684a92 100644
+--- a/drivers/media/common/videobuf2/videobuf2-memops.c
++++ b/drivers/media/common/videobuf2/videobuf2-memops.c
+@@ -18,10 +18,49 @@
+ #include <linux/mm.h>
+ #include <linux/sched.h>
+ #include <linux/file.h>
++#include <linux/overflow.h>
+ 
+ #include <media/videobuf2-v4l2.h>
+ #include <media/videobuf2-memops.h>
+ 
++/**
++ * vb2_dma_contiguous_prefix() - Count DMA-contiguous bytes in a mapped table
++ * @sgt: DMA-mapped scatter-gather table
++ * @limit: Maximum number of bytes to inspect
++ *
++ * Return the number of contiguous bytes from the first DMA address, up to
++ * @limit. Stop at the first gap, zero-length entry or DMA address overflow.
++ */
++unsigned long vb2_dma_contiguous_prefix(const struct sg_table *sgt,
++				       unsigned long limit)
++{
++	unsigned long size = 0;
++	struct scatterlist *sg;
++	dma_addr_t expected;
++	unsigned int i;
++
++	if (!sgt || !sgt->sgl || !sgt->nents)
++		return 0;
++
++	expected = sg_dma_address(sgt->sgl);
++	for_each_sgtable_dma_sg(sgt, sg, i) {
++		unsigned long len = min_t(unsigned long, sg_dma_len(sg),
++					  limit - size);
++		dma_addr_t last;
++
++		if (!len || sg_dma_address(sg) != expected ||
++		    check_add_overflow(expected, len - 1, &last))
++			break;
++
++		size += len;
++		if (size == limit || check_add_overflow(last, 1, &expected))
++			break;
++	}
++
++	return size;
++}
++EXPORT_SYMBOL_GPL(vb2_dma_contiguous_prefix);
++
+ /**
+  * vb2_create_framevec() - map virtual addresses to pfns
+  * @start:	Virtual user address where we start mapping
+diff --git a/include/media/videobuf2-memops.h b/include/media/videobuf2-memops.h
+index 4b5b84f93538ed4cc808dbc6cfdf18a448a5abab..2f92bebebb0f619956c4cec7413477e147275652 100644
+--- a/include/media/videobuf2-memops.h
++++ b/include/media/videobuf2-memops.h
+@@ -33,6 +33,10 @@ struct vb2_vmarea_handler {
+ 
+ extern const struct vm_operations_struct vb2_common_vm_ops;
+ 
++struct sg_table;
++unsigned long vb2_dma_contiguous_prefix(const struct sg_table *sgt,
++				       unsigned long limit);
++
+ struct frame_vector *vb2_create_framevec(unsigned long start,
+ 					 unsigned long length,
+ 					 bool write);

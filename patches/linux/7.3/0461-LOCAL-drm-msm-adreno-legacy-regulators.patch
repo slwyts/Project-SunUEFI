@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Sat, 21 Nov 2026 00:25:32 +0800
+Subject: [PATCH] drm/msm/adreno: Acquire legacy regulators only for A2xx
+ through A5xx
+
+Only the A2xx through A5xx power callbacks access the vdd and vddcx
+regulator handles. GMU-based GPUs use their power domains and should
+not request dummy supplies from the GPU device.
+
+Move the requests to the legacy generation path and preserve handling
+of absent supplies for the generations that use them.
+
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/gpu/drm/msm/adreno/adreno_gpu.c | 14 ++++++++++++++
+ drivers/gpu/drm/msm/msm_gpu.c           | 11 -----------
+ 2 files changed, 14 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/adreno/adreno_gpu.c b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+index 5832dc25d..a7ed66b4d 100644
+--- a/drivers/gpu/drm/msm/adreno/adreno_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+@@ -13,6 +13,7 @@
+ #include <linux/kernel.h>
+ #include <linux/of_reserved_mem.h>
+ #include <linux/pm_opp.h>
++#include <linux/regulator/consumer.h>
+ #include <linux/slab.h>
+ #include <linux/soc/qcom/mdt_loader.h>
+ #include <linux/nvmem-consumer.h>
+@@ -1248,6 +1249,19 @@ int adreno_gpu_init(struct drm_device *drm, struct platform_device *pdev,
+ 		adreno_gpu->info->inactive_period);
+ 	pm_runtime_use_autosuspend(dev);
+ 
++	/* Only the pre-GMU runtime PM callbacks use these regulators. */
++	if (adreno_gpu->info->family < ADRENO_6XX_GEN1) {
++		gpu->gpu_reg = devm_regulator_get(dev, "vdd");
++		DBG("gpu_reg: %p", gpu->gpu_reg);
++		if (IS_ERR(gpu->gpu_reg))
++			gpu->gpu_reg = NULL;
++
++		gpu->gpu_cx = devm_regulator_get(dev, "vddcx");
++		DBG("gpu_cx: %p", gpu->gpu_cx);
++		if (IS_ERR(gpu->gpu_cx))
++			gpu->gpu_cx = NULL;
++	}
++
+ 	return msm_gpu_init(drm, pdev, &adreno_gpu->base, &funcs->base,
+ 			gpu_name, &adreno_gpu_config);
+ }
+diff --git a/drivers/gpu/drm/msm/msm_gpu.c b/drivers/gpu/drm/msm/msm_gpu.c
+index 0c2c35636..ee6bdeb18 100644
+--- a/drivers/gpu/drm/msm/msm_gpu.c
++++ b/drivers/gpu/drm/msm/msm_gpu.c
+@@ -955,17 +955,6 @@ int msm_gpu_init(struct drm_device *drm, struct platform_device *pdev,
+ 	if (IS_ERR(gpu->ebi1_clk))
+ 		gpu->ebi1_clk = NULL;
+ 
+-	/* Acquire regulators: */
+-	gpu->gpu_reg = devm_regulator_get(&pdev->dev, "vdd");
+-	DBG("gpu_reg: %p", gpu->gpu_reg);
+-	if (IS_ERR(gpu->gpu_reg))
+-		gpu->gpu_reg = NULL;
+-
+-	gpu->gpu_cx = devm_regulator_get(&pdev->dev, "vddcx");
+-	DBG("gpu_cx: %p", gpu->gpu_cx);
+-	if (IS_ERR(gpu->gpu_cx))
+-		gpu->gpu_cx = NULL;
+-
+ 	platform_set_drvdata(pdev, &gpu->adreno_smmu);
+ 
+ 	msm_devfreq_init(gpu);

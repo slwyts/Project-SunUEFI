@@ -1,0 +1,63 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Sat, 21 Nov 2026 00:17:34 +0800
+Subject: [PATCH] pinctrl: qcom: spmi-gpio: Disable high-impedance pins without
+ rewriting their configuration
+
+A request for high impedance only needs to clear the master enable bit. The full pin configuration path rewrites mode, pull and digital input and output settings even if the pin is already disabled. The PMIH010x on Piano rejects those unrelated writes for its charger thermistor input.
+
+Use a masked read-modify-write of the master enable bit for a standalone high-impedance request. Skip the write when the register already reports the requested state, and propagate errors when hardware still needs to change. Leave combined requests on the existing path.
+
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/pinctrl/qcom/pinctrl-spmi-gpio.c | 29 ++++++++++++++++++++++++
+ 1 file changed, 29 insertions(+)
+
+diff --git a/drivers/pinctrl/qcom/pinctrl-spmi-gpio.c b/drivers/pinctrl/qcom/pinctrl-spmi-gpio.c
+index 530d7eb7f..5d7a51e1c 100644
+--- a/drivers/pinctrl/qcom/pinctrl-spmi-gpio.c
++++ b/drivers/pinctrl/qcom/pinctrl-spmi-gpio.c
+@@ -476,6 +476,31 @@ static int pmic_gpio_config_get(struct pinctrl_dev *pctldev,
+ 	return 0;
+ }
+ 
++static int pmic_gpio_set_high_impedance(struct pmic_gpio_state *state,
++				      struct pmic_gpio_pad *pad)
++{
++	unsigned int mask = BIT(PMIC_GPIO_REG_MASTER_EN_SHIFT);
++	bool changed;
++	int ret;
++
++	/* Leave the electrical configuration intact when disabling the pad. */
++	ret = regmap_update_bits_check(state->map, pad->base + PMIC_GPIO_REG_EN_CTL,
++				       mask, 0, &changed);
++	if (ret)
++		return ret;
++
++	if (changed) {
++		ret = pmic_gpio_read(state, pad, PMIC_GPIO_REG_EN_CTL);
++		if (ret < 0)
++			return ret;
++		if (ret & mask)
++			return -EIO;
++	}
++
++	pad->is_enabled = false;
++	return 0;
++}
++
+ static int pmic_gpio_config_set(struct pinctrl_dev *pctldev, unsigned int pin,
+ 				unsigned long *configs, unsigned nconfs)
+ {
+@@ -487,6 +512,10 @@ static int pmic_gpio_config_set(struct pinctrl_dev *pctldev, unsigned int pin,
+ 
+ 	pad = pctldev->desc->pins[pin].drv_data;
+ 
++	if (nconfs == 1 &&
++	    pinconf_to_config_param(configs[0]) == PIN_CONFIG_BIAS_HIGH_IMPEDANCE)
++		return pmic_gpio_set_high_impedance(state, pad);
++
+ 	pad->is_enabled = true;
+ 	for (i = 0; i < nconfs; i++) {
+ 		param = pinconf_to_config_param(configs[i]);

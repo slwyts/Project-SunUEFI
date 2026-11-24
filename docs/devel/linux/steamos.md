@@ -324,7 +324,7 @@ PRM 延迟探测，不再忽略回复直到五秒超时。其他 DSP 错误保�
 
 进一步实机对照将触发点定位到 VA 麦克风设备的 runtime suspend：
 7.3 的 PM-clock 转换会释放最后两路共享核心投票，随后出现 ADSP watchdog；
-保持这两路投票时，录音结束和设备空闲均正常。`0013` 仅为 SM8750 保留
+保持这两路投票时，录音结束和设备空闲均正常。[麦克风时钟补丁](../../../patches/linux/7.3/0333-LOCAL-asoc-va-sm8750-core-votes.patch)仅为 SM8750 保留
 `LPASS_HW_MACRO_VOTE`、`LPASS_HW_DCODEC_VOTE` 的注册期引用，采样时钟仍由
 runtime PM 管理，探测失败和移除时归还引用。其他型号保持原来的行为。
 这修正了已复现的触发条件，不代表长期稳定性或待机功耗已经测完。

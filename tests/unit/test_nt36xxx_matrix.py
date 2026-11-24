@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-PATCH = ROOT / 'patches/linux/7.3/0224-LOCAL-input-nt36532e-matrix.patch'
+PATCH = ROOT / 'patches/linux/7.3/0399-LOCAL-input-nt36532e-matrix.patch'
 SOURCE = Path('drivers/input/touchscreen/nt36532e')
 
 # Only kernel platform helpers are replaced. The decoder and integer square

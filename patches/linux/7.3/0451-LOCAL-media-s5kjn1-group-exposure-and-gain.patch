@@ -1,0 +1,245 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@tuta.io>
+Date: Fri, 20 Nov 2026 13:20:29 +0800
+Subject: media: i2c: s5kjn1: Apply exposure and analogue gain together
+
+Applications can supply exposure and analogue gain in one V4L2 control
+request. Cluster the two controls and write them under the sensor's
+group hold so they do not latch separately. The Xiaomi Pad 8 Pro's
+OS4.0.6.0 S5KJN1 FillExposureSettings sequence uses the same 0x0104
+hold and release writes.
+
+Always attempt to release the hold, including after a failed data
+write. When a shorter frame needs an exposure adjustment, use the
+same cluster and leave the old exposure range on error. If the
+adjustment succeeds but the frame length write fails, keep the shorter
+exposure and the old range. Do not attempt to undo a sensor write
+whose completion is unknown.
+
+Exercise clustered and single controls, controls cached while stopped,
+CCI error handling, and frame length retry with the ARM64 V4L2 core and
+a test register bus.
+
+Following a failed group-hold, exposure, gain or frame-length write,
+require a new stream start before accepting live updates. The next
+start reprograms the mode before applying the cached controls.
+The recovery change was contributed by Cryolitia PukNgae <cryolitia@gmail.com>.
+
+Assisted-by: LLM
+Link: https://github.com/slwyts/Project-SunUEFI/commit/8225035cb676ae83298c7638861ecb23bba7fedb
+Signed-off-by: slwyts <slwyts@tuta.io>
+Co-developed-by: Cryolitia PukNgae <cryolitia@gmail.com>
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+---
+ drivers/media/i2c/s5kjn1.c | 114 +++++++++++++++++++++++++------------
+ 1 file changed, 78 insertions(+), 36 deletions(-)
+
+diff --git a/drivers/media/i2c/s5kjn1.c b/drivers/media/i2c/s5kjn1.c
+index 7fa76f12f6a68d34b5b16995bfca9c54131fba8b..09d97a45067c2cc98c125800583ba59a40b6b932 100644
+--- a/drivers/media/i2c/s5kjn1.c
++++ b/drivers/media/i2c/s5kjn1.c
+@@ -31,6 +31,8 @@
+ #define S5KJN1_VFLIP			BIT(1)
+ #define S5KJN1_HFLIP			BIT(0)
+ 
++#define S5KJN1_REG_GROUP_HOLD		CCI_REG8(0x0104)
++
+ #define S5KJN1_REG_EXPOSURE		CCI_REG16(0x0202)
+ #define S5KJN1_EXPOSURE_MIN		8
+ #define S5KJN1_EXPOSURE_STEP		1
+@@ -92,6 +94,12 @@ static const char * const s5kjn1_test_pattern_menu[] = {
+ 	"PN9",
+ };
+ 
++enum {
++	S5KJN1_EXPOSURE_CTRL,
++	S5KJN1_AGAIN_CTRL,
++	S5KJN1_NUM_EXPOSURE_CTRLS,
++};
++
+ struct s5kjn1 {
+ 	struct device *dev;
+ 	struct regmap *regmap;
+@@ -110,7 +118,7 @@ struct s5kjn1 {
+ 	struct v4l2_ctrl *pixel_rate;
+ 	struct v4l2_ctrl *hblank;
+ 	struct v4l2_ctrl *vblank;
+-	struct v4l2_ctrl *exposure;
++	struct v4l2_ctrl *exposure_ctrls[S5KJN1_NUM_EXPOSURE_CTRLS];
+ 	struct v4l2_ctrl *vflip;
+ 	struct v4l2_ctrl *hflip;
+ 	unsigned long mclk_rate;
+@@ -121,6 +129,7 @@ struct s5kjn1 {
+ 
+ 	const struct s5kjn1_mode *mode;
+ 	bool mode_programmed;
++	bool controls_need_reinit;
+ 	bool stream_pm_held;	/* The one reference acquired for privacy capture. */
+ };
+ 
+@@ -753,47 +762,77 @@ static const struct s5kjn1_mode s5kjn1_supported_modes[] = {
+ 
+ #include "s5kjn1-piano.h"
+ 
++static int s5kjn1_set_exposure_gain(struct s5kjn1 *s5kjn1)
++{
++	struct v4l2_ctrl **ctrls = s5kjn1->exposure_ctrls;
++	int ret = 0, release_ret;
++
++	cci_write(s5kjn1->regmap, S5KJN1_REG_GROUP_HOLD, 1, &ret);
++	cci_write(s5kjn1->regmap, S5KJN1_REG_EXPOSURE,
++		  ctrls[S5KJN1_EXPOSURE_CTRL]->val, &ret);
++	cci_write(s5kjn1->regmap, S5KJN1_REG_AGAIN,
++		  ctrls[S5KJN1_AGAIN_CTRL]->val << S5KJN1_AGAIN_SHIFT, &ret);
++
++	/* A failed write must not prevent releasing the hold. */
++	release_ret = cci_write(s5kjn1->regmap, S5KJN1_REG_GROUP_HOLD, 0, NULL);
++	if (ret || release_ret)
++		s5kjn1->controls_need_reinit = true;
++
++	return ret ?: release_ret;
++}
++
++static int s5kjn1_set_vblank(struct s5kjn1 *s5kjn1, s32 vblank)
++{
++	struct v4l2_ctrl *exposure = s5kjn1->exposure_ctrls[S5KJN1_EXPOSURE_CTRL];
++	const struct s5kjn1_mode *mode = s5kjn1->mode;
++	u32 vts = mode->height + vblank;
++	s32 max_exposure = vts - mode->exposure_margin;
++	int ret;
++
++	/* Shorten the exposure, if necessary, before shortening the frame. */
++	if (exposure->cur.val > max_exposure) {
++		ret = __v4l2_ctrl_s_ctrl(exposure, max_exposure);
++		if (ret)
++			return ret;
++	}
++
++	if (s5kjn1->mode_programmed) {
++		ret = cci_write(s5kjn1->regmap, S5KJN1_REG_VTS, vts, NULL);
++		if (ret) {
++			s5kjn1->controls_need_reinit = true;
++			return ret;
++		}
++	}
++
++	return __v4l2_ctrl_modify_range(exposure, exposure->minimum, max_exposure,
++					exposure->step, mode->exposure);
++}
++
+ static int s5kjn1_set_ctrl(struct v4l2_ctrl *ctrl)
+ {
+ 	struct s5kjn1 *s5kjn1 = container_of(ctrl->handler, struct s5kjn1,
+ 					     ctrl_handler);
+-	const struct s5kjn1_mode *mode = s5kjn1->mode;
+-	s64 exposure_max;
+ 	int pm, ret;
+ 
+-	/* Propagate change of current control to all related controls */
+-	switch (ctrl->id) {
+-	case V4L2_CID_VBLANK:
+-		/* Update max exposure while meeting expected vblanking */
+-		exposure_max = mode->height + ctrl->val - mode->exposure_margin;
+-		__v4l2_ctrl_modify_range(s5kjn1->exposure,
+-					 s5kjn1->exposure->minimum,
+-					 exposure_max,
+-					 s5kjn1->exposure->step,
+-					 mode->exposure);
+-		break;
+-	}
+-
+ 	/* A powered sensor can still contain the previous mode's registers. */
+ 	if (!s5kjn1->mode_programmed)
+-		return 0;
++		return ctrl->id == V4L2_CID_VBLANK ?
++		       s5kjn1_set_vblank(s5kjn1, ctrl->val) : 0;
++
++	/* A failed group update may have changed only some of the registers. */
++	if (s5kjn1->controls_need_reinit)
++		return -EIO;
+ 
+ 	pm = pm_runtime_get_if_active(s5kjn1->dev);
+ 	if (IS_ENABLED(CONFIG_PM) && pm <= 0)
+ 		return pm ?: -EAGAIN;
+ 
+ 	switch (ctrl->id) {
+-	case V4L2_CID_ANALOGUE_GAIN:
+-		ret = cci_write(s5kjn1->regmap, S5KJN1_REG_AGAIN,
+-				ctrl->val << S5KJN1_AGAIN_SHIFT, NULL);
+-		break;
+ 	case V4L2_CID_EXPOSURE:
+-		ret = cci_write(s5kjn1->regmap, S5KJN1_REG_EXPOSURE,
+-				ctrl->val, NULL);
++		ret = s5kjn1_set_exposure_gain(s5kjn1);
+ 		break;
+ 	case V4L2_CID_VBLANK:
+-		ret = cci_write(s5kjn1->regmap, S5KJN1_REG_VTS,
+-				ctrl->val + mode->height, NULL);
++		ret = s5kjn1_set_vblank(s5kjn1, ctrl->val);
+ 		break;
+ 	case V4L2_CID_VFLIP:
+ 	case V4L2_CID_HFLIP:
+@@ -860,17 +899,17 @@ static int s5kjn1_init_controls(struct s5kjn1 *s5kjn1)
+ 					   S5KJN1_VTS_MAX - mode->height, 1,
+ 					   vblank);
+ 
+-	v4l2_ctrl_new_std(ctrl_hdlr, &s5kjn1_ctrl_ops, V4L2_CID_ANALOGUE_GAIN,
+-			  S5KJN1_AGAIN_MIN, S5KJN1_AGAIN_MAX,
+-			  S5KJN1_AGAIN_STEP, S5KJN1_AGAIN_DEFAULT);
++	s5kjn1->exposure_ctrls[S5KJN1_AGAIN_CTRL] =
++		v4l2_ctrl_new_std(ctrl_hdlr, &s5kjn1_ctrl_ops,
++				  V4L2_CID_ANALOGUE_GAIN, S5KJN1_AGAIN_MIN,
++				  S5KJN1_AGAIN_MAX, S5KJN1_AGAIN_STEP,
++				  S5KJN1_AGAIN_DEFAULT);
+ 
+ 	exposure_max = mode->vts - mode->exposure_margin;
+-	s5kjn1->exposure = v4l2_ctrl_new_std(ctrl_hdlr, &s5kjn1_ctrl_ops,
+-					     V4L2_CID_EXPOSURE,
+-					     S5KJN1_EXPOSURE_MIN,
+-					     exposure_max,
+-					     S5KJN1_EXPOSURE_STEP,
+-					     mode->exposure);
++	s5kjn1->exposure_ctrls[S5KJN1_EXPOSURE_CTRL] =
++		v4l2_ctrl_new_std(ctrl_hdlr, &s5kjn1_ctrl_ops, V4L2_CID_EXPOSURE,
++				  S5KJN1_EXPOSURE_MIN, exposure_max,
++				  S5KJN1_EXPOSURE_STEP, mode->exposure);
+ 
+ 	v4l2_ctrl_new_std_menu_items(ctrl_hdlr, &s5kjn1_ctrl_ops,
+ 				     V4L2_CID_TEST_PATTERN,
+@@ -896,6 +935,7 @@ static int s5kjn1_init_controls(struct s5kjn1 *s5kjn1)
+ 	if (ret)
+ 		goto error_free_hdlr;
+ 
++	v4l2_ctrl_cluster(ARRAY_SIZE(s5kjn1->exposure_ctrls), s5kjn1->exposure_ctrls);
+ 	s5kjn1->sd.ctrl_handler = ctrl_hdlr;
+ 
+ 	return 0;
+@@ -964,6 +1004,7 @@ static int s5kjn1_enable_streams(struct v4l2_subdev *sd,
+ 	if (ret)
+ 		goto error;
+ 
++	s5kjn1->controls_need_reinit = false;
+ 	s5kjn1->mode_programmed = true;
+ 	ret = __v4l2_ctrl_handler_setup(s5kjn1->sd.ctrl_handler);
+ 
+@@ -1035,6 +1076,7 @@ static int s5kjn1_set_pad_format(struct v4l2_subdev *sd,
+ 				 struct v4l2_subdev_format *fmt)
+ {
+ 	struct s5kjn1 *s5kjn1 = to_s5kjn1(sd);
++	struct v4l2_ctrl *exposure = s5kjn1->exposure_ctrls[S5KJN1_EXPOSURE_CTRL];
+ 	s64 hblank, vblank, exposure_max;
+ 	const struct s5kjn1_mode *mode;
+ 
+@@ -1066,10 +1108,10 @@ static int s5kjn1_set_pad_format(struct v4l2_subdev *sd,
+ 	__v4l2_ctrl_s_ctrl(s5kjn1->vblank, vblank);
+ 
+ 	exposure_max = mode->vts - mode->exposure_margin;
+-	__v4l2_ctrl_modify_range(s5kjn1->exposure, S5KJN1_EXPOSURE_MIN,
++	__v4l2_ctrl_modify_range(exposure, S5KJN1_EXPOSURE_MIN,
+ 				 exposure_max, S5KJN1_EXPOSURE_STEP,
+ 				 mode->exposure);
+-	__v4l2_ctrl_s_ctrl(s5kjn1->exposure, mode->exposure);
++	__v4l2_ctrl_s_ctrl(exposure, mode->exposure);
+ 
+ set_format:
+ 	*v4l2_subdev_state_get_format(state, 0) = fmt->format;

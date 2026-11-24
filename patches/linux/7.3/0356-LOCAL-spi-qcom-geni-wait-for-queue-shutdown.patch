@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Fri, 20 Nov 2026 20:55:00 +0800
+Subject: spi: qcom-geni: wait for the transfer queue to stop before shutdown
+
+The SPI core times out waiting for a busy queue. On GENI, error
+recovery can still be waiting for GPI termination at that point.
+Keep waiting rather than return from shutdown while DMA may still
+be active. The queued worker retains the transfer, mappings and
+runtime-PM reference while it confirms termination.
+
+Fixes: 3958b39fa5b7 ("spi: qcom-geni: Add shutdown callback to quiesce hardware on reboot")
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/spi/spi-geni-qcom.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/spi/spi-geni-qcom.c b/drivers/spi/spi-geni-qcom.c
+index 1d56bccbe6fdf91dd06c6da877c86c4b91ed5c94..1e6202cf5edf37e36de47b257a3e76871845fd32 100644
+--- a/drivers/spi/spi-geni-qcom.c
++++ b/drivers/spi/spi-geni-qcom.c
+@@ -1140,7 +1140,10 @@ static void spi_geni_shutdown(struct platform_device *pdev)
+ {
+ 	struct spi_controller *spi = platform_get_drvdata(pdev);
+ 
+-	spi_controller_suspend(spi);
++	/* Keep resources until queued transfers have stopped. */
++	while (spi_controller_suspend(spi))
++		dev_err_ratelimited(&pdev->dev,
++				    "SPI queue still busy; waiting before shutdown\n");
+ }
+ 
+ static int spi_geni_probe(struct platform_device *pdev)

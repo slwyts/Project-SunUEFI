@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Thu, 19 Nov 2026 09:13:34 +0800
+Subject: [PATCH] leds: flash: leds-qcom-flash: Fix safety timer encoding
+
+The MVFLASH safety timer encodes the first 10 ms period as zero in
+bits 6:0. Bit 7 separately enables the timer. The downstream PM8350C
+driver and the PMI8998 and PM8150L implementations use this encoding.
+
+The current calculation adds a period to an enabled timeout, except
+at the 1280 ms limit where clamping already produces the maximum code.
+Subtract one from the number of 10 ms periods when it is nonzero.
+Keep the enable decision based on the requested timeout: 10 ms sets
+bit 7 even though the duration field is zero, while torch mode still
+disables the timer.
+
+Fixes: 96a2e242a5dc ("leds: flash: Add driver to support flash LED module in QCOM PMICs")
+Link: https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/45fb9bd6ae5ba2942fc1d53e4b6b46ef76992f71/drivers/leds/leds-qti-flash.c#L245
+Link: https://github.com/OnePlusOSS/android_kernel_oneplus_msm8998/blob/e34b770a6350cab6bfd51d7b4c106b95b40b3dc5/drivers/leds/leds-qpnp-flash-v2.c#L101
+Link: https://github.com/OnePlusOSS/android_kernel_oneplus_sm8150/blob/74eb3cd94e7cd70bb8a3983148b298851ea35123/drivers/leds/leds-qpnp-flash-v2.c#L1570
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/leds/flash/leds-qcom-flash.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/leds/flash/leds-qcom-flash.c b/drivers/leds/flash/leds-qcom-flash.c
+index a51d7662a7c35cb7d60802a5543a44b1ca324dcc..91fce899544ff6efaee4ce5d2437845b11a7322a 100644
+--- a/drivers/leds/flash/leds-qcom-flash.c
++++ b/drivers/leds/flash/leds-qcom-flash.c
+@@ -398,6 +398,9 @@ static int set_flash_timeout(struct qcom_flash_led *led, u32 timeout_ms)
+ 		chan_id = led->chan_id[i];
+ 
+ 		timer = timeout_ms / FLASH_TIMER_STEP_MS;
++		/* The first 10 ms period is encoded as zero. */
++		if (timer)
++			timer--;
+ 		timer = clamp_t(u8, timer, 0, FLASH_TIMER_VAL_MASK);
+ 
+ 		if (timeout_ms)

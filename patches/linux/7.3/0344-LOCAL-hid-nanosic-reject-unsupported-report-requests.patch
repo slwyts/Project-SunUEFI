@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Thu, 22 Oct 2026 18:25:53 +0800
+Subject: HID: nanosic: reject unsupported HID report requests
+
+The MCU has no transport for HID feature and output reports. Return
+EOPNOTSUPP when asked for either, and suppress the touchpad feature
+queries after HID core has set the initial quirks. Input mapping
+can use the limits already provided by the descriptor.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/b5949f98afb60a23287052de5c3532a0567c2975
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/hid/hid-nanosic-wn8030.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/hid/hid-nanosic-wn8030.c b/drivers/hid/hid-nanosic-wn8030.c
+index 86ed4059e9aa250b740574afdf7bb4f385a9cd48..cff071e485d0ab9807d6191b9da53540dbe3df39 100644
+--- a/drivers/hid/hid-nanosic-wn8030.c
++++ b/drivers/hid/hid-nanosic-wn8030.c
+@@ -615,6 +615,10 @@ static int nanosic_wn8030_hid_parse(struct hid_device *hid)
+ 
+ static int nanosic_wn8030_hid_start(struct hid_device *hid)
+ {
++	/* HID core resets quirks before probe; set this before input mapping. */
++	if (hid->product == 0x00A1)
++		hid->quirks |= HID_QUIRK_NO_INIT_REPORTS;
++
+ 	return 0;
+ }
+ 
+@@ -637,7 +641,8 @@ static int nanosic_wn8030_raw_request(struct hid_device *hid,
+ 				      __u8 *buf, size_t len,
+ 				      unsigned char rtype, int reqtype)
+ {
+-	return len;
++	/* The MCU protocol has no HID feature/output report transport. */
++	return -EOPNOTSUPP;
+ }
+ 
+ static inline u32 nanosic_wn8030_checksum32(const u8 *data, int size)

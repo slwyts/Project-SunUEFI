@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: dt-bindings: display: msm: describe bonded DSI on Piano
+
+Describe the DPU resources used by the bonded panel links.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ .../bindings/display/msm/qcom,sm8650-dpu.yaml   | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/display/msm/qcom,sm8650-dpu.yaml b/Documentation/devicetree/bindings/display/msm/qcom,sm8650-dpu.yaml
+index aa0cf0ec5b93f61aeea98395f6095275e24e1ffb..cb315c53cbe92ada99146f546a8d2a99253a57a2 100644
+--- a/Documentation/devicetree/bindings/display/msm/qcom,sm8650-dpu.yaml
++++ b/Documentation/devicetree/bindings/display/msm/qcom,sm8650-dpu.yaml
+@@ -29,14 +29,18 @@ properties:
+           - const: qcom,sa8775p-dpu
+ 
+   reg:
++    minItems: 2
+     items:
+       - description: Address offset and size for mdp register set
+       - description: Address offset and size for vbif register set
++      - description: Optional REGDMA register set (SM8750)
+ 
+   reg-names:
++    minItems: 2
+     items:
+       - const: mdp
+       - const: vbif
++      - const: regdma
+ 
+   clocks:
+     items:
+@@ -54,6 +58,19 @@ properties:
+       - const: core
+       - const: vsync
+ 
++allOf:
++  - if:
++      properties:
++        compatible:
++          contains:
++            const: qcom,sm8750-dpu
++    else:
++      properties:
++        reg:
++          maxItems: 2
++        reg-names:
++          maxItems: 2
++
+ required:
+   - compatible
+   - reg

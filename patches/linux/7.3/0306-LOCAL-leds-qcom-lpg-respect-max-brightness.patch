@@ -1,0 +1,120 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Fri, 20 Nov 2026 20:54:18 +0800
+Subject: [PATCH] leds: qcom-lpg: keep the hardware PWM scale with a brightness
+ limit
+
+The LED class accepts the max-brightness property from firmware. LPG
+uses the class limit as the denominator when translating steady
+brightness to PWM duty cycle. A board limit of 4 would then request
+full-duty PWM at brightness 4.
+
+Use the hardware scale for conversion. Apply the board limit before
+setting the initial brightness, and use the LED core fallback for
+blinking and patterns when their hardware implementations would
+bypass the limit.
+
+Keep the Piano privacy indicator at the stock 4/255 duty fraction
+with the common LED provider binding.
+
+Link: https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/Documentation/devicetree/bindings/leds/common.yaml?id=d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd
+Link: https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/drivers/leds/led-class.c?id=d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+diff --git a/drivers/leds/rgb/leds-qcom-lpg.c b/drivers/leds/rgb/leds-qcom-lpg.c
+index 6eeaceb9ebe62a88891cfecd1cea19b4eabc1608..d0e91687af356230cde15b3d326b03d5e1c5268c 100644
+--- a/drivers/leds/rgb/leds-qcom-lpg.c
++++ b/drivers/leds/rgb/leds-qcom-lpg.c
+@@ -876,7 +876,13 @@ static int lpg_apply(struct lpg_channel *chan)
+ 	return lpg_enable_glitch(chan);
+ }
+ 
+-static int lpg_brightness_set(struct lpg_led *led, struct led_classdev *cdev,
++static unsigned int lpg_hw_max_brightness(const struct lpg *lpg)
++{
++	return lpg->lpg_chan_sdam ? PPG_MAX_LED_BRIGHTNESS :
++		LPG_RESOLUTION_9BIT - 1;
++}
++
++static int lpg_brightness_set(struct lpg_led *led,
+ 			       struct mc_subled *subleds)
+ {
+ 	enum led_brightness brightness;
+@@ -913,7 +919,9 @@ static int lpg_brightness_set(struct lpg_led *led, struct led_classdev *cdev,
+ 			if (ret)
+ 				return ret;
+ 
+-			duty = div_u64(brightness * chan->period, cdev->max_brightness);
++			/* A firmware brightness cap does not change the PWM scale. */
++			duty = div_u64((u64)brightness * chan->period,
++				       lpg_hw_max_brightness(lpg));
+ 			lpg_calc_duty(chan, duty);
+ 			chan->enabled = true;
+ 			chan->ramp_enabled = false;
+@@ -956,7 +964,7 @@ static int lpg_brightness_single_set(struct led_classdev *cdev,
+ 	mutex_lock(&led->lpg->lock);
+ 
+ 	info.brightness = value;
+-	ret = lpg_brightness_set(led, cdev, &info);
++	ret = lpg_brightness_set(led, &info);
+ 
+ 	mutex_unlock(&led->lpg->lock);
+ 
+@@ -973,7 +981,7 @@ static int lpg_brightness_mc_set(struct led_classdev *cdev,
+ 	mutex_lock(&led->lpg->lock);
+ 
+ 	led_mc_calc_color_components(mc, value);
+-	ret = lpg_brightness_set(led, cdev, mc->subled_info);
++	ret = lpg_brightness_set(led, mc->subled_info);
+ 
+ 	mutex_unlock(&led->lpg->lock);
+ 
+@@ -1256,7 +1264,7 @@ static int lpg_pattern_mc_set(struct led_classdev *cdev,
+ 		return ret;
+ 
+ 	led_mc_calc_color_components(mc, LED_FULL);
+-	lpg_brightness_set(led, cdev, mc->subled_info);
++	lpg_brightness_set(led, mc->subled_info);
+ 
+ 	return 0;
+ }
+@@ -1472,10 +1480,22 @@ static int lpg_add_led(struct lpg *lpg, struct device_node *np)
+ 	struct lpg_led *led;
+ 	const char *state;
+ 	int num_channels;
++	unsigned int hw_max_brightness = lpg_hw_max_brightness(lpg);
++	u32 max_brightness = hw_max_brightness;
+ 	u32 color = 0;
+ 	int ret;
+ 	int i;
+ 
++	if (of_property_present(np, "max-brightness")) {
++		ret = of_property_read_u32(np, "max-brightness", &max_brightness);
++		if (ret)
++			return dev_err_probe(lpg->dev, ret,
++					     "reading max-brightness of %pOF\n", np);
++		if (!max_brightness || max_brightness > hw_max_brightness)
++			return dev_err_probe(lpg->dev, -EINVAL,
++					     "invalid max-brightness of %pOF\n", np);
++	}
++
+ 	ret = of_property_read_u32(np, "color", &color);
+ 	if (ret < 0 && ret != -EINVAL)
+ 		return dev_err_probe(lpg->dev, ret,
+@@ -1538,10 +1558,13 @@ static int lpg_add_led(struct lpg *lpg, struct device_node *np)
+ 
+ 	cdev->default_trigger = of_get_property(np, "linux,default-trigger", NULL);
+ 
+-	if (lpg->lpg_chan_sdam)
+-		cdev->max_brightness = PPG_MAX_LED_BRIGHTNESS;
+-	else
+-		cdev->max_brightness = LPG_RESOLUTION_9BIT - 1;
++	cdev->max_brightness = max_brightness;
++	if (max_brightness < hw_max_brightness) {
++		/* Use software blinking and patterns to honor the steady limit. */
++		cdev->blink_set = NULL;
++		cdev->pattern_set = NULL;
++		cdev->pattern_clear = NULL;
++	}
+ 
+ 	if (!of_property_read_string(np, "default-state", &state) &&
+ 	    !strcmp(state, "on"))

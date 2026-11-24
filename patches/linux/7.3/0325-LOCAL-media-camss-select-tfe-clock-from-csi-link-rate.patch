@@ -1,0 +1,140 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@tuta.io>
+Date: Wed, 18 Nov 2026 22:50:24 +0800
+Subject: [PATCH] media: camss: select the TFE980 clock from the CSI link rate
+
+Use the link frequency, lane count and sink bus format for the input
+rate of full TFE980. Use the same estimate when validating clocks that
+are already running, and keep the pixel-rate fallback.
+
+Apply the existing pixel-rate calculation to the split VFE 980 backend.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/98bb62cb785a8e2c592859e14bb430e6ac0e6f35
+Signed-off-by: slwyts <slwyts@tuta.io>
+---
+ drivers/media/platform/qcom/camss/camss-vfe.c | 28 ++++++++++++---
+ drivers/media/platform/qcom/camss/camss.c     | 34 +++++++++++++++++++
+ drivers/media/platform/qcom/camss/camss.h     |  2 ++
+ 3 files changed, 60 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index 6040b82b53..ef211402bb 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -976,6 +976,28 @@ static bool vfe_check_clock_levels(struct camss_clock *clock)
+ 	return false;
+ }
+ 
++static int vfe_get_input_pixel_rate(struct vfe_device *vfe, unsigned int id,
++				    u64 *pixel_rate)
++{
++	struct vfe_line *line = &vfe->line[id];
++	struct media_entity *entity = &line->subdev.entity;
++
++	/*
++	 * Full TFE980 processes samples received from CSID. Size the vote
++	 * for D-PHY payload throughput, not the sensor's array sampling rate.
++	 * Keep the old estimate for transmitters without link frequency.
++	 */
++	if (vfe->camss->res->version == CAMSS_8750 && !vfe->res->is_lite) {
++		u8 bpp = camss_format_get_bpp(line->formats, line->nformats,
++					     line->fmt[MSM_VFE_PAD_SINK].code);
++
++		if (!camss_get_dphy_pixel_rate(entity, bpp, pixel_rate))
++			return 0;
++	}
++
++	return camss_get_pixel_clock(entity, pixel_rate);
++}
++
+ /*
+  * vfe_set_clock_rates - Calculate and set clock rates on VFE module
+  * @vfe: VFE device
+@@ -990,8 +1012,7 @@ static int vfe_set_clock_rates(struct vfe_device *vfe)
+ 	int ret;
+ 
+ 	for (i = VFE_LINE_RDI0; i < vfe->res->line_num; i++) {
+-		ret = camss_get_pixel_clock(&vfe->line[i].subdev.entity,
+-					    &pixel_clock[i]);
++		ret = vfe_get_input_pixel_rate(vfe, i, &pixel_clock[i]);
+ 		if (ret)
+ 			pixel_clock[i] = 0;
+ 	}
+@@ -1075,8 +1096,7 @@ static int vfe_check_clock_rates(struct vfe_device *vfe)
+ 	int ret;
+ 
+ 	for (i = VFE_LINE_RDI0; i < vfe->res->line_num; i++) {
+-		ret = camss_get_pixel_clock(&vfe->line[i].subdev.entity,
+-					    &pixel_clock[i]);
++		ret = vfe_get_input_pixel_rate(vfe, i, &pixel_clock[i]);
+ 		if (ret)
+ 			pixel_clock[i] = 0;
+ 	}
+diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
+index 610a34ccff..47b9518aea 100644
+--- a/drivers/media/platform/qcom/camss/camss.c
++++ b/drivers/media/platform/qcom/camss/camss.c
+@@ -16,6 +16,7 @@
+ #include <linux/of.h>
+ #include <linux/of_device.h>
+ #include <linux/of_graph.h>
++#include <linux/overflow.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/pm_domain.h>
+ #include <linux/pm_clock.h>
+@@ -5185,6 +5186,39 @@ s64 camss_get_link_freq(struct media_entity *entity, unsigned int bpp,
+ 	return v4l2_get_link_freq(sensor_pad, bpp, 2 * lanes);
+ }
+ 
++int camss_get_dphy_pixel_rate(struct media_entity *entity, unsigned int bpp,
++			      u64 *pixel_rate)
++{
++	struct media_pad *sensor_pad = camss_find_sensor_pad(entity);
++	struct csiphy_device *csiphy;
++	s64 link_freq;
++	u64 bit_rate;
++	int lanes;
++
++	if (!sensor_pad)
++		return -ENODEV;
++
++	csiphy = media_entity_to_v4l2_subdev(sensor_pad->entity)->host_priv;
++	if (!csiphy || !csiphy->cfg.csi2 || !bpp)
++		return -EINVAL;
++
++	lanes = v4l2_get_active_data_lanes(sensor_pad,
++					   csiphy->cfg.csi2->lane_cfg.num_data);
++	if (lanes <= 0)
++		return lanes ?: -EINVAL;
++
++	/* Do not turn the pixel-array rate back into a link frequency. */
++	link_freq = v4l2_get_link_freq(sensor_pad, 0, 0);
++	if (link_freq < 0)
++		return link_freq;
++
++	if (check_mul_overflow((u64)link_freq, 2 * lanes, &bit_rate))
++		return -ERANGE;
++
++	*pixel_rate = div_u64(bit_rate, bpp);
++	return 0;
++}
++
+ /*
+  * camss_get_pixel_clock - Get pixel clock rate from sensor
+  * @entity: Media entity in the current pipeline
+diff --git a/drivers/media/platform/qcom/camss/camss.h b/drivers/media/platform/qcom/camss/camss.h
+index 5c9eb1bca8..a8b070a429 100644
+--- a/drivers/media/platform/qcom/camss/camss.h
++++ b/drivers/media/platform/qcom/camss/camss.h
+@@ -175,6 +175,8 @@ void camss_disable_clocks(int nclocks, struct camss_clock *clock);
+ struct media_pad *camss_find_sensor_pad(struct media_entity *entity);
+ s64 camss_get_link_freq(struct media_entity *entity, unsigned int bpp,
+ 			unsigned int lanes);
++int camss_get_dphy_pixel_rate(struct media_entity *entity, unsigned int bpp,
++			      u64 *pixel_rate);
+ int camss_get_pixel_clock(struct media_entity *entity, u64 *pixel_clock);
+ int camss_pm_domain_on(struct camss *camss, int id);
+ void camss_pm_domain_off(struct camss *camss, int id);
+-- 
+2.55.0
+

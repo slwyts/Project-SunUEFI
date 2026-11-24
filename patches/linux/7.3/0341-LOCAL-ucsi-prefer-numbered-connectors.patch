@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Thu, 22 Oct 2026 11:52:43 +0800
+Subject: [PATCH] usb: typec: ucsi: prefer explicit connector numbers over
+ ordinal lookup
+
+PMIC GLINK can expose regulator resources before connector@0. The ordinal fallback currently selects that unrelated child before examining the explicit reg index, so orientation is reported but no physical switch or role switch is acquired. Resolve a matching reg first; preserve the existing ordinal fallback for firmware that does not number its connectors.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/usb/typec/ucsi/ucsi.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/drivers/usb/typec/ucsi/ucsi.c b/drivers/usb/typec/ucsi/ucsi.c
+index c1450639c79..0a7ceb5b5d0 100644
+--- a/drivers/usb/typec/ucsi/ucsi.c
++++ b/drivers/usb/typec/ucsi/ucsi.c
+@@ -1804,6 +1804,15 @@ static struct fwnode_handle *ucsi_find_fwnode(struct ucsi_connector *con)
+ 	int ret;
+ 	u32 port;
+ 
++	/* A numbered connector takes precedence over an ordinal fallback.
++	 * Other firmware resources may precede it below the same parent.
++	 */
++	device_for_each_child_node(con->ucsi->dev, fwnode) {
++		ret = fwnode_property_read_u32(fwnode, "reg", &port);
++		if (!ret && port == con->num - 1)
++			return fwnode;
++	}
++
+ 	device_for_each_child_node(con->ucsi->dev, fwnode) {
+ 		ret = fwnode_property_read_u32(fwnode, "reg", &port);
+ 		if (ret < 0) {

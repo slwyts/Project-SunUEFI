@@ -1,0 +1,627 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: power: supply: add the Piano SC96231 pen charger
+
+Provide the pen transmitter power, input and charging interfaces.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/power/supply/Kconfig           |   9 +
+ drivers/power/supply/Makefile          |   1 +
+ drivers/power/supply/sc96231_charger.c | 578 +++++++++++++++++++++++++
+ 3 files changed, 588 insertions(+)
+ create mode 100644 drivers/power/supply/sc96231_charger.c
+
+diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
+index d782a2eb73d29acfce05fc5d5e911792e7ddfdf9..0e21baccdc4ce53f0a4046fc88a745826f99d991 100644
+--- a/drivers/power/supply/Kconfig
++++ b/drivers/power/supply/Kconfig
+@@ -1221,4 +1221,13 @@ config MACSMC_POWER
+ 
+ 	  Say Y or M here if you have an Apple Silicon based Mac.
+ 
++config CHARGER_SC96231
++	tristate "Southchip SC96231 wireless pen transmitter"
++	depends on I2C && GPIOLIB && INPUT && REGULATOR
++	select REGMAP_I2C
++	help
++	  Supply and control an SC96231 pen transmitter using standard regulator,
++	  input switch and power supply interfaces. The device's installed
++	  firmware handles the wireless link; no firmware update is performed.
++
+ endif # POWER_SUPPLY
+diff --git a/drivers/power/supply/Makefile b/drivers/power/supply/Makefile
+index 5c75760d2931d0ea8ab22697f25447539fdfeb98..e4c42a1290d52c0fab6b023c45b614531726da21 100644
+--- a/drivers/power/supply/Makefile
++++ b/drivers/power/supply/Makefile
+@@ -137,3 +137,4 @@ obj-$(CONFIG_CHARGER_QCOM_SMB2)	+= qcom_smbx.o
+ obj-$(CONFIG_FUEL_GAUGE_MM8013)	+= mm8013.o
+ obj-$(CONFIG_MACSMC_POWER)	+= macsmc-power.o
+ obj-$(CONFIG_CHARGER_MAX77759)	+= max77759_charger.o
++obj-$(CONFIG_CHARGER_SC96231)	+= sc96231_charger.o
+diff --git a/drivers/power/supply/sc96231_charger.c b/drivers/power/supply/sc96231_charger.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..562286c95d650278f9c1113aeaccb7372bf8f5fe
+--- /dev/null
++++ b/drivers/power/supply/sc96231_charger.c
+@@ -0,0 +1,578 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Southchip SC96231 pen transmitter.
++ *
++ * Register protocol and sequencing recovered from the Piano HyperOS 4
++ * sc96231_tx and mca_wireless_revchg drivers, checked against a live charge
++ * cycle. Firmware remains on the chip; this driver does not program MTP.
++ */
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/input.h>
++#include <linux/interrupt.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/power_supply.h>
++#include <linux/pm_wakeup.h>
++#include <linux/property.h>
++#include <linux/regmap.h>
++#include <linux/regulator/consumer.h>
++#include <linux/unaligned.h>
++#include <linux/workqueue.h>
++
++#define SC_FW_VERSION		0x0004
++#define SC_COMMAND		0x0100
++#define SC_IRQ_STATUS		0x0108
++#define SC_IRQ_CLEAR		0x010c
++#define SC_I2C_CHECK		0x01cc
++#define SC_PEN_SOC		0x01d0
++#define SC_PEN_MAC		0x01dc /* six bytes starting at offset 2 */
++#define SC_TX_DISABLE		BIT(18)
++#define SC_TX_ENABLE		BIT(19)
++#define SC_IRQ_RX_DETECTED	BIT(14)
++#define SC_IRQ_EPT		BIT(15)
++#define SC_IRQ_GET_RX		BIT(16)
++#define SC_IRQ_FOD		BIT(17)
++#define SC_IRQ_CEP_TIMEOUT	BIT(19)
++#define SC_IRQ_PING		BIT(21)
++#define SC_IRQ_CONFIG		BIT(24)
++#define SC_IRQ_BLE_CONNECT	BIT(25)
++#define SC_IRQ_SOC		BIT(27)
++#define SC_IRQ_FAULTS		(SC_IRQ_EPT | SC_IRQ_FOD | SC_IRQ_CEP_TIMEOUT)
++
++#define SC_PING_TIMEOUT		(20 * HZ)
++#define SC_TRANSFER_TIMEOUT	(100 * HZ)
++
++enum sc96231_tx_state {
++	SC96231_TX_OFF,
++	SC96231_TX_WAIT_PING,
++	SC96231_TX_WAIT_RX,
++	SC96231_TX_TRANSFER,
++};
++
++struct sc96231 {
++	struct device *dev;
++	struct regmap *map;
++	struct regulator *vin;
++	struct gpio_desc *tx_enable;
++	struct gpio_desc *lp_enable;
++	struct gpio_descs *hall;
++	struct input_dev *dock;
++	struct power_supply *battery;
++	struct delayed_work work;
++	struct mutex lock;
++	int *hall_irqs;
++	int irq;
++	bool docked;
++	bool vin_enable_held;
++	bool present;
++	bool full;
++	bool fault;
++	bool stopping;
++	bool soc_valid;
++	int capacity;
++	enum sc96231_tx_state tx_state;
++	unsigned long tx_deadline;
++	unsigned long full_since;
++	char address[18];
++};
++
++static int sc96231_read(struct sc96231 *sc, u16 reg, void *data, size_t size)
++{
++	return regmap_raw_read(sc->map, reg, data, size);
++}
++
++static int sc96231_write_u32(struct sc96231 *sc, u16 reg, u32 value)
++{
++	__le32 data = cpu_to_le32(value);
++
++	return regmap_raw_write(sc->map, reg, &data, sizeof(data));
++}
++
++static int sc96231_disable_vin(struct sc96231 *sc)
++{
++	int ret;
++
++	if (!sc->vin_enable_held)
++		return 0;
++	ret = regulator_disable(sc->vin);
++	if (ret)
++		dev_warn_ratelimited(sc->dev, "pen supply disable failed: %d\n",
++				     ret);
++	else
++		sc->vin_enable_held = false;
++	return ret;
++}
++
++static int sc96231_stop(struct sc96231 *sc)
++{
++	int ret;
++
++	if (sc->tx_state != SC96231_TX_OFF) {
++		ret = sc96231_write_u32(sc, SC_COMMAND, SC_TX_DISABLE);
++		if (ret)
++			dev_dbg(sc->dev, "TX disable command failed: %d\n", ret);
++		/* Also disconnect an unresponsive transmitter. */
++		gpiod_set_value_cansleep(sc->tx_enable, 0);
++		sc->tx_state = SC96231_TX_OFF;
++	}
++	return sc96231_disable_vin(sc);
++}
++
++static int sc96231_start(struct sc96231 *sc)
++{
++	u8 check[4];
++	__le32 version, pending;
++	int ret;
++
++	ret = regulator_enable(sc->vin);
++	if (ret)
++		return ret == -ENODEV ? -EPROBE_DEFER : ret;
++	sc->vin_enable_held = true;
++	gpiod_set_value_cansleep(sc->tx_enable, 1);
++	sc->tx_state = SC96231_TX_WAIT_PING;
++	msleep(20);
++
++	/* Stock uses the last byte of this aligned word as an I2C handshake. */
++	ret = sc96231_read(sc, SC_I2C_CHECK, check, sizeof(check));
++	if (ret)
++		goto fail;
++	check[3] = 0x55;
++	ret = regmap_raw_write(sc->map, SC_I2C_CHECK, check, sizeof(check));
++	if (ret)
++		goto fail;
++	msleep(20);
++	ret = sc96231_read(sc, SC_I2C_CHECK, check, sizeof(check));
++	if (ret)
++		goto fail;
++	if (check[3] != 0x55) {
++		ret = -EIO;
++		goto fail;
++	}
++	ret = sc96231_read(sc, SC_FW_VERSION, &version, sizeof(version));
++	if (ret)
++		goto fail;
++	if (!version || version == cpu_to_le32(U32_MAX)) {
++		ret = -ENODATA;
++		goto fail;
++	}
++	ret = sc96231_read(sc, SC_IRQ_STATUS, &pending, sizeof(pending));
++	if (ret)
++		goto fail;
++	if (pending) {
++		ret = sc96231_write_u32(sc, SC_IRQ_CLEAR, le32_to_cpu(pending));
++		if (ret)
++			goto fail;
++	}
++	ret = sc96231_write_u32(sc, SC_COMMAND, SC_TX_ENABLE);
++	if (ret)
++		goto fail;
++	sc->tx_deadline = jiffies + SC_PING_TIMEOUT;
++	dev_info(sc->dev, "pen transmitter enabled, firmware %#x\n",
++		 le32_to_cpu(version));
++	return 0;
++fail:
++	sc96231_stop(sc);
++	return ret;
++}
++
++static int sc96231_docked(struct sc96231 *sc)
++{
++	unsigned int i;
++	int value, attached = 0;
++
++	for (i = 0; i < sc->hall->ndescs; i++) {
++		value = gpiod_get_value_cansleep(sc->hall->desc[i]);
++		if (value < 0)
++			return value;
++		attached |= value;
++	}
++	return attached;
++}
++
++static int sc96231_update_pen(struct sc96231 *sc, u32 irq)
++{
++	u8 raw[8], soc[4];
++	int ret, i;
++	bool nonzero = false, not_ff = false;
++
++	if (!sc->present && !(irq & (SC_IRQ_CONFIG | SC_IRQ_BLE_CONNECT | SC_IRQ_SOC)))
++		return 0;
++	ret = sc96231_read(sc, SC_PEN_MAC, raw, sizeof(raw));
++	if (ret)
++		return ret;
++	for (i = 2; i < 8; i++) {
++		nonzero |= raw[i] != 0;
++		not_ff |= raw[i] != 0xff;
++	}
++	if (nonzero && not_ff) {
++		/* The chip stores the Bluetooth address least-significant byte
++		 * first; stock publishes the resulting u64 with "%llx".
++		 */
++		snprintf(sc->address, sizeof(sc->address), "%pMR", raw + 2);
++		sc->present = true;
++	}
++
++	ret = sc96231_read(sc, SC_PEN_SOC, soc, sizeof(soc));
++	if (ret)
++		return ret;
++	/* Zero before a charge-status interrupt means no report yet. */
++	if ((soc[0] || (irq & SC_IRQ_SOC)) && (soc[0] & 0x7f) <= 100) {
++		sc->capacity = soc[0] & 0x7f;
++		sc->soc_valid = true;
++		sc->full = soc[0] & BIT(7);
++		/* Stock stops after 18 consecutive ten-second reports at 100%,
++		 * even if the receiver never raises its explicit full flag.
++		 */
++		if (sc->capacity == 100) {
++			if (!sc->full_since)
++				sc->full_since = jiffies;
++			else if (time_after_eq(jiffies, sc->full_since + 180 * HZ))
++				sc->full = true;
++		} else {
++			sc->full_since = 0;
++		}
++	}
++	return 0;
++}
++
++static void sc96231_work(struct work_struct *work)
++{
++	struct sc96231 *sc = container_of(to_delayed_work(work),
++					struct sc96231, work);
++	__le32 raw_irq;
++	u32 irq = 0;
++	int attached, ret;
++
++	mutex_lock(&sc->lock);
++	if (READ_ONCE(sc->stopping))
++		goto out;
++	attached = sc96231_docked(sc);
++	if (attached < 0)
++		goto poll;
++	if (attached != sc->docked) {
++		sc->docked = attached;
++		input_report_switch(sc->dock, SW_PEN_INSERTED, attached);
++		input_sync(sc->dock);
++		if (!attached) {
++			sc->present = false;
++			sc->full = false;
++			sc->fault = false;
++			sc->soc_valid = false;
++			sc->full_since = 0;
++			/* Retain the discovered address for reconnect after removal. */
++		}
++	}
++	if (!sc->docked || sc->fault || sc->full)
++		goto stop;
++	if (sc->tx_state == SC96231_TX_OFF) {
++		/* Finish any failed supply shutdown before starting a new cycle. */
++		if (sc96231_disable_vin(sc))
++			goto poll;
++		ret = sc96231_start(sc);
++		if (ret == -EPROBE_DEFER)
++			goto poll;
++		if (ret) {
++			dev_err(sc->dev, "pen transmitter start failed: %d\n", ret);
++			sc->fault = true;
++			goto notify;
++		}
++		goto poll;
++	}
++
++	ret = sc96231_read(sc, SC_IRQ_STATUS, &raw_irq, sizeof(raw_irq));
++	if (ret)
++		goto failed;
++	irq = le32_to_cpu(raw_irq);
++	if (irq) {
++		ret = sc96231_write_u32(sc, SC_IRQ_CLEAR, irq);
++		if (ret)
++			goto failed;
++	}
++	if (irq & (SC_IRQ_GET_RX | SC_IRQ_RX_DETECTED | SC_IRQ_CONFIG))
++		sc->present = true;
++
++	/* The receiver can be detected before it accepts power. */
++	if (irq & SC_IRQ_GET_RX) {
++		sc->tx_state = SC96231_TX_TRANSFER;
++	} else if ((irq & SC_IRQ_PING) &&
++		   sc->tx_state == SC96231_TX_WAIT_PING) {
++		sc->tx_state = SC96231_TX_WAIT_RX;
++		sc->tx_deadline = jiffies + SC_TRANSFER_TIMEOUT;
++	}
++
++	ret = sc96231_update_pen(sc, irq);
++	if (ret)
++		goto failed;
++	if (sc->full)
++		goto stop;
++	if (irq & SC_IRQ_FAULTS) {
++		ret = -EREMOTEIO;
++		goto failed;
++	}
++	if (sc->tx_state != SC96231_TX_TRANSFER &&
++	    time_after_eq(jiffies, sc->tx_deadline)) {
++		ret = -ETIMEDOUT;
++		goto failed;
++	}
++	goto notify;
++failed:
++	dev_warn(sc->dev, "pen transmitter stopped: %d, IRQ %#x\n", ret, irq);
++	sc->fault = true;
++stop:
++	sc96231_stop(sc);
++notify:
++	power_supply_changed(sc->battery);
++poll:
++	if (!READ_ONCE(sc->stopping) &&
++	    (sc->vin_enable_held || (sc->docked && !sc->fault && !sc->full)))
++		queue_delayed_work(system_freezable_wq, &sc->work, HZ);
++out:
++	mutex_unlock(&sc->lock);
++}
++
++static irqreturn_t sc96231_irq(int irq, void *data)
++{
++	struct sc96231 *sc = data;
++
++	if (!READ_ONCE(sc->stopping))
++		mod_delayed_work(system_freezable_wq, &sc->work, msecs_to_jiffies(20));
++	return IRQ_HANDLED;
++}
++
++static int sc96231_get_property(struct power_supply *psy,
++			       enum power_supply_property prop,
++			       union power_supply_propval *val)
++{
++	struct sc96231 *sc = power_supply_get_drvdata(psy);
++	int ret = 0;
++
++	mutex_lock(&sc->lock);
++	switch (prop) {
++	case POWER_SUPPLY_PROP_PRESENT:
++		val->intval = sc->present;
++		break;
++	case POWER_SUPPLY_PROP_SCOPE:
++		val->intval = POWER_SUPPLY_SCOPE_DEVICE;
++		break;
++	case POWER_SUPPLY_PROP_STATUS:
++		if (!sc->present)
++			val->intval = POWER_SUPPLY_STATUS_UNKNOWN;
++		else if (sc->full)
++			val->intval = POWER_SUPPLY_STATUS_FULL;
++		else if (sc->tx_state == SC96231_TX_TRANSFER)
++			val->intval = POWER_SUPPLY_STATUS_CHARGING;
++		else
++			val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
++		break;
++	case POWER_SUPPLY_PROP_CAPACITY:
++		if (!sc->soc_valid)
++			ret = -ENODATA;
++		else
++			val->intval = sc->capacity;
++		break;
++	case POWER_SUPPLY_PROP_MODEL_NAME:
++		val->strval = "Wireless pen";
++		break;
++	case POWER_SUPPLY_PROP_SERIAL_NUMBER:
++		if (!sc->address[0])
++			ret = -ENODATA;
++		else
++			val->strval = sc->address;
++		break;
++	default:
++		ret = -EINVAL;
++	}
++	mutex_unlock(&sc->lock);
++	return ret;
++}
++
++static const enum power_supply_property sc96231_properties[] = {
++	POWER_SUPPLY_PROP_PRESENT,
++	POWER_SUPPLY_PROP_SCOPE,
++	POWER_SUPPLY_PROP_STATUS,
++	POWER_SUPPLY_PROP_CAPACITY,
++	POWER_SUPPLY_PROP_MODEL_NAME,
++	POWER_SUPPLY_PROP_SERIAL_NUMBER,
++};
++
++static const struct power_supply_desc sc96231_supply = {
++	.name = "sc96231-pen",
++	.type = POWER_SUPPLY_TYPE_BATTERY,
++	.properties = sc96231_properties,
++	.num_properties = ARRAY_SIZE(sc96231_properties),
++	.get_property = sc96231_get_property,
++};
++
++static void sc96231_quiesce(void *data)
++{
++	struct sc96231 *sc = data;
++
++	WRITE_ONCE(sc->stopping, true);
++	cancel_delayed_work_sync(&sc->work);
++	mutex_lock(&sc->lock);
++	sc96231_stop(sc);
++	mutex_unlock(&sc->lock);
++}
++
++static const struct regmap_config sc96231_regmap = {
++	.reg_bits = 16,
++	.val_bits = 8,
++	.max_register = 0xffff,
++	.reg_format_endian = REGMAP_ENDIAN_BIG,
++	.cache_type = REGCACHE_NONE,
++};
++
++static int sc96231_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct power_supply_config cfg = {};
++	struct sc96231 *sc;
++	unsigned int i;
++	int ret;
++
++	sc = devm_kzalloc(dev, sizeof(*sc), GFP_KERNEL);
++	if (!sc)
++		return -ENOMEM;
++	sc->dev = dev;
++	sc->irq = client->irq;
++	i2c_set_clientdata(client, sc);
++	mutex_init(&sc->lock);
++	INIT_DELAYED_WORK(&sc->work, sc96231_work);
++	sc->map = devm_regmap_init_i2c(client, &sc96231_regmap);
++	if (IS_ERR(sc->map))
++		return PTR_ERR(sc->map);
++	sc->vin = devm_regulator_get(dev, "vin");
++	if (IS_ERR(sc->vin))
++		return dev_err_probe(dev, PTR_ERR(sc->vin), "pen power supply\n");
++	sc->tx_enable = devm_gpiod_get(dev, "enable", GPIOD_OUT_LOW);
++	if (IS_ERR(sc->tx_enable))
++		return dev_err_probe(dev, PTR_ERR(sc->tx_enable), "TX enable GPIO\n");
++	sc->lp_enable = devm_gpiod_get_optional(dev, "lp-enable", GPIOD_OUT_HIGH);
++	if (IS_ERR(sc->lp_enable))
++		return PTR_ERR(sc->lp_enable);
++	sc->hall = devm_gpiod_get_array(dev, "hall", GPIOD_IN);
++	if (IS_ERR(sc->hall))
++		return dev_err_probe(dev, PTR_ERR(sc->hall), "pen Hall GPIOs\n");
++	sc->hall_irqs = devm_kcalloc(dev, sc->hall->ndescs,
++				    sizeof(*sc->hall_irqs), GFP_KERNEL);
++	if (!sc->hall_irqs)
++		return -ENOMEM;
++	sc->dock = devm_input_allocate_device(dev);
++	if (!sc->dock)
++		return -ENOMEM;
++	sc->dock->name = "Xiaomi Piano Pen Dock";
++	sc->dock->id.bustype = BUS_I2C;
++	input_set_capability(sc->dock, EV_SW, SW_PEN_INSERTED);
++	ret = input_register_device(sc->dock);
++	if (ret)
++		return ret;
++	cfg.drv_data = sc;
++	cfg.fwnode = dev_fwnode(dev);
++	sc->battery = devm_power_supply_register(dev, &sc96231_supply, &cfg);
++	if (IS_ERR(sc->battery))
++		return PTR_ERR(sc->battery);
++	ret = devm_add_action_or_reset(dev, sc96231_quiesce, sc);
++	if (ret)
++		return ret;
++	/* IRQ resources are registered last, so devres frees them before work. */
++	for (i = 0; i < sc->hall->ndescs; i++) {
++		ret = gpiod_to_irq(sc->hall->desc[i]);
++		if (ret < 0)
++			return ret;
++		sc->hall_irqs[i] = ret;
++		ret = devm_request_threaded_irq(dev, ret, NULL, sc96231_irq,
++				IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
++				"sc96231-hall", sc);
++		if (ret)
++			return ret;
++	}
++	ret = devm_request_threaded_irq(dev, client->irq, NULL, sc96231_irq,
++				       IRQF_ONESHOT, "sc96231", sc);
++	if (ret)
++		return ret;
++	if (device_property_read_bool(dev, "wakeup-source")) {
++		ret = devm_device_init_wakeup(dev);
++		if (ret)
++			return ret;
++	}
++	mod_delayed_work(system_freezable_wq, &sc->work, 0);
++	return 0;
++}
++
++static void sc96231_shutdown(struct i2c_client *client)
++{
++	sc96231_quiesce(i2c_get_clientdata(client));
++}
++
++static int sc96231_suspend(struct device *dev)
++{
++	struct sc96231 *sc = dev_get_drvdata(dev);
++	int ret;
++	unsigned int i;
++
++	/*
++	 * The freezable workqueue cannot expire a handshake during sleep.
++	 * Stop unfinished handshakes and retry after resuming the device.
++	 */
++	mutex_lock(&sc->lock);
++	if (sc->tx_state != SC96231_TX_TRANSFER)
++		ret = sc96231_stop(sc);
++	else
++		ret = 0;
++	mutex_unlock(&sc->lock);
++	if (ret || !device_may_wakeup(dev))
++		return ret;
++
++	ret = enable_irq_wake(sc->irq);
++	if (ret)
++		return ret;
++	for (i = 0; i < sc->hall->ndescs; i++) {
++		ret = enable_irq_wake(sc->hall_irqs[i]);
++		if (ret) {
++			while (i--)
++				disable_irq_wake(sc->hall_irqs[i]);
++			disable_irq_wake(sc->irq);
++			return ret;
++		}
++	}
++	return 0;
++}
++
++static int sc96231_resume(struct device *dev)
++{
++	struct sc96231 *sc = dev_get_drvdata(dev);
++	unsigned int i;
++
++	if (device_may_wakeup(dev)) {
++		for (i = 0; i < sc->hall->ndescs; i++)
++			disable_irq_wake(sc->hall_irqs[i]);
++		disable_irq_wake(sc->irq);
++	}
++	mod_delayed_work(system_freezable_wq, &sc->work, 0);
++	return 0;
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(sc96231_pm_ops, sc96231_suspend, sc96231_resume);
++
++static const struct of_device_id sc96231_of_match[] = {
++	{ .compatible = "southchip,sc96231" },
++	{}
++};
++MODULE_DEVICE_TABLE(of, sc96231_of_match);
++
++static struct i2c_driver sc96231_driver = {
++	.driver = {
++		.name = "sc96231",
++		.of_match_table = sc96231_of_match,
++		.pm = pm_sleep_ptr(&sc96231_pm_ops),
++	},
++	.probe = sc96231_probe,
++	.shutdown = sc96231_shutdown,
++};
++module_i2c_driver(sc96231_driver);
++
++MODULE_DESCRIPTION("Southchip SC96231 wireless pen charger");
++MODULE_AUTHOR("slwyts <slwyts@foxmail.com>");
++MODULE_LICENSE("GPL");

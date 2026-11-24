@@ -107,7 +107,7 @@ sudo /usr/lib/piano/pen-control.py --address YOUR_PEN_ADDRESS \
 
 ## HID 报告与桌面行为
 
-P81C 的 137 字节 HID Report Map 将私有 Report5 数据放在键盘 Usage Page 的 `0x57`，Linux 通用 HID 会将它映射为 `KEY_KPPLUS`。压力包的四个 16 位字段和六个 8 位字段不是十个加号按键。默认内核的[输入补丁](../../../patches/linux/7.3/0148-LOCAL-hid-xiaomi-p81c-piano.patch)扩展现有 `hid-xiaomi`，按 Bluetooth VID/PID、Report ID 和字段布局跳过这条错误键盘映射，保留原始 hidraw 数据给笔输入程序。它不替换整份描述符，不全局屏蔽 `+`，也不影响键盘保护套。
+P81C 的 137 字节 HID Report Map 将私有 Report5 数据放在键盘 Usage Page 的 `0x57`，Linux 通用 HID 会将它映射为 `KEY_KPPLUS`。压力包的四个 16 位字段和六个 8 位字段不是十个加号按键。默认内核的[输入补丁](../../../patches/linux/7.3/0323-LOCAL-hid-xiaomi-p81c-piano.patch)扩展现有 `hid-xiaomi`，按 Bluetooth VID/PID、Report ID 和字段布局跳过这条错误键盘映射，保留原始 hidraw 数据给笔输入程序。它不替换整份描述符，不全局屏蔽 `+`，也不影响键盘保护套。
 
 `piano-touch.service` 通过 BlueZ 初始化并跟随连接，不读取 THP 或生成键鼠输入。
 笔连接并且 `ServicesResolved` 就绪后发送配置，断连后等待重新连接。磁吸状态来自
@@ -132,7 +132,7 @@ P81C 的 137 字节 HID Report Map 将私有 Report5 数据放在键盘 Usage Pa
 | `02 61`、`02 00` | 上滑 | 笔键盘节点的 `KEY_PAGEUP` | 阅读与办公应用收到 Page Up，短视频应用切到上一条 |
 | `02 5b`、`02 00` | 下滑 | 笔键盘节点的 `KEY_PAGEDOWN` | 阅读与办公应用收到 Page Down，短视频应用切到下一条 |
 
-滑动由内核 `hid-xiaomi` 的 [`0029` 补丁](../../../patches/linux/7.3/0175-LOCAL-hid-xiaomi-p81c-body-gestures.patch)直接映射为 Page Up／Page Down，发给当前窗口，与键盘上的翻页键相同；它不依赖这里的程序，其他发行版使用同一内核也能得到。通用 HID 原本会把双击和滑动变成小键盘回车、`9` 和 `3`，补丁去掉了这些映射，也不再发送轻捏的 F19。
+滑动由内核 `hid-xiaomi` 的[笔身手势补丁](../../../patches/linux/7.3/0350-LOCAL-hid-xiaomi-p81c-body-gestures.patch)直接映射为 Page Up／Page Down，发给当前窗口，与键盘上的翻页键相同；它不依赖这里的程序，其他发行版使用同一内核也能得到。通用 HID 原本会把双击和滑动变成小键盘回车、`9` 和 `3`，补丁去掉了这些映射，也不再发送轻捏的 F19。
 
 内核在 HID／触控驱动内融合轻捏和双击，只在笔处于感应范围内时上报工具按钮，
 抬出范围、断连或数据超时后释放。轻捏短按点击，长按 600 ms 触发 `BTN_STYLUS`。

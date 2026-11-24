@@ -1,0 +1,102 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Thu, 22 Oct 2026 04:35:06 +0800
+Subject: [PATCH] ASoC: codecs: lpass-va-macro: retain SM8750 shared core votes
+
+On Piano, releasing the last LPASS_HW_MACRO_VOTE and LPASS_HW_DCODEC_VOTE after capture causes an ADSP watchdog, including while the sensors PD is active. The pre-PM-clock driver held these votes throughout codec registration.
+
+Keep the two shared core votes for SM8750 while retaining runtime PM for the local sample clocks. Balance references on failed probe and remove. Other compatible codecs retain their existing clock ownership.
+
+With normal WirePlumber enabled, playback and microphone capture both passed an acoustic check and remained idle without DSP recovery. This does not establish suspend power consumption.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ sound/soc/codecs/lpass-va-macro.c | 33 +++++++++++++++++++++++++++++++
+ 1 file changed, 33 insertions(+)
+
+diff --git a/sound/soc/codecs/lpass-va-macro.c b/sound/soc/codecs/lpass-va-macro.c
+index 526f6646c1b..60a6269308c 100644
+--- a/sound/soc/codecs/lpass-va-macro.c
++++ b/sound/soc/codecs/lpass-va-macro.c
+@@ -210,6 +210,7 @@ struct va_macro {
+ 	u16 dmic_clk_div;
+ 	bool has_swr_master;
+ 	bool has_npl_clk;
++	bool core_votes_held;
+ 
+ 	int dec_mode[VA_MACRO_NUM_DECIMATORS];
+ 	struct regmap *regmap;
+@@ -236,6 +237,7 @@ struct va_macro {
+ struct va_macro_data {
+ 	bool has_swr_master;
+ 	bool has_npl_clk;
++	bool keep_core_votes;
+ 	int version;
+ };
+ 
+@@ -260,6 +262,12 @@ static const struct va_macro_data sm8550_va_data = {
+ 	.has_npl_clk = false,
+ };
+ 
++static const struct va_macro_data sm8750_va_data = {
++	.has_swr_master = true,
++	.has_npl_clk = false,
++	.keep_core_votes = true,
++};
++
+ static bool va_is_volatile_register(struct device *dev, unsigned int reg)
+ {
+ 	switch (reg) {
+@@ -1653,6 +1661,22 @@ static int va_macro_probe(struct platform_device *pdev)
+ 			goto err;
+ 	}
+ 
++	/* These SM8750 votes cover a core also used by ADSP sensor services.
++	 * Keep its ownership until the codec is removed; runtime PM may still
++	 * gate the local sample clocks when capture is idle.
++	 */
++	if (data->keep_core_votes) {
++		ret = clk_prepare_enable(va->macro);
++		if (ret)
++			goto err;
++		ret = clk_prepare_enable(va->dcodec);
++		if (ret) {
++			clk_disable_unprepare(va->macro);
++			goto err;
++		}
++		va->core_votes_held = true;
++	}
++
+ 	ret = devm_pm_clk_create(dev);
+ 	if (ret)
+ 		goto err;
+@@ -1736,6 +1760,10 @@ static int va_macro_probe(struct platform_device *pdev)
+ 	if (rpm_ret < 0)
+ 		dev_warn(dev, "runtime PM sync suspend failed in probe unwind: %d\n", rpm_ret);
+ err:
++	if (va->core_votes_held) {
++		clk_disable_unprepare(va->dcodec);
++		clk_disable_unprepare(va->macro);
++	}
+ 	lpass_macro_pds_exit(va->pds);
+ 
+ 	return ret;
+@@ -1745,6 +1773,10 @@ static void va_macro_remove(struct platform_device *pdev)
+ {
+ 	struct va_macro *va = dev_get_drvdata(&pdev->dev);
+ 
++	if (va->core_votes_held) {
++		clk_disable_unprepare(va->dcodec);
++		clk_disable_unprepare(va->macro);
++	}
+ 	lpass_macro_pds_exit(va->pds);
+ }
+ 
+@@ -1806,6 +1838,7 @@ static const struct of_device_id va_macro_dt_match[] = {
+ 	{ .compatible = "qcom,sm8250-lpass-va-macro", .data = &sm8250_va_data },
+ 	{ .compatible = "qcom,sm8450-lpass-va-macro", .data = &sm8450_va_data },
+ 	{ .compatible = "qcom,sm8550-lpass-va-macro", .data = &sm8550_va_data },
++	{ .compatible = "qcom,sm8750-lpass-va-macro", .data = &sm8750_va_data },
+ 	{ .compatible = "qcom,sc8280xp-lpass-va-macro", .data = &sm8450_va_data },
+ 	{}
+ };

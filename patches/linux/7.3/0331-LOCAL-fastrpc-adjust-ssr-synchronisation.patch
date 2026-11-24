@@ -1,0 +1,131 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Thu, 22 Oct 2026 00:30:00 +0800
+Subject: [PATCH] misc: fastrpc: synchronise invoke admission and SSR wait
+ conditions
+
+Check the RPMsg device under the same lock used to admit new invocations.
+Publish the polling completion flag with WRITE_ONCE and read the in-flight
+count with READ_ONCE while waiting to remove the DMA context banks.
+Keep the counter updates with the surrounding lock operations.
+
+This carries forward the remaining differences between the Qualcomm SSR
+series and the existing Piano implementation. The end of the series
+reproduces the previous Piano kernel source exactly.
+
+Link: https://github.com/qualcomm-linux/kernel/commit/bcf730279a854ce7a7f586c68d8064726e48ffff
+Link: https://github.com/qualcomm-linux/kernel/commit/2b139af3cfefe0b79fb33e1b207eac3ea2812678
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/misc/fastrpc.c | 49 ++++++++++--------------------------------
+ 1 file changed, 11 insertions(+), 38 deletions(-)
+
+diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
+index bb6403383d80f3078961b0f4686d3a5c801c0e5b..5fe8253f3588269137ba15619adde9f70b688c79 100644
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -312,6 +312,9 @@ struct fastrpc_channel_ctx {
+ 	struct idr ctx_idr;
+ 	struct list_head users;
+ 	struct kref refcount;
++	atomic_t teardown;
++	int invoke_cnt;
++	wait_queue_head_t ssr_wait_queue;
+ 	/* Flag if dsp attributes are cached */
+ 	bool valid_attributes;
+ 	u32 dsp_attributes[FASTRPC_MAX_DSP_ATTRIBUTES];
+@@ -326,15 +329,6 @@ struct fastrpc_channel_ctx {
+ 	atomic_t ctx_seq;
+ 	u64 dma_mask;
+ 	const struct fastrpc_soc_data *soc_data;
+-	/*
+-	 * Set once fastrpc_rpmsg_remove() starts tearing the channel down.
+-	 * Checked under @lock so that no new invoke can begin afterwards.
+-	 */
+-	atomic_t teardown;
+-	/* Number of in-flight invokes; guarded by @lock */
+-	int invoke_cnt;
+-	/* Woken whenever @invoke_cnt drops to zero */
+-	wait_queue_head_t ssr_wait_queue;
+ };
+ 
+ struct fastrpc_device {
+@@ -1366,16 +1360,6 @@ static int fastrpc_wait_for_completion(struct fastrpc_invoke_ctx *ctx,
+ 	return fastrpc_wait_for_response(ctx, kernel);
+ }
+ 
+-/* Caller must hold cctx->lock */
+-static void fastrpc_channel_update_invoke_cnt(struct fastrpc_channel_ctx *cctx,
+-					      bool enter)
+-{
+-	if (enter)
+-		cctx->invoke_cnt++;
+-	else if (--cctx->invoke_cnt == 0)
+-		wake_up(&cctx->ssr_wait_queue);
+-}
+-
+ static int fastrpc_internal_invoke(struct fastrpc_user *fl,  u32 kernel,
+ 				   u32 handle, u32 sc,
+ 				   struct fastrpc_invoke_args *args)
+@@ -1389,15 +1373,12 @@ static int fastrpc_internal_invoke(struct fastrpc_user *fl,  u32 kernel,
+ 	if (!fl->sctx)
+ 		return -EINVAL;
+ 
+-	if (!fl->cctx->rpdev)
+-		return -EPIPE;
+-
+ 	spin_lock_irqsave(&fl->cctx->lock, flags);
+-	if (atomic_read(&fl->cctx->teardown)) {
++	if (atomic_read(&fl->cctx->teardown) || !fl->cctx->rpdev) {
+ 		spin_unlock_irqrestore(&fl->cctx->lock, flags);
+ 		return -EPIPE;
+ 	}
+-	fastrpc_channel_update_invoke_cnt(fl->cctx, true);
++	fl->cctx->invoke_cnt++;
+ 	spin_unlock_irqrestore(&fl->cctx->lock, flags);
+ 
+ 	if (handle == FASTRPC_INIT_HANDLE && !kernel) {
+@@ -1466,9 +1447,11 @@ bail:
+ 
+ 	if (err)
+ 		dev_dbg(fl->sctx->dev, "Error: Invoke Failed %d\n", err);
++
+ out:
+ 	spin_lock_irqsave(&fl->cctx->lock, flags);
+-	fastrpc_channel_update_invoke_cnt(fl->cctx, false);
++	if (--fl->cctx->invoke_cnt == 0)
++		wake_up(&fl->cctx->ssr_wait_queue);
+ 	spin_unlock_irqrestore(&fl->cctx->lock, flags);
+ 
+ 	return err;
+@@ -2712,7 +2695,7 @@ static void fastrpc_notify_users(struct fastrpc_user *user)
+ 	spin_lock(&user->lock);
+ 	list_for_each_entry(ctx, &user->pending, node) {
+ 		ctx->retval = -EPIPE;
+-		ctx->is_work_done = true;
++		WRITE_ONCE(ctx->is_work_done, true);
+ 		complete(&ctx->work);
+ 	}
+ 	spin_unlock(&user->lock);
+@@ -2732,19 +2715,9 @@ static void fastrpc_rpmsg_remove(struct rpmsg_device *rpdev)
+ 		fastrpc_notify_users(user);
+ 	spin_unlock_irqrestore(&cctx->lock, flags);
+ 
+-	/*
+-	 * Wait for every invoke that was already past the gate to finish.
+-	 * They have all just been woken with -EPIPE, and no new one can be
+-	 * counted, so this is guaranteed to make progress.
+-	 */
+-	spin_lock_irqsave(&cctx->lock, flags);
+-	while (cctx->invoke_cnt > 0) {
+-		spin_unlock_irqrestore(&cctx->lock, flags);
+-		wait_event(cctx->ssr_wait_queue, cctx->invoke_cnt == 0);
+-		spin_lock_irqsave(&cctx->lock, flags);
+-	}
++	/* Keep the DMA context banks until every awakened invoke has exited. */
++	wait_event(cctx->ssr_wait_queue, !READ_ONCE(cctx->invoke_cnt));
+ 	cctx->rpdev = NULL;
+-	spin_unlock_irqrestore(&cctx->lock, flags);
+ 
+ 	if (cctx->fdevice)
+ 		misc_deregister(&cctx->fdevice->miscdev);

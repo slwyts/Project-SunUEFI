@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Sat, 21 Nov 2026 00:18:15 +0800
+Subject: [PATCH] Bluetooth: hci_qca: Accept wake ACKs while IBS is disabled
+
+Piano wakes the UART controller during setup, before starting the in-band
+sleep state machine. The resulting ACK arrives while the transmit state
+is ASLEEP, where the driver reports a protocol error.
+
+Ignore an ACK in this state while IBS is disabled. Preserve the usual
+diagnostic after runtime IBS negotiation and leave WAKING unchanged.
+
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/bluetooth/hci_qca.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/bluetooth/hci_qca.c b/drivers/bluetooth/hci_qca.c
+index 3e921e197..366720f92 100644
+--- a/drivers/bluetooth/hci_qca.c
++++ b/drivers/bluetooth/hci_qca.c
+@@ -892,6 +892,10 @@ static void device_woke_up(struct hci_uart *hu)
+ 		break;
+ 
+ 	case HCI_IBS_TX_ASLEEP:
++		/* Setup may wake the controller before enabling runtime IBS. */
++		if (test_bit(QCA_IBS_DISABLED, &qca->flags))
++			break;
++		fallthrough;
+ 	default:
+ 		BT_ERR("Received HCI_IBS_WAKE_ACK in tx state %d",
+ 		       qca->tx_ibs_state);

@@ -1,0 +1,1556 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Sun, 15 Nov 2026 01:11:01 +0800
+Subject: [PATCH] Input: nt36532e: decode pen frames and fuse Bluetooth samples
+
+Validate both checksums before decoding the four pen scan planes. Remove
+each scan group's median baseline and calculate the centroid from the
+strongest local signal within one group. Load the LCD-ID-specific mapping
+and tilt calibration through the firmware loader.
+
+Pair the touchscreen samples with timestamped pressure and button
+reports from hid-xiaomi. Report a physical tablet tool with the pressure
+range for the connected pen and reject ambiguous simultaneous radios.
+Release the tool across disconnect, suspend and firmware recovery.
+
+Keep the last valid tilt only while the tool stays in proximity. Retry
+unacknowledged scan stops before selecting a different pen model; a
+failure to set up the pen dock must not prevent finger input.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/hid/hid-xiaomi.c                      |  41 +-
+ drivers/input/touchscreen/nt36532e/Makefile   |   2 +-
+ .../touchscreen/nt36532e/nt36xxx-pen-input.c  | 600 ++++++++++++++++++
+ .../input/touchscreen/nt36532e/nt36xxx-pen.c  | 500 +++++++++++++++
+ .../input/touchscreen/nt36532e/nt36xxx-pen.h  |  29 +
+ drivers/input/touchscreen/nt36532e/nt36xxx.c  |  83 ++-
+ drivers/input/touchscreen/nt36532e/nt36xxx.h  |   5 +
+ include/linux/input/xiaomi-pen.h              |  38 ++
+ 8 files changed, 1285 insertions(+), 13 deletions(-)
+ create mode 100644 drivers/input/touchscreen/nt36532e/nt36xxx-pen-input.c
+ create mode 100644 drivers/input/touchscreen/nt36532e/nt36xxx-pen.c
+ create mode 100644 drivers/input/touchscreen/nt36532e/nt36xxx-pen.h
+ create mode 100644 include/linux/input/xiaomi-pen.h
+
+diff --git a/drivers/hid/hid-xiaomi.c b/drivers/hid/hid-xiaomi.c
+index 48c0c927b..6b0fb1a1b 100644
+--- a/drivers/hid/hid-xiaomi.c
++++ b/drivers/hid/hid-xiaomi.c
+@@ -9,6 +9,8 @@
+ #include <linux/module.h>
+ #include <linux/hid.h>
+ #include <linux/input.h>
++#include <linux/input/xiaomi-pen.h>
++#include <linux/ktime.h>
+ #include <linux/slab.h>
+ #include <linux/unaligned.h>
+ 
+@@ -97,6 +99,20 @@ struct xiaomi_pen {
+ 	unsigned int pressure_max;
+ };
+ 
++static ATOMIC_NOTIFIER_HEAD(xiaomi_pen_notifiers);
++
++int xiaomi_pen_register_notifier(struct notifier_block *notifier)
++{
++	return atomic_notifier_chain_register(&xiaomi_pen_notifiers, notifier);
++}
++EXPORT_SYMBOL_GPL(xiaomi_pen_register_notifier);
++
++void xiaomi_pen_unregister_notifier(struct notifier_block *notifier)
++{
++	atomic_notifier_chain_unregister(&xiaomi_pen_notifiers, notifier);
++}
++EXPORT_SYMBOL_GPL(xiaomi_pen_unregister_notifier);
++
+ static bool xiaomi_is_pen(struct hid_device *hdev)
+ {
+ 	return hdev->bus == BUS_BLUETOOTH &&
+@@ -230,6 +246,8 @@ static int xiaomi_pen_init(struct hid_device *hdev)
+ 	input_set_drvdata(input, pen);
+ 	/* BLE has no coordinates or proximity; do not advertise a tablet tool. */
+ 	input_set_abs_params(input, ABS_PRESSURE, 0, pen->pressure_max, 0, 0);
++	input_set_capability(input, EV_KEY, BTN_STYLUS);
++	input_set_capability(input, EV_KEY, BTN_STYLUS2);
+ 	hid_set_drvdata(hdev, pen);
+ 	return 0;
+ }
+@@ -238,9 +256,28 @@ static int xiaomi_raw_event(struct hid_device *hdev, struct hid_report *report,
+ 			    u8 *data, int size)
+ {
+ 	struct xiaomi_pen *pen = hid_get_drvdata(hdev);
++	struct xiaomi_pen_report sample;
+ 	unsigned int pressure;
+ 
+-	if (!pen || !xiaomi_pen_pressure_report(report))
++	if (!pen)
++		return 0;
++	sample.input = pen->pressure;
++	sample.timestamp_ns = ktime_get_boottime_ns();
++	if (report->type == HID_INPUT_REPORT && size == 2 &&
++	    data[0] == 2 && report->maxfield == 1 &&
++	    xiaomi_p81c_body_keys(report, report->field[0])) {
++		bool pro = hdev->product == BT_DEVICE_ID_XIAOMI_P81C;
++
++		sample.value = data[1];
++		atomic_notifier_call_chain(&xiaomi_pen_notifiers, XIAOMI_PEN_BUTTONS, &sample);
++		input_report_key(pen->pressure, BTN_STYLUS,
++				 data[1] == (pro ? 0x6e : 0x4e));
++		input_report_key(pen->pressure, BTN_STYLUS2,
++				 data[1] == (pro ? 0x58 : 0x4b));
++		input_sync(pen->pressure);
++		return 0;
++	}
++	if (!xiaomi_pen_pressure_report(report))
+ 		return 0;
+ 	/* HID core pads short reports. Never interpret that padding as release. */
+ 	if (size != 15 || data[0] != 5)
+@@ -249,6 +286,8 @@ static int xiaomi_raw_event(struct hid_device *hdev, struct hid_report *report,
+ 	if (pressure > pen->pressure_max)
+ 		return 0;
+ 
++	sample.value = pressure;
++	atomic_notifier_call_chain(&xiaomi_pen_notifiers, XIAOMI_PEN_PRESSURE, &sample);
+ 	input_report_abs(pen->pressure, ABS_PRESSURE, pressure);
+ 	input_sync(pen->pressure);
+ 	/* Keep the unchanged report available to existing hidraw consumers. */
+diff --git a/drivers/input/touchscreen/nt36532e/Makefile b/drivers/input/touchscreen/nt36532e/Makefile
+index d2dde2674..a5b7c55e7 100644
+--- a/drivers/input/touchscreen/nt36532e/Makefile
++++ b/drivers/input/touchscreen/nt36532e/Makefile
+@@ -6,4 +6,4 @@
+ # Each configuration option enables a list of files.
+ 
+ obj-$(CONFIG_TOUCHSCREEN_NT36532E_SPI) += nt36532e_ts.o
+-nt36532e_ts-y := nt36xxx.o nt36xxx_fw_update.o nt36xxx-matrix.o
++nt36532e_ts-y := nt36xxx.o nt36xxx_fw_update.o nt36xxx-matrix.o nt36xxx-pen.o nt36xxx-pen-input.o
+diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx-pen-input.c b/drivers/input/touchscreen/nt36532e/nt36xxx-pen-input.c
+new file mode 100644
+index 000000000..369042a9e
+--- /dev/null
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx-pen-input.c
+@@ -0,0 +1,600 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* Fuse a single identified BLE pen with the local capacitive receiver. */
++#include <linux/err.h>
++#include <linux/device.h>
++#include <linux/input.h>
++#include <linux/input/xiaomi-pen.h>
++#include <linux/jiffies.h>
++#include <linux/ktime.h>
++#include <linux/list.h>
++#include <linux/slab.h>
++#include <linux/spinlock.h>
++#include <linux/workqueue.h>
++
++#include "nt36xxx.h"
++
++#define NVT_PEN_SAMPLE_AGE (100 * NSEC_PER_MSEC)
++#define NVT_PEN_PRESSURE_SAMPLES 32
++
++struct nvt_pen_sample {
++	u64 time;
++	s32 pressure;
++};
++
++struct nvt_pen_button {
++	u64 time;
++	u8 value;
++};
++
++struct nvt_pen_ble {
++	struct input_handle handle;
++	struct list_head node;
++};
++
++struct nvt_pen_input {
++	struct nvt_ts_data *data;
++	struct nvt_pen_decoder *decoder;
++	struct input_handler handler;
++	struct notifier_block report_notifier;
++	struct list_head ble_devices;
++	unsigned int ble_count;
++	struct input_dev *input;
++	struct delayed_work connect_work;
++	struct work_struct button_work;
++	struct delayed_work release_work;
++	spinlock_t lock; /* BLE samples, device identities and pending button reports */
++	u64 frame_time;
++	u64 proximity_time;
++	u64 generation, input_generation;
++	struct nvt_pen_sample samples[NVT_PEN_PRESSURE_SAMPLES];
++	unsigned int sample_count, next_sample;
++	unsigned int vendor, input_vendor;
++	unsigned int buttons;
++	struct nvt_pen_button button_samples[16];
++	unsigned int button_head, button_count;
++	u64 squeeze_started;
++	bool squeeze_long;
++	bool connected, present, contact, stopping;
++	bool scan_requested;
++};
++
++static void nvt_pen_release(struct nvt_pen_input *pen)
++{
++	unsigned long flags;
++
++	if (pen->input && pen->present) {
++		input_report_key(pen->input, BTN_TOUCH, 0);
++		input_report_abs(pen->input, ABS_PRESSURE, 0);
++		input_report_key(pen->input, BTN_STYLUS, 0);
++		input_report_key(pen->input, BTN_STYLUS2, 0);
++		input_report_key(pen->input, BTN_TOOL_PEN, 0);
++		input_report_abs(pen->input, ABS_TILT_X, 0);
++		input_report_abs(pen->input, ABS_TILT_Y, 0);
++		input_sync(pen->input);
++	}
++	pen->present = false;
++	pen->contact = false;
++	pen->buttons = 0;
++	pen->squeeze_started = 0;
++	pen->squeeze_long = false;
++	pen->proximity_time = 0;
++	spin_lock_irqsave(&pen->lock, flags);
++	pen->button_head = 0;
++	pen->button_count = 0;
++	spin_unlock_irqrestore(&pen->lock, flags);
++}
++
++void nvt_pen_reset(struct nvt_ts_data *data)
++{
++	struct nvt_pen_input *pen = data->pen;
++	unsigned long flags;
++
++	if (!pen)
++		return;
++	nvt_pen_release(pen);
++	spin_lock_irqsave(&pen->lock, flags);
++	pen->sample_count = 0;
++	pen->next_sample = 0;
++	pen->button_head = 0;
++	pen->button_count = 0;
++	spin_unlock_irqrestore(&pen->lock, flags);
++	pen->frame_time = 0;
++}
++
++static void nvt_pen_release_work(struct work_struct *work)
++{
++	struct nvt_pen_input *pen = container_of(to_delayed_work(work),
++						struct nvt_pen_input, release_work);
++	u64 now, time = 0;
++	unsigned long flags;
++
++	mutex_lock(&pen->data->lock);
++	now = ktime_get_boottime_ns();
++	if (pen->present && now - pen->frame_time >= NVT_PEN_SAMPLE_AGE)
++		nvt_pen_release(pen);
++	spin_lock_irqsave(&pen->lock, flags);
++	if (pen->sample_count)
++		time = pen->samples[(pen->next_sample + NVT_PEN_PRESSURE_SAMPLES - 1) %
++				    NVT_PEN_PRESSURE_SAMPLES].time;
++	spin_unlock_irqrestore(&pen->lock, flags);
++	if (pen->present && pen->squeeze_started && !pen->squeeze_long &&
++	    now >= pen->squeeze_started &&
++	    now - pen->squeeze_started >= 600 * NSEC_PER_MSEC) {
++		pen->squeeze_long = true;
++		pen->buttons |= 1;
++		input_report_key(pen->input, BTN_STYLUS, 1);
++		input_sync(pen->input);
++	}
++	if (pen->contact && (!time || (time <= now && now - time >= NVT_PEN_SAMPLE_AGE))) {
++		input_report_key(pen->input, BTN_TOUCH, 0);
++		input_report_abs(pen->input, ABS_PRESSURE, 0);
++		input_sync(pen->input);
++		pen->contact = false;
++	}
++	if (pen->present && !pen->stopping)
++		mod_delayed_work(system_wq, &pen->release_work, msecs_to_jiffies(20));
++	mutex_unlock(&pen->data->lock);
++}
++
++void nvt_pen_frame(struct nvt_ts_data *data, const u8 *payload, size_t bytes, u64 time)
++{
++	struct nvt_pen_input *pen = data->pen;
++	struct nvt_pen_point point;
++	u64 pressure_time = 0;
++	s32 pressure = 0;
++	unsigned int buttons, vendor, i;
++	unsigned long flags;
++	bool connected, pressure_valid;
++	u64 generation;
++	bool have_sample;
++	int ret;
++
++	if (!pen || !pen->input)
++		return;
++	spin_lock_irqsave(&pen->lock, flags);
++	connected = pen->connected;
++	have_sample = pen->sample_count;
++	vendor = pen->vendor;
++	generation = pen->generation;
++	for (i = 0; i < pen->sample_count; i++) {
++		unsigned int index = (pen->next_sample + NVT_PEN_PRESSURE_SAMPLES - 1 - i) %
++				     NVT_PEN_PRESSURE_SAMPLES;
++
++		if (pen->samples[index].time <= time) {
++			pressure_time = pen->samples[index].time;
++			pressure = pen->samples[index].pressure;
++			break;
++		}
++	}
++	spin_unlock_irqrestore(&pen->lock, flags);
++	buttons = pen->buttons;
++	if (!connected || generation != pen->input_generation ||
++	    vendor != pen->input_vendor || READ_ONCE(data->pen_docked)) {
++		nvt_pen_release(pen);
++		return;
++	}
++	ret = nvt_pen_decode(pen->decoder, payload, bytes, vendor, &point);
++	if (ret)
++		return;
++	if (!point.proximity) {
++		nvt_pen_release(pen);
++		return;
++	}
++	pressure_valid = have_sample && pressure_time && pressure_time <= time &&
++			 time - pressure_time <= NVT_PEN_SAMPLE_AGE;
++	if (!pen->present)
++		pen->proximity_time = time;
++	pen->contact = pressure_valid && pressure > 0;
++	input_report_key(pen->input, BTN_TOUCH, pen->contact);
++	input_report_key(pen->input, BTN_TOOL_PEN, 1);
++	input_report_key(pen->input, BTN_STYLUS, !!(buttons & 1));
++	input_report_key(pen->input, BTN_STYLUS2, !!(buttons & 2));
++	/* Input axes match the physical landscape touchscreen, not the LCD mode. */
++	input_report_abs(pen->input, ABS_X, point.y);
++	input_report_abs(pen->input, ABS_Y, 213599 - point.x);
++	input_report_abs(pen->input, ABS_PRESSURE, pressure_valid ? pressure : 0);
++	/* A missing Ring sample retains tilt only within this proximity. */
++	if (point.tilt_valid) {
++		input_report_abs(pen->input, ABS_TILT_X, point.tilt_y);
++		input_report_abs(pen->input, ABS_TILT_Y, -point.tilt_x);
++	}
++	input_sync(pen->input);
++	pen->present = true;
++	pen->frame_time = time;
++	mod_delayed_work(system_wq, &pen->release_work, msecs_to_jiffies(20));
++}
++
++static void nvt_pen_button_work(struct work_struct *work)
++{
++	struct nvt_pen_input *pen = container_of(work, struct nvt_pen_input, button_work);
++	unsigned long flags;
++	struct nvt_pen_button sample;
++
++	mutex_lock(&pen->data->lock);
++	for (;;) {
++		bool click = false;
++
++		spin_lock_irqsave(&pen->lock, flags);
++		if (!pen->button_count || pen->stopping ||
++		    pen->generation != pen->input_generation) {
++			spin_unlock_irqrestore(&pen->lock, flags);
++			break;
++		}
++		sample = pen->button_samples[pen->button_head];
++		pen->button_head = (pen->button_head + 1) % ARRAY_SIZE(pen->button_samples);
++		pen->button_count--;
++		spin_unlock_irqrestore(&pen->lock, flags);
++		if (!pen->present || !pen->input || sample.time < pen->proximity_time) {
++			pen->squeeze_started = 0;
++			pen->buttons = 0;
++			continue;
++		}
++		if (pen->input_vendor == 1) {
++			pen->buttons = sample.value == 0x4e ? 1 : sample.value == 0x4b ? 2 : 0;
++		} else {
++			if (sample.value == 0x6e) {
++				if (!pen->squeeze_started) {
++					pen->squeeze_started = sample.time;
++					pen->squeeze_long = false;
++				}
++			} else {
++				click = !sample.value && pen->squeeze_started &&
++					!pen->squeeze_long &&
++					sample.time >= pen->squeeze_started &&
++					sample.time - pen->squeeze_started < 600 * NSEC_PER_MSEC;
++				pen->squeeze_started = 0;
++			}
++			pen->buttons = (sample.value == 0x6e && pen->squeeze_long ? 1 : 0) |
++				       (sample.value == 0x58 ? 2 : 0);
++		}
++		input_report_key(pen->input, BTN_STYLUS, !!(pen->buttons & 1));
++		input_report_key(pen->input, BTN_STYLUS2, !!(pen->buttons & 2));
++		input_sync(pen->input);
++		if (click && !pen->contact) {
++			input_report_key(pen->input, BTN_TOUCH, 1);
++			input_sync(pen->input);
++			input_report_key(pen->input, BTN_TOUCH, 0);
++			input_sync(pen->input);
++		}
++	}
++	mutex_unlock(&pen->data->lock);
++}
++
++static int nvt_pen_ble_report(struct notifier_block *notifier, unsigned long type,
++			      void *data)
++{
++	struct nvt_pen_input *pen = container_of(notifier, struct nvt_pen_input,
++						 report_notifier);
++	const struct xiaomi_pen_report *report = data;
++	struct nvt_pen_ble *ble;
++	unsigned int value = report->value;
++	unsigned long flags;
++	bool button = false;
++
++	spin_lock_irqsave(&pen->lock, flags);
++	if (pen->ble_count != 1)
++		goto unlock;
++	ble = list_first_entry(&pen->ble_devices, struct nvt_pen_ble, node);
++	if (ble->handle.dev != report->input)
++		goto unlock;
++	if (type == XIAOMI_PEN_PRESSURE && value <= (pen->vendor == 1 ? 8191 : 16383)) {
++		pen->samples[pen->next_sample] = (struct nvt_pen_sample) {
++			.time = report->timestamp_ns, .pressure = value,
++		};
++		pen->next_sample = (pen->next_sample + 1) % NVT_PEN_PRESSURE_SAMPLES;
++		pen->sample_count = min(pen->sample_count + 1, NVT_PEN_PRESSURE_SAMPLES);
++	} else if (type == XIAOMI_PEN_BUTTONS) {
++		unsigned int index;
++
++		if (pen->button_count == ARRAY_SIZE(pen->button_samples)) {
++			/* Overflow cancels pending gestures, never invents a click. */
++			pen->button_head = 0;
++			pen->button_count = 0;
++			value = 0xff;
++		}
++		index = (pen->button_head + pen->button_count) % ARRAY_SIZE(pen->button_samples);
++		pen->button_samples[index] = (struct nvt_pen_button) {
++			.time = report->timestamp_ns, .value = value,
++		};
++		pen->button_count++;
++		button = true;
++	}
++unlock:
++	spin_unlock_irqrestore(&pen->lock, flags);
++	if (button)
++		queue_work(system_wq, &pen->button_work);
++	return NOTIFY_OK;
++}
++
++static void nvt_pen_retry_connect(struct nvt_pen_input *pen)
++{
++	mutex_lock(&pen->data->lock);
++	if (!pen->stopping)
++		mod_delayed_work(system_wq, &pen->connect_work, msecs_to_jiffies(1000));
++	mutex_unlock(&pen->data->lock);
++}
++
++static void nvt_pen_connect_work(struct work_struct *work)
++{
++	struct nvt_pen_input *pen = container_of(to_delayed_work(work),
++						struct nvt_pen_input, connect_work);
++	struct input_dev *input;
++	unsigned int vendor;
++	u64 generation;
++	unsigned long flags;
++	bool connected, stopping;
++	int ret;
++
++	spin_lock_irqsave(&pen->lock, flags);
++	connected = pen->connected;
++	vendor = pen->vendor;
++	generation = pen->generation;
++	spin_unlock_irqrestore(&pen->lock, flags);
++	mutex_lock(&pen->data->lock);
++	stopping = pen->stopping;
++	nvt_pen_release(pen);
++	input = pen->input;
++	pen->input = NULL;
++	mutex_unlock(&pen->data->lock);
++	if (input)
++		input_unregister_device(input);
++	if (pen->scan_requested) {
++		ret = nvt_thp_select_stylus(0);
++		if (ret) {
++			if (ret != -EAGAIN)
++				dev_warn_ratelimited(&pen->data->client->dev,
++						     "pen scan stop failed: %d; retrying\n", ret);
++			nvt_pen_retry_connect(pen);
++			return;
++		}
++		pen->scan_requested = false;
++	}
++	if (!connected || stopping)
++		return;
++	input = input_allocate_device();
++	if (!input)
++		return;
++	input->dev.parent = &pen->data->client->dev;
++	input->id.bustype = BUS_SPI;
++	input->id.vendor = 0x0603;
++	input->id.product = 0x6532;
++	input->name = vendor == 1 ? "Novatek Focus Pen" : "Novatek Focus Pen Pro";
++	input_set_capability(input, EV_KEY, BTN_TOOL_PEN);
++	input_set_capability(input, EV_KEY, BTN_TOUCH);
++	input_set_capability(input, EV_KEY, BTN_STYLUS);
++	input_set_capability(input, EV_KEY, BTN_STYLUS2);
++	__set_bit(INPUT_PROP_DIRECT, input->propbit);
++	input_set_abs_params(input, ABS_X, 0, 319999, 0, 0);
++	input_set_abs_params(input, ABS_Y, 0, 213599, 0, 0);
++	input_abs_set_res(input, ABS_X, 1339);
++	input_abs_set_res(input, ABS_Y, 1310);
++	input_set_abs_params(input, ABS_PRESSURE, 0,
++			     vendor == 1 ? 8191 : 16383, 0, 0);
++	input_set_abs_params(input, ABS_TILT_X, -60, 60, 0, 0);
++	input_set_abs_params(input, ABS_TILT_Y, -60, 60, 0, 0);
++	ret = input_register_device(input);
++	if (ret) {
++		input_free_device(input);
++		return;
++	}
++	mutex_lock(&pen->data->lock);
++	spin_lock_irqsave(&pen->lock, flags);
++	connected = pen->connected && generation == pen->generation;
++	spin_unlock_irqrestore(&pen->lock, flags);
++	stopping = pen->stopping;
++	mutex_unlock(&pen->data->lock);
++	if (stopping || !connected) {
++		input_unregister_device(input);
++		return;
++	}
++	ret = nvt_thp_select_stylus(vendor);
++	pen->scan_requested = true;
++	if (ret) {
++		input_unregister_device(input);
++		if (ret != -EAGAIN)
++			dev_warn_ratelimited(&pen->data->client->dev,
++					     "pen scan setup failed: %d; retrying\n", ret);
++		nvt_pen_retry_connect(pen);
++		return;
++	}
++	mutex_lock(&pen->data->lock);
++	spin_lock_irqsave(&pen->lock, flags);
++	connected = pen->connected && generation == pen->generation;
++	spin_unlock_irqrestore(&pen->lock, flags);
++	if (pen->stopping || !connected) {
++		mutex_unlock(&pen->data->lock);
++		input_unregister_device(input);
++		return;
++	}
++	pen->input = input;
++	pen->input_vendor = vendor;
++	pen->input_generation = generation;
++	mutex_unlock(&pen->data->lock);
++}
++
++static bool nvt_pen_ble_match(struct input_handler *handler, struct input_dev *input)
++{
++	struct device *parent = input->dev.parent;
++
++	return parent && parent->bus && !strcmp(parent->bus->name, "hid") &&
++	       parent->driver && !strcmp(parent->driver->name, "xiaomi");
++}
++
++static int nvt_pen_ble_connect(struct input_handler *handler, struct input_dev *input,
++			       const struct input_device_id *id)
++{
++	struct nvt_pen_input *pen = handler->private;
++	struct nvt_pen_ble *ble;
++	unsigned long flags;
++	int ret;
++
++	ble = kzalloc_obj(*ble);
++	if (!ble)
++		return -ENOMEM;
++	ble->handle = (struct input_handle) {
++		.dev = input_get_device(input), .handler = handler,
++		.private = pen, .name = "nt36532e-pen-ble",
++	};
++	ret = input_register_handle(&ble->handle);
++	if (ret)
++		goto put_device;
++	ret = input_open_device(&ble->handle);
++	if (ret)
++		goto unregister_handle;
++	spin_lock_irqsave(&pen->lock, flags);
++	list_add_tail(&ble->node, &pen->ble_devices);
++	pen->ble_count++;
++	pen->generation++;
++	pen->vendor = input->id.product == 0x4d80 ? 1 : 3;
++	/* Without a receiver-side identity, two radios must not share samples. */
++	pen->connected = pen->ble_count == 1;
++	pen->sample_count = 0;
++	pen->next_sample = 0;
++	pen->button_count = 0;
++	pen->button_head = 0;
++	spin_unlock_irqrestore(&pen->lock, flags);
++	mod_delayed_work(system_wq, &pen->connect_work, 0);
++	return 0;
++
++unregister_handle:
++	input_unregister_handle(&ble->handle);
++put_device:
++	input_put_device(ble->handle.dev);
++	kfree(ble);
++	return ret;
++}
++
++static void nvt_pen_ble_disconnect(struct input_handle *handle)
++{
++	struct nvt_pen_input *pen = handle->private;
++	struct nvt_pen_ble *ble = container_of(handle, struct nvt_pen_ble, handle);
++	unsigned long flags;
++
++	input_close_device(handle);
++	input_unregister_handle(handle);
++	input_put_device(handle->dev);
++	spin_lock_irqsave(&pen->lock, flags);
++	list_del(&ble->node);
++	pen->ble_count--;
++	pen->generation++;
++	pen->connected = pen->ble_count == 1;
++	if (pen->connected) {
++		struct nvt_pen_ble *remaining = list_first_entry(&pen->ble_devices,
++							struct nvt_pen_ble, node);
++
++		pen->vendor = remaining->handle.dev->id.product == 0x4d80 ? 1 : 3;
++	}
++	pen->sample_count = 0;
++	pen->next_sample = 0;
++	pen->button_count = 0;
++	pen->button_head = 0;
++	spin_unlock_irqrestore(&pen->lock, flags);
++	kfree(ble);
++	mod_delayed_work(system_wq, &pen->connect_work, 0);
++}
++
++static const struct input_device_id nvt_pen_ble_ids[] = {
++	{
++		.flags = INPUT_DEVICE_ID_MATCH_DEVICE | INPUT_DEVICE_ID_MATCH_ABSBIT,
++		.bustype = BUS_BLUETOOTH, .vendor = 0x22, .product = 0x5081,
++		.absbit = { [BIT_WORD(ABS_PRESSURE)] = BIT_MASK(ABS_PRESSURE) },
++	},
++	{
++		.flags = INPUT_DEVICE_ID_MATCH_DEVICE | INPUT_DEVICE_ID_MATCH_ABSBIT,
++		.bustype = BUS_BLUETOOTH, .vendor = 0x22, .product = 0x4d80,
++		.absbit = { [BIT_WORD(ABS_PRESSURE)] = BIT_MASK(ABS_PRESSURE) },
++	},
++	{ }
++};
++
++int nvt_pen_init(struct nvt_ts_data *data)
++{
++	struct nvt_pen_input *pen;
++	int ret;
++
++	pen = kzalloc_obj(*pen);
++	if (!pen)
++		return -ENOMEM;
++	pen->decoder = nvt_pen_decoder_load(&data->client->dev, data->lcd_id);
++	if (IS_ERR(pen->decoder)) {
++		ret = PTR_ERR(pen->decoder);
++		kfree(pen);
++		return ret == -ENOENT ? 0 : ret;
++	}
++	pen->data = data;
++	spin_lock_init(&pen->lock);
++	INIT_LIST_HEAD(&pen->ble_devices);
++	INIT_DELAYED_WORK(&pen->connect_work, nvt_pen_connect_work);
++	INIT_WORK(&pen->button_work, nvt_pen_button_work);
++	INIT_DELAYED_WORK(&pen->release_work, nvt_pen_release_work);
++	pen->handler = (struct input_handler) {
++		.private = pen, .name = "nt36532e-pen-ble", .id_table = nvt_pen_ble_ids,
++		.match = nvt_pen_ble_match, .connect = nvt_pen_ble_connect,
++		.disconnect = nvt_pen_ble_disconnect,
++	};
++	pen->report_notifier.notifier_call = nvt_pen_ble_report;
++	ret = xiaomi_pen_register_notifier(&pen->report_notifier);
++	if (ret) {
++		nvt_pen_decoder_free(pen->decoder);
++		kfree(pen);
++		return ret;
++	}
++	mutex_lock(&data->lock);
++	data->pen = pen;
++	mutex_unlock(&data->lock);
++	ret = input_register_handler(&pen->handler);
++	if (ret) {
++		xiaomi_pen_unregister_notifier(&pen->report_notifier);
++		mutex_lock(&data->lock);
++		pen->stopping = true;
++		mutex_unlock(&data->lock);
++		cancel_delayed_work_sync(&pen->connect_work);
++		cancel_work_sync(&pen->button_work);
++		cancel_delayed_work_sync(&pen->release_work);
++		mutex_lock(&data->lock);
++		data->pen = NULL;
++		mutex_unlock(&data->lock);
++		if (pen->input)
++			input_unregister_device(pen->input);
++		nvt_pen_decoder_free(pen->decoder);
++		kfree(pen);
++	}
++	return ret;
++}
++
++void nvt_pen_free(struct nvt_ts_data *data)
++{
++	struct nvt_pen_input *pen = data->pen;
++	struct input_dev *input;
++
++	if (!pen)
++		return;
++	mutex_lock(&data->lock);
++	pen->stopping = true;
++	mutex_unlock(&data->lock);
++	input_unregister_handler(&pen->handler);
++	xiaomi_pen_unregister_notifier(&pen->report_notifier);
++	cancel_delayed_work_sync(&pen->connect_work);
++	cancel_work_sync(&pen->button_work);
++	mutex_lock(&data->lock);
++	nvt_pen_reset(data);
++	data->pen = NULL;
++	input = pen->input;
++	pen->input = NULL;
++	mutex_unlock(&data->lock);
++	cancel_delayed_work_sync(&pen->release_work);
++	if (input)
++		input_unregister_device(input);
++	nvt_pen_decoder_free(pen->decoder);
++	kfree(pen);
++}
++
++bool nvt_pen_input_active(struct nvt_ts_data *data)
++{
++	return !!data->pen;
++}
++
++bool nvt_pen_in_range(struct nvt_ts_data *data)
++{
++	return data->pen && data->pen->present;
++}
+diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx-pen.c b/drivers/input/touchscreen/nt36532e/nt36xxx-pen.c
+new file mode 100644
+index 000000000..44f4457ce
+--- /dev/null
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx-pen.c
+@@ -0,0 +1,500 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * NT36532 pen matrices: MiCode piano-w-oss p81/nt36532/nt36xxx.c,
++ * type 17/29, 36-byte metadata followed by Tip/Ring planes.
++ *
++ * This decoder uses an integer local centroid and piecewise-linear tilt.
++ * It does not import xiaomi-sheng-thp's Apache-2.0 solver or filters.
++ * Electrode positions and tilt curves remain in external firmware data.
++ */
++#include <linux/ctype.h>
++#include <linux/err.h>
++#include <linux/firmware.h>
++#include <linux/kernel.h>
++#include <linux/math64.h>
++#include <linux/module.h>
++#include <linux/slab.h>
++#include <linux/sort.h>
++#include <linux/string.h>
++#include <linux/unaligned.h>
++
++#include "nt36xxx-pen.h"
++
++#define NVT_PEN_AXIS_X 40
++#define NVT_PEN_AXIS_Y 60
++#define NVT_PEN_CURVE_POINTS 6
++#define NVT_PEN_PLANE_NODES 480
++#define NVT_PEN_CONFIG_LIMIT 16384
++
++struct nvt_pen_profile {
++	s32 difference[NVT_PEN_CURVE_POINTS];
++	s32 threshold, rate;
++};
++
++struct nvt_pen_decoder {
++	s32 mapping_x[NVT_PEN_AXIS_X];
++	s32 mapping_y[NVT_PEN_AXIS_Y];
++	s32 angles[NVT_PEN_CURVE_POINTS];
++	s32 tip_threshold, ring_threshold;
++	s32 resolution, x_max, y_max;
++	bool compensate_tilt;
++	struct nvt_pen_profile profiles[2];
++	/* Scratch space is probe-allocated, not on the IRQ stack. */
++	s32 axes[4][NVT_PEN_AXIS_Y];
++	s32 line[NVT_PEN_AXIS_Y];
++};
++
++static int nvt_pen_config_value(const char *config, const char *section,
++				const char *key, s32 *values, unsigned int count)
++{
++	const char *line = config;
++	bool selected = false, found = false;
++	unsigned int section_len = strlen(section), key_len = strlen(key);
++
++	while (*line) {
++		const char *end = strchrnul(line, '\n');
++		const char *start = line, *equal;
++		unsigned int i;
++
++		line = *end ? end + 1 : end;
++		while (start < end && isspace(*start))
++			start++;
++		end = memchr(start, '#', end - start) ?: end;
++		while (end > start && isspace(end[-1]))
++			end--;
++		if (start == end)
++			continue;
++		equal = memchr(start, '=', end - start);
++		if (!equal) {
++			selected = end - start == section_len &&
++				   !strncmp(start, section, section_len);
++			continue;
++		}
++		if (!selected || equal - start < key_len ||
++		    strncmp(start, key, key_len))
++			continue;
++		start += key_len;
++		while (start < equal && isspace(*start))
++			start++;
++		if (start != equal)
++			continue;
++		if (found)
++			return -EINVAL;
++		found = true;
++		start = equal + 1;
++		while (start < end && isspace(*start))
++			start++;
++		if (count > 1) {
++			if (start == end || *start++ != '{')
++				return -EINVAL;
++		}
++		for (i = 0; i < count; i++) {
++			s64 value = 0;
++			bool negative = false;
++
++			while (start < end && isspace(*start))
++				start++;
++			if (start < end && (*start == '-' || *start == '+'))
++				negative = *start++ == '-';
++			if (start == end || !isdigit(*start))
++				return -EINVAL;
++			while (start < end && isdigit(*start)) {
++				value = value * 10 + *start++ - '0';
++				if (value > S32_MAX)
++					return -ERANGE;
++			}
++			values[i] = negative ? -value : value;
++			while (start < end && isspace(*start))
++				start++;
++			if (i + 1 < count && (start == end || *start++ != ','))
++				return -EINVAL;
++		}
++		if (count > 1 && (start == end || *start++ != '}'))
++			return -EINVAL;
++		while (start < end && isspace(*start))
++			start++;
++		if (start != end)
++			return -EINVAL;
++	}
++	return found ? 0 : -ENOENT;
++}
++
++static int nvt_pen_config_scalar(const char *config, const char *section,
++				 const char *key, s32 expected)
++{
++	s32 value;
++	int ret;
++
++	ret = nvt_pen_config_value(config, section, key, &value, 1);
++	if (ret)
++		return ret;
++	return value == expected ? 0 : -EINVAL;
++}
++
++static int nvt_pen_read_profile(const char *config, unsigned int vendor,
++				struct nvt_pen_profile *profile)
++{
++	static const char * const slots[] = { "stylus", "stylus_2", "stylus_3" };
++	char key[64];
++	int selected = -1;
++	unsigned int i;
++	s32 value;
++	int ret;
++
++	for (i = 0; i < ARRAY_SIZE(slots); i++) {
++		snprintf(key, sizeof(key), "%s_vendor_id", slots[i]);
++		ret = nvt_pen_config_value(config, "stylus", key, &value, 1);
++		if (ret == -ENOENT)
++			continue;
++		if (ret)
++			return ret;
++		if (value != vendor)
++			continue;
++		if (selected >= 0)
++			return -EINVAL;
++		selected = i;
++	}
++	if (selected < 0)
++		return -ENOENT;
++	snprintf(key, sizeof(key), "%s_coor_diff", slots[selected]);
++	ret = nvt_pen_config_value(config, "stylus", key, profile->difference,
++				   NVT_PEN_CURVE_POINTS);
++	if (ret)
++		return ret;
++	snprintf(key, sizeof(key), "%s_tilt_calibration_thd", slots[selected]);
++	ret = nvt_pen_config_value(config, "stylus", key, &profile->threshold, 1);
++	if (ret)
++		return ret;
++	snprintf(key, sizeof(key), "%s_tilt_calibration_rate", slots[selected]);
++	ret = nvt_pen_config_value(config, "stylus", key, &profile->rate, 1);
++	if (ret)
++		return ret;
++	if (profile->difference[0] || profile->threshold < 0 ||
++	    profile->threshold > 3200 || profile->rate < 1 || profile->rate > 1000)
++		return -ERANGE;
++	for (i = 1; i < NVT_PEN_CURVE_POINTS; i++)
++		if (profile->difference[i] <= profile->difference[i - 1] ||
++		    profile->difference[i] > 3200)
++			return -ERANGE;
++	return 0;
++}
++
++static int nvt_pen_read_config(const char *config, struct nvt_pen_decoder *decoder)
++{
++	static const struct {
++		const char *section, *key;
++		s32 value;
++	} geometry[] = {
++		{ "calibration", "format_version", 1 },
++		{ "hw", "hal_row_num", 40 },
++		{ "hw", "hal_col_num", 60 },
++		{ "hw", "hal_node_num", 2400 },
++		{ "hw", "display_x_resolution", 2136 },
++		{ "hw", "display_y_resolution", 3200 },
++		{ "hw", "x_flip", 0 }, { "hw", "y_flip", 0 }, { "hw", "xy_flip", 0 },
++		{ "project_infor", "super_resolution", 100 },
++		{ "stylus", "stylus_en", 1 },
++		{ "stylus", "stylus_num_col1", 12 },
++		{ "stylus", "stylus_num_row1", 40 },
++		{ "stylus", "stylus_num_col2", 60 },
++		{ "stylus", "stylus_num_row2", 8 },
++	};
++	s32 compensate;
++	unsigned int i;
++	int ret;
++
++	for (i = 0; i < ARRAY_SIZE(geometry); i++) {
++		ret = nvt_pen_config_scalar(config, geometry[i].section,
++					    geometry[i].key, geometry[i].value);
++		if (ret)
++			return ret;
++	}
++	ret = nvt_pen_config_value(config, "mapping", "mapping_40",
++				   decoder->mapping_x, NVT_PEN_AXIS_X);
++	if (ret)
++		return ret;
++	ret = nvt_pen_config_value(config, "mapping", "mapping_60",
++				   decoder->mapping_y, NVT_PEN_AXIS_Y);
++	if (ret)
++		return ret;
++	for (i = 0; i < NVT_PEN_AXIS_Y; i++) {
++		if (decoder->mapping_y[i] < 0 || decoder->mapping_y[i] >= 3200 ||
++		    (i && decoder->mapping_y[i] <= decoder->mapping_y[i - 1]))
++			return -ERANGE;
++		if (i < NVT_PEN_AXIS_X &&
++		    (decoder->mapping_x[i] < 0 || decoder->mapping_x[i] >= 2136 ||
++		     (i && decoder->mapping_x[i] <= decoder->mapping_x[i - 1])))
++			return -ERANGE;
++	}
++	ret = nvt_pen_config_value(config, "stylus", "stylus_angle",
++				   decoder->angles, NVT_PEN_CURVE_POINTS);
++	if (ret)
++		return ret;
++	if (decoder->angles[0])
++		return -ERANGE;
++	for (i = 1; i < NVT_PEN_CURVE_POINTS; i++)
++		if (decoder->angles[i] <= decoder->angles[i - 1] ||
++		    decoder->angles[i] > 9000)
++			return -ERANGE;
++	ret = nvt_pen_config_value(config, "stylus", "stylus_up_threshold",
++				   &decoder->tip_threshold, 1);
++	if (ret)
++		return ret;
++	ret = nvt_pen_config_value(config, "stylus", "stylus_ring_threshold",
++				   &decoder->ring_threshold, 1);
++	if (ret)
++		return ret;
++	if (decoder->tip_threshold < 1 || decoder->tip_threshold > S16_MAX ||
++	    decoder->ring_threshold < 1 || decoder->ring_threshold > S16_MAX)
++		return -ERANGE;
++	ret = nvt_pen_config_value(config, "stylus", "stylus_tilt_calibration_en",
++				   &compensate, 1);
++	if (ret || (compensate != 0 && compensate != 1))
++		return ret ?: -ERANGE;
++	decoder->compensate_tilt = compensate;
++	ret = nvt_pen_read_profile(config, 1, &decoder->profiles[0]);
++	if (ret)
++		return ret;
++	ret = nvt_pen_read_profile(config, 3, &decoder->profiles[1]);
++	if (ret)
++		return ret;
++	decoder->resolution = 100;
++	decoder->x_max = 213599;
++	decoder->y_max = 319999;
++	return 0;
++}
++
++struct nvt_pen_decoder *nvt_pen_decoder_load(struct device *dev, unsigned int lcd_id)
++{
++	const struct firmware *fw;
++	struct nvt_pen_decoder *decoder;
++	const char *name;
++	char *config;
++	int ret;
++
++	if (lcd_id > 1)
++		return ERR_PTR(-ENODEV);
++	name = lcd_id ? "novatek/piano-boe-pen.ini" : "novatek/piano-csot-pen.ini";
++	ret = request_firmware_direct(&fw, name, dev);
++	if (ret)
++		return ERR_PTR(ret);
++	if (!fw->size || fw->size > NVT_PEN_CONFIG_LIMIT ||
++	    memchr(fw->data, 0, fw->size)) {
++		ret = -EINVAL;
++		goto release;
++	}
++	config = kmemdup_nul(fw->data, fw->size, GFP_KERNEL);
++	if (!config) {
++		ret = -ENOMEM;
++		goto release;
++	}
++	decoder = kzalloc_obj(*decoder);
++	if (!decoder) {
++		ret = -ENOMEM;
++		goto free_config;
++	}
++	ret = nvt_pen_read_config(config, decoder);
++	if (ret) {
++		kfree(decoder);
++		goto free_config;
++	}
++	kfree(config);
++	release_firmware(fw);
++	return decoder;
++
++free_config:
++	kfree(config);
++release:
++	release_firmware(fw);
++	return ERR_PTR(ret);
++}
++
++void nvt_pen_decoder_free(struct nvt_pen_decoder *decoder)
++{
++	kfree(decoder);
++}
++
++static bool nvt_pen_checksum(const u8 *data, size_t bytes, size_t header,
++			     size_t minimum, size_t maximum)
++{
++	size_t end, i;
++	u32 count, sum = 0;
++	u16 expected;
++
++	if (header > bytes || bytes - header < 20)
++		return false;
++	expected = get_unaligned_le16(data + header + 4);
++	count = get_unaligned_le32(data + header + 8);
++	if (!count || count > (bytes - 20) / 4 ||
++	    get_unaligned_le16(data + header + 12) != (u16)~expected ||
++	    get_unaligned_le32(data + header + 16) != ~count)
++		return false;
++	end = 20 + (size_t)count * 4;
++	if (end < minimum || end > maximum)
++		return false;
++	for (i = 20; i < end; i += 2)
++		sum += get_unaligned_le16(data + i);
++	return (u16)(0U - sum) == expected;
++}
++
++static int nvt_pen_compare(const void *left, const void *right)
++{
++	s32 a = *(const s32 *)left, b = *(const s32 *)right;
++
++	return (a > b) - (a < b);
++}
++
++/* Scan groups are separate measurements, not interchangeable electrodes.
++ * Select one group by its strongest local five-electrode signal, then find
++ * the centroid in that same group. The median excludes the narrow pen lobe
++ * from the DC estimate; the gate measures its integrated positive signal.
++ */
++static bool nvt_pen_centroid(const u8 *plane, unsigned int nodes,
++			     unsigned int groups, bool interleaved,
++			     const s32 *mapping, s32 threshold, s32 resolution,
++			     s32 *axis, s32 *line, s32 *coordinate)
++{
++	unsigned int i, group, peak = 0, selected_group = 0;
++	s64 total = 0, weighted = 0, background = 0;
++	s32 best = 0;
++
++	for (group = 0; group < groups; group++) {
++		unsigned int first, last, candidate;
++		s32 signal = 0;
++
++		for (i = 0; i < nodes; i++) {
++			unsigned int index = interleaved ? i * groups + group : group * nodes + i;
++
++			line[i] = (s16)get_unaligned_le16(plane + index * 2);
++		}
++		sort(line, nodes, sizeof(*line), nvt_pen_compare, NULL);
++		background = line[nodes / 2];
++		for (candidate = 0; candidate < nodes; candidate++) {
++			unsigned int index = interleaved ? candidate * groups + group :
++								 group * nodes + candidate;
++			s32 value = (s16)get_unaligned_le16(plane + index * 2);
++
++			line[candidate] = max_t(s32, value - background, 0);
++		}
++		first = 0;
++		last = min(2U, nodes - 1);
++		for (i = first; i <= last; i++)
++			signal += line[i];
++		for (candidate = 0; candidate < nodes; candidate++) {
++			if (signal > best) {
++				best = signal;
++				peak = candidate;
++				selected_group = group;
++			}
++			if (candidate >= 2)
++				signal -= line[first++];
++			if (last + 1 < nodes)
++				signal += line[++last];
++		}
++	}
++	if (best < threshold)
++		return false;
++	for (i = 0; i < nodes; i++) {
++		unsigned int index = interleaved ? i * groups + selected_group :
++						 selected_group * nodes + i;
++
++		line[i] = (s16)get_unaligned_le16(plane + index * 2);
++	}
++	sort(line, nodes, sizeof(*line), nvt_pen_compare, NULL);
++	background = line[nodes / 2];
++	for (i = 0; i < nodes; i++) {
++		unsigned int index = interleaved ? i * groups + selected_group :
++						 selected_group * nodes + i;
++		s32 value = (s16)get_unaligned_le16(plane + index * 2);
++
++		axis[i] = max_t(s32, value - background, 0);
++	}
++	for (i = peak > 2 ? peak - 2 : 0; i <= min(peak + 2, nodes - 1); i++) {
++		s32 weight = axis[i];
++
++		total += weight;
++		weighted += (s64)weight * mapping[i] * resolution;
++	}
++	if (total < threshold)
++		return false;
++	*coordinate = div64_s64(weighted, total);
++	return true;
++}
++
++static s32 nvt_pen_tilt(const struct nvt_pen_decoder *decoder,
++			const struct nvt_pen_profile *profile, s32 difference)
++{
++	s32 magnitude = abs(difference), angle;
++	unsigned int i;
++
++	for (i = 1; i + 1 < NVT_PEN_CURVE_POINTS; i++)
++		if (magnitude < profile->difference[i] * decoder->resolution)
++			break;
++	magnitude = min(magnitude, profile->difference[i] * decoder->resolution);
++	angle = decoder->angles[i - 1] +
++		div_s64((s64)(magnitude - profile->difference[i - 1] * decoder->resolution) *
++			(decoder->angles[i] - decoder->angles[i - 1]),
++			(profile->difference[i] - profile->difference[i - 1]) *
++			decoder->resolution);
++	return clamp(angle / 100 * (difference < 0 ? -1 : 1), -60, 60);
++}
++
++int nvt_pen_decode(struct nvt_pen_decoder *decoder, const u8 *payload, size_t bytes,
++		   unsigned int vendor, struct nvt_pen_point *point)
++{
++	const size_t trailer = 100 + 4 * NVT_PEN_PLANE_NODES * sizeof(s16);
++	const size_t required = trailer + 20 + 1200;
++	const struct nvt_pen_profile *profile;
++	s32 tip_x, tip_y, ring_x, ring_y, dx, dy;
++	bool x_valid, y_valid;
++
++	if (!decoder || !payload || !point || (vendor != 1 && vendor != 3))
++		return -EINVAL;
++	memset(point, 0, sizeof(*point));
++	if (bytes < required || bytes > 7934 || payload[56] != 29 ||
++	    payload[48] != 60 || payload[49] != 40 ||
++	    payload[71] != 12 || payload[72] != 40 ||
++	    payload[73] != 60 || payload[74] != 8 ||
++	    payload[75] < 1 || payload[75] > 4 || get_unaligned_le16(payload + 76) != 1200)
++		return -EINVAL;
++	if (!nvt_pen_checksum(payload, bytes, 0, required, bytes) ||
++	    !nvt_pen_checksum(payload, bytes, trailer, trailer, trailer + 4))
++		return -EBADMSG;
++	profile = &decoder->profiles[vendor == 3];
++	x_valid = nvt_pen_centroid(payload + 100, 40, 12, true, decoder->mapping_x,
++				   decoder->tip_threshold, decoder->resolution,
++				   decoder->axes[0], decoder->line, &tip_x);
++	y_valid = nvt_pen_centroid(payload + 1060, 60, 8, false, decoder->mapping_y,
++				   decoder->tip_threshold, decoder->resolution,
++				   decoder->axes[1], decoder->line, &tip_y);
++	if (!x_valid || !y_valid)
++		return 0;
++	point->proximity = true;
++	point->x = tip_x;
++	point->y = tip_y;
++	x_valid = nvt_pen_centroid(payload + 2020, 40, 12, true, decoder->mapping_x,
++				   decoder->ring_threshold, decoder->resolution,
++				   decoder->axes[2], decoder->line, &ring_x);
++	y_valid = nvt_pen_centroid(payload + 2980, 60, 8, false, decoder->mapping_y,
++				   decoder->ring_threshold, decoder->resolution,
++				   decoder->axes[3], decoder->line, &ring_y);
++	if (x_valid && y_valid) {
++		dx = ring_x - tip_x;
++		dy = ring_y - tip_y;
++		point->tilt_x = nvt_pen_tilt(decoder, profile, dy);
++		point->tilt_y = nvt_pen_tilt(decoder, profile, dx);
++		point->tilt_valid = true;
++		if (decoder->compensate_tilt) {
++			s32 threshold = profile->threshold * decoder->resolution;
++
++			point->x -= (dx < 0 ? -1 : 1) * max(abs(dx) - threshold, 0) / profile->rate;
++			point->y -= (dy < 0 ? -1 : 1) * max(abs(dy) - threshold, 0) / profile->rate;
++		}
++	}
++	point->x = clamp(point->x, 0, decoder->x_max);
++	point->y = clamp(point->y, 0, decoder->y_max);
++	return 0;
++}
++
++MODULE_FIRMWARE("novatek/piano-boe-pen.ini");
++MODULE_FIRMWARE("novatek/piano-csot-pen.ini");
+diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx-pen.h b/drivers/input/touchscreen/nt36532e/nt36xxx-pen.h
+new file mode 100644
+index 000000000..0b8b58316
+--- /dev/null
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx-pen.h
+@@ -0,0 +1,29 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef _NT36XXX_PEN_H
++#define _NT36XXX_PEN_H
++
++#include <linux/types.h>
++
++struct device;
++struct nvt_pen_decoder;
++struct nvt_ts_data;
++
++struct nvt_pen_point {
++	s32 x, y;
++	s32 tilt_x, tilt_y;
++	bool proximity;
++	bool tilt_valid;
++};
++
++struct nvt_pen_decoder *nvt_pen_decoder_load(struct device *dev, unsigned int lcd_id);
++void nvt_pen_decoder_free(struct nvt_pen_decoder *decoder);
++int nvt_pen_decode(struct nvt_pen_decoder *decoder, const u8 *payload, size_t bytes,
++		   unsigned int vendor, struct nvt_pen_point *point);
++int nvt_pen_init(struct nvt_ts_data *data);
++void nvt_pen_free(struct nvt_ts_data *data);
++void nvt_pen_reset(struct nvt_ts_data *data);
++void nvt_pen_frame(struct nvt_ts_data *data, const u8 *payload, size_t bytes, u64 time);
++bool nvt_pen_input_active(struct nvt_ts_data *data);
++bool nvt_pen_in_range(struct nvt_ts_data *data);
++
++#endif
+diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx.c b/drivers/input/touchscreen/nt36532e/nt36xxx.c
+index 0460563ef..4a6deeade 100644
+--- a/drivers/input/touchscreen/nt36532e/nt36xxx.c
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx.c
+@@ -118,6 +118,7 @@ static void nvt_input_release(bool palms)
+ static void nvt_input_reset(void)
+ {
+ 	nvt_input_release(false);
++	nvt_pen_reset(ts);
+ 	if (ts->matrix)
+ 		nvt_matrix_reset(ts->matrix);
+ }
+@@ -130,6 +131,10 @@ static void nvt_input_report(const struct nvt_matrix_frame *frame)
+ 	unsigned int s, p;
+ 	int first = -1;
+ 
++	if (nvt_pen_in_range(ts)) {
++		nvt_input_release(true);
++		return;
++	}
+ 	if (!frame->count) {
+ 		nvt_input_release(false);
+ 		return;
+@@ -263,6 +268,8 @@ static void nvt_input_frame(void)
+ 		if (!nvt_input_pen_frame_valid(payload, ts->thp_payload_len))
+ 			return;
+ 		nvt_input_release(true);
++		nvt_pen_frame(ts, payload, ts->thp_payload_len,
++			      ktime_to_ns(ts->thp_timestamp));
+ 	}
+ 	if (ret > 0)
+ 		nvt_input_report(&frame);
+@@ -807,14 +814,52 @@ static int nvt_thp_set_pen_switch(u8 value)
+ 	return ack[1] ? -ETIMEDOUT : 0;
+ }
+ 
++static int nvt_thp_stop_stylus(void)
++{
++	int ret;
++
++	ts->thp_stylus_stop_pending = true;
++	ret = nvt_set_custom_cmd(0x04, 0);
++	if (!ret)
++		ts->thp_stylus_stop_pending = false;
++	return ret;
++}
++
+ static int nvt_thp_apply_stylus(u8 mode)
+ {
+ 	bool enabled = mode && !READ_ONCE(ts->pen_docked);
+ 	int ret;
+ 
+-	ret = nvt_set_custom_cmd(0x04, enabled);
+-	if (!ret && enabled)
++	if (!enabled || ts->thp_stylus_stop_pending) {
++		ret = nvt_thp_stop_stylus();
++		if (ret || !enabled)
++			return ret;
++	}
++	ret = nvt_set_custom_cmd(0x04, 1);
++	if (!ret)
+ 		ret = nvt_thp_set_pen_switch(mode);
++	if (ret)
++		nvt_thp_stop_stylus();
++	return ret;
++}
++
++int nvt_thp_select_stylus(u8 mode)
++{
++	int ret;
++
++	disable_irq(ts->client->irq);
++	mutex_lock(&ts->lock);
++	ts->thp_stylus_mode = mode;
++	if (!mode)
++		ts->thp_stylus_stop_pending = true;
++	/* A cached request does not confirm that the controller accepted it. */
++	if (!bTouchIsAwake || ts->dev_pm_suspend || !ts->thp_firmware_ready ||
++	    ts->ic_state == NVT_IC_SUSPEND_IN || ts->ic_state == NVT_IC_SUSPEND_OUT)
++		ret = -EAGAIN;
++	else
++		ret = nvt_thp_apply_stylus(mode);
++	mutex_unlock(&ts->lock);
++	enable_irq(ts->client->irq);
+ 	return ret;
+ }
+ 
+@@ -828,6 +873,8 @@ static ssize_t nvt_thp_stylus_write(struct file *file,
+ 	if (!ts)
+ 		return -ENODEV;
+ 
++	if (nvt_pen_input_active(ts))
++		return -EBUSY;
+ 	ret = kstrtou8_from_user(buf, count, 0, &mode);
+ 	if (ret)
+ 		return ret;
+@@ -908,7 +955,7 @@ int nvt_thp_restore_stylus(void)
+ 	    ts->ic_state == NVT_IC_SUSPEND_IN || ts->ic_state == NVT_IC_SUSPEND_OUT)
+ 		return 0;
+ 	mode = READ_ONCE(ts->thp_stylus_mode);
+-	if (!mode)
++	if (!mode && !ts->thp_stylus_stop_pending)
+ 		return 0;
+ 
+ 	ret = nvt_thp_apply_stylus(mode);
+@@ -925,6 +972,8 @@ static void nvt_pen_scan_work(struct work_struct *work)
+ 
+ 	disable_irq(data->client->irq);
+ 	mutex_lock(&data->lock);
++	if (READ_ONCE(data->pen_docked))
++		nvt_pen_reset(data);
+ 	nvt_thp_restore_stylus();
+ 	mutex_unlock(&data->lock);
+ 	enable_irq(data->client->irq);
+@@ -1029,8 +1078,6 @@ static int nvt_pen_dock_init(void)
+ 	ret = input_register_handler(&ts->pen_dock_handler);
+ 	if (!ret)
+ 		ts->pen_dock_registered = true;
+-	else
+-		cancel_work_sync(&ts->pen_scan_work);
+ 	return ret;
+ }
+ 
+@@ -1041,6 +1088,7 @@ static void nvt_pen_dock_free(void)
+ 		ts->pen_dock_registered = false;
+ 	}
+ 	cancel_work_sync(&ts->pen_scan_work);
++	WRITE_ONCE(ts->pen_docked, false);
+ }
+ 
+ static bool nvt_thp_stream_ready(void)
+@@ -2286,6 +2334,7 @@ static irqreturn_t nvt_ts_work_func(int irq, void *data)
+ 
+ XFER_ERROR:
+ 	nvt_input_release(false);
++	nvt_pen_reset(ts);
+ 
+ out:
+ 	mutex_unlock(&ts->lock);
+@@ -2666,8 +2715,16 @@ static int32_t nvt_ts_probe(struct spi_device *client)
+ 
+ 	bTouchIsAwake = 1;
+ 	ret = nvt_pen_dock_init();
+-	if (ret)
+-		goto err_create_thp_proc;
++	if (ret) {
++		nvt_pen_dock_free();
++		dev_warn(&client->dev,
++			 "pen dock unavailable: %d; keeping finger and userspace pen input\n", ret);
++	} else {
++		ret = nvt_pen_init(ts);
++		if (ret)
++			dev_warn(&client->dev,
++				 "pen calibration unavailable: %d; keeping finger input\n", ret);
++	}
+ 	NVT_LOG("end\n");
+ 
+ #if BOOT_UPDATE_FIRMWARE
+@@ -2764,6 +2821,7 @@ static void nvt_ts_remove(struct spi_device *client)
+ 	nvt_panel_remove_follower(ts);
+ 
+ 	bTouchIsAwake = 0;
++	nvt_pen_free(ts);
+ 	nvt_pen_dock_free();
+ 	WRITE_ONCE(ts->thp_capture_enabled, false);
+ 	wake_up_interruptible(&ts->thp_stream_wait);
+@@ -2834,6 +2892,7 @@ static void nvt_ts_shutdown(struct spi_device *client)
+ 
+ 	nvt_panel_remove_follower(ts);
+ 	bTouchIsAwake = 0;
++	nvt_pen_free(ts);
+ 	nvt_pen_dock_free();
+ 
+ 	if (ts->power_supply_registered) {
+@@ -2884,8 +2943,9 @@ static int32_t nvt_ts_suspend(struct device *dev)
+ 
+ 	NVT_LOG("start\n");
+ 
+-	if (ts->thp_firmware_ready && ts->thp_stylus_mode) {
+-		ret = nvt_set_custom_cmd(0x04, 0);
++	if (ts->thp_firmware_ready &&
++	    (ts->thp_stylus_mode || ts->thp_stylus_stop_pending)) {
++		ret = nvt_thp_stop_stylus();
+ 		if (ret)
+ 			NVT_ERR("failed to stop pen scanning before panel sleep: %d\n", ret);
+ 	}
+@@ -3031,8 +3091,9 @@ static int nvt_pm_suspend(struct device *dev)
+ 
+ 	NVT_LOG("system enters into pm_suspend");
+ 	mutex_lock(&ts->lock);
+-	if (bTouchIsAwake && ts->thp_firmware_ready && ts->thp_stylus_mode) {
+-		ret = nvt_set_custom_cmd(0x04, 0);
++	if (bTouchIsAwake && ts->thp_firmware_ready &&
++	    (ts->thp_stylus_mode || ts->thp_stylus_stop_pending)) {
++		ret = nvt_thp_stop_stylus();
+ 		if (ret) {
+ 			mutex_unlock(&ts->lock);
+ 			return ret;
+diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx.h b/drivers/input/touchscreen/nt36532e/nt36xxx.h
+index 2c0944b7a..1138be7ab 100644
+--- a/drivers/input/touchscreen/nt36532e/nt36xxx.h
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx.h
+@@ -35,8 +35,10 @@
+ 
+ #include "nt36xxx_mem_map.h"
+ #include "nt36xxx-matrix.h"
++#include "nt36xxx-pen.h"
+ 
+ struct proc_dir_entry;
++struct nvt_pen_input;
+ 
+ struct nvt_input_slot {
+ 	s32 x, y;
+@@ -157,11 +159,13 @@ struct nvt_ts_data {
+ 	bool pen_dock_registered;
+ 	struct input_dev *input;
+ 	struct nvt_matrix *matrix;
++	struct nvt_pen_input *pen;
+ 	struct nvt_input_slot input_slots[NVT_MATRIX_MAX_POINTS];
+ 	struct mutex thp_lock; /* protects the frame buffer and stream FIFO */
+ 	u8 *thp_frame;
+ 	bool thp_capture_enabled;
+ 	u8 thp_stylus_mode;
++	bool thp_stylus_stop_pending;
+ 	bool thp_firmware_ready; /* successful download and firmware-info read */
+ 	u32 thp_firmware_crc;
+ 	bool thp_game_valid;
+@@ -256,6 +260,7 @@ int32_t nvt_check_spi_dma_tx_info(void);
+ int32_t nvt_check_tx_auto_copy(void);
+ int nvt_set_custom_cmd(u8 cmd, u16 value);
+ int nvt_thp_restore_stylus(void);
++int nvt_thp_select_stylus(u8 mode);
+ void nvt_thp_restore_game(void);
+ void nvt_power_supply_restore(void);
+ void nvt_set_doze_delay(u16 value);
+diff --git a/include/linux/input/xiaomi-pen.h b/include/linux/input/xiaomi-pen.h
+new file mode 100644
+index 000000000..4e7bec2b3
+--- /dev/null
++++ b/include/linux/input/xiaomi-pen.h
+@@ -0,0 +1,38 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef _LINUX_INPUT_XIAOMI_PEN_H
++#define _LINUX_INPUT_XIAOMI_PEN_H
++
++#include <linux/errno.h>
++#include <linux/kconfig.h>
++#include <linux/notifier.h>
++#include <linux/types.h>
++
++struct input_dev;
++
++enum xiaomi_pen_report_type {
++	XIAOMI_PEN_PRESSURE,
++	XIAOMI_PEN_BUTTONS,
++};
++
++/* Kernel-internal samples supplement evdev's change-only ABS reporting. */
++struct xiaomi_pen_report {
++	struct input_dev *input;
++	u64 timestamp_ns;
++	unsigned int value;
++};
++
++#if IS_REACHABLE(CONFIG_HID_XIAOMI)
++int xiaomi_pen_register_notifier(struct notifier_block *notifier);
++void xiaomi_pen_unregister_notifier(struct notifier_block *notifier);
++#else
++static inline int xiaomi_pen_register_notifier(struct notifier_block *notifier)
++{
++	return -ENODEV;
++}
++
++static inline void xiaomi_pen_unregister_notifier(struct notifier_block *notifier)
++{
++}
++#endif
++
++#endif
+-- 
+2.56.1
+

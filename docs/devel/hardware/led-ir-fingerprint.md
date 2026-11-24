@@ -47,7 +47,7 @@ SE15 / QUP2 SE7 / CS0。GPIO28/29/30/31 分别为 MISO/MOSI/CLK/CS，
 GENI 向 SPI 核心公布 QUP 映射设备支持的单段 DMA 大小，GPI 用一个数据描述符
 发送完整波形，不在脉冲之间拆分传输。
 GPI 成功时只通知 SPI 核心当前段完成，由核心累计实际长度并处理下一段；
-DMA 错误或有未传完的数据时标记消息失败。见[传输完成修复](../../../patches/linux/7.3/0287-LOCAL-spi-geni-qcom-complete-gpi-transfer.patch)。
+DMA 错误或有未传完的数据时标记消息失败。见[传输完成修复](../../../patches/linux/7.3/0462-LOCAL-spi-geni-qcom-complete-gpi-transfer.patch)。
 
 共享 [`设备树`](../../../linux/dts/piano-ir-spi-controller.dtso)沿用原厂
 GCC ID123、GIC SPI462、GPI2 SE7 和 IOMMU 路由。运行与休眠的差异只在
@@ -59,7 +59,7 @@ GENI 驱动在消息开始时选择 default，在队列空闲且 SE 确认停止
 提前解除仍被 DMA 使用的缓冲区映射。终止失败时保留消息、映射、时钟和引脚，
 继续恢复；不把超时当成硬件已停止。绑定、编码和空闲引脚由内核补丁系列的
 0041–0043 维护，单段 DMA 大小由
-[GENI SPI 补丁](../../../patches/linux/7.3/0271-LOCAL-spi-geni-qcom-map-large-gpi-transfers.patch)
+[GENI SPI 补丁](../../../patches/linux/7.3/0446-LOCAL-spi-geni-qcom-map-large-gpi-transfers.patch)
 处理。`RC_CORE`、`LIRC` 和 `IR_SPI` 配置由共享平台片段启用。
 
 ## 侧指纹
@@ -132,7 +132,7 @@ QTEE 使用通用 Linux TEE uAPI 的对象调用，不是 GlobalPlatform（GP）
 
 原始 QTEE 共享内存分配器使用 `alloc_pages_exact()`，超过伙伴分配器
 支持的最大阶数时会报错。项目的
-[`0159-LOCAL-qcomtee-large-shared-memory.patch`](../../../patches/linux/7.3/0159-LOCAL-qcomtee-large-shared-memory.patch)
+[`0334-LOCAL-qcomtee-large-shared-memory.patch`](../../../patches/linux/7.3/0334-LOCAL-qcomtee-large-shared-memory.patch)
 让大缓冲区使用可回收的 CMA 连续内存，小缓冲区保留原来的路径，
 并继续登记和注销安全世界的共享内存桥。
 [`piano-cma.dtso`](../../../linux/dts/piano-cma.dtso) 将默认池从 36 MiB
@@ -147,7 +147,7 @@ QTEE 使用通用 Linux TEE uAPI 的对象调用，不是 GlobalPlatform（GP）
 提供供电、复位和中断：原厂 DT 指定 GPIO73 复位、GPIO85 IRQ，
 `fp_3v3_vreg-supply` 指向 PM-HUMU L9。认证数据由安全服务处理；
 Goodix 客户端使用 `QSEECom_send_modified_cmd()` 发送请求。
-[`0162-LOCAL-uio-piano-fingerprint-control.patch`](../../../patches/linux/7.3/0162-LOCAL-uio-piano-fingerprint-control.patch)
+[`0337-LOCAL-uio-piano-fingerprint-control.patch`](../../../patches/linux/7.3/0337-LOCAL-uio-piano-fingerprint-control.patch)
 提供内核供电、复位和中断控制，设备树位于
 [`piano-fingerprint.dtso`](../../../linux/dts/piano-fingerprint.dtso)。
 打开 `piano-goodix` UIO 设备时打开供电并释放复位，关闭时停止中断、
@@ -195,7 +195,7 @@ QSEECOMPAT 的 lookup 返回 `architecture=2`，命令应使用 64 位地址，
 传感器类型为 5。无需给每条命令申请大缓冲区，也无需为这个查询启动
 文件／时间监听服务。
 
-[`0018` 内核修正](../../../patches/linux/7.3/0163-LOCAL-qcomtee-public-buffers-cma.patch)
+[QTEE CMA 缓冲区补丁](../../../patches/linux/7.3/0338-LOCAL-qcomtee-public-buffers-cma.patch)
 使应用共享内存使用设备树声明的连续内存池，保留驱动私有小消息的
 普通分配方式。地址范围由池的配置决定，不通过伪造指针或用户空间
 内存热补丁处理。

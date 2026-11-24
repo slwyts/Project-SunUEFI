@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Thu, 22 Oct 2026 07:46:25 +0800
+Subject: [PATCH] remoteproc: qcom: pas: share SM8750 CDSP global sync memory
+
+Match the factory sun_cdsp_resource descriptor in MiCode commit 45fb9bd6ae5ba2942fc1d53e4b6b46ef76992f71. The third reserved-memory region is global_sync_mem and needs shared HLOS/CDSP access before starting the firmware.
+
+Use the existing reserved-region assignment and release paths, as already done for SM8650 CDSP, rather than changing firmware or granting access to unrelated memory.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/remoteproc/qcom_q6v5_pas.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/remoteproc/qcom_q6v5_pas.c b/drivers/remoteproc/qcom_q6v5_pas.c
+index 139137b50a5..440141d4773 100644
+--- a/drivers/remoteproc/qcom_q6v5_pas.c
++++ b/drivers/remoteproc/qcom_q6v5_pas.c
+@@ -1921,6 +1921,10 @@ static const struct qcom_pas_data sm8750_cdsp_resource = {
+ 	.sysmon_name = "cdsp",
+ 	.ssctl_id = 0x17,
+ 	.smem_host_id = 5,
++	.region_assign_idx = 2,
++	.region_assign_count = 1,
++	.region_assign_shared = true,
++	.region_assign_vmid = QCOM_SCM_VMID_CDSP,
+ };
+ 
+ static const struct of_device_id qcom_pas_of_match[] = {

@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: misc: fastrpc: select DMA mapping for Piano
+
+Use the SM8750 DMA mapping policy retained in the port.
+
+The cited SunUEFI changes were carried through the 7.3 port.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/c85b24616d84a5fc68814e0090fa2b2d41acdfbc
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/misc/fastrpc.c | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
+index 3ed43564f77ba29b5b0a75a1eae3c12665cb71c4..1cf56227373f02200c4f22a4c8fe25e8c10fde81 100644
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -932,6 +932,11 @@ static int fastrpc_map_attach(struct fastrpc_user *fl, int fd,
+ 	for_each_sg(map->table->sgl, sgl, map->table->nents,
+ 		sgl_index)
+ 		map->size += sg_dma_len(sgl);
++	dev_dbg(sess->dev,
++		"dma-buf fd=%d nents=%u orig_nents=%u first_phys=%llx first_dma=%llx size=%llu\n",
++		fd, map->table->nents, map->table->orig_nents,
++		(unsigned long long)sg_phys(map->table->sgl),
++		(unsigned long long)sg_dma_address(map->table->sgl), map->size);
+ 	if (len > map->size) {
+ 		dev_dbg(sess->dev, "Bad size passed len 0x%llx map size 0x%llx\n",
+ 				len, map->size);
+@@ -1335,7 +1340,11 @@ static inline int fastrpc_wait_for_response(struct fastrpc_invoke_ctx *ctx,
+ 		if (!wait_for_completion_timeout(&ctx->work, 10 * HZ))
+ 			err = -ETIMEDOUT;
+ 	} else {
+-		err = wait_for_completion_interruptible(&ctx->work);
++		/* Keep the in-flight DSP context across process freezing; real
++		 * signals still interrupt this userspace invocation.
++		 */
++		err = wait_for_completion_state(&ctx->work,
++						TASK_INTERRUPTIBLE | TASK_FREEZABLE);
+ 	}
+ 
+ 	return err;

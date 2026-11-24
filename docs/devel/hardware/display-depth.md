@@ -62,8 +62,8 @@ HyperOS 4 的配置位于 `/odm/etc/display/qdcm_calib_data_xiaomi_p81_35_02_0b_
 
 - `native_hdr` 的输出 Gamma 为 2.2，包含 P3 面板校准、17 点色调映射、实时亮度补偿和内容统计；CSOT 配置中的满屏峰值约 844.5 nit，SDR 参考峰值为 400 nit。这些是配置值，不是测试物理亮度测量。
 - HDR 模式和 intent 1 的 `standard_*` 模式配置了 LUMA dither，但 `temporalEnable=0`；配置内容不能代替播放时的寄存器状态，也不能单凭该字段认定面板 FRC。
-- [显示补丁中的高精度后端](../../../patches/linux/7.3/0146-LOCAL-drm-msm-dpu-igcv5-high-precision.patch)暴露均匀 1025 项 `DEGAMMA_LUT`，由驱动选取两组硬件采样点。当前组合 DMA 为 64 KiB，容纳两路 GC、IGC 和 Gamut 状态；实机恒等、非线性和旁路恢复已完成。
-- Linux 7.3 的 [`0016` 补丁](../../../patches/linux/7.3/0161-LOCAL-drm-igcv5-high-precision-dither.patch)按原厂 IGC 控制字，在存在 Degamma LUT 时打开高精度内部抖动，强度为 4；空 LUT 仍保持旁路。它不改变十位 DSC，也不提供面板 FRC 控制。
+- [显示补丁中的高精度后端](../../../patches/linux/7.3/0321-LOCAL-drm-msm-dpu-igcv5-high-precision.patch)暴露均匀 1025 项 `DEGAMMA_LUT`，由驱动选取两组硬件采样点。当前组合 DMA 为 64 KiB，容纳两路 GC、IGC 和 Gamut 状态；实机恒等、非线性和旁路恢复已完成。
+- Linux 7.3 的 [IGC 抖动补丁](../../../patches/linux/7.3/0336-LOCAL-drm-igcv5-high-precision-dither.patch)按原厂 IGC 控制字，在存在 Degamma LUT 时打开高精度内部抖动，强度为 4；空 LUT 仍保持旁路。它不改变十位 DSC，也不提供面板 FRC 控制。
 
 ### HDR 亮度与背光
 
@@ -111,7 +111,7 @@ AIQE 也没有经原厂驱动启用。同机 HyperOS 4 启动时，SSIP 熔丝�
 | `GM1`、`GM2`、`GM3`、`GM11`、`GM22`、`GM33`（263～265），`smart_MC`、`smart_MC1`（258） | 关 | 关 | 开，强度 4 |
 | `expert_*`（267～269）、`hal_*`（256、257）、`video*`（259～262）、`Native_D65_*`（273）、`standard_native`（0） | 关 | 关 | 关 |
 
-配置中开启的 `PostBlendDither` 都是同一组值：`ditherMode` 为 `LUMA`，`strengthR`／`strengthG`／`strengthB` 均为 6，`temporalEnable=0`，4×4 矩阵 `[15,7,13,5,3,11,1,9,12,4,14,6,0,8,2,10]`。实际 SDR 和 HDR 播放中这些后混合模块仍关闭，Linux 不额外开启；IGC 内部抖动由 7.3 的 `0016` 补丁在存在 Degamma LUT 时按强度 4 打开。
+配置中开启的 `PostBlendDither` 都是同一组值：`ditherMode` 为 `LUMA`，`strengthR`／`strengthG`／`strengthB` 均为 6，`temporalEnable=0`，4×4 矩阵 `[15,7,13,5,3,11,1,9,12,4,14,6,0,8,2,10]`。实际 SDR 和 HDR 播放中这些后混合模块仍关闭，Linux 不额外开启；内核在存在 Degamma LUT 时将 IGC 内部抖动设为强度 4。
 
 
 ## 标准 HDR 输出

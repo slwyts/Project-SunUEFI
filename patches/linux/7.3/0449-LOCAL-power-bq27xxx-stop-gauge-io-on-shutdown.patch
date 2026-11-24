@@ -1,0 +1,397 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Fri, 20 Nov 2026 00:49:21 +0800
+Subject: power: supply: bq27xxx: stop gauge I/O on shutdown
+
+A queued power supply notification can read STATUS after the I2C
+adapter has stopped accepting transfers. The gauge has no I2C shutdown
+callback, and STATUS reads the bus outside the update lock. On Piano
+this leads to a "Transfer while suspended" warning during reboot.
+
+Stop polling and use the existing gauge lock to finish in-flight I/O
+before marking the gauge unavailable. Keep the power supply registered
+for existing consumers, but return -ENODEV rather than issuing new
+transfers. Preserve the I2C core's IRQ disable and use the same stop path
+for removal, keeping the existing removal-time charge-mode restore.
+The shutdown callback itself does not write to the gauge.
+
+Fixes: 9f78c607600c ("i2c: qcom-geni: Add shutdown callback for i2c")
+
+Establish shutdown dependencies on the two gauges before enabling FFC.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/power/supply/bq27xxx_battery.c      | 55 +++++++++++++--------
+ drivers/power/supply/bq27xxx_battery_i2c.c  |  9 ++++
+ drivers/power/supply/bq27xxx_battery_test.c | 48 +++++++++++++++---
+ drivers/power/supply/piano_mca.c            | 55 +++++++++++++++++++--
+ include/linux/power/bq27xxx_battery.h       |  1 +
+ 5 files changed, 137 insertions(+), 31 deletions(-)
+
+diff --git a/drivers/power/supply/bq27xxx_battery.c b/drivers/power/supply/bq27xxx_battery.c
+index 0726da5fb0abcad4c6278c1e675f2299631e0d1e..163e6a22a4faff7f58bfe4b668bbd5d06d9cee75 100644
+--- a/drivers/power/supply/bq27xxx_battery.c
++++ b/drivers/power/supply/bq27xxx_battery.c
+@@ -1849,10 +1849,8 @@ static int bq27xxx_battery_read_health(struct bq27xxx_device_info *di,
+ 
+ 	/* Vendor firmware exposes read-only SOA and ISC alerts as byte registers. */
+ 	if (di->health_alerts) {
+-		mutex_lock(&di->lock);
+-		isc = di->removed ? -ENODEV : di->bus.read(di, BQ27Z561_ISC_ALERT, true);
++		isc = di->bus.read(di, BQ27Z561_ISC_ALERT, true);
+ 		soa = isc < 0 ? isc : di->bus.read(di, BQ27Z561_SOA_ALERT, true);
+-		mutex_unlock(&di->lock);
+ 		if (soa < 0)
+ 			return soa;
+ 		if (isc > 3)
+@@ -1955,6 +1953,9 @@ static void bq27xxx_battery_update_unlocked(struct bq27xxx_device_info *di)
+ 	struct bq27xxx_reg_cache cache = {0, };
+ 	bool has_singe_flag = di->opts & BQ27XXX_O_ZERO;
+ 
++	if (di->removed)
++		return;
++
+ 	cache.flags = bq27xxx_read(di, BQ27XXX_REG_FLAGS, has_singe_flag);
+ 	if (di->chip == BQ27000 && (cache.flags & 0xff) == 0xff)
+ 		cache.flags = -ENODEV; /* bq27000 hdq read error */
+@@ -1985,7 +1986,7 @@ static void bq27xxx_battery_update_unlocked(struct bq27xxx_device_info *di)
+ 
+ 	di->last_update = jiffies;
+ 
+-	if (!di->removed && poll_interval > 0)
++	if (poll_interval > 0)
+ 		mod_delayed_work(system_percpu_wq, &di->work, poll_interval * HZ);
+ }
+ 
+@@ -2291,14 +2292,13 @@ static int bq27z561_get_charge_property(struct bq27xxx_device_info *di,
+ 				      enum power_supply_property property,
+ 				      union power_supply_propval *value)
+ {
+-	int ret = 0;
++	int ret;
+ 
+-	mutex_lock(&di->lock);
+-	ret = di->removed ? -ENODEV : bq27xxx_read(di, BQ27XXX_REG_FLAGS, false);
++	ret = bq27xxx_read(di, BQ27XXX_REG_FLAGS, false);
+ 	if (ret < 0) {
+ 		di->authentic = false;
+ 		di->charge_mode_known = false;
+-		goto out;
++		return ret;
+ 	}
+ 	ret = 0;
+ 	if (property == POWER_SUPPLY_PROP_AUTHENTIC && !di->authentic &&
+@@ -2315,8 +2315,6 @@ static int bq27z561_get_charge_property(struct bq27xxx_device_info *di,
+ 	else if (!ret)
+ 		value->intval = di->fast_charge ? POWER_SUPPLY_CHARGE_TYPE_FAST :
+ 			POWER_SUPPLY_CHARGE_TYPE_STANDARD;
+-out:
+-	mutex_unlock(&di->lock);
+ 	return ret;
+ }
+ 
+@@ -2355,14 +2353,16 @@ static int bq27xxx_battery_get_property(struct power_supply *psy,
+ 	struct bq27xxx_device_info *di = power_supply_get_drvdata(psy);
+ 	enum bq27xxx_reg_index current_reg = BQ27XXX_REG_AI;
+ 
++	guard(mutex)(&di->lock);
++	if (di->removed)
++		return -ENODEV;
++
+ 	if (di->auth_key && (psp == POWER_SUPPLY_PROP_AUTHENTIC ||
+ 			    psp == POWER_SUPPLY_PROP_CHARGE_TYPE))
+ 		return bq27z561_get_charge_property(di, psp, val);
+ 
+-	mutex_lock(&di->lock);
+ 	if (time_is_before_jiffies(di->last_update + 5 * HZ))
+ 		bq27xxx_battery_update_unlocked(di);
+-	mutex_unlock(&di->lock);
+ 
+ 	if (psp != POWER_SUPPLY_PROP_PRESENT && di->cache.flags < 0)
+ 		return di->cache.flags;
+@@ -2606,20 +2606,35 @@ int bq27xxx_battery_setup(struct bq27xxx_device_info *di)
+ }
+ EXPORT_SYMBOL_GPL(bq27xxx_battery_setup);
+ 
++static void bq27xxx_battery_stop(struct bq27xxx_device_info *di,
++				 bool restore_charge_mode)
++{
++	scoped_guard(mutex, &di->lock) {
++		if (di->removed)
++			return;
++		if (restore_charge_mode && di->auth_key &&
++		    bq27z561_set_charge_mode(di, false))
++			dev_warn(di->dev, "could not disable gauge fast-charge mode\n");
++		di->removed = true;
++	}
++
++	/* Supply notifications can still try to schedule a poll. */
++	disable_delayed_work_sync(&di->work);
++}
++
++void bq27xxx_battery_shutdown(struct bq27xxx_device_info *di)
++{
++	bq27xxx_battery_stop(di, false);
++}
++EXPORT_SYMBOL_GPL(bq27xxx_battery_shutdown);
++
+ void bq27xxx_battery_teardown(struct bq27xxx_device_info *di)
+ {
+ 	mutex_lock(&bq27xxx_list_lock);
+ 	list_del(&di->list);
+ 	mutex_unlock(&bq27xxx_list_lock);
+ 
+-	/* Set removed to avoid bq27xxx_battery_update() re-queuing the work */
+-	mutex_lock(&di->lock);
+-	if (di->auth_key && bq27z561_set_charge_mode(di, false))
+-		dev_warn(di->dev, "could not disable gauge fast-charge mode\n");
+-	di->removed = true;
+-	mutex_unlock(&di->lock);
+-
+-	cancel_delayed_work_sync(&di->work);
++	bq27xxx_battery_stop(di, true);
+ }
+ EXPORT_SYMBOL_GPL(bq27xxx_battery_teardown);
+ 
+diff --git a/drivers/power/supply/bq27xxx_battery_i2c.c b/drivers/power/supply/bq27xxx_battery_i2c.c
+index d1d15955da979b67a6cc303f2433f2b936b75a49..9b138ac4bb86016768fce7f1241e7644472ed8b6 100644
+--- a/drivers/power/supply/bq27xxx_battery_i2c.c
++++ b/drivers/power/supply/bq27xxx_battery_i2c.c
+@@ -228,6 +228,14 @@ static void bq27xxx_battery_i2c_remove(struct i2c_client *client)
+ 	bq27xxx_battery_teardown(di);
+ }
+ 
++static void bq27xxx_battery_i2c_shutdown(struct i2c_client *client)
++{
++	if (client->irq > 0)
++		disable_irq(client->irq);
++
++	bq27xxx_battery_shutdown(i2c_get_clientdata(client));
++}
++
+ static const struct i2c_device_id bq27xxx_i2c_id_table[] = {
+ 	{ .name = "bq27200", .driver_data = BQ27000 },
+ 	{ .name = "bq27210", .driver_data = BQ27010 },
+@@ -310,6 +318,7 @@ static struct i2c_driver bq27xxx_battery_i2c_driver = {
+ 	},
+ 	.probe = bq27xxx_battery_i2c_probe,
+ 	.remove = bq27xxx_battery_i2c_remove,
++	.shutdown = bq27xxx_battery_i2c_shutdown,
+ 	.id_table = bq27xxx_i2c_id_table,
+ };
+ module_i2c_driver(bq27xxx_battery_i2c_driver);
+diff --git a/drivers/power/supply/bq27xxx_battery_test.c b/drivers/power/supply/bq27xxx_battery_test.c
+index f18106e47e2e0f063219dfcafdd2695470b1bd46..5fea3c0bf35a0031dbb0b0c7c114b7ccdf1e1186 100644
+--- a/drivers/power/supply/bq27xxx_battery_test.c
++++ b/drivers/power/supply/bq27xxx_battery_test.c
+@@ -324,6 +324,7 @@ static int bq27xxx_health_test_read(struct bq27xxx_device_info *di, u8 reg,
+ static void bq27xxx_health_alert_test(struct kunit *test)
+ {
+ 	struct bq27xxx_suspend_test *f = test->priv;
++	struct power_supply psy = { .drv_data = &f->di };
+ 	union power_supply_propval health;
+ 	static const struct { int isc, soa, health; } rows[] = {
+ 		{ 0, 0, POWER_SUPPLY_HEALTH_GOOD },
+@@ -337,27 +338,34 @@ static void bq27xxx_health_alert_test(struct kunit *test)
+ 
+ 	f->di.health_alerts = true;
+ 	f->di.bus.read = bq27xxx_health_test_read;
++	f->di.last_update = jiffies;
+ 	for (i = 0; i < ARRAY_SIZE(rows); i++) {
+ 		f->isc = rows[i].isc;
+ 		f->soa = rows[i].soa;
+-		KUNIT_ASSERT_EQ(test, bq27xxx_battery_read_health(&f->di, &health), 0);
++		KUNIT_ASSERT_EQ(test, bq27xxx_battery_get_property(&psy,
++					POWER_SUPPLY_PROP_HEALTH, &health), 0);
+ 		KUNIT_EXPECT_EQ(test, health.intval, rows[i].health);
+ 	}
+ 	f->isc = -EREMOTEIO;
+-	KUNIT_EXPECT_EQ(test, bq27xxx_battery_read_health(&f->di, &health), -EREMOTEIO);
++	KUNIT_EXPECT_EQ(test, bq27xxx_battery_get_property(&psy,
++				POWER_SUPPLY_PROP_HEALTH, &health), -EREMOTEIO);
+ 	f->isc = 0;
+ 	f->soa = -EIO;
+-	KUNIT_EXPECT_EQ(test, bq27xxx_battery_read_health(&f->di, &health), -EIO);
++	KUNIT_EXPECT_EQ(test, bq27xxx_battery_get_property(&psy,
++				POWER_SUPPLY_PROP_HEALTH, &health), -EIO);
+ 	f->isc = 4;
+ 	f->soa = 0;
+-	KUNIT_EXPECT_EQ(test, bq27xxx_battery_read_health(&f->di, &health), -ENODATA);
++	KUNIT_EXPECT_EQ(test, bq27xxx_battery_get_property(&psy,
++				POWER_SUPPLY_PROP_HEALTH, &health), -ENODATA);
+ 	f->di.health_alerts = false;
+ 	f->health_reads = 0;
+-	KUNIT_EXPECT_EQ(test, bq27xxx_battery_read_health(&f->di, &health), 0);
++	KUNIT_EXPECT_EQ(test, bq27xxx_battery_get_property(&psy,
++				POWER_SUPPLY_PROP_HEALTH, &health), 0);
+ 	KUNIT_EXPECT_EQ(test, f->health_reads, 0U);
+ 	f->di.health_alerts = true;
+ 	f->di.removed = true;
+-	KUNIT_EXPECT_EQ(test, bq27xxx_battery_read_health(&f->di, &health), -ENODEV);
++	KUNIT_EXPECT_EQ(test, bq27xxx_battery_get_property(&psy,
++				POWER_SUPPLY_PROP_HEALTH, &health), -ENODEV);
+ 	KUNIT_EXPECT_EQ(test, f->health_reads, 0U);
+ 	KUNIT_EXPECT_EQ(test, f->writes, 0U);
+ }
+@@ -485,10 +493,38 @@ static void bq27z561_current_properties_test(struct kunit *test)
+ 	KUNIT_EXPECT_EQ(test, f->writes, 0U);
+ }
+ 
++static void bq27xxx_shutdown_stops_io_test(struct kunit *test)
++{
++	struct bq27xxx_suspend_test *f = test->priv;
++	struct power_supply psy = { .drv_data = &f->di };
++	union power_supply_propval val = { .intval = 42 };
++
++	f->di.chip = BQ27Z561;
++	f->di.regs = bq27z561_regs;
++	f->di.opts = BQ27Z561_O_BITS;
++	f->di.bus.read = bq27xxx_current_test_read;
++	f->di.last_update = jiffies;
++
++	bq27xxx_battery_shutdown(&f->di);
++	KUNIT_EXPECT_FALSE(test, delayed_work_pending(&f->di.work));
++	bq27xxx_external_power_changed(&psy);
++	KUNIT_EXPECT_FALSE(test, delayed_work_pending(&f->di.work));
++	KUNIT_EXPECT_EQ(test, bq27xxx_battery_get_property(&psy,
++				POWER_SUPPLY_PROP_STATUS, &val), -ENODEV);
++	KUNIT_EXPECT_EQ(test, val.intval, 42);
++	KUNIT_EXPECT_EQ(test, f->current_avg_reads, 0U);
++	val.intval = POWER_SUPPLY_CHARGE_TYPE_STANDARD;
++	KUNIT_EXPECT_EQ(test, bq27xxx_battery_set_property(&psy,
++				POWER_SUPPLY_PROP_CHARGE_TYPE, &val), -ENODEV);
++	KUNIT_EXPECT_TRUE(test, f->di.fast_charge);
++	KUNIT_EXPECT_EQ(test, f->writes, 0U);
++}
++
+ static struct kunit_case bq27xxx_suspend_cases[] = {
+ 	KUNIT_CASE(bq27xxx_vendor_average_power_test),
+ 	KUNIT_CASE(bq27z561_current_properties_test),
+ 	KUNIT_CASE(bq27xxx_health_alert_test),
++	KUNIT_CASE(bq27xxx_shutdown_stops_io_test),
+ #if IS_ENABLED(CONFIG_BATTERY_BQ27XXX_IIO)
+ 	KUNIT_CASE(bq27xxx_original_iio_values_test),
+ 	KUNIT_CASE(bq27xxx_original_iio_range_test),
+diff --git a/drivers/power/supply/piano_mca.c b/drivers/power/supply/piano_mca.c
+index af2efe8cc610317b7f01f0038315d7210b878851..7c621a80e9331a4a7bbe52225a06574a830c849d 100644
+--- a/drivers/power/supply/piano_mca.c
++++ b/drivers/power/supply/piano_mca.c
+@@ -581,8 +581,11 @@ struct mca_resp {
+ 	u8 data[MCA_DATA_LEN];
+ } __packed;
+ 
++static char *piano_mca_supplied_to[] = { "bq27z561-0", "bq27z561-1" };
++
+ struct piano_mca {
+ 	struct device *dev;
++	struct device *gauge_devices[ARRAY_SIZE(piano_mca_supplied_to)];
+ 	u32 pd_protocol_version;
+ 	__le32 otg_config[4];
+ 	bool otg_config_valid;
+@@ -2337,8 +2340,6 @@ static void piano_mca_apply_policy(struct piano_mca *mca, unsigned int generatio
+ 	piano_mca_apply_input_policy(mca, generation, connection);
+ }
+ 
+-static char *piano_mca_supplied_to[] = { "bq27z561-0", "bq27z561-1" };
+-
+ static int piano_mca_battery_alert(struct piano_mca *mca)
+ {
+ 	union power_supply_propval health;
+@@ -2532,13 +2533,54 @@ static int piano_mca_battery_state(struct piano_mca *mca)
+ 	return 0;
+ }
+ 
+-/* No raised PMIC voltage is retained across a partial gauge-mode update. */
+-static int piano_mca_set_gauge_modes(struct piano_mca *mca, bool fast)
++static void piano_mca_unlink_gauge(struct piano_mca *mca, unsigned int index)
++{
++	struct device *gauge = mca->gauge_devices[index];
++
++	if (!gauge)
++		return;
++	device_link_remove(mca->dev, gauge);
++	put_device(gauge);
++	mca->gauge_devices[index] = NULL;
++}
++
++static int piano_mca_link_gauge(struct piano_mca *mca, struct device *gauge,
++				 unsigned int index)
++{
++	if (mca->gauge_devices[index] == gauge)
++		return 0;
++
++	/* Restore standard mode before the gauge and its I2C bus shut down. */
++	if (!device_link_add(mca->dev, gauge, DL_FLAG_STATELESS))
++		return -ENODEV;
++	piano_mca_unlink_gauge(mca, index);
++	mca->gauge_devices[index] = get_device(gauge);
++	return 0;
++}
++
++static int piano_mca_set_gauge_mode(struct piano_mca *mca, struct power_supply *psy,
++				    unsigned int index, bool fast)
+ {
+ 	union power_supply_propval value = {
+ 		.intval = fast ? POWER_SUPPLY_CHARGE_TYPE_FAST :
+ 				POWER_SUPPLY_CHARGE_TYPE_STANDARD,
+ 	};
++	int ret = -ESHUTDOWN;
++
++	guard(rwsem_read)(&psy->epc_sem);
++	if (psy->removing)
++		return -ENODEV;
++	if (READ_ONCE(system_state) <= SYSTEM_RUNNING)
++		ret = piano_mca_link_gauge(mca, psy->dev.parent, index);
++	if (fast && ret)
++		return ret;
++
++	return power_supply_set_property(psy, POWER_SUPPLY_PROP_CHARGE_TYPE, &value);
++}
++
++/* No raised PMIC voltage is retained across a partial gauge-mode update. */
++static int piano_mca_set_gauge_modes(struct piano_mca *mca, bool fast)
++{
+ 	struct power_supply *psy;
+ 	int i, ret = 0, error;
+ 
+@@ -2548,7 +2590,7 @@ static int piano_mca_set_gauge_modes(struct piano_mca *mca, bool fast)
+ 			ret = ret ?: -ENODEV;
+ 			continue;
+ 		}
+-		error = power_supply_set_property(psy, POWER_SUPPLY_PROP_CHARGE_TYPE, &value);
++		error = piano_mca_set_gauge_mode(mca, psy, i, fast);
+ 		power_supply_put(psy);
+ 		ret = ret ?: error;
+ 	}
+@@ -5527,6 +5569,7 @@ static void piano_mca_stop_work(struct piano_mca *mca)
+ static void piano_mca_stop(void *data)
+ {
+ 	struct piano_mca *mca = data;
++	unsigned int i;
+ 
+ 	mutex_lock(&mca->policy_lock);
+ 	if (mca->policy_stopped) {
+@@ -5540,6 +5583,8 @@ static void piano_mca_stop(void *data)
+ 		disable_delayed_work_sync(&mca->connector_work);
+ 	guard(mutex)(&mca->policy_lock);
+ 	piano_mca_stop_work(mca);
++	for (i = 0; i < ARRAY_SIZE(mca->gauge_devices); i++)
++		piano_mca_unlink_gauge(mca, i);
+ }
+ 
+ /* debugfs: write a property id to "prop", read the raw reply from "data" */
+diff --git a/include/linux/power/bq27xxx_battery.h b/include/linux/power/bq27xxx_battery.h
+index 64b0e9e8c8147dd8e576cc4ec64317b61e8fb390..ccaa2d0ef36b696b76b6acfb24bc23188b09963e 100644
+--- a/include/linux/power/bq27xxx_battery.h
++++ b/include/linux/power/bq27xxx_battery.h
+@@ -82,6 +82,7 @@ struct bq27xxx_device_info {
+ void bq27xxx_battery_update(struct bq27xxx_device_info *di);
+ int bq27xxx_battery_setup(struct bq27xxx_device_info *di);
+ void bq27xxx_battery_teardown(struct bq27xxx_device_info *di);
++void bq27xxx_battery_shutdown(struct bq27xxx_device_info *di);
+ extern const struct dev_pm_ops bq27xxx_battery_battery_pm_ops;
+ 
+ #endif
+-- 
+2.55.0
+

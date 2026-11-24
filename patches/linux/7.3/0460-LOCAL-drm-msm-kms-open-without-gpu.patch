@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Sat, 21 Nov 2026 00:18:16 +0800
+Subject: [PATCH] drm/msm: Skip GPU initialization for a KMS-only device
+
+msm_open() is shared by drivers registering display and rendering
+nodes. The KMS-only driver intentionally has no GPU platform device.
+Calling load_gpu() when opening that node produces an error on every
+open.
+
+Initialize the GPU on devices advertising DRIVER_RENDER. Keep file
+context initialization for all nodes.
+
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/gpu/drm/msm/msm_drv.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/msm/msm_drv.c b/drivers/gpu/drm/msm/msm_drv.c
+index f3d2eaa04..8c6098d49 100644
+--- a/drivers/gpu/drm/msm/msm_drv.c
++++ b/drivers/gpu/drm/msm/msm_drv.c
+@@ -268,7 +268,8 @@ static int msm_open(struct drm_device *dev, struct drm_file *file)
+ 	/* For now, load gpu on open.. to avoid the requirement of having
+ 	 * firmware in the initrd.
+ 	 */
+-	load_gpu(dev);
++	if (drm_core_check_feature(dev, DRIVER_RENDER))
++		load_gpu(dev);
+ 
+ 	return context_init(dev, file);
+ }

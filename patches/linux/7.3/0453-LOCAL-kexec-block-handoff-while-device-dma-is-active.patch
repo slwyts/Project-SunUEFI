@@ -1,0 +1,142 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Fri, 20 Nov 2026 16:38:28 +0800
+Subject: [PATCH] kexec: Let drivers block handoff while DMA is active
+
+A device that has not completed DMA must remain attached to its old
+address space across ordinary and crash kexec. Allow a driver to
+block both execution paths before publishing addresses to hardware.
+Claim the same atomic state before a jump so that a start cannot
+race an already-loaded image. Keep image loading independent.
+
+Link: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/kernel/kexec_core.c
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ include/linux/kexec.h   |  6 ++++++
+ kernel/crash_core.c     |  3 ++-
+ kernel/kexec_core.c     | 33 ++++++++++++++++++++++++++++++++-
+ kernel/kexec_internal.h |  3 +++
+ 4 files changed, 43 insertions(+), 2 deletions(-)
+
+diff --git a/include/linux/kexec.h b/include/linux/kexec.h
+index 0af8ae4fdd087bdf1b4a74918827236d0ef68d03..d14b7410a9bea67f912583531db22a93f54cef4f 100644
+--- a/include/linux/kexec.h
++++ b/include/linux/kexec.h
+@@ -469,6 +469,10 @@ bool kexec_load_permitted(int kexec_image_type);
+ /* flag to track if kexec reboot is in progress */
+ extern bool kexec_in_progress;
+ 
++/* Hold across DMA that cannot survive a jump to another kernel. */
++bool kexec_block_for_dma(void);
++void kexec_unblock_for_dma(void);
++
+ #ifndef page_to_boot_pfn
+ static inline unsigned long page_to_boot_pfn(struct page *page)
+ {
+@@ -540,6 +544,8 @@ static inline void __crash_kexec(struct pt_regs *regs) { }
+ static inline void crash_kexec(struct pt_regs *regs) { }
+ static inline int kexec_should_crash(struct task_struct *p) { return 0; }
+ static inline int kexec_crash_loaded(void) { return 0; }
++static inline bool kexec_block_for_dma(void) { return true; }
++static inline void kexec_unblock_for_dma(void) { }
+ static inline void *kimage_map_segment(struct kimage *image, int idx)
+ { return NULL; }
+ static inline void kimage_unmap_segment(void *buffer) { }
+diff --git a/kernel/crash_core.c b/kernel/crash_core.c
+index 2b36aa9fade06449aac4ac20d5377c137f9a104f..2c34538c013e9c87fdcfd807966c9182a050beb3 100644
+--- a/kernel/crash_core.c
++++ b/kernel/crash_core.c
+@@ -135,7 +135,7 @@ void __noclone __crash_kexec(struct pt_regs *regs)
+ 	 * sufficient.  But since I reuse the memory...
+ 	 */
+ 	if (kexec_trylock()) {
+-		if (kexec_crash_image) {
++		if (kexec_crash_image && kexec_try_enter()) {
+ 			struct pt_regs fixed_regs;
+ 
+ 			crash_setup_regs(&fixed_regs, regs);
+@@ -143,6 +143,7 @@ void __noclone __crash_kexec(struct pt_regs *regs)
+ 			machine_crash_shutdown(&fixed_regs);
+ 			crash_cma_clear_pending_dma();
+ 			machine_kexec(kexec_crash_image);
++			kexec_leave();
+ 		}
+ 		kexec_unlock();
+ 	}
+diff --git a/kernel/kexec_core.c b/kernel/kexec_core.c
+index dc770b9a6d05392f36fa6411538f13512fd65195..4cf70a5c540f4afaf468e8e277286da926499cd2 100644
+--- a/kernel/kexec_core.c
++++ b/kernel/kexec_core.c
+@@ -1131,6 +1131,31 @@ bool kexec_load_permitted(int kexec_image_type)
+ 	return true;
+ }
+ 
++/* -1 while transferring control, otherwise the number of active DMA users. */
++static atomic_t kexec_dma_users = ATOMIC_INIT(0);
++
++bool kexec_block_for_dma(void)
++{
++	return atomic_add_unless(&kexec_dma_users, 1, -1);
++}
++EXPORT_SYMBOL_GPL(kexec_block_for_dma);
++
++void kexec_unblock_for_dma(void)
++{
++	WARN_ON_ONCE(atomic_dec_return_release(&kexec_dma_users) < 0);
++}
++EXPORT_SYMBOL_GPL(kexec_unblock_for_dma);
++
++bool kexec_try_enter(void)
++{
++	return atomic_cmpxchg_acquire(&kexec_dma_users, 0, -1) == 0;
++}
++
++void kexec_leave(void)
++{
++	atomic_set_release(&kexec_dma_users, 0);
++}
++
+ /*
+  * Move into place and start executing a preloaded standalone
+  * executable.  If nothing was preloaded return an error.
+@@ -1145,11 +1170,15 @@ int kernel_kexec(void)
+ 		error = -EINVAL;
+ 		goto Unlock;
+ 	}
++	if (!kexec_try_enter()) {
++		error = -EBUSY;
++		goto Unlock;
++	}
+ 
+ 	if (!kexec_image->preserve_context) {
+ 		error = liveupdate_reboot();
+ 		if (error)
+-			goto Unlock;
++			goto Leave;
+ 	}
+ 
+ #ifdef CONFIG_KEXEC_JUMP
+@@ -1231,6 +1260,8 @@ int kernel_kexec(void)
+ 	}
+ #endif
+ 
++ Leave:
++	kexec_leave();
+  Unlock:
+ 	kexec_unlock();
+ 	return error;
+diff --git a/kernel/kexec_internal.h b/kernel/kexec_internal.h
+index 228bb88c018bceb52bf178cd33b890448cc48cc8..44c8848c44f652c348dccaa68c5ab7810e8c51e2 100644
+--- a/kernel/kexec_internal.h
++++ b/kernel/kexec_internal.h
+@@ -31,6 +31,9 @@ static inline void kexec_unlock(void)
+ 	atomic_set_release(&__kexec_lock, 0);
+ }
+ 
++bool kexec_try_enter(void);
++void kexec_leave(void);
++
+ #ifdef CONFIG_KEXEC_FILE
+ #include <linux/purgatory.h>
+ void kimage_file_post_load_cleanup(struct kimage *image);

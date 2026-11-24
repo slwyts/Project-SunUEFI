@@ -12,7 +12,7 @@
   "base_commit": "d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd",
   "base_tree": "a3d0b8db615452e89f37be4454c80262c06ecc99",
   "target_tree": "e08cdb7d7004e4d7712f837e001fbcb140210865",
-  "original_target_commit": "daa8bd47362d63bc3e4afda2faf480e26215c588",
+  "original_target_commit": "4fa107def5f72a6f31720c07997bb8695be3fad7",
   "source_url": "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git",
   "patches": [
     {
@@ -506,7 +506,7 @@
       }
     },
     {
-      "file": "0035-MAILLIST-pcie-qcom-hpg-controller.patch",
+      "file": "0100-MAILLIST-pcie-qcom-hpg-controller.patch",
       "sha256": "3798b1578b8d3e4691e0f83cb191bbd07ec350c536b850f7e5415e04562c4cac",
       "original_commit": "09f5179df9d580ad4e0dc6572c54cc77465d295b",
       "original_parent": "602f17e9e756e752b5310164a8f2be81cadb6e11",
@@ -519,7 +519,7 @@
       }
     },
     {
-      "file": "0036-MAILLIST-pcie-qcom-hpg-endpoint.patch",
+      "file": "0101-MAILLIST-pcie-qcom-hpg-endpoint.patch",
       "sha256": "c8ed0ed08b822f74af904a7fc0ab15349c92a1bc75320d1e471b3e8fda18bfa9",
       "original_commit": "2e8c5dfac48a77e3860668268b77763f870a7024",
       "original_parent": "09f5179df9d580ad4e0dc6572c54cc77465d295b",
@@ -532,7 +532,7 @@
       }
     },
     {
-      "file": "0037-MAILLIST-pcie-qcom-hpg-phy.patch",
+      "file": "0102-MAILLIST-pcie-qcom-hpg-phy.patch",
       "sha256": "ce477028b9f7b4df1d6be8efa9ef9f6323b7cf8b33a6890d5405449fc3ffeb1d",
       "original_commit": "b69b5c0a13338cccc55a8f42661a435d286c60d1",
       "original_parent": "2e8c5dfac48a77e3860668268b77763f870a7024",
@@ -545,7 +545,7 @@
       }
     },
     {
-      "file": "0038-MAILLIST-iio-adc-bindings-gen4-channel.patch",
+      "file": "0103-MAILLIST-iio-adc-bindings-gen4-channel.patch",
       "sha256": "d55652d37f22bdadf74c24f32dfa1ea07e64abdc34721bf99a75ce3e9f47a04c",
       "original_commit": "69a34ca385ba8da6f6ddbe3ea9a33e754c7de8e9",
       "original_parent": "b69b5c0a13338cccc55a8f42661a435d286c60d1",
@@ -558,7 +558,7 @@
       }
     },
     {
-      "file": "0039-MAILLIST-iio-adc5-gen3-explicit-hardware-enums.patch",
+      "file": "0104-MAILLIST-iio-adc5-gen3-explicit-hardware-enums.patch",
       "sha256": "717b84f3879a78994bf60ef46e956db3e3f93b5c3446cd0e4718ff85730af550",
       "original_commit": "0c3308e0761a695deab19c9e269c8a3acb3d4340",
       "original_parent": "69a34ca385ba8da6f6ddbe3ea9a33e754c7de8e9",
@@ -571,7 +571,7 @@
       }
     },
     {
-      "file": "0040-MAILLIST-iio-qcom-adc5-gen4-support.patch",
+      "file": "0105-MAILLIST-iio-qcom-adc5-gen4-support.patch",
       "sha256": "2a54b1fe5ef0db9351bd245573b347979b4a6a9da1f737c210f111fd9bbbabe3",
       "original_commit": "69420b75f0db0a59d1104928551555d0cf60f5ff",
       "original_parent": "0c3308e0761a695deab19c9e269c8a3acb3d4340",
@@ -584,7 +584,7 @@
       }
     },
     {
-      "file": "0041-MAILLIST-thermal-qcom-adc5-gen4-support.patch",
+      "file": "0106-MAILLIST-thermal-qcom-adc5-gen4-support.patch",
       "sha256": "eb9465a312fc842d126c84188424ed8e5f6aff7d3891c09f20d99725ca3e2f8b",
       "original_commit": "1651853d6660ad5cc987b3e2faa34d4fbc644fd3",
       "original_parent": "69420b75f0db0a59d1104928551555d0cf60f5ff",
@@ -597,7 +597,7 @@
       }
     },
     {
-      "file": "0042-MAILLIST-iio-adc5-remove-gen3-virtual-channel-macros.patch",
+      "file": "0107-MAILLIST-iio-adc5-remove-gen3-virtual-channel-macros.patch",
       "sha256": "3044f82d56b0aac0046e39a6bd972b6cc2ad3337480d1025cd09ab0a758f480f",
       "original_commit": "3911299c858d3921f29a14554e4e4f9f2ec572f3",
       "original_parent": "1651853d6660ad5cc987b3e2faa34d4fbc644fd3",
@@ -610,7 +610,7 @@
       }
     },
     {
-      "file": "0043-MAILLIST-iio-adc-bindings-pmic5-gen4-master.patch",
+      "file": "0108-MAILLIST-iio-adc-bindings-pmic5-gen4-master.patch",
       "sha256": "ed431573d49d25b98289bf8758fd9580e4d595062c56b481d17db356d4c9d2a7",
       "original_commit": "b1b9e4acf25a01204e48056eaa98cbb23d8ebba1",
       "original_parent": "3911299c858d3921f29a14554e4e4f9f2ec572f3",
@@ -623,7 +623,7 @@
       }
     },
     {
-      "file": "0044-MAILLIST-iio-qcom-adc5-gen4-master-support.patch",
+      "file": "0109-MAILLIST-iio-qcom-adc5-gen4-master-support.patch",
       "sha256": "8e6f20c632f91f7a020fd9da46a284f086c760263b42ff8ea61c9e8bd7c1ffe6",
       "original_commit": "9ec819ce6654a85287c9732d22d126ffbc4eda27",
       "original_parent": "b1b9e4acf25a01204e48056eaa98cbb23d8ebba1",
@@ -636,7 +636,7 @@
       }
     },
     {
-      "file": "0045-MAILLIST-dt-bindings-phy-qcom-x1e80100-csi2-phy-Add-Kaanapali-CSI2-PHY.patch",
+      "file": "0110-MAILLIST-dt-bindings-phy-qcom-x1e80100-csi2-phy-Add-Kaanapali-CSI2-PHY.patch",
       "sha256": "2dd6f705025a7bc3083561bb1d8876a0842b6155510191b2253df6216cc049a8",
       "original_commit": "87c675ef22e09d1806cb555c7018b8d9b2b93db6",
       "original_parent": "9ec819ce6654a85287c9732d22d126ffbc4eda27",
@@ -649,7 +649,7 @@
       }
     },
     {
-      "file": "0046-MAILLIST-phy-qcom-mipi-csi2-Parametrise-the-common-status-register-offset.patch",
+      "file": "0111-MAILLIST-phy-qcom-mipi-csi2-Parametrise-the-common-status-register-offset.patch",
       "sha256": "c498cf3b92f38009761fe582c7a2610af47211770cd544c4dc74fab62c774181",
       "original_commit": "eff412f33337294a4f363edc9f8f62793c72e208",
       "original_parent": "87c675ef22e09d1806cb555c7018b8d9b2b93db6",
@@ -662,7 +662,7 @@
       }
     },
     {
-      "file": "0047-MAILLIST-phy-qcom-mipi-csi2-Add-Kaanapali-support.patch",
+      "file": "0112-MAILLIST-phy-qcom-mipi-csi2-Add-Kaanapali-support.patch",
       "sha256": "64c09005d83516d70c6c18103b717a493768f5d524a0cd00cec9d99ba2fb68a6",
       "original_commit": "87d1672e3bab127ceb55f933a1244df0ac5935a4",
       "original_parent": "eff412f33337294a4f363edc9f8f62793c72e208",
@@ -675,7 +675,7 @@
       }
     },
     {
-      "file": "0048-MAILLIST-media-qcom-camss-Add-addr_update-hooks-and-guard-CSID-reg_update.patch",
+      "file": "0113-MAILLIST-media-qcom-camss-Add-addr_update-hooks-and-guard-CSID-reg_update.patch",
       "sha256": "9171be71dee3c3371db08100d7a946ae350b6d645234961ca35f4153f10a81e4",
       "original_commit": "d011ebdfd4371d763120e2eb52977860cb834ed0",
       "original_parent": "87d1672e3bab127ceb55f933a1244df0ac5935a4",
@@ -688,7 +688,7 @@
       }
     },
     {
-      "file": "0049-MAILLIST-media-dt-bindings-Add-CAMSS-device-for-Kaanapali.patch",
+      "file": "0114-MAILLIST-media-dt-bindings-Add-CAMSS-device-for-Kaanapali.patch",
       "sha256": "169e4939bfc25390edd98d65760af64df95545793635bed8477357a2b5823747",
       "original_commit": "4b723ea1466707922c958fa8bc47b4ece464737c",
       "original_parent": "d011ebdfd4371d763120e2eb52977860cb834ed0",
@@ -701,7 +701,7 @@
       }
     },
     {
-      "file": "0050-MAILLIST-media-qcom-camss-Add-Kaanapali-compatible.patch",
+      "file": "0115-MAILLIST-media-qcom-camss-Add-Kaanapali-compatible.patch",
       "sha256": "49bc3b51e2e389aea0e684a16f82f07d0c6da418236351ef999685e5de5b2e77",
       "original_commit": "992e96684c67ae2faf830ca22a115aec02de73a5",
       "original_parent": "4b723ea1466707922c958fa8bc47b4ece464737c",
@@ -714,7 +714,7 @@
       }
     },
     {
-      "file": "0051-MAILLIST-media-qcom-camss-Add-PM-clock-definitions-for-Kaanapali.patch",
+      "file": "0116-MAILLIST-media-qcom-camss-Add-PM-clock-definitions-for-Kaanapali.patch",
       "sha256": "f896c302683d917ebf3a7ffc0c38e2e4af909130811175d4e1d7405d38eb94b4",
       "original_commit": "2622307fe1d0ccff4dd87e6d02fd7c7d5887163c",
       "original_parent": "992e96684c67ae2faf830ca22a115aec02de73a5",
@@ -727,7 +727,7 @@
       }
     },
     {
-      "file": "0052-MAILLIST-media-qcom-camss-Allow-CSI2-PHY-devices-without-CSIPHY-resources.patch",
+      "file": "0117-MAILLIST-media-qcom-camss-Allow-CSI2-PHY-devices-without-CSIPHY-resources.patch",
       "sha256": "8650df88605d8c3b1c8ca1e9bb9dc2fb991cecc2f114f40b228a3dfc7d74f2f0",
       "original_commit": "8e73cbfed80c557c6ce8a7d83d80dba6b9833d54",
       "original_parent": "2622307fe1d0ccff4dd87e6d02fd7c7d5887163c",
@@ -740,7 +740,7 @@
       }
     },
     {
-      "file": "0053-MAILLIST-media-qcom-camss-csid-Add-support-for-CSID-1080.patch",
+      "file": "0118-MAILLIST-media-qcom-camss-csid-Add-support-for-CSID-1080.patch",
       "sha256": "1d5eb9644b5eb4e40a2e15b333c31a43401d4771943d6f8174db694f9891ae3d",
       "original_commit": "75a4939407e6ad452a59eea944a2a6e9ddd03a68",
       "original_parent": "8e73cbfed80c557c6ce8a7d83d80dba6b9833d54",
@@ -753,7 +753,7 @@
       }
     },
     {
-      "file": "0054-MAILLIST-media-qcom-camss-vfe-Add-support-for-VFE-1080.patch",
+      "file": "0119-MAILLIST-media-qcom-camss-vfe-Add-support-for-VFE-1080.patch",
       "sha256": "7741ed1fc6819d6259f236992039e30d0566ae77d1fd864389b9e6f9bf4c6cc9",
       "original_commit": "a01e670eed580aaca3d01799f74486110ab38d41",
       "original_parent": "75a4939407e6ad452a59eea944a2a6e9ddd03a68",
@@ -766,7 +766,7 @@
       }
     },
     {
-      "file": "0055-MAILLIST-media-qcom-camss-tpg-Add-support-for-v2-4-0-TPG.patch",
+      "file": "0120-MAILLIST-media-qcom-camss-tpg-Add-support-for-v2-4-0-TPG.patch",
       "sha256": "3ec73f1304fdf7f6eba442b8157ef1e580d334b860eeb71a337805367621d996",
       "original_commit": "cbb90f72e6b46e253c1bfde7f2df2c0a408cb6c1",
       "original_parent": "a01e670eed580aaca3d01799f74486110ab38d41",
@@ -779,7 +779,7 @@
       }
     },
     {
-      "file": "0056-MAILLIST-dt-bindings-phy-qcom-x1e80100-csi2-phy-Add-SM8750-CSI2-PHY.patch",
+      "file": "0121-MAILLIST-dt-bindings-phy-qcom-x1e80100-csi2-phy-Add-SM8750-CSI2-PHY.patch",
       "sha256": "370689887c509f5ce0100c4eff161fb35eb8cc3399cd0fdddd168920ec1d121e",
       "original_commit": "9cf530b5cdcad3f4f51f2d5689b8bdde0a5705f9",
       "original_parent": "cbb90f72e6b46e253c1bfde7f2df2c0a408cb6c1",
@@ -792,7 +792,7 @@
       }
     },
     {
-      "file": "0057-MAILLIST-dt-bindings-media-qcom-sm8750-camss-Add-SM8750-CAMSS.patch",
+      "file": "0122-MAILLIST-dt-bindings-media-qcom-sm8750-camss-Add-SM8750-CAMSS.patch",
       "sha256": "a162004822ad46e8e2743a68902f34d2cfba826c1291e4b207a4bb288a5edd41",
       "original_commit": "38890a35342cd31f96273a91421b81d6969b88e9",
       "original_parent": "9cf530b5cdcad3f4f51f2d5689b8bdde0a5705f9",
@@ -805,7 +805,7 @@
       }
     },
     {
-      "file": "0058-MAILLIST-phy-qcom-mipi-csi2-Add-SM8750-support.patch",
+      "file": "0123-MAILLIST-phy-qcom-mipi-csi2-Add-SM8750-support.patch",
       "sha256": "28d0884ceae2febb888c6dd7d5bddfae31fefd8bb676bdb163cb8871ecd35f58",
       "original_commit": "7e8213525a689b97f9e0dba6e14589e191f0a550",
       "original_parent": "38890a35342cd31f96273a91421b81d6969b88e9",
@@ -818,7 +818,7 @@
       }
     },
     {
-      "file": "0059-MAILLIST-media-qcom-camss-Add-SM8750-compatible.patch",
+      "file": "0124-MAILLIST-media-qcom-camss-Add-SM8750-compatible.patch",
       "sha256": "cca2117a9a8e56342de11bfce943898d97dd99970eb6024446fefca8530dd6a2",
       "original_commit": "f9db91ad2c8670b5a70ad4a006fd465e46b5f210",
       "original_parent": "7e8213525a689b97f9e0dba6e14589e191f0a550",
@@ -831,7 +831,7 @@
       }
     },
     {
-      "file": "0060-MAILLIST-media-qcom-camss-Add-PM-clock-definitions-for-SM8750.patch",
+      "file": "0125-MAILLIST-media-qcom-camss-Add-PM-clock-definitions-for-SM8750.patch",
       "sha256": "971926872463d63c729e0804ff5c281d63421230dc861769f08194ce8a80ac22",
       "original_commit": "88efb8cc02a9ca47a83c063718428c5b46da09ee",
       "original_parent": "f9db91ad2c8670b5a70ad4a006fd465e46b5f210",
@@ -844,7 +844,7 @@
       }
     },
     {
-      "file": "0061-MAILLIST-media-qcom-camss-csid-Scale-the-clocks-with-the-CSI-2-link-rate.patch",
+      "file": "0126-MAILLIST-media-qcom-camss-csid-Scale-the-clocks-with-the-CSI-2-link-rate.patch",
       "sha256": "cdfbb3b59dde38e194173dc9e4a96e9325489a39f430ddce09db3b6de2f4b8ae",
       "original_commit": "d643193401b2da3fbf621fff093811b378fb53b6",
       "original_parent": "88efb8cc02a9ca47a83c063718428c5b46da09ee",
@@ -857,7 +857,7 @@
       }
     },
     {
-      "file": "0062-MAILLIST-media-qcom-camss-csid-Add-support-for-CSID-980.patch",
+      "file": "0127-MAILLIST-media-qcom-camss-csid-Add-support-for-CSID-980.patch",
       "sha256": "aff06a784a538885741e6b6aea15ae8545ca9122c92fb98e60a1c3d9b1410ebd",
       "original_commit": "dbf5f18b25aeb74c1f6dca1ccf16d34b9081627f",
       "original_parent": "d643193401b2da3fbf621fff093811b378fb53b6",
@@ -870,7 +870,7 @@
       }
     },
     {
-      "file": "0063-MAILLIST-media-qcom-camss-vfe-Add-support-for-VFE-980.patch",
+      "file": "0128-MAILLIST-media-qcom-camss-vfe-Add-support-for-VFE-980.patch",
       "sha256": "f9f3a194e79868902adbb2ce52cc98b12faf0dbc4bf71234d176c4163dd61e52",
       "original_commit": "e7afcc19d358f38f1ad3ae4ae742d4e72bf7a725",
       "original_parent": "dbf5f18b25aeb74c1f6dca1ccf16d34b9081627f",
@@ -883,7 +883,7 @@
       }
     },
     {
-      "file": "0064-MAILLIST-media-qcom-camss-tpg-Add-support-for-v2-3-0-TPG.patch",
+      "file": "0129-MAILLIST-media-qcom-camss-tpg-Add-support-for-v2-3-0-TPG.patch",
       "sha256": "7a21009af965aa2b95c107b0a3f1c1ff8b02106b509f267d693727680a8dd8b7",
       "original_commit": "6ceea5a42ba5eb4455ecdc200695d78189c79684",
       "original_parent": "e7afcc19d358f38f1ad3ae4ae742d4e72bf7a725",
@@ -896,7 +896,7 @@
       }
     },
     {
-      "file": "0065-MAILLIST-arm64-dts-qcom-sm8750-Add-CAMSS-and-CSIPHY-block-definitions.patch",
+      "file": "0130-MAILLIST-arm64-dts-qcom-sm8750-Add-CAMSS-and-CSIPHY-block-definitions.patch",
       "sha256": "2fc2b7f2a97aa5c75d2993436e19925e477bdda987d2f03b61518cf10a41dab8",
       "original_commit": "743f57840f61899e5fe5147f5aeaf2003940c863",
       "original_parent": "6ceea5a42ba5eb4455ecdc200695d78189c79684",
@@ -909,7 +909,7 @@
       }
     },
     {
-      "file": "0066-MAILLIST-arm64-dts-qcom-sm8750-Add-CCI-definitions.patch",
+      "file": "0131-MAILLIST-arm64-dts-qcom-sm8750-Add-CCI-definitions.patch",
       "sha256": "313dd04ac70aea53940ac1fd8b429bbac3d695ae39bbb66514988bbd9a0cd6bc",
       "original_commit": "1c9f14cc21f46c92f0123d33fffbfedf708e70d0",
       "original_parent": "743f57840f61899e5fe5147f5aeaf2003940c863",
@@ -922,7 +922,7 @@
       }
     },
     {
-      "file": "0067-MAILLIST-arm64-dts-qcom-sm8750-Add-camera-MCLK-pinctrl.patch",
+      "file": "0132-MAILLIST-arm64-dts-qcom-sm8750-Add-camera-MCLK-pinctrl.patch",
       "sha256": "48f55f989235e5e4ba0a31b75714e6ab0da4f544720e98f8b2b94537a53931c2",
       "original_commit": "2fbda6d626cd6c76c06b7c27a364e6ed5411c2dc",
       "original_parent": "1c9f14cc21f46c92f0123d33fffbfedf708e70d0",
@@ -935,7 +935,7 @@
       }
     },
     {
-      "file": "0068-MAILLIST-media-camss-csid-unwind-power-on.patch",
+      "file": "0133-MAILLIST-media-camss-csid-unwind-power-on.patch",
       "sha256": "786ab267a641dce5ca2129c40dbc2aba9db68629ed9507a36ce1afe0c9d434b5",
       "original_commit": "89a359b2af9841b88e9d1e202de6a35df62b8102",
       "original_parent": "2fbda6d626cd6c76c06b7c27a364e6ed5411c2dc",
@@ -948,7 +948,7 @@
       }
     },
     {
-      "file": "0069-MAILLIST-media-camss-stream-subdevices.patch",
+      "file": "0134-MAILLIST-media-camss-stream-subdevices.patch",
       "sha256": "16f79d7b9483469c9241e7222d504763f39715fb2a2665441ccc8554a0734c55",
       "original_commit": "094ad9615636c2051fa7d008b1848bed2d9563d0",
       "original_parent": "89a359b2af9841b88e9d1e202de6a35df62b8102",
@@ -961,7 +961,7 @@
       }
     },
     {
-      "file": "0070-MAILLIST-wifi-ath12k-track-reg-ranges-per-radio.patch",
+      "file": "0135-MAILLIST-wifi-ath12k-track-reg-ranges-per-radio.patch",
       "sha256": "5a0a19f76a9e5f051f4e88c46e1c6344db17201e422b3bfe68a85fa1e18b89b2",
       "original_commit": "a0032aa3d3370551918794ea0bf1b00b23e1d098",
       "original_parent": "094ad9615636c2051fa7d008b1848bed2d9563d0",
@@ -974,7 +974,7 @@
       }
     },
     {
-      "file": "0071-MAILLIST-fastrpc-wake-poll-waiters.patch",
+      "file": "0136-MAILLIST-fastrpc-wake-poll-waiters.patch",
       "sha256": "988565e559a237f3e2564ffac1ea1b2c7d5b565f956918a349f2040c3c2b1514",
       "original_commit": "a1d75dc97bcdc7575c5ef201f758ce397a62f4c6",
       "original_parent": "a0032aa3d3370551918794ea0bf1b00b23e1d098",
@@ -987,7 +987,7 @@
       }
     },
     {
-      "file": "0072-MAILLIST-fastrpc-drain-inflight-invokes.patch",
+      "file": "0137-MAILLIST-fastrpc-drain-inflight-invokes.patch",
       "sha256": "832b3f7eb88566788a82659bcfd50fdb934ba53186802d1cfa533f46042a0bbc",
       "original_commit": "d5bc3126ca12a0e693ed788e10c807bc4a4730c8",
       "original_parent": "a1d75dc97bcdc7575c5ef201f758ce397a62f4c6",
@@ -1000,7 +1000,7 @@
       }
     },
     {
-      "file": "0073-EXTERNAL-virt-gunyah-android-port.patch",
+      "file": "0200-EXTERNAL-virt-gunyah-android-port.patch",
       "sha256": "a10ba5aa1e904e5bfa06f7c92b37557692ee559e062e3ac2dc36388ccee0d4dd",
       "original_commit": "9d28752e86c37fedcd54efd7fb5e4c7b552399c8",
       "original_parent": "d5bc3126ca12a0e693ed788e10c807bc4a4730c8",
@@ -1013,7 +1013,7 @@
       }
     },
     {
-      "file": "0074-EXTERNAL-sched-bore-cachy.patch",
+      "file": "0201-EXTERNAL-sched-bore-cachy.patch",
       "sha256": "23ed1b940da3bc2a54027c1ac45a202e2ee7142d072aeb8cd9ce8145a94aadd1",
       "original_commit": "ec621e665749ec82645e0d26d0ac4bb1b46d001f",
       "original_parent": "9d28752e86c37fedcd54efd7fb5e4c7b552399c8",
@@ -1026,7 +1026,7 @@
       }
     },
     {
-      "file": "0075-EXTERNAL-power-mipps-protocol-data.patch",
+      "file": "0202-EXTERNAL-power-mipps-protocol-data.patch",
       "sha256": "b62512aeb2f05cbf69ced2ee319a78161707ea38b924d775cc31c7a8c053da7e",
       "original_commit": "ea39c1000008824227411d1a6f2d299240c59693",
       "original_parent": "ec621e665749ec82645e0d26d0ac4bb1b46d001f",
@@ -1039,7 +1039,7 @@
       }
     },
     {
-      "file": "0076-EXTERNAL-dt-bindings-piano-vendors.patch",
+      "file": "0203-EXTERNAL-dt-bindings-piano-vendors.patch",
       "sha256": "936ce0bc75f840290509da9ae51a94cc07fa9af80aad127aea122df4b2125976",
       "original_commit": "d25c88dd129800ee4463f947cc5574d950662372",
       "original_parent": "ea39c1000008824227411d1a6f2d299240c59693",
@@ -1052,7 +1052,7 @@
       }
     },
     {
-      "file": "0077-EXTERNAL-dt-bindings-arm-piano.patch",
+      "file": "0204-EXTERNAL-dt-bindings-arm-piano.patch",
       "sha256": "9c77b49ffa82191b9ac8b3dc1bca202cd457a8631741f7c2b922d069bd6c267d",
       "original_commit": "9d46477ff1860f23e25d577f6e2cf58a1f93d7b0",
       "original_parent": "d25c88dd129800ee4463f947cc5574d950662372",
@@ -1065,7 +1065,7 @@
       }
     },
     {
-      "file": "0078-EXTERNAL-nt36532-piano-binding.patch",
+      "file": "0205-EXTERNAL-nt36532-piano-binding.patch",
       "sha256": "2668cb000ec2c993722fd68d76e8a69376da7e8fa5a6eef258b5fb0313685122",
       "original_commit": "e11f6b86b85c39cb76733b525a7d7df19731659d",
       "original_parent": "9d46477ff1860f23e25d577f6e2cf58a1f93d7b0",
@@ -1078,7 +1078,7 @@
       }
     },
     {
-      "file": "0079-EXTERNAL-dt-bindings-input-nanosic.patch",
+      "file": "0206-EXTERNAL-dt-bindings-input-nanosic.patch",
       "sha256": "3d8a56979605421f4bf22318773d0264c9be864c1737db43c31246c9e84ffb77",
       "original_commit": "5c38c2b87b62671da14899353409323ac19f66f2",
       "original_parent": "e11f6b86b85c39cb76733b525a7d7df19731659d",
@@ -1091,7 +1091,7 @@
       }
     },
     {
-      "file": "0080-EXTERNAL-dt-bindings-input-novatek-spi.patch",
+      "file": "0207-EXTERNAL-dt-bindings-input-novatek-spi.patch",
       "sha256": "20655d23aa04b6d9a372dc4d548de32d561a6b1f2598028777c36f71d632d1fe",
       "original_commit": "ef5b20ccca019bb025abda31a3945235b13a82e1",
       "original_parent": "5c38c2b87b62671da14899353409323ac19f66f2",
@@ -1104,7 +1104,7 @@
       }
     },
     {
-      "file": "0081-EXTERNAL-dt-bindings-backlight-ktz8866.patch",
+      "file": "0208-EXTERNAL-dt-bindings-backlight-ktz8866.patch",
       "sha256": "eb39860516c274d4efb0ee97abbe88468e479277753dab4bdf546986b2f73c4b",
       "original_commit": "fcffa7336a73fe363368c6b9467e755ea56e88b6",
       "original_parent": "ef5b20ccca019bb025abda31a3945235b13a82e1",
@@ -1117,7 +1117,7 @@
       }
     },
     {
-      "file": "0082-EXTERNAL-dt-bindings-power-supply-piano.patch",
+      "file": "0209-EXTERNAL-dt-bindings-power-supply-piano.patch",
       "sha256": "cb756720fe1f255e2a5e38571749b08ed4f12a1722c8e203996ea5f13c8ecce6",
       "original_commit": "953cc4cf104c6067eb412661e751f9f2d110aba5",
       "original_parent": "fcffa7336a73fe363368c6b9467e755ea56e88b6",
@@ -1130,7 +1130,7 @@
       }
     },
     {
-      "file": "0083-EXTERNAL-dt-bindings-remoteproc-piano.patch",
+      "file": "0210-EXTERNAL-dt-bindings-remoteproc-piano.patch",
       "sha256": "b9c053eb34217ef96ee6596d40c255a2b5d9b0a5267981730fc73935a1c9ef93",
       "original_commit": "a7acb11bff085397aa9e1d73c936c7cc5312f2ed",
       "original_parent": "953cc4cf104c6067eb412661e751f9f2d110aba5",
@@ -1143,7 +1143,7 @@
       }
     },
     {
-      "file": "0084-EXTERNAL-dt-bindings-audio-piano.patch",
+      "file": "0211-EXTERNAL-dt-bindings-audio-piano.patch",
       "sha256": "0a693fb75cede3b6ca6677866a07c75e7fb22dd70d785ff097b62c3a998be9aa",
       "original_commit": "8273f244bdc6bd8740f78dd581002fbbb2b9baa6",
       "original_parent": "a7acb11bff085397aa9e1d73c936c7cc5312f2ed",
@@ -1156,7 +1156,7 @@
       }
     },
     {
-      "file": "0085-EXTERNAL-i2c-qcom-cci-node-lookup.patch",
+      "file": "0212-EXTERNAL-i2c-qcom-cci-node-lookup.patch",
       "sha256": "1a2bc896772be8dc5b02e78969452924ff598d471ac27d8df15f8f81d4b5a468",
       "original_commit": "a01e9d6b076ef2906e35d610de2a2f194026c83a",
       "original_parent": "8273f244bdc6bd8740f78dd581002fbbb2b9baa6",
@@ -1169,7 +1169,7 @@
       }
     },
     {
-      "file": "0086-EXTERNAL-iommu-arm-smmu-piano-handoff.patch",
+      "file": "0213-EXTERNAL-iommu-arm-smmu-piano-handoff.patch",
       "sha256": "b5fbead410b514808b0f41e6c17823584ca1819358391dcac3ec371022f2ec3b",
       "original_commit": "feae840aae8d2eb9187f49dabe5f8fb8b3a53894",
       "original_parent": "a01e9d6b076ef2906e35d610de2a2f194026c83a",
@@ -1182,7 +1182,7 @@
       }
     },
     {
-      "file": "0087-EXTERNAL-pcie-sm8750-piano.patch",
+      "file": "0214-EXTERNAL-pcie-sm8750-piano.patch",
       "sha256": "39acd415fa3ab35617f981dbfeadf90d320d1c95ce62420de4af81f5f59b740d",
       "original_commit": "ae827de52f2ae48bc7f83c39d3f784d663251295",
       "original_parent": "feae840aae8d2eb9187f49dabe5f8fb8b3a53894",
@@ -1195,7 +1195,7 @@
       }
     },
     {
-      "file": "0088-EXTERNAL-pwrseq-qcom-wcn-piano.patch",
+      "file": "0215-EXTERNAL-pwrseq-qcom-wcn-piano.patch",
       "sha256": "c4d8648d8fca2038eb491700059d2ba541a18fb56257371c22c8f14d7546a5cf",
       "original_commit": "71c4c943e3fe2323080b3c4d2c006084a07df37e",
       "original_parent": "ae827de52f2ae48bc7f83c39d3f784d663251295",
@@ -1208,7 +1208,7 @@
       }
     },
     {
-      "file": "0089-EXTERNAL-power-supply-sc8541-piano.patch",
+      "file": "0216-EXTERNAL-power-supply-sc8541-piano.patch",
       "sha256": "651f7df47815b8caa4abe37cd4090a1ecf49b4ed37de2ba595675958e7c12f0d",
       "original_commit": "5d8c1ce11a3ad04e573f99f33d9aba605ed6c964",
       "original_parent": "71c4c943e3fe2323080b3c4d2c006084a07df37e",
@@ -1221,7 +1221,7 @@
       }
     },
     {
-      "file": "0090-EXTERNAL-power-supply-piano-mca.patch",
+      "file": "0217-EXTERNAL-power-supply-piano-mca.patch",
       "sha256": "38fab49c400b3a1d306e26d3309e4e3aa48191ff4ee21cf80fd366c9739a6467",
       "original_commit": "b0935061190ad965a7133ca438cfa14a98af9080",
       "original_parent": "5d8c1ce11a3ad04e573f99f33d9aba605ed6c964",
@@ -1234,7 +1234,7 @@
       }
     },
     {
-      "file": "0091-EXTERNAL-power-supply-qcom-battmgr-piano.patch",
+      "file": "0218-EXTERNAL-power-supply-qcom-battmgr-piano.patch",
       "sha256": "603482e9d8ff1d8361e355a510f6e7562f43ebfeab9cf6f5188e7c077dcf2f8e",
       "original_commit": "7a2e6a8a71b9c142ebed2ad528f300c95e8d4c2f",
       "original_parent": "b0935061190ad965a7133ca438cfa14a98af9080",
@@ -1247,7 +1247,7 @@
       }
     },
     {
-      "file": "0092-EXTERNAL-remoteproc-qcom-piano.patch",
+      "file": "0219-EXTERNAL-remoteproc-qcom-piano.patch",
       "sha256": "2b55213ad06cfcfd7f8e20edcb34410ea4e6eab28cd5c0ea6246221e005366fb",
       "original_commit": "02e06eaa4446f88426fd9f2caf09e7d3ebfad743",
       "original_parent": "7a2e6a8a71b9c142ebed2ad528f300c95e8d4c2f",
@@ -1260,7 +1260,7 @@
       }
     },
     {
-      "file": "0093-EXTERNAL-qcom-pmic-glink-piano.patch",
+      "file": "0220-EXTERNAL-qcom-pmic-glink-piano.patch",
       "sha256": "d8d808be0aab02346509c5ba1eec9272ed659daf6558c663b9c40567cef665d6",
       "original_commit": "7fec054cd99027808541e4c616e8c77dc92c435b",
       "original_parent": "02e06eaa4446f88426fd9f2caf09e7d3ebfad743",
@@ -1273,7 +1273,7 @@
       }
     },
     {
-      "file": "0094-EXTERNAL-qcom-pd-mapper-piano.patch",
+      "file": "0221-EXTERNAL-qcom-pd-mapper-piano.patch",
       "sha256": "f02c2e11954539c2ca634ab55cb3e2a792675c1660f798ead5a9b70425ae7831",
       "original_commit": "97040db083a15240667b37a81c0d0ef8e5f30426",
       "original_parent": "7fec054cd99027808541e4c616e8c77dc92c435b",
@@ -1286,7 +1286,7 @@
       }
     },
     {
-      "file": "0095-EXTERNAL-usb-dwc3-piano-handoff.patch",
+      "file": "0222-EXTERNAL-usb-dwc3-piano-handoff.patch",
       "sha256": "f76608df6ef173a13b4032521e6f50977326631e0148e2725b7b3d2e0a08422e",
       "original_commit": "13fb1b64f836276938a22daf2554ac3e9493d620",
       "original_parent": "97040db083a15240667b37a81c0d0ef8e5f30426",
@@ -1299,7 +1299,7 @@
       }
     },
     {
-      "file": "0096-EXTERNAL-hid-nanosic-hinge-abi.patch",
+      "file": "0223-EXTERNAL-hid-nanosic-hinge-abi.patch",
       "sha256": "5aab012d19f77f9900ad77e076d95c2883fa39888c7fd357356fafa7d983ec8e",
       "original_commit": "5fa9e9cb53bd7dc18b47370d084204beaa62771a",
       "original_parent": "13fb1b64f836276938a22daf2554ac3e9493d620",
@@ -1312,7 +1312,7 @@
       }
     },
     {
-      "file": "0097-EXTERNAL-drm-msm-dsi-bonded-piano.patch",
+      "file": "0224-EXTERNAL-drm-msm-dsi-bonded-piano.patch",
       "sha256": "e5d8e9d2bb9752f1d17f0500092c6ba2977a77fa97e561c2ef43fd7c3785f967",
       "original_commit": "5adb4834dc4132898e5f330f64342881bb997c89",
       "original_parent": "5fa9e9cb53bd7dc18b47370d084204beaa62771a",
@@ -1325,7 +1325,7 @@
       }
     },
     {
-      "file": "0098-EXTERNAL-backlight-ktz8866-paired-controllers.patch",
+      "file": "0225-EXTERNAL-backlight-ktz8866-paired-controllers.patch",
       "sha256": "972aacb1985a72609607d8bdcbc04885a4d3302bbd969aea3b584731ef519549",
       "original_commit": "6befd471d179de49f2c5a617f0241fc578a6c085",
       "original_parent": "5adb4834dc4132898e5f330f64342881bb997c89",
@@ -1338,7 +1338,7 @@
       }
     },
     {
-      "file": "0099-EXTERNAL-backlight-ktz8866-bootloader-brightness.patch",
+      "file": "0226-EXTERNAL-backlight-ktz8866-bootloader-brightness.patch",
       "sha256": "6da9f87a47c164717f6f285d250798d64ac63fc6654092bb51bb9a3b642d8db9",
       "original_commit": "f28bc188219ccac39b6fc3a09426b0b3bb602967",
       "original_parent": "6befd471d179de49f2c5a617f0241fc578a6c085",
@@ -1351,7 +1351,7 @@
       }
     },
     {
-      "file": "0100-EXTERNAL-drm-msm-dpu-dsc-encoder-precision.patch",
+      "file": "0227-EXTERNAL-drm-msm-dpu-dsc-encoder-precision.patch",
       "sha256": "f71227231b3af296bd7d49219736f46e82e07e63a81dd45c507407d71f4b464d",
       "original_commit": "26fdeef176b26d8ec9b549415ac379ffa817f2e1",
       "original_parent": "f28bc188219ccac39b6fc3a09426b0b3bb602967",
@@ -1364,7 +1364,7 @@
       }
     },
     {
-      "file": "0101-EXTERNAL-drm-msm-dpu-mode-clock.patch",
+      "file": "0228-EXTERNAL-drm-msm-dpu-mode-clock.patch",
       "sha256": "61b0ccac31ac56f92591366409d037bee0a0de718346cb569ad766921ce2e086",
       "original_commit": "1d92c1b82b2924c117cbd6d9835815030494f234",
       "original_parent": "26fdeef176b26d8ec9b549415ac379ffa817f2e1",
@@ -1377,7 +1377,7 @@
       }
     },
     {
-      "file": "0102-EXTERNAL-drm-msm-dpu-video-stop-order.patch",
+      "file": "0229-EXTERNAL-drm-msm-dpu-video-stop-order.patch",
       "sha256": "47dfd2e0f624cd94c07de1545224bf3eba2ebdb9beb0f6635e87c6ebd9017dc8",
       "original_commit": "bc5c9d5bdd8e19594418ae55e6403de5711a8342",
       "original_parent": "1d92c1b82b2924c117cbd6d9835815030494f234",
@@ -1390,7 +1390,7 @@
       }
     },
     {
-      "file": "0103-EXTERNAL-bluetooth-qca-piano.patch",
+      "file": "0230-EXTERNAL-bluetooth-qca-piano.patch",
       "sha256": "fe55d4b169dac2703b9f68e0d93f558bfd752b5888e9e084697ef2a3b0996000",
       "original_commit": "96df13aa717d00d0d767eff83f429eeed0ffd6e2",
       "original_parent": "bc5c9d5bdd8e19594418ae55e6403de5711a8342",
@@ -1403,7 +1403,7 @@
       }
     },
     {
-      "file": "0104-EXTERNAL-hid-nanosic-wn8030-piano.patch",
+      "file": "0231-EXTERNAL-hid-nanosic-wn8030-piano.patch",
       "sha256": "a4949b574b3626b1a4904438ba95dc0f8a4f8a22f07a6a95e7b22c13c5346032",
       "original_commit": "3f229f525f3a0f7d00dd35f7c9b4e56a678ea9b6",
       "original_parent": "96df13aa717d00d0d767eff83f429eeed0ffd6e2",
@@ -1416,7 +1416,7 @@
       }
     },
     {
-      "file": "0105-EXTERNAL-input-novatek-nt36532e.patch",
+      "file": "0232-EXTERNAL-input-novatek-nt36532e.patch",
       "sha256": "dd3e65ba5c92d42e66c1d2613a5ff3947a794e4f8019a635255abafe3f7649e0",
       "original_commit": "487b1a20e15438c8b553ce98c0106bc03b84b44b",
       "original_parent": "3f229f525f3a0f7d00dd35f7c9b4e56a678ea9b6",
@@ -1429,7 +1429,7 @@
       }
     },
     {
-      "file": "0106-EXTERNAL-wifi-ath12k-piano.patch",
+      "file": "0233-EXTERNAL-wifi-ath12k-piano.patch",
       "sha256": "4fa50b330c3e3e35568bbd8cd424f3e83eff66823715fc8b09a19119a0d924b5",
       "original_commit": "bc6daf10cf24b1f63a7992e7c762f8c1ffafffb9",
       "original_parent": "487b1a20e15438c8b553ce98c0106bc03b84b44b",
@@ -1442,7 +1442,7 @@
       }
     },
     {
-      "file": "0107-EXTERNAL-media-i2c-add-ov32d40.patch",
+      "file": "0234-EXTERNAL-media-i2c-add-ov32d40.patch",
       "sha256": "98a13283b2ef178edb6eb0d9ab438d7b9411f0931e19c976d02a44da35b095c5",
       "original_commit": "c9b49b24527db3afa52c128abb691716b3834376",
       "original_parent": "bc6daf10cf24b1f63a7992e7c762f8c1ffafffb9",
@@ -1455,7 +1455,7 @@
       }
     },
     {
-      "file": "0108-EXTERNAL-media-i2c-modernize-ov32d40-runtime-pm.patch",
+      "file": "0235-EXTERNAL-media-i2c-modernize-ov32d40-runtime-pm.patch",
       "sha256": "1c166789cb048d1565de09b7c3d5ffc9018b23618bfd9aaaf3fc1e1503308f06",
       "original_commit": "fe64d6009686297703a9b957ec27fe55c9070495",
       "original_parent": "c9b49b24527db3afa52c128abb691716b3834376",
@@ -1468,7 +1468,7 @@
       }
     },
     {
-      "file": "0109-EXTERNAL-media-camss-route-ipp-to-tfe-pixel-pipeline.patch",
+      "file": "0236-EXTERNAL-media-camss-route-ipp-to-tfe-pixel-pipeline.patch",
       "sha256": "c77a37896e771e0785d887cbb4a238cf63083f72d8e80dcc3aeda9e8fdcc3f47",
       "original_commit": "388a0b1048011db5310993100689e5600e6481a9",
       "original_parent": "fe64d6009686297703a9b957ec27fe55c9070495",
@@ -1481,7 +1481,7 @@
       }
     },
     {
-      "file": "0110-EXTERNAL-asoc-fs19xx-piano.patch",
+      "file": "0237-EXTERNAL-asoc-fs19xx-piano.patch",
       "sha256": "5d33abcd9c9f3a72fc8839302084565931a7148bb5324f3f800d1d4899c4e4e4",
       "original_commit": "9ebe9f58ace890878e6588ac24cb30f25622d148",
       "original_parent": "388a0b1048011db5310993100689e5600e6481a9",
@@ -1494,7 +1494,7 @@
       }
     },
     {
-      "file": "0111-EXTERNAL-asoc-qcom-piano-voice-mono.patch",
+      "file": "0238-EXTERNAL-asoc-qcom-piano-voice-mono.patch",
       "sha256": "e10858eaaa6e4d6cee6c7a5b473dcc75704d7a045f1b73733c5a075a49a8ad3b",
       "original_commit": "37bb3e055bcd766f56512c167e95f1bd291554a4",
       "original_parent": "9ebe9f58ace890878e6588ac24cb30f25622d148",
@@ -1507,7 +1507,7 @@
       }
     },
     {
-      "file": "0112-EXTERNAL-asoc-qcom-audioreach-piano.patch",
+      "file": "0239-EXTERNAL-asoc-qcom-audioreach-piano.patch",
       "sha256": "98e93065c53692ef8fca6ed9a9ed660cf9a2f971002acf04b9b0b1774f7e7c2d",
       "original_commit": "9c97c4f270172f66e65911039f2d0b29e6ce9b93",
       "original_parent": "37bb3e055bcd766f56512c167e95f1bd291554a4",
@@ -1520,7 +1520,7 @@
       }
     },
     {
-      "file": "0113-EXTERNAL-asoc-qcom-piano-card.patch",
+      "file": "0240-EXTERNAL-asoc-qcom-piano-card.patch",
       "sha256": "04f132950dc58f8edea6ccf859376209e745fc371a3810ce5ca2839696bcd5af",
       "original_commit": "d8d968312bbcd3dc0eb82e07ead301bcff110bdf",
       "original_parent": "9c97c4f270172f66e65911039f2d0b29e6ce9b93",
@@ -1533,7 +1533,7 @@
       }
     },
     {
-      "file": "0114-EXTERNAL-arm64-dts-sm8750-piano.patch",
+      "file": "0241-EXTERNAL-arm64-dts-sm8750-piano.patch",
       "sha256": "9795fa3c238bb45946c066cd34c0f78f3de341ac0563bb03cb0df03fcacc7291",
       "original_commit": "f24e7b9600ac8f600708d5ab723429cc400b4f96",
       "original_parent": "d8d968312bbcd3dc0eb82e07ead301bcff110bdf",
@@ -1546,7 +1546,7 @@
       }
     },
     {
-      "file": "0115-EXTERNAL-arm64-configs-piano.patch",
+      "file": "0242-EXTERNAL-arm64-configs-piano.patch",
       "sha256": "8cd2538c2ed0391a4371e14d4e4444a2148a4d3a577a982c926d0fe595766f93",
       "original_commit": "67e47d9dfc7b4156906a61a412ec574fcd2a7def",
       "original_parent": "f24e7b9600ac8f600708d5ab723429cc400b4f96",
@@ -1559,7 +1559,7 @@
       }
     },
     {
-      "file": "0116-EXTERNAL-ci-linux-piano-dtb.patch",
+      "file": "0243-EXTERNAL-ci-linux-piano-dtb.patch",
       "sha256": "ce0da48d245e1a82af73e81a68757ae64e3ca87f78b66ad6773c0660c2c4bf99",
       "original_commit": "bc2d030b4e70ba5c933325860a432d885f28ddb0",
       "original_parent": "67e47d9dfc7b4156906a61a412ec574fcd2a7def",
@@ -1572,7 +1572,7 @@
       }
     },
     {
-      "file": "0117-EXTERNAL-ath12k-pci-cma.patch",
+      "file": "0244-EXTERNAL-ath12k-pci-cma.patch",
       "sha256": "df2c5a2a1ee2142cb1bc8fc12dd9ef40a0bea9fb7afd8b3cadd21c041a5e05ef",
       "original_commit": "704b12fdeea8703ea17fe2a77a0996629d8b7efd",
       "original_parent": "bc2d030b4e70ba5c933325860a432d885f28ddb0",
@@ -1585,7 +1585,7 @@
       }
     },
     {
-      "file": "0118-EXTERNAL-iommu-identity-attach-readback.patch",
+      "file": "0245-EXTERNAL-iommu-identity-attach-readback.patch",
       "sha256": "3bf07aef265294785aa2d8d186b0c363c487b2ca12b677616440925b01220ceb",
       "original_commit": "01e279e72322e313a2287b57dfb42f97940dee1c",
       "original_parent": "704b12fdeea8703ea17fe2a77a0996629d8b7efd",
@@ -1598,7 +1598,7 @@
       }
     },
     {
-      "file": "0119-EXTERNAL-iommu-adreno-defer-attach.patch",
+      "file": "0246-EXTERNAL-iommu-adreno-defer-attach.patch",
       "sha256": "bd82897e5e18bd6b734780c8e83234a22272ec5063ba7265b2e03dc2feadeddd",
       "original_commit": "0561b200cda3e2ad7b120673d3d264a746c238c4",
       "original_parent": "01e279e72322e313a2287b57dfb42f97940dee1c",
@@ -1611,7 +1611,7 @@
       }
     },
     {
-      "file": "0120-EXTERNAL-iommu-media-dma-domain.patch",
+      "file": "0247-EXTERNAL-iommu-media-dma-domain.patch",
       "sha256": "bb53f8031726c7b4922523177601712150d5871d71a8419dcea30042193c7974",
       "original_commit": "d62b8350723b1ace3a098c6e27b40156282b7b75",
       "original_parent": "0561b200cda3e2ad7b120673d3d264a746c238c4",
@@ -1624,7 +1624,7 @@
       }
     },
     {
-      "file": "0121-EXTERNAL-bluetooth-qca-defer-power.patch",
+      "file": "0248-EXTERNAL-bluetooth-qca-defer-power.patch",
       "sha256": "a0d7d4ad6a7c71fc1da0ee6d3eb4cd95590b92d61fffd34c26cb22696a51e70d",
       "original_commit": "9ce9a69c64b7b8bf1cf02883b4920ca619bcef6c",
       "original_parent": "d62b8350723b1ace3a098c6e27b40156282b7b75",
@@ -1637,7 +1637,7 @@
       }
     },
     {
-      "file": "0122-EXTERNAL-nanosic-tablet-mode.patch",
+      "file": "0249-EXTERNAL-nanosic-tablet-mode.patch",
       "sha256": "5af13e461008eb1c7192bbc424e2d754024c598321c0b78874262c168bba903b",
       "original_commit": "c387a3f65351aaa32104caa36c91dc192585c2c4",
       "original_parent": "9ce9a69c64b7b8bf1cf02883b4920ca619bcef6c",
@@ -1650,7 +1650,7 @@
       }
     },
     {
-      "file": "0123-EXTERNAL-rpmsg-channel-modalias.patch",
+      "file": "0250-EXTERNAL-rpmsg-channel-modalias.patch",
       "sha256": "e3c33e5d1c64cff3a71776d4137ae6a14ffa00fc49ec9e7342e224983fa937da",
       "original_commit": "37a150149c63b57b98cd686565e76511981dc076",
       "original_parent": "c387a3f65351aaa32104caa36c91dc192585c2c4",
@@ -1663,7 +1663,7 @@
       }
     },
     {
-      "file": "0124-EXTERNAL-pcie-qcom-piano-reset-and-clock-order.patch",
+      "file": "0251-EXTERNAL-pcie-qcom-piano-reset-and-clock-order.patch",
       "sha256": "92f00dae2f02eb35ea5d904d2a788c42bbefbf8044f50cb3c9663e35b66ca82c",
       "original_commit": "f37aee3d43003823699f0a547ddc1107f233ae53",
       "original_parent": "37a150149c63b57b98cd686565e76511981dc076",
@@ -1676,9 +1676,9 @@
       }
     },
     {
-      "file": "0125-LOCAL-dt-bindings-dpu-bonded-dsi.patch",
-      "sha256": "1ba2f191f429ac0c3586df4b12c5d7cb3bc3eaa562b52cb5dfd6d9271c63213a",
-      "original_commit": "4d47865c9f88fec83d961c9ac35546ea7d808a2b",
+      "file": "0300-LOCAL-dt-bindings-dpu-bonded-dsi.patch",
+      "sha256": "d2644d3e1fc76835b12c17d5871af02e6609f914d1faa31de1879c5cb9af8601",
+      "original_commit": "863929cff98fc56ee5443a25cf396a1676a84592",
       "original_parent": "f37aee3d43003823699f0a547ddc1107f233ae53",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "9e972c3086a315c78ebf7974c73b58b99bf6cb8c",
@@ -1689,10 +1689,10 @@
       }
     },
     {
-      "file": "0126-LOCAL-dt-bindings-pmic-glink-piano.patch",
-      "sha256": "d370bb03819e733a80222b08def04d8dbe69fd6c44d41b6c41d660894da699a2",
-      "original_commit": "62014097bb03d47027ad1f7f60c975af3fb2fe36",
-      "original_parent": "4d47865c9f88fec83d961c9ac35546ea7d808a2b",
+      "file": "0301-LOCAL-dt-bindings-pmic-glink-piano.patch",
+      "sha256": "2298351d5c7f73a9d58eef2a40e01497691b963b35bfe6bd9accba3eb55fc548",
+      "original_commit": "4a1fc6c979ad29a0003b4cc3931cd3e0842a6789",
+      "original_parent": "863929cff98fc56ee5443a25cf396a1676a84592",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "343ac7cf0cd2ae9bcfd49252f4070abbe201722c",
       "upstream": {
@@ -1702,10 +1702,10 @@
       }
     },
     {
-      "file": "0127-LOCAL-arm64-cpuinfo-board-model.patch",
-      "sha256": "33a87a0af43ea2228649a58570d30eecddbc0729368a1b24ee445dba6a7c1613",
-      "original_commit": "fa9ccb78ac52f0e8725c40b4590855b5c6903f84",
-      "original_parent": "62014097bb03d47027ad1f7f60c975af3fb2fe36",
+      "file": "0302-LOCAL-arm64-cpuinfo-board-model.patch",
+      "sha256": "60227f3ef900f2ba1c3a9a96d9fcd83738939e7c9a4e8d9e632217d7a948b46e",
+      "original_commit": "2425231050237a2756ae19eedafa7cfd677cf683",
+      "original_parent": "4a1fc6c979ad29a0003b4cc3931cd3e0842a6789",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "f0b388c8c6ccf4b0329796a751986339fe4e421d",
       "upstream": {
@@ -1715,10 +1715,10 @@
       }
     },
     {
-      "file": "0128-LOCAL-clk-sm8750-gcc.patch",
-      "sha256": "0a900c6d2c66c95b549ce430db9197acf9d08833f78d9afec7a7b09a02fee69a",
-      "original_commit": "cbcbd01d514cec137ac25c49c120628be8391ff1",
-      "original_parent": "fa9ccb78ac52f0e8725c40b4590855b5c6903f84",
+      "file": "0303-LOCAL-clk-sm8750-gcc.patch",
+      "sha256": "87413d228d0381cf59dae1d374422263a73e1187775fe75e6b7cef15c0ac50c5",
+      "original_commit": "4b3f9bbf77ee285882e48109bbcc3f79cc6420ce",
+      "original_parent": "2425231050237a2756ae19eedafa7cfd677cf683",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "07644ceecf1a59a2b5d43e8b32ac236a4397e068",
       "upstream": {
@@ -1728,10 +1728,10 @@
       }
     },
     {
-      "file": "0129-LOCAL-leds-qcom-flash-piano.patch",
-      "sha256": "1a27c129061a47703af16b6156a64f99ad8efc67f17bb366d3ee42ed99efc1be",
-      "original_commit": "10bf4b6fae084fcb21a8d29858142c79ce19cae1",
-      "original_parent": "cbcbd01d514cec137ac25c49c120628be8391ff1",
+      "file": "0304-LOCAL-leds-qcom-flash-piano.patch",
+      "sha256": "14426c03e754929f0635a691c47959185f062556f4ed7456f9372e57665bb665",
+      "original_commit": "47d7c9482cc69e0d4e2d408256d8231849552340",
+      "original_parent": "4b3f9bbf77ee285882e48109bbcc3f79cc6420ce",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "8e93e25248b606af65386e216b3cc8c8fc34b704",
       "upstream": {
@@ -1741,10 +1741,10 @@
       }
     },
     {
-      "file": "0130-LOCAL-leds-qcom-lpg-piano.patch",
-      "sha256": "f89b2cb4e038325e2b328d8fae6a78b35c778325233ea64282d374c14a54d01e",
-      "original_commit": "d9748857bf4ee19bd0c477f60bd1276df4f52fce",
-      "original_parent": "10bf4b6fae084fcb21a8d29858142c79ce19cae1",
+      "file": "0305-LOCAL-leds-qcom-lpg-piano.patch",
+      "sha256": "45b4ef8e57112ebe109a98eb79e2c61560eb7cd318b09afc39536f6e648ad31c",
+      "original_commit": "e553092abcab5f23fe059bea93a794816e4ee387",
+      "original_parent": "47d7c9482cc69e0d4e2d408256d8231849552340",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "613fa078e043089c621d37a0a8ea543574386c53",
       "upstream": {
@@ -1754,10 +1754,10 @@
       }
     },
     {
-      "file": "0131-LOCAL-leds-qcom-lpg-respect-max-brightness.patch",
-      "sha256": "ea65108ee67e133e2ec4384c70e1aab8795216df33d159a7bc95e0a8845d771c",
-      "original_commit": "662c6979d96f31c939121f0dcb9605ed65d9e9bc",
-      "original_parent": "d9748857bf4ee19bd0c477f60bd1276df4f52fce",
+      "file": "0306-LOCAL-leds-qcom-lpg-respect-max-brightness.patch",
+      "sha256": "3bfb98b69cb4898eb021009f6ac05fe62908be8d297d0aa74ba6b64ff773b26b",
+      "original_commit": "cedebe3bc74772812e58098b2ab0c5c1a879b46b",
+      "original_parent": "e553092abcab5f23fe059bea93a794816e4ee387",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "21224386314cc2d2682813e93eed8dd011f40c33",
       "upstream": {
@@ -1767,10 +1767,10 @@
       }
     },
     {
-      "file": "0132-LOCAL-misc-fastrpc-piano-dma.patch",
-      "sha256": "d88db7cfcb3b40169f8345f77a429d13a41d3b1af6981a0dca62faca595c8b27",
-      "original_commit": "e19ca560452037cb76f9a6511adb34dc368bee23",
-      "original_parent": "662c6979d96f31c939121f0dcb9605ed65d9e9bc",
+      "file": "0307-LOCAL-misc-fastrpc-piano-dma.patch",
+      "sha256": "10f0988eb52be5053a549acf0d422edd4fd978515ea5dd5760255c441fc55584",
+      "original_commit": "3284a13ec5e1196d115a24374ce0879bf8e478a3",
+      "original_parent": "cedebe3bc74772812e58098b2ab0c5c1a879b46b",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "dbb19b20032b4e9566948c76be46e4a31e8288db",
       "upstream": {
@@ -1780,10 +1780,10 @@
       }
     },
     {
-      "file": "0133-LOCAL-phy-qcom-qmp-optional-dp.patch",
-      "sha256": "d9fa8bedc975fd3177681f2e01a76906f8d15ed26bda3c52b0a5c72517274eda",
-      "original_commit": "99d5dc90ee90fb7f5bb421d6daf73474c7b3d987",
-      "original_parent": "e19ca560452037cb76f9a6511adb34dc368bee23",
+      "file": "0308-LOCAL-phy-qcom-qmp-optional-dp.patch",
+      "sha256": "83598f90c02333547940a2f4e7571d3b6485792e2ced4a7760ffba2655cad353",
+      "original_commit": "1bc8199c7a4a3c3b48cd0c840190af7be1400369",
+      "original_parent": "3284a13ec5e1196d115a24374ce0879bf8e478a3",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "27d9bcb6ad10a835b3319a0c0b0adcb07422960b",
       "upstream": {
@@ -1793,10 +1793,10 @@
       }
     },
     {
-      "file": "0134-LOCAL-power-supply-sc96231-piano.patch",
-      "sha256": "73fbdc34368c93d341a358302b89859c8a8b9642ae9d826f3dd9adc9c570117d",
-      "original_commit": "953c99163785029bd820a4ea71be2d0133c566b4",
-      "original_parent": "99d5dc90ee90fb7f5bb421d6daf73474c7b3d987",
+      "file": "0309-LOCAL-power-supply-sc96231-piano.patch",
+      "sha256": "2e74871a4ae063863ec8b88508ee2efa7d2382dfb078ac14ad678776a95988c0",
+      "original_commit": "900969afca71df4fab402efa13767a5164ea5a99",
+      "original_parent": "1bc8199c7a4a3c3b48cd0c840190af7be1400369",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "04ef91b81702f70d7325741a33828f7a2b5090ad",
       "upstream": {
@@ -1806,10 +1806,10 @@
       }
     },
     {
-      "file": "0135-LOCAL-power-supply-bq27xxx-piano.patch",
-      "sha256": "b89079520ca11451967441923f7b469cefff84c4dbdf7703f33b75d7aa9845ba",
-      "original_commit": "09b9ff04f3b7c123db00930c2a01b78a402b3077",
-      "original_parent": "953c99163785029bd820a4ea71be2d0133c566b4",
+      "file": "0310-LOCAL-power-supply-bq27xxx-piano.patch",
+      "sha256": "6dff2697449b39920afc66fc858d646c59888c1ba18c58687e0b674391e60343",
+      "original_commit": "db96cf1b68c886b69a8e2c8159a77f45f18aa675",
+      "original_parent": "900969afca71df4fab402efa13767a5164ea5a99",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "5415a87e54be03072be2cf30a3092bd49b8094e1",
       "upstream": {
@@ -1819,10 +1819,10 @@
       }
     },
     {
-      "file": "0136-LOCAL-qcom-smp2p-sleepstate.patch",
-      "sha256": "608759444520f574af83c8f826fd529c21a75dcdc7e169705da1bd57130fcee4",
-      "original_commit": "3d42d7fda04004abb92043560499350d1fe623ea",
-      "original_parent": "09b9ff04f3b7c123db00930c2a01b78a402b3077",
+      "file": "0311-LOCAL-qcom-smp2p-sleepstate.patch",
+      "sha256": "47de7548ff042d2fafe4cceb57fe3e36e87fd33267ee378860bb27cdf0dc3d7b",
+      "original_commit": "ee07842011265f1680e9dda314a900eea805bb8f",
+      "original_parent": "db96cf1b68c886b69a8e2c8159a77f45f18aa675",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "6ba6d2a6a121d1dbfa67f81735daadba217e2322",
       "upstream": {
@@ -1832,10 +1832,10 @@
       }
     },
     {
-      "file": "0137-LOCAL-qcom-ubwc-sm8750.patch",
-      "sha256": "921f7b99c46502a21f23d42a272b04c51f430f38f3cd6f60f49f56fa7c814c1a",
-      "original_commit": "c63f33ef308baf3751862033066d6badef885624",
-      "original_parent": "3d42d7fda04004abb92043560499350d1fe623ea",
+      "file": "0312-LOCAL-qcom-ubwc-sm8750.patch",
+      "sha256": "9fd105525f4ac752724a8a9a45dec5be53f2573054988cafbc8d56903f407897",
+      "original_commit": "7126c70d3fe5a20c970d1306219cc5f610040ec2",
+      "original_parent": "ee07842011265f1680e9dda314a900eea805bb8f",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "1ba7759a903a1a70aa2477297a2cb772f2d6d1c3",
       "upstream": {
@@ -1845,10 +1845,10 @@
       }
     },
     {
-      "file": "0138-LOCAL-scsi-ufs-piano-handoff.patch",
-      "sha256": "91718f1f6173bd586583dc0d6f54ce8c59662d5778331228c3c4fbb9dcaa542f",
-      "original_commit": "7436fde5ccd0df39f5d3fd1dd31b1716b05321cf",
-      "original_parent": "c63f33ef308baf3751862033066d6badef885624",
+      "file": "0313-LOCAL-scsi-ufs-piano-handoff.patch",
+      "sha256": "887878ebc131e7a0602d00f437878e31077e005368d9a59e0936698523e2253d",
+      "original_commit": "af1f131a066bd4fadd7dbe8d818c129a828a2d20",
+      "original_parent": "7126c70d3fe5a20c970d1306219cc5f610040ec2",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "87caf4164f0f7208362007e77bf7af4f4ad998e3",
       "upstream": {
@@ -1858,10 +1858,10 @@
       }
     },
     {
-      "file": "0139-LOCAL-input-novatek-thp-abi.patch",
-      "sha256": "832271f631dc63f8a53fbdfdfe290169ab29f71307c0561f4bbb78f60f5641cb",
-      "original_commit": "35c6fe7529518526b87f0319d1fe5d6ce7ab9931",
-      "original_parent": "7436fde5ccd0df39f5d3fd1dd31b1716b05321cf",
+      "file": "0314-LOCAL-input-novatek-thp-abi.patch",
+      "sha256": "4fe8fa1ea285a570401552ed8c6e1547a177272fab4cf783073f518ce77d67fc",
+      "original_commit": "34a914b290a3fe3a18814056adad93dadf41f0e9",
+      "original_parent": "af1f131a066bd4fadd7dbe8d818c129a828a2d20",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "e0c5d313052b720fb4305cbdf1bb2bfd1b9f12b6",
       "upstream": {
@@ -1871,10 +1871,10 @@
       }
     },
     {
-      "file": "0140-LOCAL-drm-bridge-connector-piano.patch",
-      "sha256": "2ebd0fe071f57f853dca2ecf5f876c0bf8253fc1cb7c93698839696c1157a183",
-      "original_commit": "42effd8fb6fd70a58172c15d22f0f1637e4e6eb9",
-      "original_parent": "35c6fe7529518526b87f0319d1fe5d6ce7ab9931",
+      "file": "0315-LOCAL-drm-bridge-connector-piano.patch",
+      "sha256": "283a3cd8fa62353fbdd0743189092c0e867d5a9c038995d80e6a0e2a21f1dfdf",
+      "original_commit": "17b5fad5f5c2e4fc2b66b9ac0983aa2149ff4f64",
+      "original_parent": "34a914b290a3fe3a18814056adad93dadf41f0e9",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "892fc78f9026a38b9dd4cfc021e5e6a86a90bdd0",
       "upstream": {
@@ -1884,10 +1884,10 @@
       }
     },
     {
-      "file": "0141-LOCAL-nt36532-piano-driver.patch",
-      "sha256": "f1cfed748b99f9f95a67f05aabe1dd9bff6e2c0290128bb28e634259145fa4ec",
-      "original_commit": "949f22939f1b76f172bea8a73fbe5185c708b566",
-      "original_parent": "42effd8fb6fd70a58172c15d22f0f1637e4e6eb9",
+      "file": "0316-LOCAL-nt36532-piano-driver.patch",
+      "sha256": "09b8a4f6a50536ef7cccfc96ed3b1e21d098153291e65f98d33ba921a8947f92",
+      "original_commit": "041cd571cf2e48375375c3c05970b3d5f92b00db",
+      "original_parent": "17b5fad5f5c2e4fc2b66b9ac0983aa2149ff4f64",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "d70d57260f262012c21a95e05f5c31a8e5ab0db5",
       "upstream": {
@@ -1897,10 +1897,10 @@
       }
     },
     {
-      "file": "0142-LOCAL-backlight-ktz8866-disable-ramp.patch",
-      "sha256": "5164cb1ae3e1c19911e43e56603122f9d49ff7aa9ff4726ec0b19dd496b3ad7e",
-      "original_commit": "28f29258ff7185588643fb712743e6849978d7da",
-      "original_parent": "949f22939f1b76f172bea8a73fbe5185c708b566",
+      "file": "0317-LOCAL-backlight-ktz8866-disable-ramp.patch",
+      "sha256": "790ac033842ce7dc632867ff276a08645b573c5dd7e04dd5422362f1a8dfe68e",
+      "original_commit": "f47c7a0ec708b0223718cce01397f7122650e2d2",
+      "original_parent": "041cd571cf2e48375375c3c05970b3d5f92b00db",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "79a1afa9d0efdc8fd652eee868917bb9f6fd9615",
       "upstream": {
@@ -1910,10 +1910,10 @@
       }
     },
     {
-      "file": "0143-LOCAL-backlight-ktz8866-hardware-brightness.patch",
-      "sha256": "819143201b6f1a284a1d7f870b584c255bcc47f5d306fd5a38e752bd65a2617a",
-      "original_commit": "0c7e5ad8a3280792a2b5c103b15e3235f52b2c7d",
-      "original_parent": "28f29258ff7185588643fb712743e6849978d7da",
+      "file": "0318-LOCAL-backlight-ktz8866-hardware-brightness.patch",
+      "sha256": "cf0a5e7061e8c6696bb1bd2e58ec9580cad8dfd28783a3ee4dcc343abdebfd65",
+      "original_commit": "7307b8a8929f33cf65e5b602de304e57924c24b0",
+      "original_parent": "f47c7a0ec708b0223718cce01397f7122650e2d2",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "e5ffd594fae1b6e9d5133ea077cac031ca27b213",
       "upstream": {
@@ -1923,10 +1923,10 @@
       }
     },
     {
-      "file": "0144-LOCAL-drm-msm-dpu-gcv2-regdma.patch",
-      "sha256": "203e823dc62e90d1232900c184c45a659e9ec5963cb1363208367e5c0c26a886",
-      "original_commit": "a4fa1c1f3b5f5a85996b79b4ad5d1d21831c52fe",
-      "original_parent": "0c7e5ad8a3280792a2b5c103b15e3235f52b2c7d",
+      "file": "0319-LOCAL-drm-msm-dpu-gcv2-regdma.patch",
+      "sha256": "384191ea3830d04ebcadf3af6c59097ccca7843ad990d2a524038162dcae4644",
+      "original_commit": "26bce5d62c03a9f58f588d1f1ee4b714c99ecf06",
+      "original_parent": "7307b8a8929f33cf65e5b602de304e57924c24b0",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "bb0fa784ffb4a2e30e9910bf65d7ceba08cb9dec",
       "upstream": {
@@ -1936,10 +1936,10 @@
       }
     },
     {
-      "file": "0145-LOCAL-drm-msm-dpu-igcv5-degamma.patch",
-      "sha256": "dcf109cf1d5831924034e1056ad1c6619bdf1a758b47b4e9f7ec40909864fd14",
-      "original_commit": "b5b528e3f69f2e961162e932c33b1c99b8f488bd",
-      "original_parent": "a4fa1c1f3b5f5a85996b79b4ad5d1d21831c52fe",
+      "file": "0320-LOCAL-drm-msm-dpu-igcv5-degamma.patch",
+      "sha256": "47b75d105469eef5bf5388417b78def381d2c2ef18a66d7c6a80ed69ebb3b9a7",
+      "original_commit": "4fb046f350ee2cc3a444900abef8c8a844fdc2fe",
+      "original_parent": "26bce5d62c03a9f58f588d1f1ee4b714c99ecf06",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "a46ab23f426357b5dc6bc6038019ccb831755311",
       "upstream": {
@@ -1949,10 +1949,10 @@
       }
     },
     {
-      "file": "0146-LOCAL-drm-msm-dpu-igcv5-high-precision.patch",
-      "sha256": "df038e26228adafce336af7d0abd140d397dc7520974809470bbfba586be5de2",
-      "original_commit": "68bd9e52db76e7bd8131edbd23c9e8f3e665b8d8",
-      "original_parent": "b5b528e3f69f2e961162e932c33b1c99b8f488bd",
+      "file": "0321-LOCAL-drm-msm-dpu-igcv5-high-precision.patch",
+      "sha256": "03cdc8fa3dbef27c3b0906b5ebf4597d90a36adbc1622996d88cd9cb0303decd",
+      "original_commit": "b4eed8a52f15acc119db1cd421ff83c5ccccca3d",
+      "original_parent": "4fb046f350ee2cc3a444900abef8c8a844fdc2fe",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "f54b9f189e55e2f111840f8ab03943ec97dae898",
       "upstream": {
@@ -1962,10 +1962,10 @@
       }
     },
     {
-      "file": "0147-LOCAL-drm-msm-piano-seamless-vfp.patch",
-      "sha256": "34727af8049c488c6feb0f9d183e40a73ccac20f4ae140af331736cf7a0e5838",
-      "original_commit": "731b6276b4544ff4e05193da1e9afd1ee323dc9f",
-      "original_parent": "68bd9e52db76e7bd8131edbd23c9e8f3e665b8d8",
+      "file": "0322-LOCAL-drm-msm-piano-seamless-vfp.patch",
+      "sha256": "fa831fedd1f581e79009e1017f05c828907bcb747a7209e780e4ab883a3ea214",
+      "original_commit": "4a748f78b7d1c34f452fa88aedc9956d0f3a742e",
+      "original_parent": "b4eed8a52f15acc119db1cd421ff83c5ccccca3d",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "932e1fc79a776ed9e77e64913c0abcfd982e50da",
       "upstream": {
@@ -1975,10 +1975,10 @@
       }
     },
     {
-      "file": "0148-LOCAL-hid-xiaomi-p81c-piano.patch",
-      "sha256": "066e94bc1c420d2834c01024eac3e35cc24df0560fd8664a19c8eba478f0110c",
-      "original_commit": "04eb76d6ea760a9a0b7fb5030b969288620d74df",
-      "original_parent": "731b6276b4544ff4e05193da1e9afd1ee323dc9f",
+      "file": "0323-LOCAL-hid-xiaomi-p81c-piano.patch",
+      "sha256": "628ed40a6c322e228a02602d3fc409008aa8dd35dd6d62187db14a405f228dbf",
+      "original_commit": "24d086635c2520223d4652e556389473c8b9b534",
+      "original_parent": "4a748f78b7d1c34f452fa88aedc9956d0f3a742e",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "86d650c59a2959f101df62ef182070a31a6d1000",
       "upstream": {
@@ -1988,10 +1988,10 @@
       }
     },
     {
-      "file": "0149-LOCAL-media-i2c-keep-piano-privacy-led-on-until-sensors-quiesce.patch",
-      "sha256": "0498fe32cdd04e864979a934ea107312a80e5d3e137aaeb110457d6d942dcc57",
-      "original_commit": "6d06ad172e52db9b57b3d4056fcd583e8477fda3",
-      "original_parent": "04eb76d6ea760a9a0b7fb5030b969288620d74df",
+      "file": "0324-LOCAL-media-i2c-keep-piano-privacy-led-on-until-sensors-quiesce.patch",
+      "sha256": "f89dc63dcc4ff43669ef9cc6765503868cbf94a701933af30e6c59013e282e3c",
+      "original_commit": "ac451aa1d6e0a63191131849e2e9ce46c82a6551",
+      "original_parent": "24d086635c2520223d4652e556389473c8b9b534",
       "committer_date": "2026-10-09T04:58:53+08:00",
       "tree": "2426e52b12a3c5295ed8cafcfc92346a29f31065",
       "upstream": {
@@ -2001,10 +2001,10 @@
       }
     },
     {
-      "file": "0150-LOCAL-media-camss-select-tfe-clock-from-csi-link-rate.patch",
-      "sha256": "95d4f06c8d34733e6bab4b07a6d45326df52df153a77039f3d28ff5a95cefed7",
-      "original_commit": "5b9c0261f7fac610b362b82ff6cb3f5bc378a97e",
-      "original_parent": "6d06ad172e52db9b57b3d4056fcd583e8477fda3",
+      "file": "0325-LOCAL-media-camss-select-tfe-clock-from-csi-link-rate.patch",
+      "sha256": "17ec6e56d2ec02ec3e56ee675d89128411679bff21159c1fd340e18db83c4cfd",
+      "original_commit": "73274f4973f1afa81f86a9eab12054327e5a31e6",
+      "original_parent": "ac451aa1d6e0a63191131849e2e9ce46c82a6551",
       "committer_date": "2026-11-18T22:50:24+08:00",
       "tree": "37eff5e2cec13ddea779f25e58533ef9d2093fe0",
       "upstream": {
@@ -2014,10 +2014,10 @@
       }
     },
     {
-      "file": "0151-LOCAL-media-iris-finish-drain-with-empty-last-buffer.patch",
-      "sha256": "e0ca7d131f78318497bc458611447366f9c120049ede02d6445eb7da4b04c932",
-      "original_commit": "f544d6331ddf38367478e104eca6f2f6c443341e",
-      "original_parent": "5b9c0261f7fac610b362b82ff6cb3f5bc378a97e",
+      "file": "0326-LOCAL-media-iris-finish-drain-with-empty-last-buffer.patch",
+      "sha256": "f9e430e35177f43ad6f18e422276c0ca20438f11b9829f248d222187815fab06",
+      "original_commit": "a2151fa63eed0a97e216961cde19d9a5cfe1aafb",
+      "original_parent": "73274f4973f1afa81f86a9eab12054327e5a31e6",
       "committer_date": "2026-10-20T07:56:01+08:00",
       "tree": "a4fb058588a037c27db3b9d740ba9888ebbd2674",
       "upstream": {
@@ -2027,10 +2027,10 @@
       }
     },
     {
-      "file": "0152-LOCAL-media-iris-quiesce-irq-before-deinit-lock.patch",
-      "sha256": "69e315746c91fb11d9523642cd20f90bd3f1b85230e40aed34a3546d13b43b70",
-      "original_commit": "3054cd8be2ca9c89b5b0bd56c205cc639830a376",
-      "original_parent": "f544d6331ddf38367478e104eca6f2f6c443341e",
+      "file": "0327-LOCAL-media-iris-quiesce-irq-before-deinit-lock.patch",
+      "sha256": "180da87373d8df70b646e484ca9e6e9da1b22c32cbcd26e54b5e96a4167d56d9",
+      "original_commit": "28fe719a75823b084f205ecc170ae18daa63b625",
+      "original_parent": "a2151fa63eed0a97e216961cde19d9a5cfe1aafb",
       "committer_date": "2026-10-20T07:56:01+08:00",
       "tree": "5ac7670793eb8f7fcde049ee04ce922f2c907e12",
       "upstream": {
@@ -2040,10 +2040,10 @@
       }
     },
     {
-      "file": "0153-LOCAL-asoc-lpass-va-piano.patch",
-      "sha256": "b311dbb2785fc478c65aa75ecd7142a960449594a8b772ed244d70cb7e35a094",
-      "original_commit": "2a8e9aa8c5d785e404241ed9b504c380253ec5a0",
-      "original_parent": "3054cd8be2ca9c89b5b0bd56c205cc639830a376",
+      "file": "0328-LOCAL-asoc-lpass-va-piano.patch",
+      "sha256": "0e0767bd061a2d224cf85c5892bb4002f35359c9668f35e78defc0bc89436939",
+      "original_commit": "ee5d4512af60e2ef195f79d01dc786e6621f71f7",
+      "original_parent": "28fe719a75823b084f205ecc170ae18daa63b625",
       "committer_date": "2026-11-08T00:43:42+08:00",
       "tree": "c2056414c2081eed238f4f53646b14a7d57e37fb",
       "upstream": {
@@ -2053,10 +2053,10 @@
       }
     },
     {
-      "file": "0154-LOCAL-gunyah-dt-availability.patch",
-      "sha256": "642322b2a7ce3e20ca0bee07dfa22c6da01de1baa376c46037122fef639a37f6",
-      "original_commit": "2a5dd94a6b1db808ab01269842589bfae713aa0d",
-      "original_parent": "2a8e9aa8c5d785e404241ed9b504c380253ec5a0",
+      "file": "0329-LOCAL-gunyah-dt-availability.patch",
+      "sha256": "3471b256bdf716c32fcea61cd49c4614a428efa46a5b95ffec3d8522f9efe541",
+      "original_commit": "dff6073fae3a7affea46434ab6d1097eada78bfb",
+      "original_parent": "ee5d4512af60e2ef195f79d01dc786e6621f71f7",
       "committer_date": "2026-11-08T00:43:43+08:00",
       "tree": "ffa30e483a9a993aa2d9161267aae9489dafb72a",
       "upstream": {
@@ -2066,10 +2066,10 @@
       }
     },
     {
-      "file": "0155-LOCAL-fastrpc-initialize-channel-state-before-registration.patch",
-      "sha256": "6ff8cdc3e880ccd2d2ebf573569a79b12e129f7f0d4fd16fe0eeed3dc319323d",
-      "original_commit": "b182c3fa2b64d1bf9922796f866ece2a4448fa17",
-      "original_parent": "2a5dd94a6b1db808ab01269842589bfae713aa0d",
+      "file": "0330-LOCAL-fastrpc-initialize-channel-state-before-registration.patch",
+      "sha256": "d23f30bee9dde41de548d394708d6f28f83b92587433f31db4f5a1a983df8647",
+      "original_commit": "887524f729c2e0cfbb74eb109bea0032aa72e2c4",
+      "original_parent": "dff6073fae3a7affea46434ab6d1097eada78bfb",
       "committer_date": "2026-11-08T00:43:43+08:00",
       "tree": "b55e5c6f5ce15b6af638bc6748f4a12b2f24a4be",
       "upstream": {
@@ -2079,10 +2079,10 @@
       }
     },
     {
-      "file": "0156-LOCAL-fastrpc-adjust-ssr-synchronisation.patch",
-      "sha256": "508430dbcd3953549ee8ad6a59317dfda7fdc8806b0814ef5d367d5824d7a3c3",
-      "original_commit": "b46cc8d9d489b709daadfaaf036ce624d6535f29",
-      "original_parent": "b182c3fa2b64d1bf9922796f866ece2a4448fa17",
+      "file": "0331-LOCAL-fastrpc-adjust-ssr-synchronisation.patch",
+      "sha256": "422cad6166e440d02ae9e0ad6a2adf046a0010c49d4719eeab9eb1e71369bff6",
+      "original_commit": "1ebcbfa92fd0d0bccde27e71fe0dc617774973ed",
+      "original_parent": "887524f729c2e0cfbb74eb109bea0032aa72e2c4",
       "committer_date": "2026-11-08T00:43:43+08:00",
       "tree": "2d6f62af7e612e3e8ae6a3a6827b304dd1d044e3",
       "upstream": {
@@ -2092,10 +2092,10 @@
       }
     },
     {
-      "file": "0157-LOCAL-asoc-q6apm-avoid-unregistered-query.patch",
-      "sha256": "2b0dfbca1d58c835fbc843d3b6069e86ef07826702fa086b9a89f0b207cd73cc",
-      "original_commit": "70799e1d4f7a34893a79b6576add98485601ccd3",
-      "original_parent": "b46cc8d9d489b709daadfaaf036ce624d6535f29",
+      "file": "0332-LOCAL-asoc-q6apm-avoid-unregistered-query.patch",
+      "sha256": "09da4d9cce87c689d127151754b9e4fd7a0009a18e4c9bdb6ae8f9446a3f4cf2",
+      "original_commit": "6b4217f14af4182b220838e25df6b0084d067e2f",
+      "original_parent": "1ebcbfa92fd0d0bccde27e71fe0dc617774973ed",
       "committer_date": "2026-11-08T00:43:43+08:00",
       "tree": "3629fa34783bd75005754a32c7f5a4953e232028",
       "upstream": {
@@ -2105,10 +2105,10 @@
       }
     },
     {
-      "file": "0158-LOCAL-asoc-va-sm8750-core-votes.patch",
-      "sha256": "dbb1c2334a482dce7dd07ee175abf5b1f81e34b208f889ac92a0e0d7c83c7a34",
-      "original_commit": "4c2c3b083ecf1e94c4af1da16289fa04e84d7262",
-      "original_parent": "70799e1d4f7a34893a79b6576add98485601ccd3",
+      "file": "0333-LOCAL-asoc-va-sm8750-core-votes.patch",
+      "sha256": "5266f442405dd218dad477b4200bc45d3c75344aabe06599298655871869fedc",
+      "original_commit": "8734c12e5d915365a1e074dc343aada58ba24b38",
+      "original_parent": "6b4217f14af4182b220838e25df6b0084d067e2f",
       "committer_date": "2026-11-08T00:43:43+08:00",
       "tree": "8b674cd583d79428f31f58e1db7d9bcbf4b1fc38",
       "upstream": {
@@ -2118,10 +2118,10 @@
       }
     },
     {
-      "file": "0159-LOCAL-qcomtee-large-shared-memory.patch",
-      "sha256": "bd7d20fcc207ae52db3e05251f79c25fa140682c491cf54f8f36f439d324610f",
-      "original_commit": "961d0ba76f6d71e5b46fa85b072b77a341a586dc",
-      "original_parent": "4c2c3b083ecf1e94c4af1da16289fa04e84d7262",
+      "file": "0334-LOCAL-qcomtee-large-shared-memory.patch",
+      "sha256": "4a8e867044d1f2983f951dd335b0699d1155b11a8e09b2e6664e1284be65f27b",
+      "original_commit": "94dddb87924a4a46788014150ab2ca2e20f6134a",
+      "original_parent": "8734c12e5d915365a1e074dc343aada58ba24b38",
       "committer_date": "2026-11-08T00:43:43+08:00",
       "tree": "7add80fde408f33a858f1267a152511e95d33fa7",
       "upstream": {
@@ -2131,10 +2131,10 @@
       }
     },
     {
-      "file": "0160-LOCAL-remoteproc-sm8750-cdsp-sync-memory.patch",
-      "sha256": "df5e94b9f3da5262a0e67eb3327b688fec078b968683ce1fc8dcb8d4ceb4487d",
-      "original_commit": "74fde7f53c8a6f5c324af76f182ca2b9b95b3ad2",
-      "original_parent": "961d0ba76f6d71e5b46fa85b072b77a341a586dc",
+      "file": "0335-LOCAL-remoteproc-sm8750-cdsp-sync-memory.patch",
+      "sha256": "76e876883b5e632888b0f83fe627d71d1410073f50363ab13a7eb64bd21d5319",
+      "original_commit": "0b58f36341f69bb9e8254e35b512ea886fa68dab",
+      "original_parent": "94dddb87924a4a46788014150ab2ca2e20f6134a",
       "committer_date": "2026-11-08T00:43:43+08:00",
       "tree": "348fb741f09bd4876d875255f16f76830ac154ad",
       "upstream": {
@@ -2144,10 +2144,10 @@
       }
     },
     {
-      "file": "0161-LOCAL-drm-igcv5-high-precision-dither.patch",
-      "sha256": "a0121dda6e06eb2eb83ad5af44343c4f8c0a89f25faf7a3b23e666b32657c39f",
-      "original_commit": "ae5d02fee6bd940276b4fa877b983444c47d8a85",
-      "original_parent": "74fde7f53c8a6f5c324af76f182ca2b9b95b3ad2",
+      "file": "0336-LOCAL-drm-igcv5-high-precision-dither.patch",
+      "sha256": "3fb7aa45761c6165653bc833cbefc7983ce7188069593ebd81c81f9aff0d01f0",
+      "original_commit": "fbfcb4cac5a42b8ff5940cf0d54d1ca36a2ad8e7",
+      "original_parent": "0b58f36341f69bb9e8254e35b512ea886fa68dab",
       "committer_date": "2026-11-08T00:43:43+08:00",
       "tree": "99598a826d0aa554e7a8b035d6edfa535098d3a1",
       "upstream": {
@@ -2157,10 +2157,10 @@
       }
     },
     {
-      "file": "0162-LOCAL-uio-piano-fingerprint-control.patch",
-      "sha256": "8b65e39ece6f64b5c53ff20d8a707cb4bb61a24bdadb73b21fcbd500c0696269",
-      "original_commit": "18be04bb3bf5ac10f382f82c69c23ab64af4a534",
-      "original_parent": "ae5d02fee6bd940276b4fa877b983444c47d8a85",
+      "file": "0337-LOCAL-uio-piano-fingerprint-control.patch",
+      "sha256": "8e8ed553fd2bcab8b1c667fd5ef4e3282141c3ee5db4388e1ac9984312d457c8",
+      "original_commit": "4d1f5e528ea185f325f0eeb058a490c38e98f1f0",
+      "original_parent": "fbfcb4cac5a42b8ff5940cf0d54d1ca36a2ad8e7",
       "committer_date": "2026-11-08T00:43:44+08:00",
       "tree": "b826d73c4db422d9b4a6925e3806d7664042b273",
       "upstream": {
@@ -2170,10 +2170,10 @@
       }
     },
     {
-      "file": "0163-LOCAL-qcomtee-public-buffers-cma.patch",
-      "sha256": "d1f192cc20be9e52167a2f30eded9aa685f7228b8c1117ee856127db0df86c7c",
-      "original_commit": "0ffae204a9201e69ede978db0c455de788dd4626",
-      "original_parent": "18be04bb3bf5ac10f382f82c69c23ab64af4a534",
+      "file": "0338-LOCAL-qcomtee-public-buffers-cma.patch",
+      "sha256": "f35f2a0e1bab9cd4a3950b46ad95b6d6885fb45c93bf0ac30a206c92ee4752b0",
+      "original_commit": "5891fac61a886517d297720fb7f39ce7186067fb",
+      "original_parent": "4d1f5e528ea185f325f0eeb058a490c38e98f1f0",
       "committer_date": "2026-11-08T00:43:44+08:00",
       "tree": "713ee3e6a675759fa05f98ab051e487ca016f222",
       "upstream": {
@@ -2183,10 +2183,10 @@
       }
     },
     {
-      "file": "0164-LOCAL-pmic-glink-altmode-connector-children.patch",
-      "sha256": "ba8cc72ac5217e7d92d876f81229402ff6565e1879c47999d384c30503956f51",
-      "original_commit": "68e68a064467b88ac7df6321582143441e3d1da9",
-      "original_parent": "0ffae204a9201e69ede978db0c455de788dd4626",
+      "file": "0339-LOCAL-pmic-glink-altmode-connector-children.patch",
+      "sha256": "c77c28bab32e6a09605e362af9a1067e4f54a9db1b972a359db609ca4d5ed80c",
+      "original_commit": "9f1b1c272ddb6e42e29c1e2dd4400e0fd6965c6d",
+      "original_parent": "5891fac61a886517d297720fb7f39ce7186067fb",
       "committer_date": "2026-11-08T00:43:44+08:00",
       "tree": "b86905f464ac7cdbc1621e95c013e481cc16d990",
       "upstream": {
@@ -2196,10 +2196,10 @@
       }
     },
     {
-      "file": "0165-LOCAL-ucsi-glink-connector-children.patch",
-      "sha256": "19cd75f903676efa372528d7157486589eb2463135d1ec942e289108158508ce",
-      "original_commit": "e1e827695dd43df61ff8f4fe40f984a4769b2b4f",
-      "original_parent": "68e68a064467b88ac7df6321582143441e3d1da9",
+      "file": "0340-LOCAL-ucsi-glink-connector-children.patch",
+      "sha256": "baae5f073b175052a6b9ca013557debcc00d051a7255c713d3a2fa7a13c64c3c",
+      "original_commit": "86d186447d83c68294e9b017abae7e0daa0f3f36",
+      "original_parent": "9f1b1c272ddb6e42e29c1e2dd4400e0fd6965c6d",
       "committer_date": "2026-11-08T00:43:44+08:00",
       "tree": "fd51b5c9a6d6e0ce3b33012ceaad46344adafc97",
       "upstream": {
@@ -2209,10 +2209,10 @@
       }
     },
     {
-      "file": "0166-LOCAL-ucsi-prefer-numbered-connectors.patch",
-      "sha256": "1b4592bcbe0c4df5b0f3b96fe6314c0e6db04b91fd6a2b948310867b1340ebad",
-      "original_commit": "f539a2d107b39a065ab9d4cf08cb329187fa67d6",
-      "original_parent": "e1e827695dd43df61ff8f4fe40f984a4769b2b4f",
+      "file": "0341-LOCAL-ucsi-prefer-numbered-connectors.patch",
+      "sha256": "005f76d5cb680a69a116ea2b71ec735b140f4b953d765f87189cb5d5fd21fb7c",
+      "original_commit": "9b609e9736b4f8553e24f141a9b6ca3df98152de",
+      "original_parent": "86d186447d83c68294e9b017abae7e0daa0f3f36",
       "committer_date": "2026-11-08T00:43:44+08:00",
       "tree": "78701e4fd3ccfbdbbd9f7ab105db414f2dda2d73",
       "upstream": {
@@ -2222,10 +2222,10 @@
       }
     },
     {
-      "file": "0167-LOCAL-ucsi-initial-usb-mux.patch",
-      "sha256": "3ad5bad8e13f404f5998a5856b6e44bb2e412d4098ee2fc5cd2dc9531b0e5c9d",
-      "original_commit": "75682403a8497388da57890f58ffc153247e8842",
-      "original_parent": "f539a2d107b39a065ab9d4cf08cb329187fa67d6",
+      "file": "0342-LOCAL-ucsi-initial-usb-mux.patch",
+      "sha256": "116cff9269d240cc9461891e246834485fe7562c4fdb01593055314edd504793",
+      "original_commit": "296908d08c2d3d3a9e44d85c0e053e628ce0f6c4",
+      "original_parent": "9b609e9736b4f8553e24f141a9b6ca3df98152de",
       "committer_date": "2026-11-08T00:43:44+08:00",
       "tree": "3ae71ea3a279fafda126e113c4e3fc495385f837",
       "upstream": {
@@ -2235,10 +2235,10 @@
       }
     },
     {
-      "file": "0168-LOCAL-dpu-shared-video-ctl.patch",
-      "sha256": "c55204b47057aeda31f737e6dd47eb88eba9f50d3a1e2c8273066824906a1aa4",
-      "original_commit": "ea01714a3cf9c1a29e422c914645f44f5089acdb",
-      "original_parent": "75682403a8497388da57890f58ffc153247e8842",
+      "file": "0343-LOCAL-dpu-shared-video-ctl.patch",
+      "sha256": "fe729ede4bf4b286c483ed9d3a2d46c1ab492c8bcccd492542e24b306f61892d",
+      "original_commit": "98c99a6e6cedca562b293162e2f7fd167f035549",
+      "original_parent": "296908d08c2d3d3a9e44d85c0e053e628ce0f6c4",
       "committer_date": "2026-11-08T00:43:44+08:00",
       "tree": "680dc53deb74e31f66137b9c8f4a172b80b9f362",
       "upstream": {
@@ -2248,10 +2248,10 @@
       }
     },
     {
-      "file": "0169-LOCAL-hid-nanosic-reject-unsupported-report-requests.patch",
-      "sha256": "768627b011932010d8f0fc9ff0baccf2b92de5cd43a85d7f9ee7530177c5fdd4",
-      "original_commit": "307386b71801c1cc3e5ecc01e4879b63b75392b4",
-      "original_parent": "ea01714a3cf9c1a29e422c914645f44f5089acdb",
+      "file": "0344-LOCAL-hid-nanosic-reject-unsupported-report-requests.patch",
+      "sha256": "1c3d3259f6d9f87882b34379a36992673ae2ed33d7bd2da2a2db1e1b619bf5b5",
+      "original_commit": "1ce4f6387c39c5717ff4ed7eba148fe682453472",
+      "original_parent": "98c99a6e6cedca562b293162e2f7fd167f035549",
       "committer_date": "2026-11-08T00:43:44+08:00",
       "tree": "98337e7cd922c42fc8f3da15a20a0ca91d5052a1",
       "upstream": {
@@ -2261,10 +2261,10 @@
       }
     },
     {
-      "file": "0170-LOCAL-hid-nanosic-release-full-touch-frames.patch",
-      "sha256": "d1062f4cebe52aaf7a29642041a9b11df346db418a19d2013f8bbe80f8b9ad14",
-      "original_commit": "ed32fec2caf4329e1a4d66f28e7da9d7d1e17b79",
-      "original_parent": "307386b71801c1cc3e5ecc01e4879b63b75392b4",
+      "file": "0345-LOCAL-hid-nanosic-release-full-touch-frames.patch",
+      "sha256": "5d918f0d4e2c6e28ec831b48125cba42323e3c675bde9788e00c233a846a933a",
+      "original_commit": "75aa4a297a6206a1e9a10899487360ea37a55219",
+      "original_parent": "1ce4f6387c39c5717ff4ed7eba148fe682453472",
       "committer_date": "2026-11-08T00:43:44+08:00",
       "tree": "84b53aca6383f311a66721c2c916208b4f8d2b8b",
       "upstream": {
@@ -2274,10 +2274,10 @@
       }
     },
     {
-      "file": "0171-LOCAL-ucsi-clear-released-connectors.patch",
-      "sha256": "1e6efec3656fe62d8a0b924066dc41f898f3392ad695d85b1ac19f1450f059d6",
-      "original_commit": "30c0190ce5d238fd6bf2bd98bc2729aef0f661ae",
-      "original_parent": "ed32fec2caf4329e1a4d66f28e7da9d7d1e17b79",
+      "file": "0346-LOCAL-ucsi-clear-released-connectors.patch",
+      "sha256": "16fe82d917060b5594e1a3e0519e1299357887b5f2a707200707cc98a7c75c81",
+      "original_commit": "35b4b5f2d6371129b3cf2eaae153222601c095f6",
+      "original_parent": "75aa4a297a6206a1e9a10899487360ea37a55219",
       "committer_date": "2026-11-08T00:43:44+08:00",
       "tree": "f83d00074f47da41f2fa7be866973b987c102441",
       "upstream": {
@@ -2287,10 +2287,10 @@
       }
     },
     {
-      "file": "0172-LOCAL-mca-recover-pd-input.patch",
-      "sha256": "c3b21b81d1f2a30412498ce16eaee839271de589f3cf93cceac0e3c831e9a7c7",
-      "original_commit": "d4bfc70cf0c6eeb59a4b1559d22a58c173bb7962",
-      "original_parent": "30c0190ce5d238fd6bf2bd98bc2729aef0f661ae",
+      "file": "0347-LOCAL-mca-recover-pd-input.patch",
+      "sha256": "727c1f33e9ca6879c47117bb73f5776cb1f99e0043adca3a08baf6ec8ecddfee",
+      "original_commit": "82bfe0e1d382b57d39ca5c53be2e3dea9f29f248",
+      "original_parent": "35b4b5f2d6371129b3cf2eaae153222601c095f6",
       "committer_date": "2026-11-08T00:43:44+08:00",
       "tree": "45cff122667692122d3777dc67e53b39f5a2b70c",
       "upstream": {
@@ -2300,10 +2300,10 @@
       }
     },
     {
-      "file": "0173-LOCAL-power-piano-mipps-authentication.patch",
+      "file": "0348-LOCAL-power-piano-mipps-authentication.patch",
       "sha256": "83bb63a1741d77b9bc861314110e46b2c339d3912a18cbd1d973a0532047e4b1",
-      "original_commit": "f628c2c72dbd90ac6f0944e0a4966da78e2ab0e0",
-      "original_parent": "d4bfc70cf0c6eeb59a4b1559d22a58c173bb7962",
+      "original_commit": "6d3f0025a4dd68e0e2dc1f8c35e67392a527072f",
+      "original_parent": "82bfe0e1d382b57d39ca5c53be2e3dea9f29f248",
       "committer_date": "2026-11-08T00:43:45+08:00",
       "tree": "d084365b781b66144a7e9fe10bf74a3fa98a59f5",
       "upstream": {
@@ -2313,10 +2313,10 @@
       }
     },
     {
-      "file": "0174-LOCAL-power-piano-otg-configuration.patch",
-      "sha256": "090360db0d3085150841b7a48a700825f82436e563312db3b374209bb3fab049",
-      "original_commit": "cc8a6c3bfbb4ded471c782df514cfc78a7723a0a",
-      "original_parent": "f628c2c72dbd90ac6f0944e0a4966da78e2ab0e0",
+      "file": "0349-LOCAL-power-piano-otg-configuration.patch",
+      "sha256": "47a3b28c4c8e134dc50a01dfecccb6529b5fdc4e2f555107b2cd6ec42170abbd",
+      "original_commit": "db468bb9131c727a9576e2feae52a4ee2132e6f2",
+      "original_parent": "6d3f0025a4dd68e0e2dc1f8c35e67392a527072f",
       "committer_date": "2026-11-08T00:43:45+08:00",
       "tree": "01966d5980209f68fd724e214ea3478c16297d47",
       "upstream": {
@@ -2326,10 +2326,10 @@
       }
     },
     {
-      "file": "0175-LOCAL-hid-xiaomi-p81c-body-gestures.patch",
+      "file": "0350-LOCAL-hid-xiaomi-p81c-body-gestures.patch",
       "sha256": "6b1487eb0694be77bdda28a351c1aaa98cd25f3ed293f28dc79b5f12cc9a2f83",
-      "original_commit": "c8d56bcba73cb9c492bd1eed4599a059eebb8264",
-      "original_parent": "cc8a6c3bfbb4ded471c782df514cfc78a7723a0a",
+      "original_commit": "599416cf486f42f7345c4cc0435d4c55761a2634",
+      "original_parent": "db468bb9131c727a9576e2feae52a4ee2132e6f2",
       "committer_date": "2026-11-08T00:43:45+08:00",
       "tree": "6f9e863cd036cb7596c2e897514f55d081d0cd19",
       "upstream": {
@@ -2339,10 +2339,10 @@
       }
     },
     {
-      "file": "0176-LOCAL-pcie-qcom-validate-iommu-map-width.patch",
-      "sha256": "8fcd9d848eb651898ab8c750fa3732c1bfafdff71a3f8b817515d39edf76b38c",
-      "original_commit": "6bf44206c66a7f45553144c2abff07eeaa98bed3",
-      "original_parent": "c8d56bcba73cb9c492bd1eed4599a059eebb8264",
+      "file": "0351-LOCAL-pcie-qcom-validate-iommu-map-width.patch",
+      "sha256": "1682d86757b3f416cffe98da4d62268205a0d80086f9e909bb5ff70207838ee0",
+      "original_commit": "76cda9e15c627364126375efba12ad97ffc86e4e",
+      "original_parent": "599416cf486f42f7345c4cc0435d4c55761a2634",
       "committer_date": "2026-11-08T02:32:50+08:00",
       "tree": "3cc9f7aba2271ba0d4cf3b0c8f4b7eabf4aef133",
       "upstream": {
@@ -2352,10 +2352,10 @@
       }
     },
     {
-      "file": "0177-LOCAL-pcie-qcom-keep-retained-links-awake.patch",
-      "sha256": "bea9db966f25c42e2acc7015e07f2b438faf2439f2d5f8ba7b0c1e7aa8952fce",
-      "original_commit": "86cc31d092d00223fff90f68ebc33c3a6e23dc4c",
-      "original_parent": "6bf44206c66a7f45553144c2abff07eeaa98bed3",
+      "file": "0352-LOCAL-pcie-qcom-keep-retained-links-awake.patch",
+      "sha256": "631d3561b10dff65ec59b5f1519b3b7beead2f246f52f820fab6d17a3f9ed1da",
+      "original_commit": "89ab4bfe82306832d3f5b9e629f5fb127cd33c7f",
+      "original_parent": "76cda9e15c627364126375efba12ad97ffc86e4e",
       "committer_date": "2026-11-08T02:32:50+08:00",
       "tree": "c8bad6892b9279e48055014414cc144666f270c4",
       "upstream": {
@@ -2365,10 +2365,10 @@
       }
     },
     {
-      "file": "0178-LOCAL-ir-spi-binding.patch",
-      "sha256": "8b4195929d40fe01464de6dfa4312becab53852b567fc392ad8dcad6fb4486ee",
-      "original_commit": "6fc60ffee0942d28d87f1e559da26996afeaa750",
-      "original_parent": "86cc31d092d00223fff90f68ebc33c3a6e23dc4c",
+      "file": "0353-LOCAL-ir-spi-binding.patch",
+      "sha256": "6532b22da303d9e0d8623f8c2428e096d3eacd0217b7e953448bd48cda8c3cfd",
+      "original_commit": "c458d8217192c23bb8533c354e5bb8e7e9003a6f",
+      "original_parent": "89ab4bfe82306832d3f5b9e629f5fb127cd33c7f",
       "committer_date": "2026-11-08T02:39:10+08:00",
       "tree": "1cb34e2a963db19251f9b6210007e59393996675",
       "upstream": {
@@ -2378,10 +2378,10 @@
       }
     },
     {
-      "file": "0179-LOCAL-ir-spi-transmitter.patch",
-      "sha256": "78222b0b0c221140fbc9ebeab5e24b2a4b4de159c310db69f0fb6b5a8d635eb5",
-      "original_commit": "b9115b0d4ddf23d6adb19f8917b9b9f846b9a042",
-      "original_parent": "6fc60ffee0942d28d87f1e559da26996afeaa750",
+      "file": "0354-LOCAL-ir-spi-transmitter.patch",
+      "sha256": "b319b10fd99e829fb57987ec3838797532fe7bed2c7760d495a64e3944ab749b",
+      "original_commit": "405bddfcf8ac65a2371ab638c33364ec0a116ca4",
+      "original_parent": "c458d8217192c23bb8533c354e5bb8e7e9003a6f",
       "committer_date": "2026-11-08T02:39:10+08:00",
       "tree": "d11e6cc067ecddd9436375553f377309fbb9c044",
       "upstream": {
@@ -2391,10 +2391,10 @@
       }
     },
     {
-      "file": "0180-LOCAL-spi-geni-dma-idle.patch",
-      "sha256": "6484f9a20aa18bc6052641ba17a5dcd01a291e825318b1dd7cc25df6d561bb9f",
-      "original_commit": "0670536a0d66e96872dbce51d858f8b0e69a1028",
-      "original_parent": "b9115b0d4ddf23d6adb19f8917b9b9f846b9a042",
+      "file": "0355-LOCAL-spi-geni-dma-idle.patch",
+      "sha256": "9d2faa415e894d2e73efae099ad3c24295a1e2fa158f72c17bb4c87d0f5e5267",
+      "original_commit": "a149bcaf3fce724787fdc9e17951792fe6ed20dc",
+      "original_parent": "405bddfcf8ac65a2371ab638c33364ec0a116ca4",
       "committer_date": "2026-11-08T02:39:10+08:00",
       "tree": "00acec750e9d9cdc1089c16b70b86f8acf3c4f70",
       "upstream": {
@@ -2404,10 +2404,10 @@
       }
     },
     {
-      "file": "0181-LOCAL-spi-qcom-geni-wait-for-queue-shutdown.patch",
-      "sha256": "80ad01341fa7acbe2a6bd697ca526c87cf3c603779aa3b4a357b03ac5be3a08a",
-      "original_commit": "d9e4bca7cdf8a939d271759aca3bab3eb0fa86aa",
-      "original_parent": "0670536a0d66e96872dbce51d858f8b0e69a1028",
+      "file": "0356-LOCAL-spi-qcom-geni-wait-for-queue-shutdown.patch",
+      "sha256": "510a4675942bede387c2a5ce567c27ee018870ce7ee570c2555db97cdbf50453",
+      "original_commit": "34cde6baeb7f44d3048cf0c0a8daabfb1def6a37",
+      "original_parent": "a149bcaf3fce724787fdc9e17951792fe6ed20dc",
       "committer_date": "2026-11-08T02:39:10+08:00",
       "tree": "9bb1406b72d609e2a3dee76911a97788cfa0a267",
       "upstream": {
@@ -2417,10 +2417,10 @@
       }
     },
     {
-      "file": "0182-LOCAL-s5kjn1-crop-height.patch",
+      "file": "0357-LOCAL-s5kjn1-crop-height.patch",
       "sha256": "382ce8bb4cd96e81ea287bc31a4d3eb61ce96762b0e9e0c7801602033eabb004",
-      "original_commit": "d244b74975cfdcf8171bd3b6ace956c5a61765f9",
-      "original_parent": "d9e4bca7cdf8a939d271759aca3bab3eb0fa86aa",
+      "original_commit": "d6ecf63ee472c1fc5becfad343eec6b9b1680fc5",
+      "original_parent": "34cde6baeb7f44d3048cf0c0a8daabfb1def6a37",
       "committer_date": "2026-11-08T02:39:11+08:00",
       "tree": "d1cc5bd8770428af6e93243737a22be39f4d4412",
       "upstream": {
@@ -2430,10 +2430,10 @@
       }
     },
     {
-      "file": "0183-LOCAL-s5kjn1-readonly-hblank.patch",
-      "sha256": "139b5a5cb3ac63c0a48a6a26573cc87f6c520e86a6a138c7da81cd15aacf5d93",
-      "original_commit": "0a3d03514b393ff753e5e36000170f0bf7dc7aa0",
-      "original_parent": "d244b74975cfdcf8171bd3b6ace956c5a61765f9",
+      "file": "0358-LOCAL-s5kjn1-readonly-hblank.patch",
+      "sha256": "172e263f3fc7d23bb3f4cc20a6716701562f994fd4d5bb23f972c74e05b143c1",
+      "original_commit": "5aaf53f4534583b2437bbd4e4b665ed4e339aff4",
+      "original_parent": "d6ecf63ee472c1fc5becfad343eec6b9b1680fc5",
       "committer_date": "2026-11-08T02:39:14+08:00",
       "tree": "9eb4c761fde00d1fa2fab992499a18740bf7a82c",
       "upstream": {
@@ -2443,10 +2443,10 @@
       }
     },
     {
-      "file": "0184-LOCAL-media-s5kjn1-guard-active-mode.patch",
+      "file": "0359-LOCAL-media-s5kjn1-guard-active-mode.patch",
       "sha256": "ac891df4edbd1bd1a42f5e29cae8492c9fde7e9a639b5b45d3f2e5fd5d26f381",
-      "original_commit": "55112e644a737b28cceb5d9b7a5d890196575161",
-      "original_parent": "0a3d03514b393ff753e5e36000170f0bf7dc7aa0",
+      "original_commit": "7fa0ea2b176e87bddf3b69540bc79e2043c711ce",
+      "original_parent": "5aaf53f4534583b2437bbd4e4b665ed4e339aff4",
       "committer_date": "2026-11-18T18:49:00+08:00",
       "tree": "52a20090f052677cbd3d6e7f72deb5a744fcdf0c",
       "upstream": {
@@ -2456,10 +2456,10 @@
       }
     },
     {
-      "file": "0185-LOCAL-s5kjn1-factory-modes.patch",
-      "sha256": "4890a41d6caf62edfece1ecb77702e09d321ba462db734393ab810e12eab2842",
-      "original_commit": "245e5df8581bc1691819f79c25b1fb2223932131",
-      "original_parent": "55112e644a737b28cceb5d9b7a5d890196575161",
+      "file": "0360-LOCAL-s5kjn1-factory-modes.patch",
+      "sha256": "a53474c08524c082b15ccfef13ca3c0d7c466055925c8aab766dd57f48152bee",
+      "original_commit": "e09f7d5677f1e98ffc179fc9f45f555ab74778c9",
+      "original_parent": "7fa0ea2b176e87bddf3b69540bc79e2043c711ce",
       "committer_date": "2026-11-08T02:39:11+08:00",
       "tree": "6cd4f934771d7b8326ba2e65dcb602f3b7665f3a",
       "upstream": {
@@ -2469,10 +2469,10 @@
       }
     },
     {
-      "file": "0186-LOCAL-ov32d40-mode-timing.patch",
-      "sha256": "50361c10ff85ba923d30689b7fdd9c52189198791bd9219652318cd4c024a617",
-      "original_commit": "cc069768ebf090064f8d6c53596c7721fb81cbb4",
-      "original_parent": "245e5df8581bc1691819f79c25b1fb2223932131",
+      "file": "0361-LOCAL-ov32d40-mode-timing.patch",
+      "sha256": "036483c64c285cc1b35f0b1c8180c8a956f21b2d5792e32f157f17fefc66b1bd",
+      "original_commit": "cda8566642cfa9c088e33c3b8857514c6ef1d1dc",
+      "original_parent": "e09f7d5677f1e98ffc179fc9f45f555ab74778c9",
       "committer_date": "2026-11-08T02:39:11+08:00",
       "tree": "b04a0d23d646cf525b7c41a28cb432710ad08f91",
       "upstream": {
@@ -2482,10 +2482,10 @@
       }
     },
     {
-      "file": "0187-LOCAL-camss-full-height-nv12.patch",
-      "sha256": "8641b4af3eda54c03573db57b5c707ef0cb9cecbd44ff4ae9fa29e55beb5b32f",
-      "original_commit": "961d59f454ebb0593ca16e4f0834b7b4cc6f56b7",
-      "original_parent": "cc069768ebf090064f8d6c53596c7721fb81cbb4",
+      "file": "0362-LOCAL-camss-full-height-nv12.patch",
+      "sha256": "e8c3ca867143671dabe5628e6b6bc1d922510df04f2120837382eb3c27e508f9",
+      "original_commit": "12bfebd61ca04232d42003a0cbedc6d9c1221599",
+      "original_parent": "cda8566642cfa9c088e33c3b8857514c6ef1d1dc",
       "committer_date": "2026-11-08T02:39:11+08:00",
       "tree": "3d775e64227eb1fa2bd9a33cb7f3dec41f8034c9",
       "upstream": {
@@ -2495,10 +2495,10 @@
       }
     },
     {
-      "file": "0188-LOCAL-camss-frame-timestamps.patch",
-      "sha256": "cf830bec6ddeba96b992f4de2a1e6f897784726874a5f21c60ce52c0f92f23b0",
-      "original_commit": "2a0577a82ea27eaf8e6e6ce4de695acb88faf760",
-      "original_parent": "961d59f454ebb0593ca16e4f0834b7b4cc6f56b7",
+      "file": "0363-LOCAL-camss-frame-timestamps.patch",
+      "sha256": "2f018f6a9c143e0e97d24160fe6d8ce2cc1f3fa14524142490a320d055de0dd6",
+      "original_commit": "462c5e74859b2ab45067c1fb1999298be6f60d3f",
+      "original_parent": "12bfebd61ca04232d42003a0cbedc6d9c1221599",
       "committer_date": "2026-11-08T02:39:12+08:00",
       "tree": "6c42852dfc744bf0d4c5d1932a50d48378d669d2",
       "upstream": {
@@ -2508,10 +2508,10 @@
       }
     },
     {
-      "file": "0189-LOCAL-camss-tfe-bus-errors.patch",
-      "sha256": "cb71c2967bfefaef1ee0cb3655a27821827436f90d9527b358abd0b99317b30f",
-      "original_commit": "ab064c944e7a1a145de4e2634863895acf3460d9",
-      "original_parent": "2a0577a82ea27eaf8e6e6ce4de695acb88faf760",
+      "file": "0364-LOCAL-camss-tfe-bus-errors.patch",
+      "sha256": "ce48b66116491bca43dcc62dbb58e693627d23351eedd86bc84b9c9fa42a4948",
+      "original_commit": "46b80050cab6b7546c57abd94e30faf850b0f908",
+      "original_parent": "462c5e74859b2ab45067c1fb1999298be6f60d3f",
       "committer_date": "2026-11-08T02:39:13+08:00",
       "tree": "956e2592915fa59cf7a9d9d8f1f52e3ceaee835d",
       "upstream": {
@@ -2521,10 +2521,10 @@
       }
     },
     {
-      "file": "0190-LOCAL-camss-pix-alignment.patch",
-      "sha256": "cd470ea958e97c33e83d807900de3d5055ac1c4667366e45cc002326ccc13690",
-      "original_commit": "a2e1925761974f4191645a3e6b3d64a4ce519282",
-      "original_parent": "ab064c944e7a1a145de4e2634863895acf3460d9",
+      "file": "0365-LOCAL-camss-pix-alignment.patch",
+      "sha256": "90fe8425fb866e6d42465cd1bbc89b11218fb1f9123124cfd7dacb00546aaa5b",
+      "original_commit": "cc3e2c92e974d365a326ad6e597902bb428a47ed",
+      "original_parent": "46b80050cab6b7546c57abd94e30faf850b0f908",
       "committer_date": "2026-11-08T02:39:15+08:00",
       "tree": "a12c6efdad04849a2133104e08f267693b2fd8e7",
       "upstream": {
@@ -2534,10 +2534,10 @@
       }
     },
     {
-      "file": "0191-LOCAL-dpu-gcv2-dark-range.patch",
+      "file": "0366-LOCAL-dpu-gcv2-dark-range.patch",
       "sha256": "f478677c7b9474352d8d7a7d7814881a6188b5e1c1bd14f71dd1c19916d4c464",
-      "original_commit": "1447f7e73ab901a56ea1fa95e23e596ab651a7d5",
-      "original_parent": "a2e1925761974f4191645a3e6b3d64a4ce519282",
+      "original_commit": "d4600c86b89be166817589ccf3bc0e344a1b5b75",
+      "original_parent": "cc3e2c92e974d365a326ad6e597902bb428a47ed",
       "committer_date": "2026-11-08T16:06:02+08:00",
       "tree": "e57a2801a82b0480d10cd90b7af069a3730cb394",
       "upstream": {
@@ -2547,10 +2547,10 @@
       }
     },
     {
-      "file": "0192-LOCAL-dpu-color-lut-sizes.patch",
+      "file": "0367-LOCAL-dpu-color-lut-sizes.patch",
       "sha256": "d0592e0e13e97af5fc5ad500a800096383a0ec2f23b4bf036fc844577e9161fa",
-      "original_commit": "8b39f9b73f1b79e5e2ab50e28bf75d4f48dda911",
-      "original_parent": "1447f7e73ab901a56ea1fa95e23e596ab651a7d5",
+      "original_commit": "8422c2b3a5badd13a1b8a4a0024b57a9a58082b5",
+      "original_parent": "d4600c86b89be166817589ccf3bc0e344a1b5b75",
       "committer_date": "2026-11-08T16:29:18+08:00",
       "tree": "c5f03944bb6c1c094b9e24d6e2442942512d19a0",
       "upstream": {
@@ -2560,10 +2560,10 @@
       }
     },
     {
-      "file": "0193-LOCAL-dsi-fixed-panel-scaling.patch",
+      "file": "0368-LOCAL-dsi-fixed-panel-scaling.patch",
       "sha256": "224ebdd71fa76a4d3fd99f00168d787ee7a4ac188e1e477f28dc9434bd59006b",
-      "original_commit": "229c656977c7ed97508528bda7c3eb7c1e1122dd",
-      "original_parent": "8b39f9b73f1b79e5e2ab50e28bf75d4f48dda911",
+      "original_commit": "55b8146ad468ee99509bd8f173b9f6e8389a9411",
+      "original_parent": "8422c2b3a5badd13a1b8a4a0024b57a9a58082b5",
       "committer_date": "2026-11-08T16:36:59+08:00",
       "tree": "15f6303c0bc69864d8545356579f995915c8910b",
       "upstream": {
@@ -2573,10 +2573,10 @@
       }
     },
     {
-      "file": "0194-LOCAL-rtc-efi-validate-time.patch",
+      "file": "0369-LOCAL-rtc-efi-validate-time.patch",
       "sha256": "08f4c660867db45b07e7087da950e1d8ef560ce339a3b02bb264b8c17597aec4",
-      "original_commit": "c52c5be01c54ef1f0181f115d97acf74bb548b9a",
-      "original_parent": "229c656977c7ed97508528bda7c3eb7c1e1122dd",
+      "original_commit": "8b11e108d931ecd2ad844b60e9e164e9a06ccf04",
+      "original_parent": "55b8146ad468ee99509bd8f173b9f6e8389a9411",
       "committer_date": "2026-11-08T22:32:16+08:00",
       "tree": "ac8f0c9221ff8f0385de75b74d30011d54285035",
       "upstream": {
@@ -2586,10 +2586,10 @@
       }
     },
     {
-      "file": "0195-LOCAL-dpu-fixed-panel-hdr-conversion.patch",
-      "sha256": "2d1d39a26aca2f69f37d1b5e37e4ff81d71b63d5ffc159a273a4a648401a6d2a",
-      "original_commit": "b82c5970b916c3b2bd86f39179a0d86711cc0e29",
-      "original_parent": "c52c5be01c54ef1f0181f115d97acf74bb548b9a",
+      "file": "0370-LOCAL-dpu-fixed-panel-hdr-conversion.patch",
+      "sha256": "340e5052f9bb46872e3bcef85600b3a2eaf79e7871d63395d3e5edbf0150a24c",
+      "original_commit": "76f88458d3dd964fbb01bd2c88b4364b21a82b9e",
+      "original_parent": "8b11e108d931ecd2ad844b60e9e164e9a06ccf04",
       "committer_date": "2026-11-08T23:39:32+08:00",
       "tree": "5e396a15498ee50d730e75fa30ab02d1e9774a0e",
       "upstream": {
@@ -2599,10 +2599,10 @@
       }
     },
     {
-      "file": "0196-LOCAL-panel-displayid-description.patch",
-      "sha256": "ccbe313e89a2c3e27d70c7ffa4af7db470325e38267530e329bf6dc0f6a97100",
-      "original_commit": "3070451cdf23e76002a2443eb4840b50640c24e6",
-      "original_parent": "b82c5970b916c3b2bd86f39179a0d86711cc0e29",
+      "file": "0371-LOCAL-panel-displayid-description.patch",
+      "sha256": "4acda7fa4ff31e4a773a755a11141ebafc5089494657e690137bdcb60514e0e7",
+      "original_commit": "353509f4d53a6e73c436d2e0a80f71e537e8677d",
+      "original_parent": "76f88458d3dd964fbb01bd2c88b4364b21a82b9e",
       "committer_date": "2026-11-09T00:08:36+08:00",
       "tree": "73be3e2faf601be3406a06d03308d4b0f02c02e9",
       "upstream": {
@@ -2612,10 +2612,10 @@
       }
     },
     {
-      "file": "0197-LOCAL-apm-wait-for-transport.patch",
-      "sha256": "a5b344b2aa6d6f3981e3b4a91b32f5e7174734f9d4684033ccec99d09f9bc147",
-      "original_commit": "5fcd394ff3d3b5c57ab9cecbb87a667619069c75",
-      "original_parent": "3070451cdf23e76002a2443eb4840b50640c24e6",
+      "file": "0372-LOCAL-apm-wait-for-transport.patch",
+      "sha256": "e5689bc00d61683d8d778998f78e311f29c805fb16e6ca1ed94054d355d55313",
+      "original_commit": "9aceaf322f4725bf0ba55670b0adfdc88c77c79a",
+      "original_parent": "353509f4d53a6e73c436d2e0a80f71e537e8677d",
       "committer_date": "2026-11-09T02:15:41+08:00",
       "tree": "f7f8f44501a078e9a3a8179c716007f92d7d5388",
       "upstream": {
@@ -2625,10 +2625,10 @@
       }
     },
     {
-      "file": "0198-LOCAL-nvmem-rmem-bind-piano-rtc-epoch.patch",
-      "sha256": "d2d717cdf6df5a94476803b0db5f1acb61c0f8d1b3b77468eb9f75a4c0f1c4a9",
-      "original_commit": "746696211d5a9fb50146a5f050a8052962995a16",
-      "original_parent": "5fcd394ff3d3b5c57ab9cecbb87a667619069c75",
+      "file": "0373-LOCAL-nvmem-rmem-bind-piano-rtc-epoch.patch",
+      "sha256": "7628e97516341247a50d941475e82c3602e4001b67b5bda8eddbe674ddd559d0",
+      "original_commit": "2a0e8b50bfdcd5e79ee488aec3a7002eb961d34f",
+      "original_parent": "9aceaf322f4725bf0ba55670b0adfdc88c77c79a",
       "committer_date": "2026-11-09T03:55:38+08:00",
       "tree": "749a6b03711eb02cf2361914f8cabab8b619b0b2",
       "upstream": {
@@ -2638,10 +2638,10 @@
       }
     },
     {
-      "file": "0199-LOCAL-rtc-allow-counters-to-opt-out-of-hctosys.patch",
-      "sha256": "e9bb2e8c6a033eca5abe8f0b310b9c50b43b033258cd723c2c93b5144f59de36",
-      "original_commit": "2bd1b07b65d2c11774a175809b0e3040e0dfc8fa",
-      "original_parent": "746696211d5a9fb50146a5f050a8052962995a16",
+      "file": "0374-LOCAL-rtc-allow-counters-to-opt-out-of-hctosys.patch",
+      "sha256": "f3638138940414b032df1291e2a1efeeb2efe63b1fad7626d39e2ab1db811132",
+      "original_commit": "7e198c0939beaf9c64d6f5fdfd946d29281cd97f",
+      "original_parent": "2a0e8b50bfdcd5e79ee488aec3a7002eb961d34f",
       "committer_date": "2026-11-09T03:55:38+08:00",
       "tree": "18e957c277c5d63eea9139e967c8cba68a96867d",
       "upstream": {
@@ -2651,10 +2651,10 @@
       }
     },
     {
-      "file": "0200-LOCAL-rtc-pm8xxx-exclude-protected-counters-without-epoch.patch",
-      "sha256": "8ac0060426e981654565bb0b7775acfcb74dd3b612d765860fd90719815981f8",
-      "original_commit": "2a04b924f3c7efca7ddc1fea30339eb5515b7f93",
-      "original_parent": "2bd1b07b65d2c11774a175809b0e3040e0dfc8fa",
+      "file": "0375-LOCAL-rtc-pm8xxx-exclude-protected-counters-without-epoch.patch",
+      "sha256": "f546d82f83f08070a6d8100d4a491640ffe80821fef8badf99c2c3aaf39c10b1",
+      "original_commit": "0de27e9a2ed155de7139129f4e8af7d96b75d44f",
+      "original_parent": "7e198c0939beaf9c64d6f5fdfd946d29281cd97f",
       "committer_date": "2026-11-09T03:55:38+08:00",
       "tree": "57702418c70bc026f2eab4ffa99ad88569dc2ab3",
       "upstream": {
@@ -2664,10 +2664,10 @@
       }
     },
     {
-      "file": "0201-LOCAL-wifi-resume-mac-address.patch",
-      "sha256": "49362027ab5d74e3b26414e9bb891135d93be389365a2ee79a840f7bd4fcb9c6",
-      "original_commit": "ed5df1beff4b071c1739eee8cbd5dc6619899d8e",
-      "original_parent": "2a04b924f3c7efca7ddc1fea30339eb5515b7f93",
+      "file": "0376-LOCAL-wifi-resume-mac-address.patch",
+      "sha256": "80362170003a3dff41ed2e20e301b276b9ba785d2867ff685a236faa7cc98a3e",
+      "original_commit": "2b2a500ffa65e07f240186daa0a5b01dba269077",
+      "original_parent": "0de27e9a2ed155de7139129f4e8af7d96b75d44f",
       "committer_date": "2026-11-09T06:01:40+08:00",
       "tree": "7041af14ff6be05c454f5f302cfe93bf992ed363",
       "upstream": {
@@ -2677,10 +2677,10 @@
       }
     },
     {
-      "file": "0202-LOCAL-dpu-debugfs-state-lock.patch",
-      "sha256": "c7763f30787c5fe6e09a9141226c568219dd58549e4f830f4d5c3ee7cd516743",
-      "original_commit": "2a44f1e0cedc53529aaf7aa5575622d0a466f6de",
-      "original_parent": "ed5df1beff4b071c1739eee8cbd5dc6619899d8e",
+      "file": "0377-LOCAL-dpu-debugfs-state-lock.patch",
+      "sha256": "2ff725c9a69918d72e524510cc780e767226321834acf7538a396b6909cc3871",
+      "original_commit": "977583a9ba759c9a101c3b7703f9f18e7439e268",
+      "original_parent": "2b2a500ffa65e07f240186daa0a5b01dba269077",
       "committer_date": "2026-11-09T06:26:04+08:00",
       "tree": "00a13caf2452f8692d9839b4d9d4a5535527a67d",
       "upstream": {
@@ -2690,10 +2690,10 @@
       }
     },
     {
-      "file": "0203-LOCAL-dpu-piano-bilinear-sampling.patch",
-      "sha256": "c15afef1b1e09b89715eaf8a9567ea54758e4535eff80b91508f6a81d401deaf",
-      "original_commit": "02d73e1cb6205a4cc02a8190995766d72f1aa1f3",
-      "original_parent": "2a44f1e0cedc53529aaf7aa5575622d0a466f6de",
+      "file": "0378-LOCAL-dpu-piano-bilinear-sampling.patch",
+      "sha256": "28ee430f754ff11919a04d478d90cb76a4b349b1752be6104c0836c8046e0b32",
+      "original_commit": "c6c46fcf66dd2ca285d70459e3c035b4af6f040d",
+      "original_parent": "977583a9ba759c9a101c3b7703f9f18e7439e268",
       "committer_date": "2026-11-09T16:46:50+08:00",
       "tree": "60a7f056cc1fede8407508104664f6346421692f",
       "upstream": {
@@ -2703,10 +2703,10 @@
       }
     },
     {
-      "file": "0204-LOCAL-hid-xiaomi-focus-pen.patch",
-      "sha256": "74f738597497a90f39902afa45faef92ec17a181ea19ee39cb5eadf7274ecc41",
-      "original_commit": "e9a306ae9b2666eac64bc85684544f4b75311b7f",
-      "original_parent": "02d73e1cb6205a4cc02a8190995766d72f1aa1f3",
+      "file": "0379-LOCAL-hid-xiaomi-focus-pen.patch",
+      "sha256": "ccb421a43e6df289483796aea08afd2a9a4ea4ad7362de46ea4976ee6efd4df2",
+      "original_commit": "dd936e6486f52373d48e9c867b2886859bebb23b",
+      "original_parent": "c6c46fcf66dd2ca285d70459e3c035b4af6f040d",
       "committer_date": "2026-11-09T16:52:10+08:00",
       "tree": "bf6334878c4262adb03a6048807236e08f88225f",
       "upstream": {
@@ -2716,10 +2716,10 @@
       }
     },
     {
-      "file": "0205-LOCAL-power-mca-stop-work.patch",
-      "sha256": "12de7f10414561c55ff3c853bc43b1210b117b828998177d4cc69672bf8f9ac6",
-      "original_commit": "b5a116b43f7e5add2342400749caf63735e35663",
-      "original_parent": "e9a306ae9b2666eac64bc85684544f4b75311b7f",
+      "file": "0380-LOCAL-power-mca-stop-work.patch",
+      "sha256": "456d53ea67603be9c277f810e1b69673cb03669bff6dd8378c1bf3bb6f032cbc",
+      "original_commit": "75e8493804fd76c6a768f36ea21cc4944b5f1918",
+      "original_parent": "dd936e6486f52373d48e9c867b2886859bebb23b",
       "committer_date": "2026-11-08T02:10:20+08:00",
       "tree": "d9e3d0b07c2656150efe22158d7e2fd2eee02c49",
       "upstream": {
@@ -2729,10 +2729,10 @@
       }
     },
     {
-      "file": "0206-LOCAL-power-mipps-session-cleanup.patch",
-      "sha256": "2462682ae17067711045cf46d7a33b13e49bed2fb74556648e801504db14b521",
-      "original_commit": "6c7ce03550e2bf99f71a819737871c46496bc091",
-      "original_parent": "b5a116b43f7e5add2342400749caf63735e35663",
+      "file": "0381-LOCAL-power-mipps-session-cleanup.patch",
+      "sha256": "bedaad6df0ee3db5193af2924bd01f4bee3e5c1ed2f0faec77fbd7150fe73adc",
+      "original_commit": "a22b83df5c18dd0ee594af58db7f3476bf7fa340",
+      "original_parent": "75e8493804fd76c6a768f36ea21cc4944b5f1918",
       "committer_date": "2026-11-08T02:49:10+08:00",
       "tree": "4f4bae57086f9fcf56038d8fc4f50a3edffc4a12",
       "upstream": {
@@ -2742,10 +2742,10 @@
       }
     },
     {
-      "file": "0207-LOCAL-power-mca-connection-events.patch",
-      "sha256": "e31497a80b69a0d4bbe493aae01b350ff7116212913f64449046e2b3b4624457",
-      "original_commit": "8990d96c833d685d2d6c03c801fc1f408afaae63",
-      "original_parent": "6c7ce03550e2bf99f71a819737871c46496bc091",
+      "file": "0382-LOCAL-power-mca-connection-events.patch",
+      "sha256": "eeca13f227bfcd5fcc9029fd2664754c6f9b17c9cbc57545c92dc74304570148",
+      "original_commit": "7d52c296e2ab5578ccb40849db2ee8a6e5517394",
+      "original_parent": "a22b83df5c18dd0ee594af58db7f3476bf7fa340",
       "committer_date": "2026-11-08T02:58:21+08:00",
       "tree": "00bee58232f7d984ce9c4e1e4797a48faf4eaa62",
       "upstream": {
@@ -2755,10 +2755,10 @@
       }
     },
     {
-      "file": "0208-LOCAL-power-sc8541-stop-watchdog.patch",
+      "file": "0383-LOCAL-power-sc8541-stop-watchdog.patch",
       "sha256": "8626456234c1fc174e1d9c6bf5fefb7a43b668293957811d319b781b72622b0e",
-      "original_commit": "81fa2356dabd7728a01233b63199e80f0e949c63",
-      "original_parent": "8990d96c833d685d2d6c03c801fc1f408afaae63",
+      "original_commit": "d8d04e4a51ac1ef74d309072e9578b5fb4e9c7dd",
+      "original_parent": "7d52c296e2ab5578ccb40849db2ee8a6e5517394",
       "committer_date": "2026-11-08T07:40:31+08:00",
       "tree": "1aa7de2cb177a1343f2478f31bc3ffe022220045",
       "upstream": {
@@ -2768,10 +2768,10 @@
       }
     },
     {
-      "file": "0209-LOCAL-power-mca-direct-charge-session-pm.patch",
+      "file": "0384-LOCAL-power-mca-direct-charge-session-pm.patch",
       "sha256": "7bcb69c8483126b32ec7346a3a059784d243c0d53acf36760a0b68f32544a84a",
-      "original_commit": "02413e9793df924378253dabc564b8b417a2f6ad",
-      "original_parent": "81fa2356dabd7728a01233b63199e80f0e949c63",
+      "original_commit": "e54df8c3847a3b3624cba5ac41392625bdff8c5e",
+      "original_parent": "d8d04e4a51ac1ef74d309072e9578b5fb4e9c7dd",
       "committer_date": "2026-11-08T07:41:01+08:00",
       "tree": "76bc7de5d42c0b186274e9d1b7bb5dbf063f645d",
       "upstream": {
@@ -2781,10 +2781,10 @@
       }
     },
     {
-      "file": "0210-LOCAL-power-mca-clear-proof-on-vbus-loss.patch",
+      "file": "0385-LOCAL-power-mca-clear-proof-on-vbus-loss.patch",
       "sha256": "25c0576963b2ece41daa8ea6fd1451b5bdb1910885efb1e33549570ad9cc4662",
-      "original_commit": "f4cfb311ec2fda747b50f4cdb7e141d869933ed2",
-      "original_parent": "02413e9793df924378253dabc564b8b417a2f6ad",
+      "original_commit": "5521e41d04215dc063d63ec6d3ccac394d541321",
+      "original_parent": "e54df8c3847a3b3624cba5ac41392625bdff8c5e",
       "committer_date": "2026-11-08T09:13:00+08:00",
       "tree": "b5d4c2818773aea9a7ff4fd50b88aaee04630306",
       "upstream": {
@@ -2794,10 +2794,10 @@
       }
     },
     {
-      "file": "0211-LOCAL-hid-nanosic-resume-fifo-keepalive.patch",
+      "file": "0386-LOCAL-hid-nanosic-resume-fifo-keepalive.patch",
       "sha256": "c03a8ef777b0eecd69b738c938f883b55fcc317a7d9fb2715fdbf97d4c990af1",
-      "original_commit": "c12bf9f198bf8bc16abe1d211986738b38f292f1",
-      "original_parent": "f4cfb311ec2fda747b50f4cdb7e141d869933ed2",
+      "original_commit": "20a5398d975ee3cc5e8ff8e0122bf8233a0c502b",
+      "original_parent": "5521e41d04215dc063d63ec6d3ccac394d541321",
       "committer_date": "2026-11-08T09:13:32+08:00",
       "tree": "d768062077cacfa185052a89065fccf192f6379c",
       "upstream": {
@@ -2807,10 +2807,10 @@
       }
     },
     {
-      "file": "0212-LOCAL-power-mca-normal-charging-tables.patch",
+      "file": "0387-LOCAL-power-mca-normal-charging-tables.patch",
       "sha256": "2ffa27d79444b645eb59be7c9f5f2bb32f3b619ae6a5d13b63d3564419fabf81",
-      "original_commit": "e6aeb2ff6dc9393f92ec4d120dd330c9eb72ee2a",
-      "original_parent": "c12bf9f198bf8bc16abe1d211986738b38f292f1",
+      "original_commit": "aacb6705955b4d7af340193289ba697d82ca5478",
+      "original_parent": "20a5398d975ee3cc5e8ff8e0122bf8233a0c502b",
       "committer_date": "2026-11-08T17:07:12+08:00",
       "tree": "40fd86898e708f39e918ade909da4cf617f11ffb",
       "upstream": {
@@ -2820,10 +2820,10 @@
       }
     },
     {
-      "file": "0213-LOCAL-power-piano-parallel-battery-pack.patch",
+      "file": "0388-LOCAL-power-piano-parallel-battery-pack.patch",
       "sha256": "c211772ce6af3961289676e51212c64f85aa3ebf3cc5dd9ea30ec39c9097601c",
-      "original_commit": "49d9fd3d921172ba230890ecab90279bb30e2bce",
-      "original_parent": "e6aeb2ff6dc9393f92ec4d120dd330c9eb72ee2a",
+      "original_commit": "93a3a3be32351d8934c8aa4b8233ee59bccbbb35",
+      "original_parent": "aacb6705955b4d7af340193289ba697d82ca5478",
       "committer_date": "2026-11-08T22:28:29+08:00",
       "tree": "5359f6ebb6247b63bbfa7dda78af547fe7b23587",
       "upstream": {
@@ -2833,10 +2833,10 @@
       }
     },
     {
-      "file": "0214-LOCAL-power-mca-buck-session.patch",
-      "sha256": "b3068b9331999d5c8b1896cbca2cc08f4f28d8eed15d2d94d0ac4e14cd2d8f89",
-      "original_commit": "678f7cd4e6db9435b2d2f1d22ff5f79e6efc6b25",
-      "original_parent": "49d9fd3d921172ba230890ecab90279bb30e2bce",
+      "file": "0389-LOCAL-power-mca-buck-session.patch",
+      "sha256": "06f22913659879a2476e212ca1738022a15f0a09b5584b7eb44fde5eccb0e66b",
+      "original_commit": "3376de3b473f11e484ac4c59c72e9e7c759a0ca6",
+      "original_parent": "93a3a3be32351d8934c8aa4b8233ee59bccbbb35",
       "committer_date": "2026-11-09T19:33:44+08:00",
       "tree": "bf32995298292a608f674cc03a58f71d54ad0ad1",
       "upstream": {
@@ -2846,10 +2846,10 @@
       }
     },
     {
-      "file": "0215-LOCAL-power-bq27xxx-auth-binding.patch",
-      "sha256": "33b67ac2741dc05389e2879e1396d443142518b7aa4efdade3a86c3997a37379",
-      "original_commit": "f69dfb73e2eef77b432b22179e7ab2ea3ad9d91c",
-      "original_parent": "678f7cd4e6db9435b2d2f1d22ff5f79e6efc6b25",
+      "file": "0390-LOCAL-power-bq27xxx-auth-binding.patch",
+      "sha256": "42d4f80476a7562b1ceedb34d7fd0d5971aeb9ca928f48e36041f40026c7be7b",
+      "original_commit": "cf4684dd07725329ef5f5cafb29abe96cdc53d6c",
+      "original_parent": "3376de3b473f11e484ac4c59c72e9e7c759a0ca6",
       "committer_date": "2026-11-09T22:26:59+08:00",
       "tree": "c3029d825124debe23e48ed5a77dff1cd0cd6e4a",
       "upstream": {
@@ -2859,10 +2859,10 @@
       }
     },
     {
-      "file": "0216-LOCAL-power-bq27xxx-authentication.patch",
-      "sha256": "4e960b73d776e4dc6dde3e12ecb36c10ae286c4480f4dbcd3bef1e18836d3ab5",
-      "original_commit": "63f69b9d38141897fdce074af0cef4e9cc8ce563",
-      "original_parent": "f69dfb73e2eef77b432b22179e7ab2ea3ad9d91c",
+      "file": "0391-LOCAL-power-bq27xxx-authentication.patch",
+      "sha256": "c97b35205ca84ea59aaa4e70e668e2bc914229964c2a7595343b4c7e0395c1d4",
+      "original_commit": "00fb460f267fa013b731d01185e7891348bb6002",
+      "original_parent": "cf4684dd07725329ef5f5cafb29abe96cdc53d6c",
       "committer_date": "2026-11-09T22:28:31+08:00",
       "tree": "17cc7db5010d57fa4f00759d23143e721859fab2",
       "upstream": {
@@ -2872,10 +2872,10 @@
       }
     },
     {
-      "file": "0217-LOCAL-arm64-sm8750-cpu-capacity.patch",
-      "sha256": "82e8d4ca0828b341b9505bb1fb2a9a74f50db8e7173e1e166c770aa9f97e8cfb",
-      "original_commit": "023c6f3b89775cf3bb0bf4d7a221f8b0c46de777",
-      "original_parent": "63f69b9d38141897fdce074af0cef4e9cc8ce563",
+      "file": "0392-LOCAL-arm64-sm8750-cpu-capacity.patch",
+      "sha256": "cc896f35f5a8f262d62d9ef458128f9a7737b6aeabbe1173a341c4063d832de2",
+      "original_commit": "082ffac1553b6edd7a543f6a40572fd867b5dbef",
+      "original_parent": "00fb460f267fa013b731d01185e7891348bb6002",
       "committer_date": "2026-11-09T23:39:17+08:00",
       "tree": "e34c3955ffd61d5fd06a97bdf93aaaf397e6cdef",
       "upstream": {
@@ -2885,10 +2885,10 @@
       }
     },
     {
-      "file": "0218-LOCAL-build-piano-oryon-optimization.patch",
-      "sha256": "fbd80177549b274b3ed9c2e58195460f0544e7b8b14cef1cb0a75b6b739848ee",
-      "original_commit": "f8de4b5106e63e107ff11158e7d49152c62ddba4",
-      "original_parent": "023c6f3b89775cf3bb0bf4d7a221f8b0c46de777",
+      "file": "0393-LOCAL-build-piano-oryon-optimization.patch",
+      "sha256": "6b6136dfbc03adfdf2b3cf472b13c82c30590929a434d9a802fb3d025cf15b57",
+      "original_commit": "08eb97d067e1f372b06b673b1207ab1f79813541",
+      "original_parent": "082ffac1553b6edd7a543f6a40572fd867b5dbef",
       "committer_date": "2026-11-10T00:31:39+08:00",
       "tree": "99be035e29f96ebbbb1736cd73038a3788691121",
       "upstream": {
@@ -2898,10 +2898,10 @@
       }
     },
     {
-      "file": "0219-LOCAL-power-mca-cooling-binding.patch",
-      "sha256": "2bfa76c314f100f94c6536d71489ae3fb14d275e078d2f3143f1b6d4ecff62bb",
-      "original_commit": "0cf44bcbeeecf3f8541cbddb0279f0d1d7b0265f",
-      "original_parent": "f8de4b5106e63e107ff11158e7d49152c62ddba4",
+      "file": "0394-LOCAL-power-mca-cooling-binding.patch",
+      "sha256": "192435478f6bf32a5dfce51d0a57cfc7f95fd4f8be61c4b5736f1355d7d1e1ff",
+      "original_commit": "5acd1402665a66f162e07f69ec20e037215a60a6",
+      "original_parent": "08eb97d067e1f372b06b673b1207ab1f79813541",
       "committer_date": "2026-11-10T02:11:16+08:00",
       "tree": "0ce351c99b8ce98c4d256842da4e9022bc440dac",
       "upstream": {
@@ -2911,10 +2911,10 @@
       }
     },
     {
-      "file": "0220-LOCAL-power-mca-thermal-charge-limit.patch",
-      "sha256": "b6e4393b75f8d07a112f76f16ea5d14a9429a1982fa9db7b65a84de34582df2c",
-      "original_commit": "2018ec511949570b3717c6ca3d58e1c407459f29",
-      "original_parent": "0cf44bcbeeecf3f8541cbddb0279f0d1d7b0265f",
+      "file": "0395-LOCAL-power-mca-thermal-charge-limit.patch",
+      "sha256": "ab946a3c9909cc49355565fc7a86a41bd7b0edb375965d60ef51148c90057b52",
+      "original_commit": "f3bc072741fdd46cba4a1a0392ad581cf9e96acb",
+      "original_parent": "5acd1402665a66f162e07f69ec20e037215a60a6",
       "committer_date": "2026-11-10T02:13:47+08:00",
       "tree": "d7c9389d15e235db763069b6a13466385fd19a85",
       "upstream": {
@@ -2924,10 +2924,10 @@
       }
     },
     {
-      "file": "0221-LOCAL-nanosic-detachable-leds.patch",
-      "sha256": "69219eea3fe4897d503a58c91cf8c769505dddb1d6fb0c24f62270b5b44d22fc",
-      "original_commit": "6dcb7afa035dfe490e449bc4e94eb39a69fe66e4",
-      "original_parent": "2018ec511949570b3717c6ca3d58e1c407459f29",
+      "file": "0396-LOCAL-nanosic-detachable-leds.patch",
+      "sha256": "8794d6037d1f66ea5dd45da2a44f7fc77d01d03081711879b633c72d54f9ecb7",
+      "original_commit": "4b5a8c3e8e63a3f47327c3f4b017ce53497e7dc5",
+      "original_parent": "f3bc072741fdd46cba4a1a0392ad581cf9e96acb",
       "committer_date": "2026-11-10T20:30:13+08:00",
       "tree": "0f2b0cfed0fab72e11089045cdf925563dae1584",
       "upstream": {
@@ -2937,10 +2937,10 @@
       }
     },
     {
-      "file": "0222-LOCAL-power-mca-charge-inhibition.patch",
-      "sha256": "afabd99e56490d85849c4812749d109f59de2b32ac6ad13c51027611f4aa7b28",
-      "original_commit": "68ef9aaf4686314c4303cb0a3c1d914064a598f7",
-      "original_parent": "6dcb7afa035dfe490e449bc4e94eb39a69fe66e4",
+      "file": "0397-LOCAL-power-mca-charge-inhibition.patch",
+      "sha256": "ba6454aefd34f4f7efd4992046cb06a33066498da57e814a7b452fc101bbd8b3",
+      "original_commit": "6c28daff2a2101172a27c4e079689796b66e6421",
+      "original_parent": "4b5a8c3e8e63a3f47327c3f4b017ce53497e7dc5",
       "committer_date": "2026-11-10T17:57:45+08:00",
       "tree": "ddcc6960afbc8bb3cb5f85a4571ac6a3538b7262",
       "upstream": {
@@ -2950,10 +2950,10 @@
       }
     },
     {
-      "file": "0223-LOCAL-power-piano-poweroff-charging.patch",
-      "sha256": "d9fd4197a137ab50e0cc234be75793514ac34681ec64d23097fc9c64944ff9b0",
-      "original_commit": "d6f0c1716372bef0a55ac1bc8ec9573141d7af6c",
-      "original_parent": "68ef9aaf4686314c4303cb0a3c1d914064a598f7",
+      "file": "0398-LOCAL-power-piano-poweroff-charging.patch",
+      "sha256": "f7ade5947ea812de24832da1e3206ce5bea54f8e0f7b4c2433610ab8c048c4f2",
+      "original_commit": "024ecf9b478dbc37ad37693cbdb6b72748ce87e4",
+      "original_parent": "6c28daff2a2101172a27c4e079689796b66e6421",
       "committer_date": "2026-11-10T19:47:33+08:00",
       "tree": "91a9cd2f968eb1ab5a645baf000770f435957c09",
       "upstream": {
@@ -2963,10 +2963,10 @@
       }
     },
     {
-      "file": "0224-LOCAL-input-nt36532e-matrix.patch",
-      "sha256": "7ade446cbed93421ff668f53b0568005f1d81ece4c980989f08c6649f3d4bf64",
-      "original_commit": "b59fc1fe23bd95e5f2fa3df365dc8eb7b44f6379",
-      "original_parent": "d6f0c1716372bef0a55ac1bc8ec9573141d7af6c",
+      "file": "0399-LOCAL-input-nt36532e-matrix.patch",
+      "sha256": "db276099b624d6da2b2345d2c9b5015cb49b281c73ea17d1de952823215fb533",
+      "original_commit": "c3fc5eac2836ee1d5db1604520c7a23f73fd3093",
+      "original_parent": "024ecf9b478dbc37ad37693cbdb6b72748ce87e4",
       "committer_date": "2026-11-10T23:45:14+08:00",
       "tree": "4dca62ef9f5a1f89fec07f1d383bdc2e4d3f7878",
       "upstream": {
@@ -2976,10 +2976,10 @@
       }
     },
     {
-      "file": "0225-LOCAL-power-mca-pmic-enable-command.patch",
+      "file": "0400-LOCAL-power-mca-pmic-enable-command.patch",
       "sha256": "fe0eff3e2d54bcc75327bc8f115e81394768b0f139fe5a495fe8b04a778a45d1",
-      "original_commit": "2f8067b6c37d663c88b4df45f01f2c0354135a4e",
-      "original_parent": "b59fc1fe23bd95e5f2fa3df365dc8eb7b44f6379",
+      "original_commit": "b1adeb4858ec6cecf564edd67dae8163a72a6125",
+      "original_parent": "c3fc5eac2836ee1d5db1604520c7a23f73fd3093",
       "committer_date": "2026-11-10T23:49:41+08:00",
       "tree": "4570c69c3e73b2ca721576c78aab2e289a6a3d37",
       "upstream": {
@@ -2989,10 +2989,10 @@
       }
     },
     {
-      "file": "0226-LOCAL-power-mca-session-recovery.patch",
+      "file": "0401-LOCAL-power-mca-session-recovery.patch",
       "sha256": "97b47fc64f837395118abca4bbda091bd6af331b40f1d3fbd0e11b8907376f20",
-      "original_commit": "3b5f068df09f0710822da2e85a0dd19b74be3a5a",
-      "original_parent": "2f8067b6c37d663c88b4df45f01f2c0354135a4e",
+      "original_commit": "d85940c9923f8d53277b82395200b32b13bf9696",
+      "original_parent": "b1adeb4858ec6cecf564edd67dae8163a72a6125",
       "committer_date": "2026-11-10T23:49:41+08:00",
       "tree": "1c7d29195703699a507d8e5691ceb1fbe0ec58f3",
       "upstream": {
@@ -3002,10 +3002,10 @@
       }
     },
     {
-      "file": "0227-LOCAL-power-bq27xxx-suspend-recovery.patch",
+      "file": "0402-LOCAL-power-bq27xxx-suspend-recovery.patch",
       "sha256": "a63155fb12cb8976086fee64cbcd6e5a81a512fa09e370409bb05a9ad12de9f2",
-      "original_commit": "6262bab6c5c10ff3fe3d31477efb2ca31e5fd8a8",
-      "original_parent": "3b5f068df09f0710822da2e85a0dd19b74be3a5a",
+      "original_commit": "563e210f4228e97593ee4227ad56d6a73e347804",
+      "original_parent": "d85940c9923f8d53277b82395200b32b13bf9696",
       "committer_date": "2026-11-10T23:49:41+08:00",
       "tree": "00f5386788c5704e67192b7e3ef7a1f7a3d47cee",
       "upstream": {
@@ -3015,10 +3015,10 @@
       }
     },
     {
-      "file": "0228-LOCAL-iio-adc5-gen3-ignore-disabled-channels.patch",
+      "file": "0403-LOCAL-iio-adc5-gen3-ignore-disabled-channels.patch",
       "sha256": "be437a3a3a91789738d44daf41494bf8474b50c12861ee0dc4164877a5ec6135",
-      "original_commit": "caf2409669195ac3e1814d50e5cdf0ab36a94120",
-      "original_parent": "6262bab6c5c10ff3fe3d31477efb2ca31e5fd8a8",
+      "original_commit": "bf4f5ffd6a49b34a8e157b25221088f73a5e6d10",
+      "original_parent": "563e210f4228e97593ee4227ad56d6a73e347804",
       "committer_date": "2026-11-23T19:35:00+08:00",
       "tree": "d21fbc920f48a9bb1877bf15418bd197219b7661",
       "upstream": {
@@ -3028,10 +3028,10 @@
       }
     },
     {
-      "file": "0229-LOCAL-iio-qcom-vadc-correct-pm7-thermistor-units.patch",
+      "file": "0404-LOCAL-iio-qcom-vadc-correct-pm7-thermistor-units.patch",
       "sha256": "62e833878ddc5a31a272f5ae7bb0497660a9fbf47d26e7ef628b9713e0418cb8",
-      "original_commit": "e471bbe358a70e7fa00d5e6071a94775327e6fec",
-      "original_parent": "caf2409669195ac3e1814d50e5cdf0ab36a94120",
+      "original_commit": "840180f4a4ce7c4af75f7e5d40f0820c71f235e2",
+      "original_parent": "bf4f5ffd6a49b34a8e157b25221088f73a5e6d10",
       "committer_date": "2026-11-23T19:35:00+08:00",
       "tree": "fed7ee0968f0bb37ee94d19ca6686bb0bbec14d2",
       "upstream": {
@@ -3041,10 +3041,10 @@
       }
     },
     {
-      "file": "0230-LOCAL-power-mca-full-recharge.patch",
-      "sha256": "87dc4f6e4071d12d664fddc969e3b350a6e8cb0c818365353d636565df031a68",
-      "original_commit": "3942be74c9323f42367e92a6f8c41d2298af7840",
-      "original_parent": "e471bbe358a70e7fa00d5e6071a94775327e6fec",
+      "file": "0405-LOCAL-power-mca-full-recharge.patch",
+      "sha256": "39b33592aaef2c12d7c7c96485ecab4d1c1b71d34bde134571f51b585957e206",
+      "original_commit": "d52d14c5650b89ed21ba23a27b43607650b67b6d",
+      "original_parent": "840180f4a4ce7c4af75f7e5d40f0820c71f235e2",
       "committer_date": "2026-11-11T00:18:30+08:00",
       "tree": "f74e5daa9eede8d1c9f71e9ef7a4291d1ffd84ee",
       "upstream": {
@@ -3054,10 +3054,10 @@
       }
     },
     {
-      "file": "0231-LOCAL-dt-bindings-power-bq27z561-temp-iio.patch",
+      "file": "0406-LOCAL-dt-bindings-power-bq27z561-temp-iio.patch",
       "sha256": "d31789e73ef61471e6881b3a031e36c75e3361ebbbd87701ccdbe4d2b7bb0b83",
-      "original_commit": "b7cb287591e33d3204033b9edc99c2df6ee50899",
-      "original_parent": "3942be74c9323f42367e92a6f8c41d2298af7840",
+      "original_commit": "23d5bea4d1131f9050edf5c344843fdd76501023",
+      "original_parent": "d52d14c5650b89ed21ba23a27b43607650b67b6d",
       "committer_date": "2026-11-11T00:25:30+08:00",
       "tree": "307b751f0eebce2f6ee0d955bd1640181a234a8f",
       "upstream": {
@@ -3067,10 +3067,10 @@
       }
     },
     {
-      "file": "0232-LOCAL-power-bq27z561-original-temperature.patch",
+      "file": "0407-LOCAL-power-bq27z561-original-temperature.patch",
       "sha256": "67fe869541a71cae440bce65de4c706590058b795290772dfa9973febf6937c6",
-      "original_commit": "5959aa5b7947ee291956bc868cd93bdcd725e896",
-      "original_parent": "b7cb287591e33d3204033b9edc99c2df6ee50899",
+      "original_commit": "acf058138d946fa55e6a37fc69b92bfcaa1376e6",
+      "original_parent": "23d5bea4d1131f9050edf5c344843fdd76501023",
       "committer_date": "2026-11-11T00:25:30+08:00",
       "tree": "ecab71c4800862426b477c892c366789aac0782a",
       "upstream": {
@@ -3080,10 +3080,10 @@
       }
     },
     {
-      "file": "0233-LOCAL-dt-bindings-pinctrl-pmih010x-gpio.patch",
+      "file": "0408-LOCAL-dt-bindings-pinctrl-pmih010x-gpio.patch",
       "sha256": "f64fdfb18add4eca714d326c1f5be9263fda7fb13cceb02f8f489b49925f8c98",
-      "original_commit": "decd6b5fa7e1b49b85bfa61de9aa197d03917b92",
-      "original_parent": "5959aa5b7947ee291956bc868cd93bdcd725e896",
+      "original_commit": "eb3f0711d74c658faa3dd11d4916923a0b2de485",
+      "original_parent": "acf058138d946fa55e6a37fc69b92bfcaa1376e6",
       "committer_date": "2026-11-11T00:25:30+08:00",
       "tree": "ac9ab2d67b93cfd4229b3d3f458e6e4d5b316487",
       "upstream": {
@@ -3093,10 +3093,10 @@
       }
     },
     {
-      "file": "0234-LOCAL-pinctrl-qcom-spmi-pmih010x-gpio.patch",
+      "file": "0409-LOCAL-pinctrl-qcom-spmi-pmih010x-gpio.patch",
       "sha256": "5258500044f9b223d18eccd1b16036654bf48f9511f18cf6a86fa66bd73a2d48",
-      "original_commit": "16b7c63acb373ee3c010aa972d9164e882a004c9",
-      "original_parent": "decd6b5fa7e1b49b85bfa61de9aa197d03917b92",
+      "original_commit": "664291d6ed4bcc1da2aab8c6cabac3394a62cd77",
+      "original_parent": "eb3f0711d74c658faa3dd11d4916923a0b2de485",
       "committer_date": "2026-11-11T00:25:30+08:00",
       "tree": "fbdd097fe1c0b82eb619ee52194a879f8243be96",
       "upstream": {
@@ -3106,10 +3106,10 @@
       }
     },
     {
-      "file": "0235-LOCAL-dt-bindings-soc-qcom-piano-skin-thermal.patch",
+      "file": "0410-LOCAL-dt-bindings-soc-qcom-piano-skin-thermal.patch",
       "sha256": "ab927b95615aa0bbba4330f09319d41e129b817fa49b25027d9910a52b893e28",
-      "original_commit": "8bc83ecb39ba6aaf3043da85c879d8d2934c0543",
-      "original_parent": "16b7c63acb373ee3c010aa972d9164e882a004c9",
+      "original_commit": "f7959152b6c4e23dd02bd1b263f0291fb4d17248",
+      "original_parent": "664291d6ed4bcc1da2aab8c6cabac3394a62cd77",
       "committer_date": "2026-11-11T00:25:30+08:00",
       "tree": "a30349fc0fc3236ec206bbcc86a7f9d88e11e6af",
       "upstream": {
@@ -3119,10 +3119,10 @@
       }
     },
     {
-      "file": "0236-LOCAL-power-mca-skin-thermal-policy.patch",
+      "file": "0411-LOCAL-power-mca-skin-thermal-policy.patch",
       "sha256": "7d8e3a08badc097f5669113099b1aa0348f8cfa6c6d092564552ae1d2b62f589",
-      "original_commit": "55dc720f79963c3c980e7839dc35f847fab58480",
-      "original_parent": "8bc83ecb39ba6aaf3043da85c879d8d2934c0543",
+      "original_commit": "42241896f56e68c086feecce87134adb081d62cf",
+      "original_parent": "f7959152b6c4e23dd02bd1b263f0291fb4d17248",
       "committer_date": "2026-11-11T00:25:30+08:00",
       "tree": "63f1398b53a0de7ea6d07c93233039903c61f9de",
       "upstream": {
@@ -3132,10 +3132,10 @@
       }
     },
     {
-      "file": "0237-LOCAL-soc-qcom-pmic-glink-rpmsg-registration.patch",
-      "sha256": "63f932517291c15f6183650bbcded400f3c09286b96b0303b0e1e235e094540e",
-      "original_commit": "1d8ce0c72e1fe7ec192413d7cba1979c0ff47ffb",
-      "original_parent": "55dc720f79963c3c980e7839dc35f847fab58480",
+      "file": "0412-LOCAL-soc-qcom-pmic-glink-rpmsg-registration.patch",
+      "sha256": "77857e8938f6243096daecfb166f12ed623d6c2f74de652d0251cd03e8d16fc7",
+      "original_commit": "edf6ff0dac020d0ad59687075c3120e7398c57ad",
+      "original_parent": "42241896f56e68c086feecce87134adb081d62cf",
       "committer_date": "2026-11-11T03:17:19+08:00",
       "tree": "c43c3743cea590ff8d6e49aae8cc072f3b2b3a32",
       "upstream": {
@@ -3145,10 +3145,10 @@
       }
     },
     {
-      "file": "0238-LOCAL-dt-bindings-soc-qcom-piano-ffc-limits.patch",
-      "sha256": "2cb02f3c23015ada37c53b106fbf53c415dc85e8bdd07245a46eaa7183be86e7",
-      "original_commit": "808df1652d65e7a30cd355268d54760b9c4e4864",
-      "original_parent": "1d8ce0c72e1fe7ec192413d7cba1979c0ff47ffb",
+      "file": "0413-LOCAL-dt-bindings-soc-qcom-piano-ffc-limits.patch",
+      "sha256": "173ac25886bb0fb0c7aafaff40ac059dc8420715701d30328055ef27e78955d7",
+      "original_commit": "3b7c9d7a98f6a96a439bda1e3718e19828847230",
+      "original_parent": "edf6ff0dac020d0ad59687075c3120e7398c57ad",
       "committer_date": "2026-11-12T00:06:47+08:00",
       "tree": "8ecfff72a3dafaf86c0b44f01a9f504a155f20b7",
       "upstream": {
@@ -3158,10 +3158,10 @@
       }
     },
     {
-      "file": "0239-LOCAL-power-mca-authenticated-ffc.patch",
-      "sha256": "5066baba5e2b8a3c9ad0552acc29018a05d81df9b67fcc0d0725c72959d64bc8",
-      "original_commit": "28fc6478eba1c9172d5af73f9da8b905d8173d91",
-      "original_parent": "808df1652d65e7a30cd355268d54760b9c4e4864",
+      "file": "0414-LOCAL-power-mca-authenticated-ffc.patch",
+      "sha256": "c5355ab8dce9d99a3c259fee3d22013a6dc28fcb2e51251dc5cd6275560419a1",
+      "original_commit": "9056c46c202d035506d3007a598d2a0adb19c0ad",
+      "original_parent": "3b7c9d7a98f6a96a439bda1e3718e19828847230",
       "committer_date": "2026-11-12T00:06:47+08:00",
       "tree": "0db3433c7db07db11edf3145a35ecd2cc81d3951",
       "upstream": {
@@ -3171,10 +3171,10 @@
       }
     },
     {
-      "file": "0240-LOCAL-power-mca-stock-cycle-policy.patch",
-      "sha256": "8a6f96310cdc1f7cc3b5e8a321e8fbe3dcc29402f76ccbb261957fe16ceafee4",
-      "original_commit": "3e81f204dff2ffc77abcba494a6c8a3c18e335f2",
-      "original_parent": "28fc6478eba1c9172d5af73f9da8b905d8173d91",
+      "file": "0415-LOCAL-power-mca-stock-cycle-policy.patch",
+      "sha256": "a44640ef72117d1ee50cf9bdde7a3a57152b213dd2ce2b59a93d6e658e0b2ac3",
+      "original_commit": "0bb58e1cb845ead45c70952ed6afcf7f8d7a7ec2",
+      "original_parent": "9056c46c202d035506d3007a598d2a0adb19c0ad",
       "committer_date": "2026-11-14T00:09:57+08:00",
       "tree": "fadf2a1c2c14efe745eb63d59fe2ae354233e1a5",
       "upstream": {
@@ -3184,10 +3184,10 @@
       }
     },
     {
-      "file": "0241-LOCAL-power-mca-qc-direct-charge.patch",
-      "sha256": "ef2a2087eb11b8fb666402d5471c5f3145721b887a50cfa50a8d119b7123f9a6",
-      "original_commit": "aa776385f85da5e7cf8581cc5462cd0076a4b77f",
-      "original_parent": "3e81f204dff2ffc77abcba494a6c8a3c18e335f2",
+      "file": "0416-LOCAL-power-mca-qc-direct-charge.patch",
+      "sha256": "ebf9d4e6f983b8d75f76a02bb27f81c5d0fb7d2db73ae10ef7b5a190878ceb96",
+      "original_commit": "798cb676dcd59d0dc48e30c3899a693b4b42a10e",
+      "original_parent": "0bb58e1cb845ead45c70952ed6afcf7f8d7a7ec2",
       "committer_date": "2026-11-14T03:28:55+08:00",
       "tree": "96e379bc0d2da0b93b1050c3860f2aa66e6cc77e",
       "upstream": {
@@ -3197,10 +3197,10 @@
       }
     },
     {
-      "file": "0242-LOCAL-power-sc8541-piano-bus-ovp.patch",
-      "sha256": "40b25aa494a60be54ea486f9483166ad1cd86a28715efd2a7610216a34bf11bf",
-      "original_commit": "7d14e0264115428bf241676ca3775083fb1e11e8",
-      "original_parent": "aa776385f85da5e7cf8581cc5462cd0076a4b77f",
+      "file": "0417-LOCAL-power-sc8541-piano-bus-ovp.patch",
+      "sha256": "ad385a59e1e8511b05fb2f318bc745334ccc0c02bb47b5c076fb6530d9b0abc0",
+      "original_commit": "9c02421d4dc1f91575fa6a13f9de03dc9fee12f8",
+      "original_parent": "798cb676dcd59d0dc48e30c3899a693b4b42a10e",
       "committer_date": "2026-11-14T03:41:04+08:00",
       "tree": "3345ff32dd805f78d3f5094ac26f989635b831fb",
       "upstream": {
@@ -3210,10 +3210,10 @@
       }
     },
     {
-      "file": "0243-LOCAL-power-mca-third-pps-limits.patch",
-      "sha256": "0215f159f69b4b48a6e2f2bb5ef398e0b7e2512d13235d72ef619d531460deb2",
-      "original_commit": "80f02ef2d5fec131aaa826fd71737f4cf6483522",
-      "original_parent": "7d14e0264115428bf241676ca3775083fb1e11e8",
+      "file": "0418-LOCAL-power-mca-third-pps-limits.patch",
+      "sha256": "ace8172c4d1e6d3dc92fcfebd7ef73c8409edb9935004da87cc95f830305d6a5",
+      "original_commit": "82a9e51e317522c41a26963239e536e3343b1e61",
+      "original_parent": "9c02421d4dc1f91575fa6a13f9de03dc9fee12f8",
       "committer_date": "2026-11-14T03:41:04+08:00",
       "tree": "0b7f1dbc71bd9914254ff8ebfa082dad29eb5755",
       "upstream": {
@@ -3223,10 +3223,10 @@
       }
     },
     {
-      "file": "0244-LOCAL-power-mca-pps-voltage-steps.patch",
-      "sha256": "c7dc28807ba2d3075e1f5149092eda37c64bbea5814f62e668e042f69b2d99cb",
-      "original_commit": "1ef81f813c2262a8d3cabd5607aa0dca863a9397",
-      "original_parent": "80f02ef2d5fec131aaa826fd71737f4cf6483522",
+      "file": "0419-LOCAL-power-mca-pps-voltage-steps.patch",
+      "sha256": "3d599c142ab3dd05ed5b8510f1d7817900e252f09530f9c64e037a9a01ccda36",
+      "original_commit": "176f01ebb686219b75c4de0fe549c2908958adc7",
+      "original_parent": "82a9e51e317522c41a26963239e536e3343b1e61",
       "committer_date": "2026-11-14T03:47:47+08:00",
       "tree": "4ff7c844a89468b0441e3e38019070d2bf269452",
       "upstream": {
@@ -3236,10 +3236,10 @@
       }
     },
     {
-      "file": "0245-LOCAL-power-mca-battery-health-current.patch",
-      "sha256": "a0fd880296de8e9373d501e787995fa754dbb48fd9a1a6bc3254a3b25edb7a76",
-      "original_commit": "eb2f858eb39f40cbd4aad061a41c925f3e262d12",
-      "original_parent": "1ef81f813c2262a8d3cabd5607aa0dca863a9397",
+      "file": "0420-LOCAL-power-mca-battery-health-current.patch",
+      "sha256": "102a7e5718c14b9081c008db288e91611adf7f7f4669c8957c690002b4ea091d",
+      "original_commit": "f5eaa3755fc5d10480317f146be4d1511e2e0184",
+      "original_parent": "176f01ebb686219b75c4de0fe549c2908958adc7",
       "committer_date": "2026-11-14T03:57:05+08:00",
       "tree": "3d43f337abbd001a650bfdb72379ff8c6f2b73d0",
       "upstream": {
@@ -3249,10 +3249,10 @@
       }
     },
     {
-      "file": "0246-LOCAL-power-mca-source-voltage-window.patch",
-      "sha256": "78cf3321c03eb90834516efc3b73983d1d45038b9f14ee28f1fcda0c3b4eed2c",
-      "original_commit": "18a753db51205dbb88b4d03b57578fcdb851b191",
-      "original_parent": "eb2f858eb39f40cbd4aad061a41c925f3e262d12",
+      "file": "0421-LOCAL-power-mca-source-voltage-window.patch",
+      "sha256": "88b0a2609d844f40d2df62d301a33b58e053302f88000b423e28f57b544208fd",
+      "original_commit": "5823d645c02d089b0555b1ac4fdf50da4ce91f10",
+      "original_parent": "f5eaa3755fc5d10480317f146be4d1511e2e0184",
       "committer_date": "2026-11-14T04:26:52+08:00",
       "tree": "9ce63790e106a139616359aa21f541ccf9f10f31",
       "upstream": {
@@ -3262,10 +3262,10 @@
       }
     },
     {
-      "file": "0247-LOCAL-power-direct-charge-conversion-modes.patch",
-      "sha256": "8c352692b1cc18d94a5d22c262da3429df0719c621369911a427c257b0f4fe16",
-      "original_commit": "a4b0ed4c728b33241efab3f5abbdd2ab2adb7d99",
-      "original_parent": "18a753db51205dbb88b4d03b57578fcdb851b191",
+      "file": "0422-LOCAL-power-direct-charge-conversion-modes.patch",
+      "sha256": "04d4fb84409810b01df279fbec2892423d742c67ff381201ff4e096fd113ec3a",
+      "original_commit": "3403b5e21add11fb65d57221a30669d16ddb984b",
+      "original_parent": "5823d645c02d089b0555b1ac4fdf50da4ce91f10",
       "committer_date": "2026-11-14T05:10:30+08:00",
       "tree": "122fe9a3d0167ac6b64bd4e9a93cca55be938572",
       "upstream": {
@@ -3275,10 +3275,10 @@
       }
     },
     {
-      "file": "0248-LOCAL-camss-pix-capture-formats.patch",
-      "sha256": "fc4415eaf25a96a04076564e8eb1bfafc2b4c3e59b097b3a344dc2388d708ce6",
-      "original_commit": "1e977b8b408b1f46001a451b7ef2d85bd72d50e5",
-      "original_parent": "a4b0ed4c728b33241efab3f5abbdd2ab2adb7d99",
+      "file": "0423-LOCAL-camss-pix-capture-formats.patch",
+      "sha256": "342bbbdf0d5e21f64f97dbad0653ed650810da72b5dc813ffdcd877e2bf6d40a",
+      "original_commit": "7476edb50ad604525c5a0d4d89072d81c4840efb",
+      "original_parent": "3403b5e21add11fb65d57221a30669d16ddb984b",
       "committer_date": "2026-11-14T21:59:54+08:00",
       "tree": "bf44285a698b7bb01291089ec1223380fa654546",
       "upstream": {
@@ -3288,10 +3288,10 @@
       }
     },
     {
-      "file": "0249-LOCAL-media-ov32d40-binding.patch",
-      "sha256": "0e5167b93f57760bfe05f45a91651fbf88755394bddefa96ee5d1e5b6e59a072",
-      "original_commit": "72b573be428f2be0de3fbd9cda0ea85440863a01",
-      "original_parent": "1e977b8b408b1f46001a451b7ef2d85bd72d50e5",
+      "file": "0424-LOCAL-media-ov32d40-binding.patch",
+      "sha256": "29cdf498b5749465a194f5bf544c4c2f941bab02252b28580e26b8a8414e8d3c",
+      "original_commit": "1537919783a23721fd85511037753d6f14fce544",
+      "original_parent": "7476edb50ad604525c5a0d4d89072d81c4840efb",
       "committer_date": "2026-11-14T23:03:04+08:00",
       "tree": "78e2de2a00d9ce5ade347bc7af45d60c375d7d7b",
       "upstream": {
@@ -3301,10 +3301,10 @@
       }
     },
     {
-      "file": "0250-LOCAL-media-camss-bayer-clock-binding.patch",
-      "sha256": "f8742997d92c1a0be7bb3d33774e2001b394413dbd92cd09b4209390bf1141a2",
-      "original_commit": "163f295481fcdf1d79e795569d379e88f4fccee2",
-      "original_parent": "72b573be428f2be0de3fbd9cda0ea85440863a01",
+      "file": "0425-LOCAL-media-camss-bayer-clock-binding.patch",
+      "sha256": "085264de772b497d31e0c4fa6a807af0764261d8728725b56213c5ba73371507",
+      "original_commit": "3c0c98a315aace53fba7ca2e0376b3dffd57c5e5",
+      "original_parent": "1537919783a23721fd85511037753d6f14fce544",
       "committer_date": "2026-11-14T23:04:09+08:00",
       "tree": "0ac1ab4b5b34b7ad3733284fdb1171f0eb878e26",
       "upstream": {
@@ -3314,10 +3314,10 @@
       }
     },
     {
-      "file": "0251-LOCAL-media-camss-csid-vfe-links.patch",
-      "sha256": "a67f0abafae450fc8899741eb1e1dbcaca8e32308f02b95abde41cb5826f8062",
-      "original_commit": "2720cbff169238c4d8c9f1b011188fb3f95bbf1b",
-      "original_parent": "163f295481fcdf1d79e795569d379e88f4fccee2",
+      "file": "0426-LOCAL-media-camss-csid-vfe-links.patch",
+      "sha256": "760f501b26564d38b04bc27d7a3a0f6c18a678565deeb72ef8b7fe08caa94321",
+      "original_commit": "d22c734c6462ec9f8abe0de5192fb074c8e38fa1",
+      "original_parent": "3c0c98a315aace53fba7ca2e0376b3dffd57c5e5",
       "committer_date": "2026-11-15T00:40:18+08:00",
       "tree": "a7f931dc3d7a0cacd6aa9c92be73a8bd3c38c943",
       "upstream": {
@@ -3327,10 +3327,10 @@
       }
     },
     {
-      "file": "0252-LOCAL-media-camss-csid-source-formats.patch",
-      "sha256": "f4fe9aab3aa2c704c8f986cbcebc056b1481b21afdefc2cd6c4f3ec9ac419ddf",
-      "original_commit": "31bf55399aeb7a338c19125047ed4ac514124a24",
-      "original_parent": "2720cbff169238c4d8c9f1b011188fb3f95bbf1b",
+      "file": "0427-LOCAL-media-camss-csid-source-formats.patch",
+      "sha256": "fcf8dee8bfb25e09b4456494018e1cc0e4ac8ccd30ab43cd11d7eff692e28a87",
+      "original_commit": "e4a8d19bd5be2f6c1dbf5aa00223ad7188ae47d3",
+      "original_parent": "d22c734c6462ec9f8abe0de5192fb074c8e38fa1",
       "committer_date": "2026-11-15T00:53:33+08:00",
       "tree": "c96cfd9ad926c9b6e9ca738156bdc94755bc4eee",
       "upstream": {
@@ -3340,10 +3340,10 @@
       }
     },
     {
-      "file": "0253-LOCAL-clock-sm8750-mclk-power-binding.patch",
-      "sha256": "a9eb8a20eedd7182833cfb8ab8356d3f586fcd38f10aa53e75ea83dc8fe93231",
-      "original_commit": "fb9b8d7beea96c6dfc7e5618c703be8d3d240257",
-      "original_parent": "31bf55399aeb7a338c19125047ed4ac514124a24",
+      "file": "0428-LOCAL-clock-sm8750-mclk-power-binding.patch",
+      "sha256": "d51857f1de02f2c0b4da1269f61137d400fea2578f3aaa29538a5716804945ed",
+      "original_commit": "77bf0c0fe1eea8ad3470c5ffa5d9c7f7abc7f3ff",
+      "original_parent": "e4a8d19bd5be2f6c1dbf5aa00223ad7188ae47d3",
       "committer_date": "2026-11-15T01:21:54+08:00",
       "tree": "88098e33825a3ce48ccfa7763e3427ed64d66195",
       "upstream": {
@@ -3353,10 +3353,10 @@
       }
     },
     {
-      "file": "0254-LOCAL-arm64-sm8750-mclk-power.patch",
-      "sha256": "a088b02b80c788aba6b651dfbbf356932db8ca5b1e0027d21edc208c847ddabf",
-      "original_commit": "cd372294a6dc0e44acb30ed238b11757bdb89960",
-      "original_parent": "fb9b8d7beea96c6dfc7e5618c703be8d3d240257",
+      "file": "0429-LOCAL-arm64-sm8750-mclk-power.patch",
+      "sha256": "a422b17d7ae06b4a69e1b3914f87f51e6a86dca327a9787fbb4c98c7adf8b526",
+      "original_commit": "a88e2a4e3c68d8d1878d8f700d514a49c1b83fe2",
+      "original_parent": "77bf0c0fe1eea8ad3470c5ffa5d9c7f7abc7f3ff",
       "committer_date": "2026-11-15T01:22:15+08:00",
       "tree": "73996a895ee578bf9fedecf25b7e088703877e9c",
       "upstream": {
@@ -3366,10 +3366,10 @@
       }
     },
     {
-      "file": "0255-LOCAL-hid-xiaomi-pen-pressure.patch",
-      "sha256": "6a973126714d391922e2c408e0f1f20f7efd7ac56e38081857032e5ff61f8f9a",
-      "original_commit": "966dc9520703f3d83b7171e2f325e6a46cd48d92",
-      "original_parent": "cd372294a6dc0e44acb30ed238b11757bdb89960",
+      "file": "0430-LOCAL-hid-xiaomi-pen-pressure.patch",
+      "sha256": "f7042c2c9cc16f2fdb76ef51c2075c0f1d74268eab7586bb290dca79f62bf112",
+      "original_commit": "3aa00a651f6c8d05937c5ca29918e6559c8752ec",
+      "original_parent": "a88e2a4e3c68d8d1878d8f700d514a49c1b83fe2",
       "committer_date": "2026-11-14T22:04:44+08:00",
       "tree": "437f302eb5a56a2bb97b6e038443c80ae5ea3317",
       "upstream": {
@@ -3379,10 +3379,10 @@
       }
     },
     {
-      "file": "0256-LOCAL-input-nt36532e-pen-scan.patch",
-      "sha256": "f6228fb6b88a994c5317cfc4920f1a6a89e15ca31dd8fc9376b8cad95d60287a",
-      "original_commit": "dc4142c51e56b5d1ae7d3313b4a61397f44d1efa",
-      "original_parent": "966dc9520703f3d83b7171e2f325e6a46cd48d92",
+      "file": "0431-LOCAL-input-nt36532e-pen-scan.patch",
+      "sha256": "9a9e666267b7c838f77c604632312f12b21cb83e8a34eecfa60e57b99aa8e167",
+      "original_commit": "ca44b10db0d7b0a8693ca0c58c71e3f62aa5cd9e",
+      "original_parent": "3aa00a651f6c8d05937c5ca29918e6559c8752ec",
       "committer_date": "2026-11-14T22:40:22+08:00",
       "tree": "a7006ad51d63629d20b2fc14f6c224320a30a46d",
       "upstream": {
@@ -3392,10 +3392,10 @@
       }
     },
     {
-      "file": "0257-LOCAL-input-nt36532e-pen.patch",
-      "sha256": "0cc515173c737a56d8cdf47794140d1d4374be3d69d6c817c06a0305ef93b9b3",
-      "original_commit": "910f511e5fe7c68b0a2569d4638422639a8f173e",
-      "original_parent": "dc4142c51e56b5d1ae7d3313b4a61397f44d1efa",
+      "file": "0432-LOCAL-input-nt36532e-pen.patch",
+      "sha256": "ba329cdafc5a768489331f34bd68a672ed61147cad6e487cae60b5a18df683ea",
+      "original_commit": "ae3b936b6933efbeb5e67f5a54eebaffdd77150e",
+      "original_parent": "ca44b10db0d7b0a8693ca0c58c71e3f62aa5cd9e",
       "committer_date": "2026-11-15T01:11:01+08:00",
       "tree": "a1ffcff87ceb81693eef3dcbcdca195b5bf2b550",
       "upstream": {
@@ -3405,10 +3405,10 @@
       }
     },
     {
-      "file": "0258-LOCAL-media-gt9764ba-binding.patch",
+      "file": "0433-LOCAL-media-gt9764ba-binding.patch",
       "sha256": "27c7fdd483189f63c50db72b4ca3a902328024cefccf75f40a9768a169331e0f",
-      "original_commit": "f6f1d84402e656016f21cba2cbe292f443df088f",
-      "original_parent": "910f511e5fe7c68b0a2569d4638422639a8f173e",
+      "original_commit": "78082e3ec01eda1373c0f50b2a7b67ab8f81f490",
+      "original_parent": "ae3b936b6933efbeb5e67f5a54eebaffdd77150e",
       "committer_date": "2026-11-16T11:16:46+08:00",
       "tree": "00450a6827ddf190c75d9fe1c04215b27a396eb6",
       "upstream": {
@@ -3418,10 +3418,10 @@
       }
     },
     {
-      "file": "0259-LOCAL-media-gt9764ba-lens.patch",
-      "sha256": "aea17fe2a6e82ad5f6c9a498d9d937319e00c8c53ddf407647a6838a865930fd",
-      "original_commit": "fe09acc3e4dbcd3de4929b7b7d922eb5e0622721",
-      "original_parent": "f6f1d84402e656016f21cba2cbe292f443df088f",
+      "file": "0434-LOCAL-media-gt9764ba-lens.patch",
+      "sha256": "5a036065c4080e0996e298f7ddf0ef7f677cb812c0bd8c0e48f323866fafa3f0",
+      "original_commit": "ef1ee93d7482100aabf3d688429601f7b25e80ae",
+      "original_parent": "78082e3ec01eda1373c0f50b2a7b67ab8f81f490",
       "committer_date": "2026-11-16T11:16:46+08:00",
       "tree": "71aabcf396e637c14c01d9360f848a26677d7d83",
       "upstream": {
@@ -3431,10 +3431,10 @@
       }
     },
     {
-      "file": "0260-LOCAL-power-mca-bounds-check-notifications.patch",
-      "sha256": "fa1d57e5ca251cdd117dbf76486155a2356772490cd938599078a88a0554f098",
-      "original_commit": "c6cb125cc3809d49f1fc5cbb4443c4399491678a",
-      "original_parent": "fe09acc3e4dbcd3de4929b7b7d922eb5e0622721",
+      "file": "0435-LOCAL-power-mca-bounds-check-notifications.patch",
+      "sha256": "74ad0ef6e0af7014730165f6d67aa94e72f34180f21e3723fe953d1dd9b03299",
+      "original_commit": "26fef511c603a5b61c5ea3c5b48b0c7e739279cd",
+      "original_parent": "ef1ee93d7482100aabf3d688429601f7b25e80ae",
       "committer_date": "2026-11-18T02:42:00+08:00",
       "tree": "526ced43dc059f664b840398ffcea5ebd8fe3eac",
       "upstream": {
@@ -3444,10 +3444,10 @@
       }
     },
     {
-      "file": "0261-LOCAL-power-sc8541-report-applied-current-limit.patch",
-      "sha256": "9f643d5bc588513022f417fadd050085b6c67fb7d1694c46acd1c6dc70bf614e",
-      "original_commit": "52c0435f18f54d023446bb0a98ace0915a803895",
-      "original_parent": "c6cb125cc3809d49f1fc5cbb4443c4399491678a",
+      "file": "0436-LOCAL-power-sc8541-report-applied-current-limit.patch",
+      "sha256": "3031d712774591978c5a24273bc331185b014a910f7f2a8dfb8579f7a35dc99c",
+      "original_commit": "3aeded90a040d4e6d6c4da8cca261c454e4dd6e2",
+      "original_parent": "26fef511c603a5b61c5ea3c5b48b0c7e739279cd",
       "committer_date": "2026-11-18T02:42:00+08:00",
       "tree": "410e6966fd3e04f698644bf7919932809ed3905c",
       "upstream": {
@@ -3457,10 +3457,10 @@
       }
     },
     {
-      "file": "0262-LOCAL-power-mca-response-identity.patch",
-      "sha256": "c2d5db34e26be7b7b845b529b18f819971cb58d8e7f646bcc8acdcf561a450b6",
-      "original_commit": "31f78ab2399b6a3403f8f0634df8b52272f33b26",
-      "original_parent": "52c0435f18f54d023446bb0a98ace0915a803895",
+      "file": "0437-LOCAL-power-mca-response-identity.patch",
+      "sha256": "c44603c61c3a6201b87f39cc38e041f25e7aa208914c6656dd8b8dccdd8b3722",
+      "original_commit": "db1fccf2b5ac24146436564b1a5961fb2523c655",
+      "original_parent": "3aeded90a040d4e6d6c4da8cca261c454e4dd6e2",
       "committer_date": "2026-11-18T03:10:00+08:00",
       "tree": "7203a93d5abc8d25f4b78eeb161854be05b28c6e",
       "upstream": {
@@ -3470,10 +3470,10 @@
       }
     },
     {
-      "file": "0263-LOCAL-power-mca-warm-pmic-compensation.patch",
-      "sha256": "c09c6f86b1c2b53eb9bd710052a934998ec0395286db6aeb085fa99f64fdc75b",
-      "original_commit": "42d5faf1d33f1fb86d1c44e341aa68653cb5eadb",
-      "original_parent": "31f78ab2399b6a3403f8f0634df8b52272f33b26",
+      "file": "0438-LOCAL-power-mca-warm-pmic-compensation.patch",
+      "sha256": "9ce9284d26a074254b2555e3598f5a282c9ae1c41cbedaf5954f1eacefc05145",
+      "original_commit": "1be113952c86f7d005b961a738a8712307940683",
+      "original_parent": "db1fccf2b5ac24146436564b1a5961fb2523c655",
       "committer_date": "2026-11-18T04:18:12+08:00",
       "tree": "8df23efc2bb4ba8f0bbadf720b9668aa588bbb51",
       "upstream": {
@@ -3483,10 +3483,10 @@
       }
     },
     {
-      "file": "0264-LOCAL-power-bq27z561-average-power.patch",
-      "sha256": "7e15b111c52b356fa73c02a092ee4298534ce9922f8989326bbbf6693dccefa7",
-      "original_commit": "de62464cbce1ab9ba00a9839a75c5edb80d2f094",
-      "original_parent": "42d5faf1d33f1fb86d1c44e341aa68653cb5eadb",
+      "file": "0439-LOCAL-power-bq27z561-average-power.patch",
+      "sha256": "a028a0bbdcad1dd42fa4d1b3ea89a4c0b62b657ebc73906d1dbbdcab455dfb7c",
+      "original_commit": "f59d9e62a57e8e16f86b8e5bdc0a9918c1f32bd5",
+      "original_parent": "1be113952c86f7d005b961a738a8712307940683",
       "committer_date": "2026-11-18T04:18:12+08:00",
       "tree": "8b86cfa6e535ee0f8e7cd62f759577b40ee23329",
       "upstream": {
@@ -3496,10 +3496,10 @@
       }
     },
     {
-      "file": "0265-LOCAL-power-mca-connector-overtemperature.patch",
-      "sha256": "dd2183975781b53c01d4651a34e9a9c11453be474f8ee6813552b4df1d0c73ae",
-      "original_commit": "6efd133dcea52d3844ac416e9e79f0cad797a13c",
-      "original_parent": "de62464cbce1ab9ba00a9839a75c5edb80d2f094",
+      "file": "0440-LOCAL-power-mca-connector-overtemperature.patch",
+      "sha256": "ced779823331d15d60c7a437a0d18aa14930e9af214f26918781c3c59c4bfef6",
+      "original_commit": "bd953affced7f5c9f9a456218c49dcf63823dacc",
+      "original_parent": "f59d9e62a57e8e16f86b8e5bdc0a9918c1f32bd5",
       "committer_date": "2026-11-18T05:03:00+08:00",
       "tree": "6f0e8fa98ddcbe8fb8b77479c6977c29f40cdd82",
       "upstream": {
@@ -3509,10 +3509,10 @@
       }
     },
     {
-      "file": "0266-LOCAL-media-s5kjn1-program-mode-before-controls.patch",
+      "file": "0441-LOCAL-media-s5kjn1-program-mode-before-controls.patch",
       "sha256": "15d744ef2ef071856247061740d3b4239e92940870714c14fef36a63fa802cad",
-      "original_commit": "eacbd3fb93b72f52e084e89f87a389e04282abfc",
-      "original_parent": "6efd133dcea52d3844ac416e9e79f0cad797a13c",
+      "original_commit": "5313caacf58a3f97243a58ddffdb61da619455ea",
+      "original_parent": "bd953affced7f5c9f9a456218c49dcf63823dacc",
       "committer_date": "2026-11-18T18:49:00+08:00",
       "tree": "abd7d43aec25535b8fb1e6fca463578941f48f90",
       "upstream": {
@@ -3522,10 +3522,10 @@
       }
     },
     {
-      "file": "0267-LOCAL-media-vb2-share-dma-contiguous-prefix.patch",
-      "sha256": "8edc4e93201f0979254db23121c609f9a89b3dd836d52418c12bd3c3274155f8",
-      "original_commit": "4789df55e3ad294dd57e8b7424fb48707553b1f6",
-      "original_parent": "eacbd3fb93b72f52e084e89f87a389e04282abfc",
+      "file": "0442-LOCAL-media-vb2-share-dma-contiguous-prefix.patch",
+      "sha256": "ecfe4aac1eca243f541ba54f0bbfd5ffcc3244329ef3917eff6258d19dd2f5cd",
+      "original_commit": "7d44974fddc5dc4dc2839ae3274e8c6dab96b9a0",
+      "original_parent": "5313caacf58a3f97243a58ddffdb61da619455ea",
       "committer_date": "2026-11-18T19:39:38+08:00",
       "tree": "781353368a900d2c2ba1184848636617d26fb083",
       "upstream": {
@@ -3535,10 +3535,10 @@
       }
     },
     {
-      "file": "0268-LOCAL-media-camss-validate-capture-dma-ranges.patch",
-      "sha256": "da70a0b40e8b8faa6302edb12bcf6d6c3a9c6d15c3f806dd125b97fb5202d2d8",
-      "original_commit": "95784545cbd029b1e9f1cc9ec66932e99c0b5956",
-      "original_parent": "4789df55e3ad294dd57e8b7424fb48707553b1f6",
+      "file": "0443-LOCAL-media-camss-validate-capture-dma-ranges.patch",
+      "sha256": "d11f7d76bafb6d57d2d7a5c2449f3a3388d24122b74e3fa08e923b2ce464ccce",
+      "original_commit": "af77dc1bc4e3e06f5f0cc9d437d90b36c0e12667",
+      "original_parent": "7d44974fddc5dc4dc2839ae3274e8c6dab96b9a0",
       "committer_date": "2026-11-18T19:39:38+08:00",
       "tree": "6c97af5dc2822ff4eeaef717668a6d421c9c86db",
       "upstream": {
@@ -3548,10 +3548,10 @@
       }
     },
     {
-      "file": "0269-LOCAL-media-iris-encoder-frame-interval.patch",
-      "sha256": "2bb000479ea92717eba8716344971d2b5c1377ff5ac6e52f8b6db3ea9af2d0ca",
-      "original_commit": "7bb7cd35dca43f9f341aa38cd348598d32fb9b3c",
-      "original_parent": "95784545cbd029b1e9f1cc9ec66932e99c0b5956",
+      "file": "0444-LOCAL-media-iris-encoder-frame-interval.patch",
+      "sha256": "6ec7ae5f114960eea670d1dcba9ce6fa3ab044c1bcb776914c3f7410890e8eda",
+      "original_commit": "357d43b490979ea4e832dc85c435caa08e3e4c2f",
+      "original_parent": "af77dc1bc4e3e06f5f0cc9d437d90b36c0e12667",
       "committer_date": "2026-11-18T20:30:45+08:00",
       "tree": "abe288738d0086ae84c55e386790cec3384fc361",
       "upstream": {
@@ -3561,10 +3561,10 @@
       }
     },
     {
-      "file": "0270-LOCAL-leds-qcom-flash-fix-safety-timer.patch",
-      "sha256": "e398eb80d596e6cc382b28c4e32be5fe093f0cb7f8677b7eed8ed7a4ba3b6f08",
-      "original_commit": "6dd18be758ce7322d9cbec9fadf48e1056751695",
-      "original_parent": "7bb7cd35dca43f9f341aa38cd348598d32fb9b3c",
+      "file": "0445-LOCAL-leds-qcom-flash-fix-safety-timer.patch",
+      "sha256": "85fd6f62c6275c1f4eeee423f1837fb010650289a9a5d20dc939c67f3a2bd920",
+      "original_commit": "0f22cd4dfce1b8b66c4fcbca42bf0ecfc52114f7",
+      "original_parent": "357d43b490979ea4e832dc85c435caa08e3e4c2f",
       "committer_date": "2026-11-19T09:13:34+08:00",
       "tree": "5a5ce4a72c9615f480fe474112a2cc755c0854bc",
       "upstream": {
@@ -3574,10 +3574,10 @@
       }
     },
     {
-      "file": "0271-LOCAL-spi-geni-qcom-map-large-gpi-transfers.patch",
-      "sha256": "0a92fb690383c6c070b44997a3d47bbcaab75f6783e2db62a812ec406f70274e",
-      "original_commit": "d2bea86cdf11ae55251446dd0db100cdf3a53b3d",
-      "original_parent": "6dd18be758ce7322d9cbec9fadf48e1056751695",
+      "file": "0446-LOCAL-spi-geni-qcom-map-large-gpi-transfers.patch",
+      "sha256": "fd6ef0d2946aa1eab3c486c6355b1c8b0a0c57af1e85b9244b161dc20a249dc2",
+      "original_commit": "8948676efbe5d48e9ce2f8180afdf275e15b49a4",
+      "original_parent": "0f22cd4dfce1b8b66c4fcbca42bf0ecfc52114f7",
       "committer_date": "2026-11-19T21:10:21+08:00",
       "tree": "1519a76ff1e0e5b424b4fef778c5599e1140a216",
       "upstream": {
@@ -3587,10 +3587,10 @@
       }
     },
     {
-      "file": "0272-LOCAL-dmaengine-qcom-gpi-clear-config-on-release.patch",
-      "sha256": "b3131ac3068aee639529bee2d6931c8ad86a9e6abd8d4fa8bf7f7bbd5361e07b",
-      "original_commit": "d6a525f4cc123b034c14b0a2b8e1f02ee56f2f45",
-      "original_parent": "d2bea86cdf11ae55251446dd0db100cdf3a53b3d",
+      "file": "0447-LOCAL-dmaengine-qcom-gpi-clear-config-on-release.patch",
+      "sha256": "5becabef7f56115e5e881d74f6c408c6d5f27cacf7b3178bc5841a88a9d88658",
+      "original_commit": "4e9bb0f89fe51077c8803f0c5387d5bfc4ef4fce",
+      "original_parent": "8948676efbe5d48e9ce2f8180afdf275e15b49a4",
       "committer_date": "2026-11-19T22:01:44+08:00",
       "tree": "fdef0361209c0bc28508e3384c4e38946ea40fc6",
       "upstream": {
@@ -3600,10 +3600,10 @@
       }
     },
     {
-      "file": "0273-LOCAL-i2c-qcom-geni-retain-buffers-until-gpi-stops.patch",
-      "sha256": "69b433d42f743cb3882f4c1ba1568939aba2811eb2ca2534c8b21ca57679cf82",
-      "original_commit": "1df7b61c46994dc7d56741ca8dbf0a13edbfce08",
-      "original_parent": "d6a525f4cc123b034c14b0a2b8e1f02ee56f2f45",
+      "file": "0448-LOCAL-i2c-qcom-geni-retain-buffers-until-gpi-stops.patch",
+      "sha256": "327b2abcdc2e752d576395a7d77ab62089a2814713d1d0400f9bcb69d747cb12",
+      "original_commit": "2d7a84c03746a7f6b62d4e06e4cae80f0114d903",
+      "original_parent": "4e9bb0f89fe51077c8803f0c5387d5bfc4ef4fce",
       "committer_date": "2026-11-19T22:01:44+08:00",
       "tree": "51beacd76c89c2bdffce993393cbeb0bc4d266ee",
       "upstream": {
@@ -3613,10 +3613,10 @@
       }
     },
     {
-      "file": "0274-LOCAL-power-bq27xxx-stop-gauge-io-on-shutdown.patch",
-      "sha256": "ff29bd70525b2a23e9303034a324625003fb2737482048a2533a76b51474f2a2",
-      "original_commit": "1a8411669a764c8afd760bda78566344d382927e",
-      "original_parent": "1df7b61c46994dc7d56741ca8dbf0a13edbfce08",
+      "file": "0449-LOCAL-power-bq27xxx-stop-gauge-io-on-shutdown.patch",
+      "sha256": "e88c28647b15ef9eaeed9c68b9a47eaaaa2006b49bd859174f73662ba00d22d7",
+      "original_commit": "d8522da612eb4f1e5724ec2100951fbb9cdc0d45",
+      "original_parent": "2d7a84c03746a7f6b62d4e06e4cae80f0114d903",
       "committer_date": "2026-11-20T00:49:21+08:00",
       "tree": "d3ae177be4143a772e5fc16c118cced1081f99e2",
       "upstream": {
@@ -3626,10 +3626,10 @@
       }
     },
     {
-      "file": "0275-LOCAL-media-camss-serialize-buffer-completion.patch",
-      "sha256": "7b9d28f9ab271f641b4091b28de13120ee9fad6822bd50adddf9215e6499c88f",
-      "original_commit": "824123c5a324aa15ac1a612c290ee9e0778357b8",
-      "original_parent": "1a8411669a764c8afd760bda78566344d382927e",
+      "file": "0450-LOCAL-media-camss-serialize-buffer-completion.patch",
+      "sha256": "cc2d0dfb265617dcc47f2688b466b6ad3f96f3d9c3e5535ed23b943989f7e13b",
+      "original_commit": "60d6a8a10cb708508ea636624ffcede0dcee2ea1",
+      "original_parent": "d8522da612eb4f1e5724ec2100951fbb9cdc0d45",
       "committer_date": "2026-11-23T19:35:00+08:00",
       "tree": "8673d31f772929863c0b8c6b50b8bba4c7f31d92",
       "upstream": {
@@ -3639,10 +3639,10 @@
       }
     },
     {
-      "file": "0276-LOCAL-media-s5kjn1-group-exposure-and-gain.patch",
-      "sha256": "0513cf9a16ea0fecee99ac715db7178c719d39858ce6031bbb3d9d8dfe0fb165",
-      "original_commit": "78b5cd83fbe6db61d86eab85847fb15b207f23bb",
-      "original_parent": "824123c5a324aa15ac1a612c290ee9e0778357b8",
+      "file": "0451-LOCAL-media-s5kjn1-group-exposure-and-gain.patch",
+      "sha256": "ac28b2b7485c78926b1449d7edc55191a92ea021de77fe874697859f7a0064b7",
+      "original_commit": "70bdc90b506d06f44ca49c5770735939cdbc3027",
+      "original_parent": "60d6a8a10cb708508ea636624ffcede0dcee2ea1",
       "committer_date": "2026-11-20T13:20:29+08:00",
       "tree": "afd8c1d6d0cea34e85a35418068bdc88c31b9102",
       "upstream": {
@@ -3652,10 +3652,10 @@
       }
     },
     {
-      "file": "0277-LOCAL-media-v4l2-flash-preserve-torch-intensity.patch",
-      "sha256": "470cb8e251329109a9e621bdf3d8852eecde1a209ae126f797697aaee574e1b7",
-      "original_commit": "6b4f031681cd8c59551cb6ef2442cd959d644455",
-      "original_parent": "78b5cd83fbe6db61d86eab85847fb15b207f23bb",
+      "file": "0452-LOCAL-media-v4l2-flash-preserve-torch-intensity.patch",
+      "sha256": "40f52fcc0f634113d85077d41c305d7fae732e2e3bd4635242d299fd94289a50",
+      "original_commit": "5380a0cc572807f54c91dac957c40a3c02809004",
+      "original_parent": "70bdc90b506d06f44ca49c5770735939cdbc3027",
       "committer_date": "2026-11-20T14:30:34+08:00",
       "tree": "9ab8d1b4fc5bdde7a5fbe72f818bd5d374f9edad",
       "upstream": {
@@ -3665,10 +3665,10 @@
       }
     },
     {
-      "file": "0278-LOCAL-kexec-block-handoff-while-device-dma-is-active.patch",
-      "sha256": "a10084c60a8490597a70122b97e1b133121ce9d27ce91d1e396f5bd0cf609a08",
-      "original_commit": "687a48820ae0d3201ef239ce41e0b331041fa6f1",
-      "original_parent": "6b4f031681cd8c59551cb6ef2442cd959d644455",
+      "file": "0453-LOCAL-kexec-block-handoff-while-device-dma-is-active.patch",
+      "sha256": "b83ad6b8736ae74c5a7ccd16317492b6937bf1574b627d4fef79fecab70fc15d",
+      "original_commit": "37728b6ff222869a8df5917e504c3ca67766cf92",
+      "original_parent": "5380a0cc572807f54c91dac957c40a3c02809004",
       "committer_date": "2026-11-20T16:38:28+08:00",
       "tree": "dec66c25a04b6c8c6d980a01e33c463a4e41fa95",
       "upstream": {
@@ -3678,10 +3678,10 @@
       }
     },
     {
-      "file": "0279-LOCAL-iommu-arm-smmu-isolate-piano-camera-dma.patch",
-      "sha256": "53f968cdb5027c240764d0ccde11a2a616ae3587521c0d7da5d3e771014b4f9f",
-      "original_commit": "db1d162aa82581acaa3f814f4eaec5234715448e",
-      "original_parent": "687a48820ae0d3201ef239ce41e0b331041fa6f1",
+      "file": "0454-LOCAL-iommu-arm-smmu-isolate-piano-camera-dma.patch",
+      "sha256": "60c96b798092fe225d0813c5d393a71fc82ce7a40cffc37481f3802bff22e3bf",
+      "original_commit": "735576f7f1efc9d40b260b5b669cff70a3db2f62",
+      "original_parent": "37728b6ff222869a8df5917e504c3ca67766cf92",
       "committer_date": "2026-11-20T16:38:28+08:00",
       "tree": "18b4b5cb2c70e8ebe8022d2fc45c0d193b753529",
       "upstream": {
@@ -3691,10 +3691,10 @@
       }
     },
     {
-      "file": "0280-LOCAL-media-camss-confirm-piano-dma-stop.patch",
-      "sha256": "a1464547bc9f46067e58fd14e5119729427673e50bd9c33a2a62f6c9b44bb52b",
-      "original_commit": "03eb7d62b924d16a67eeb63364ff1934e226d6e4",
-      "original_parent": "db1d162aa82581acaa3f814f4eaec5234715448e",
+      "file": "0455-LOCAL-media-camss-confirm-piano-dma-stop.patch",
+      "sha256": "d4bfe73a2b1a97ddbe9b617ded5f6fd80e5955f367126d7b68b5d3acaa8ac5cd",
+      "original_commit": "640f5b01d80013b99c0134f72dd21fb48038381f",
+      "original_parent": "735576f7f1efc9d40b260b5b669cff70a3db2f62",
       "committer_date": "2026-11-23T19:35:00+08:00",
       "tree": "67174ec5bd95e470c2763a3201b41beb8c27fc9d",
       "upstream": {
@@ -3704,10 +3704,10 @@
       }
     },
     {
-      "file": "0281-LOCAL-media-camss-propagate-shared-clock-failures.patch",
-      "sha256": "4a81437e92a703ee77ede1f5fb24540c94a24aa852acaf4dd5a4d10be95080d2",
-      "original_commit": "d59799992db10b26059dfc87d4196e6b08fc6f1c",
-      "original_parent": "03eb7d62b924d16a67eeb63364ff1934e226d6e4",
+      "file": "0456-LOCAL-media-camss-propagate-shared-clock-failures.patch",
+      "sha256": "743edd9e00b916398df75a1e8106ab1bfe284ffcfde41e2d1359c71f1abba86e",
+      "original_commit": "76c7a93d8c55c5aadf378779761c8829cce3d69c",
+      "original_parent": "640f5b01d80013b99c0134f72dd21fb48038381f",
       "committer_date": "2026-11-24T14:33:13+08:00",
       "tree": "db273b99290ea0b5341ba4c65dee08e9f0bda4b0",
       "upstream": {
@@ -3717,10 +3717,10 @@
       }
     },
     {
-      "file": "0282-LOCAL-ufs-samsung-health-critical.patch",
-      "sha256": "4bede077b60e52cef6c90729edce85d5b54c0f4789910f7e0d30882f8a4d470b",
-      "original_commit": "1017de2132e855d48944a4012ee629671069d4c5",
-      "original_parent": "d59799992db10b26059dfc87d4196e6b08fc6f1c",
+      "file": "0457-LOCAL-ufs-samsung-health-critical.patch",
+      "sha256": "9e9acd4e49cfb789d55c86fdeb49dc4030a79bc58f39c4dbf329ced5a1a32ab8",
+      "original_commit": "8351b78ef93110ff3203a5ee59c6bfb48365fadb",
+      "original_parent": "76c7a93d8c55c5aadf378779761c8829cce3d69c",
       "committer_date": "2026-11-21T00:14:56+08:00",
       "tree": "373078a0c47767766e036951ef73153d478fad05",
       "upstream": {
@@ -3730,10 +3730,10 @@
       }
     },
     {
-      "file": "0283-LOCAL-pinctrl-spmi-gpio-high-impedance-only.patch",
-      "sha256": "4c7583136cab1bf53db80d42f28f908ad0ec71646f594de3e5b055f7c2751d8e",
-      "original_commit": "aed99b9e3d60b28559898dd7ab95edc2efd70991",
-      "original_parent": "1017de2132e855d48944a4012ee629671069d4c5",
+      "file": "0458-LOCAL-pinctrl-spmi-gpio-high-impedance-only.patch",
+      "sha256": "c54da94223da5d5c5f55d2165b332cedaaf7805dd50de0cb18338fafd6c21284",
+      "original_commit": "7e4727801d6e6d529499db0c6bb1ff842d3d4444",
+      "original_parent": "8351b78ef93110ff3203a5ee59c6bfb48365fadb",
       "committer_date": "2026-11-21T00:17:34+08:00",
       "tree": "4549036eb2ab9542dea376471419613df3d9e250",
       "upstream": {
@@ -3743,10 +3743,10 @@
       }
     },
     {
-      "file": "0284-LOCAL-bluetooth-qca-startup-wake-ack.patch",
-      "sha256": "5e63a3de88906bb8de7d556e61efd2159ec170df6da6a19a4c6f1459376850e8",
-      "original_commit": "4a6e7897374a1d61d4c2b38eb0351921f2b3d823",
-      "original_parent": "aed99b9e3d60b28559898dd7ab95edc2efd70991",
+      "file": "0459-LOCAL-bluetooth-qca-startup-wake-ack.patch",
+      "sha256": "8e367573601ff4916dd786aa1590ae9d041393a1a600a06e1e738c07344bcd3c",
+      "original_commit": "e6a570e251a26766b4db2fbbc633ffd1145be084",
+      "original_parent": "7e4727801d6e6d529499db0c6bb1ff842d3d4444",
       "committer_date": "2026-11-21T00:18:15+08:00",
       "tree": "abe948e1f8ed53d18164ad71ffb2ac55b37852b9",
       "upstream": {
@@ -3756,10 +3756,10 @@
       }
     },
     {
-      "file": "0285-LOCAL-drm-msm-kms-open-without-gpu.patch",
-      "sha256": "b9e592fa772a3da3a3b46835d1c1f0d3405688cd083716fe36e75f4a9e061a26",
-      "original_commit": "ba51567f46813f540d03d698e15d5affc38d92a4",
-      "original_parent": "4a6e7897374a1d61d4c2b38eb0351921f2b3d823",
+      "file": "0460-LOCAL-drm-msm-kms-open-without-gpu.patch",
+      "sha256": "9e5b7e6bcdc15b411fb9f9f834e3e0f527639848f20f8ad57ee036e53df48ec9",
+      "original_commit": "478b75c1ec9307dfd6953b2ad2789322f1d1bad3",
+      "original_parent": "e6a570e251a26766b4db2fbbc633ffd1145be084",
       "committer_date": "2026-11-21T00:18:16+08:00",
       "tree": "50b7af2d17d40d613162d94387193aa43ca885a7",
       "upstream": {
@@ -3769,10 +3769,10 @@
       }
     },
     {
-      "file": "0286-LOCAL-drm-msm-adreno-legacy-regulators.patch",
-      "sha256": "871ea17617f866000bad074ab4e4d061d0021c460dad73f223007a45f5927aaa",
-      "original_commit": "f9d6108f1b0094411bda8df2690bb4f7e3989031",
-      "original_parent": "ba51567f46813f540d03d698e15d5affc38d92a4",
+      "file": "0461-LOCAL-drm-msm-adreno-legacy-regulators.patch",
+      "sha256": "e3fdf6d0c9efd48379c484fe0d4443234807539dd2931759414f5982ee891237",
+      "original_commit": "0ed870f2adf497d7c96963437d3272e39cba4939",
+      "original_parent": "478b75c1ec9307dfd6953b2ad2789322f1d1bad3",
       "committer_date": "2026-11-21T00:25:32+08:00",
       "tree": "e3598c9f477b96575b818f4e19fc63c226484ab6",
       "upstream": {
@@ -3782,10 +3782,10 @@
       }
     },
     {
-      "file": "0287-LOCAL-spi-geni-qcom-complete-gpi-transfer.patch",
-      "sha256": "e7b26b05a7568260f5c90ca3c336cbd0882b657ecd4890209a30788c55dcb73a",
-      "original_commit": "a2e2216f934cbb74152b7871a99ad8abe1251a75",
-      "original_parent": "f9d6108f1b0094411bda8df2690bb4f7e3989031",
+      "file": "0462-LOCAL-spi-geni-qcom-complete-gpi-transfer.patch",
+      "sha256": "635a431b698bf13765f91f026377dbb8f392f1874d6002f0f50aa8efc9ec3d6d",
+      "original_commit": "fea0d0c54847d3def44447b71e2de77892c0e749",
+      "original_parent": "0ed870f2adf497d7c96963437d3272e39cba4939",
       "committer_date": "2026-11-21T02:35:25+08:00",
       "tree": "0970085ae067b1a57744b88611b7376ad41a08e5",
       "upstream": {
@@ -3795,12 +3795,12 @@
       }
     },
     {
-      "file": "0288-LOCAL-audioreach-configure-dolby-dap.patch",
+      "file": "0463-LOCAL-audioreach-configure-dolby-dap.patch",
       "tree": "47bdc5da7496ee9576be9f1dc2368ad5ec5ecf74",
-      "original_commit": "609c3785cbb37b85b7d4d295ab3d8b5c15d89cfd",
-      "original_parent": "a2e2216f934cbb74152b7871a99ad8abe1251a75",
+      "original_commit": "a962751efce7470c665f67217a50f65066de2e75",
+      "original_parent": "fea0d0c54847d3def44447b71e2de77892c0e749",
       "committer_date": "2026-11-21T05:40:00+08:00",
-      "sha256": "a0b7eebaf7f659d8a23e1ede792e163108fe9a0ded8f0402e31ea500f77837c5",
+      "sha256": "836138f0872534f8d4431a592a451d80d5d7e731c2b028f064b098529798fb17",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI",
@@ -3808,15 +3808,15 @@
       }
     },
     {
-      "file": "0289-LOCAL-input-nt36532e-keep-panel-follower-off-event-wq.patch",
+      "file": "0464-LOCAL-input-nt36532e-keep-panel-follower-off-event-wq.patch",
       "sha256": "a0300eab79ae0aac28f95f7728a9476c27cbedd7160b78b6764b3a95d894aeb3",
       "upstream": {
         "status": "downstream",
         "url": "https://github.com/slwyts/Project-SunUEFI/pull/28",
         "drop_when": "The selected nt36532e driver synchronizes touch resume without waiting for charger property queries and never programs charger mode while the panel is off."
       },
-      "original_commit": "daa8bd47362d63bc3e4afda2faf480e26215c588",
-      "original_parent": "609c3785cbb37b85b7d4d295ab3d8b5c15d89cfd",
+      "original_commit": "4fa107def5f72a6f31720c07997bb8695be3fad7",
+      "original_parent": "a962751efce7470c665f67217a50f65066de2e75",
       "tree": "e08cdb7d7004e4d7712f837e001fbcb140210865",
       "committer_date": "2026-11-24T17:22:58+08:00"
     }

@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Thu, 22 Oct 2026 18:25:53 +0800
+Subject: HID: nanosic: release all contacts with a full touch frame
+
+Piano has a 27-byte touch report and the other supported variant
+has a 21-byte report. Send an empty report of the active variant
+size so lid close releases contacts represented in the tail.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/b5949f98afb60a23287052de5c3532a0567c2975
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/hid/hid-nanosic-wn8030.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/hid/hid-nanosic-wn8030.c b/drivers/hid/hid-nanosic-wn8030.c
+index cff071e485d0ab9807d6191b9da53540dbe3df39..b2d11915c9260111b78188aefd4a7d3ea1e10ee6 100644
+--- a/drivers/hid/hid-nanosic-wn8030.c
++++ b/drivers/hid/hid-nanosic-wn8030.c
+@@ -1512,7 +1512,7 @@ static void nanosic_wn8030_release_inputs(struct nanosic_wn8030 *nanosic)
+ {
+ 	u8 keyboard[9] = { 0x05 };
+ 	u8 consumer[3] = { 0x06 };
+-	u8 touchpad[21] = { 0x19 };
++	u8 touchpad[27] = { 0x19 };
+ 
+ 	if (nanosic->hid_keyboard) {
+ 		hid_input_report(nanosic->hid_keyboard, HID_INPUT_REPORT,
+@@ -1522,7 +1522,7 @@ static void nanosic_wn8030_release_inputs(struct nanosic_wn8030 *nanosic)
+ 	}
+ 	if (nanosic->hid_touchpad)
+ 		hid_input_report(nanosic->hid_touchpad, HID_INPUT_REPORT,
+-				 touchpad, sizeof(touchpad), 0);
++				 touchpad, nanosic->variant->touchpad_len, 0);
+ 	WRITE_ONCE(nanosic->micmute_key_down, false);
+ 	nanosic->fn_held = 0;
+ }

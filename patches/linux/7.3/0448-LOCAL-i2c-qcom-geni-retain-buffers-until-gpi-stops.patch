@@ -1,0 +1,537 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Thu, 19 Nov 2026 22:01:44 +0800
+Subject: i2c: qcom-geni: retain DMA buffers while GPI may still access them
+
+Give each GENI I2C DMA transfer its own buffer. Wait for completion before reusing a buffer and keep mappings when DMA termination fails. Recovery can release these buffers after the DMA engine confirms shutdown.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/19b810da9b9078c5925edb71f6e3a56259bb2f81
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+---
+ drivers/i2c/busses/i2c-qcom-geni.c | 295 +++++++++++++++++------------
+ 1 file changed, 178 insertions(+), 117 deletions(-)
+
+diff --git a/drivers/i2c/busses/i2c-qcom-geni.c b/drivers/i2c/busses/i2c-qcom-geni.c
+index c4c6202ff15a8c546c4aae28b31765a3546b7c76..67a27eabd30f18b2009d4a7f9bf755ff4e7affc8 100644
+--- a/drivers/i2c/busses/i2c-qcom-geni.c
++++ b/drivers/i2c/busses/i2c-qcom-geni.c
+@@ -6,6 +6,7 @@
+ 
+ #include <linux/acpi.h>
+ #include <linux/clk.h>
++#include <linux/delay.h>
+ #include <linux/dmaengine.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/dma/qcom-gpi-dma.h>
+@@ -96,21 +97,25 @@ struct geni_i2c_desc {
+ 
+ #define QCOM_I2C_MIN_NUM_OF_MSGS_MULTI_DESC	2
+ 
++struct geni_i2c_gpi_buffer {
++	void *data;
++	dma_addr_t addr;
++	u16 len;
++};
++
+ /**
+  * struct geni_i2c_gpi_multi_desc_xfer - Structure for multi transfer support
+  *
+  * @msg_idx_cnt: Current message index being processed in the transfer
+  * @unmap_msg_cnt: Number of messages that have been unmapped
+  * @irq_cnt: Number of transfer completion interrupts received
+- * @dma_buf: Array of virtual addresses for DMA-safe buffers
+- * @dma_addr: Array of DMA addresses corresponding to the buffers
++ * @buffers: Outstanding write buffers
+  */
+ struct geni_i2c_gpi_multi_desc_xfer {
+ 	u32 msg_idx_cnt;
+ 	u32 unmap_msg_cnt;
+ 	u32 irq_cnt;
+-	void **dma_buf;
+-	dma_addr_t *dma_addr;
++	struct geni_i2c_gpi_buffer *buffers;
+ };
+ 
+ struct geni_i2c_dev {
+@@ -138,8 +143,11 @@ struct geni_i2c_dev {
+ 	struct dma_chan *rx_c;
+ 	bool no_dma;
+ 	bool gpi_mode;
++	bool gpi_failed;
+ 	bool is_tx_multi_desc_xfer;
+ 	u32 num_msgs;
++	struct geni_i2c_gpi_buffer gpi_tx;
++	struct geni_i2c_gpi_buffer gpi_rx;
+ 	struct geni_i2c_gpi_multi_desc_xfer i2c_multi_desc_config;
+ 	const struct geni_i2c_desc *dev_data;
+ };
+@@ -346,7 +354,7 @@ static irqreturn_t geni_i2c_irq(int irq, void *dev)
+ 	if (!cur ||
+ 	    m_stat & (M_CMD_FAILURE_EN | M_CMD_ABORT_EN) ||
+ 	    dm_rx_st & (DM_I2C_CB_ERR)) {
+-		if (m_stat & M_GP_IRQ_1_EN)
++		if (cur && m_stat & M_GP_IRQ_1_EN)
+ 			geni_i2c_check_addr_data_nack(gi2c);
+ 		if (m_stat & M_GP_IRQ_3_EN)
+ 			geni_i2c_err(gi2c, BUS_PROTO);
+@@ -412,9 +420,9 @@ static irqreturn_t geni_i2c_irq(int irq, void *dev)
+ 		writel_relaxed(dm_rx_st, base + SE_DMA_RX_IRQ_CLR);
+ 
+ 	/* if this is err with done-bit not set, handle that through timeout. */
+-	if (m_stat & M_CMD_DONE_EN ||
+-	    dm_tx_st & TX_DMA_DONE ||
+-	    dm_rx_st & RX_DMA_DONE)
++	if (!gi2c->gpi_mode && (m_stat & M_CMD_DONE_EN ||
++			       dm_tx_st & TX_DMA_DONE ||
++			       dm_rx_st & RX_DMA_DONE))
+ 		complete(&gi2c->done);
+ 	if (m_stat & M_CMD_CANCEL_EN)
+ 		complete(&gi2c->cancel_done);
+@@ -601,6 +609,8 @@ static void i2c_gpi_cb_result(void *cb, const struct dmaengine_result *result)
+ 	struct geni_i2c_dev *gi2c = cb;
+ 	struct geni_i2c_gpi_multi_desc_xfer *tx_multi_xfer;
+ 
++	guard(spinlock_irqsave)(&gi2c->lock);
++
+ 	if (result->result != DMA_TRANS_NOERROR) {
+ 		dev_err(gi2c->se.dev, "DMA txn failed:%d\n", result->result);
+ 		gi2c->err = -EIO;
+@@ -608,99 +618,118 @@ static void i2c_gpi_cb_result(void *cb, const struct dmaengine_result *result)
+ 		dev_dbg(gi2c->se.dev, "DMA xfer has pending: %d\n", result->residue);
+ 	}
+ 
+-	if (gi2c->is_tx_multi_desc_xfer) {
++	if (gi2c->is_tx_multi_desc_xfer && !gi2c->err) {
+ 		tx_multi_xfer = &gi2c->i2c_multi_desc_config;
+-		tx_multi_xfer->irq_cnt++;
++		WRITE_ONCE(tx_multi_xfer->irq_cnt, tx_multi_xfer->irq_cnt + 1);
+ 	}
+ 
+ 	complete(&gi2c->done);
+ }
+ 
+-static void geni_i2c_gpi_unmap(struct geni_i2c_dev *gi2c, struct i2c_msg *msg,
+-			       void *tx_buf, dma_addr_t tx_addr,
+-			       void *rx_buf, dma_addr_t rx_addr)
++static void geni_i2c_gpi_unmap(struct geni_i2c_dev *gi2c,
++			       struct geni_i2c_gpi_buffer *buffer, bool read,
++			       struct i2c_msg *msg)
+ {
+-	if (tx_buf) {
+-		dma_unmap_single(gi2c->se.dev->parent, tx_addr, msg->len, DMA_TO_DEVICE);
+-		i2c_put_dma_safe_msg_buf(tx_buf, msg, !gi2c->err);
+-	}
++	if (!buffer->data)
++		return;
+ 
+-	if (rx_buf) {
+-		dma_unmap_single(gi2c->se.dev->parent, rx_addr, msg->len, DMA_FROM_DEVICE);
+-		i2c_put_dma_safe_msg_buf(rx_buf, msg, !gi2c->err);
+-	}
++	dma_unmap_single(gi2c->se.dev->parent, buffer->addr, buffer->len,
++			 read ? DMA_FROM_DEVICE : DMA_TO_DEVICE);
++	if (msg)
++		i2c_put_dma_safe_msg_buf(buffer->data, msg, true);
++	else
++		kfree(buffer->data);
++	buffer->data = NULL;
+ }
+ 
+ /**
+  * geni_i2c_gpi_multi_desc_unmap() - Unmaps DMA buffers post multi message TX transfers
+  * @gi2c: I2C dev handle
+- * @msgs: Array of I2C  messages
+- * @peripheral: Pointer to gpi_i2c_config
++ * @completed: Number of messages whose DMA accesses have finished
+  */
+-static void geni_i2c_gpi_multi_desc_unmap(struct geni_i2c_dev *gi2c, struct i2c_msg msgs[],
+-					  struct gpi_i2c_config *peripheral)
++static void geni_i2c_gpi_multi_desc_unmap(struct geni_i2c_dev *gi2c, u32 completed)
+ {
+-	u32 msg_xfer_cnt, wr_idx = 0;
+ 	struct geni_i2c_gpi_multi_desc_xfer *tx_multi_xfer = &gi2c->i2c_multi_desc_config;
++	u32 i;
+ 
+-	msg_xfer_cnt = gi2c->err ? tx_multi_xfer->msg_idx_cnt : tx_multi_xfer->irq_cnt;
++	for (i = tx_multi_xfer->unmap_msg_cnt; i < completed; i++)
++		geni_i2c_gpi_unmap(gi2c, &tx_multi_xfer->buffers[i], false, NULL);
++	tx_multi_xfer->unmap_msg_cnt = completed;
++}
+ 
+-	/* Unmap the processed DMA buffers based on the received interrupt count */
+-	for (; tx_multi_xfer->unmap_msg_cnt < msg_xfer_cnt; tx_multi_xfer->unmap_msg_cnt++) {
+-		wr_idx = tx_multi_xfer->unmap_msg_cnt;
+-		geni_i2c_gpi_unmap(gi2c, &msgs[wr_idx],
+-				   tx_multi_xfer->dma_buf[wr_idx],
+-				   tx_multi_xfer->dma_addr[wr_idx],
+-				   NULL, 0);
++static void geni_i2c_gpi_free_buffers(struct geni_i2c_dev *gi2c)
++{
++	struct geni_i2c_gpi_multi_desc_xfer *multi = &gi2c->i2c_multi_desc_config;
+ 
+-		if (tx_multi_xfer->unmap_msg_cnt == gi2c->num_msgs - 1) {
+-			kfree(tx_multi_xfer->dma_buf);
+-			kfree(tx_multi_xfer->dma_addr);
+-			break;
+-		}
++	if (multi->buffers) {
++		geni_i2c_gpi_multi_desc_unmap(gi2c, multi->msg_idx_cnt);
++		kfree(multi->buffers);
++		multi->buffers = NULL;
+ 	}
++	geni_i2c_gpi_unmap(gi2c, &gi2c->gpi_tx, false, NULL);
++	geni_i2c_gpi_unmap(gi2c, &gi2c->gpi_rx, true, NULL);
++}
++
++static int geni_i2c_gpi_terminate(struct geni_i2c_dev *gi2c)
++{
++	int tx_ret, rx_ret;
++
++	tx_ret = dmaengine_terminate_sync(gi2c->tx_c);
++	rx_ret = dmaengine_terminate_sync(gi2c->rx_c);
++	return tx_ret ?: rx_ret;
++}
++
++static int geni_i2c_gpi_recover(struct geni_i2c_dev *gi2c)
++{
++	int ret = geni_i2c_gpi_terminate(gi2c);
++
++	if (ret)
++		return ret;
++
++	geni_i2c_gpi_free_buffers(gi2c);
++	WRITE_ONCE(gi2c->gpi_failed, false);
++	return 0;
+ }
+ 
+ /**
+- * geni_i2c_gpi_multi_xfer_timeout_handler() - Handles multi message transfer timeout
+- * @dev: Pointer to the corresponding dev node
+- * @multi_xfer: Pointer to the geni_i2c_gpi_multi_desc_xfer
+- * @transfer_timeout_msecs: Timeout value in milliseconds
+- * @transfer_comp: Completion object of the transfer
++ * geni_i2c_gpi_wait_multi() - Wait for outstanding GPI write messages
++ * @gi2c: I2C controller
++ * @timeout: Timeout in jiffies
+  *
+  * This function waits for the completion of each processed transfer messages
+  * based on the interrupts generated upon transfer completion.
+  *
+  * Return: On success returns 0, -ETIMEDOUT on timeout.
+  */
+-static int geni_i2c_gpi_multi_xfer_timeout_handler(struct device *dev,
+-						   struct geni_i2c_gpi_multi_desc_xfer *multi_xfer,
+-						   u32 transfer_timeout_msecs,
+-						   struct completion *transfer_comp)
++static int geni_i2c_gpi_wait_multi(struct geni_i2c_dev *gi2c, unsigned long timeout)
+ {
+-	int i;
+-	u32 time_left;
+-
+-	for (i = 0; i < multi_xfer->msg_idx_cnt - 1; i++) {
+-		reinit_completion(transfer_comp);
+-
+-		if (multi_xfer->msg_idx_cnt != multi_xfer->irq_cnt) {
+-			time_left = wait_for_completion_timeout(transfer_comp,
+-								transfer_timeout_msecs);
+-			if (!time_left) {
+-				dev_err(dev, "%s: Transfer timeout\n", __func__);
+-				return -ETIMEDOUT;
+-			}
++	struct geni_i2c_gpi_multi_desc_xfer *multi = &gi2c->i2c_multi_desc_config;
++
++	for (;;) {
++		scoped_guard(spinlock_irqsave, &gi2c->lock) {
++			if (gi2c->err)
++				return gi2c->err;
++			if (multi->irq_cnt == multi->msg_idx_cnt)
++				return 0;
++			if (multi->irq_cnt > multi->msg_idx_cnt)
++				return -EIO;
++			reinit_completion(&gi2c->done);
+ 		}
++		if (!timeout)
++			break;
++		timeout = wait_for_completion_timeout(&gi2c->done, timeout);
+ 	}
+-	return 0;
++	dev_err(gi2c->se.dev, "GPI multi-message transfer timed out\n");
++	return -ETIMEDOUT;
+ }
+ 
+ static int geni_i2c_gpi(struct geni_i2c_dev *gi2c, struct i2c_msg msgs[],
+-			struct dma_slave_config *config, dma_addr_t *dma_addr_p,
+-			void **buf, unsigned int op, struct dma_chan *dma_chan)
++			struct dma_slave_config *config, unsigned int op,
++			struct dma_chan *dma_chan)
+ {
+ 	struct gpi_i2c_config *peripheral;
++	struct geni_i2c_gpi_buffer *buffer;
++	struct i2c_msg dma_msg;
+ 	unsigned int flags;
+ 	void *dma_buf = NULL;
+ 	dma_addr_t addr = 0;
+@@ -726,7 +755,10 @@ static int geni_i2c_gpi(struct geni_i2c_dev *gi2c, struct i2c_msg msgs[],
+ 		goto skip_tx_dma_map;
+ 	}
+ 
+-	dma_buf = i2c_get_dma_safe_msg_buf(&msgs[msg_idx], 1);
++	/* The caller must be able to release its buffer after a failed STOP. */
++	dma_msg = msgs[msg_idx];
++	dma_msg.flags &= ~I2C_M_DMA_SAFE;
++	dma_buf = i2c_get_dma_safe_msg_buf(&dma_msg, 1);
+ 	if (!dma_buf) {
+ 		ret = -ENOMEM;
+ 		goto out;
+@@ -792,9 +824,6 @@ skip_tx_dma_map:
+ 	desc->callback_result = i2c_gpi_cb_result;
+ 	desc->callback_param = gi2c;
+ 
+-	if (!((msgs[msg_idx].flags & I2C_M_RD) && op == I2C_WRITE))
+-		gi2c_gpi_xfer->msg_idx_cnt++;
+-
+ 	cookie = dmaengine_submit(desc);
+ 	if (dma_submit_error(cookie)) {
+ 		dev_err(gi2c->se.dev,
+@@ -803,27 +832,29 @@ skip_tx_dma_map:
+ 		goto err_config;
+ 	}
+ 
+-	if (gi2c->is_tx_multi_desc_xfer) {
+-		gi2c_gpi_xfer->dma_buf[msg_idx] = dma_buf;
+-		gi2c_gpi_xfer->dma_addr[msg_idx] = addr;
++	if (dma_buf) {
++		if (gi2c->is_tx_multi_desc_xfer)
++			buffer = &gi2c_gpi_xfer->buffers[msg_idx];
++		else
++			buffer = op == I2C_WRITE ? &gi2c->gpi_tx : &gi2c->gpi_rx;
++		buffer->data = dma_buf;
++		buffer->addr = addr;
++		buffer->len = msgs[msg_idx].len;
++		gi2c_gpi_xfer->msg_idx_cnt++;
++	}
+ 
++	if (gi2c->is_tx_multi_desc_xfer) {
+ 		dma_async_issue_pending(gi2c->tx_c);
+ 
+ 		if ((msg_idx == (gi2c->num_msgs - 1)) || flags & DMA_PREP_INTERRUPT) {
+-			ret = geni_i2c_gpi_multi_xfer_timeout_handler(gi2c->se.dev, gi2c_gpi_xfer,
+-								      XFER_TIMEOUT, &gi2c->done);
++			ret = geni_i2c_gpi_wait_multi(gi2c, XFER_TIMEOUT);
+ 			if (ret) {
+ 				dev_err(gi2c->se.dev,
+ 					"I2C multi write msg transfer timeout: %d\n",
+ 					ret);
+-				gi2c->err = ret;
+ 				return ret;
+ 			}
+ 		}
+-	} else {
+-		/* Non multi descriptor message transfer */
+-		*buf = dma_buf;
+-		*dma_addr_p = addr;
+ 	}
+ 	return 0;
+ 
+@@ -836,7 +867,6 @@ err_config:
+ 	}
+ 
+ out:
+-	gi2c->err = ret;
+ 	return ret;
+ }
+ 
+@@ -846,8 +876,6 @@ static int geni_i2c_gpi_xfer(struct geni_i2c_dev *gi2c, struct i2c_msg msgs[], i
+ 	struct gpi_i2c_config peripheral = {};
+ 	int i, ret = 0;
+ 	unsigned long time_left;
+-	dma_addr_t tx_addr, rx_addr;
+-	void *tx_buf = NULL, *rx_buf = NULL;
+ 	struct geni_i2c_gpi_multi_desc_xfer *tx_multi_xfer;
+ 	const struct geni_i2c_clk_fld *itr = gi2c->clk_fld;
+ 
+@@ -893,19 +921,19 @@ static int geni_i2c_gpi_xfer(struct geni_i2c_dev *gi2c, struct i2c_msg msgs[], i
+ 	}
+ 
+ 	if (gi2c->is_tx_multi_desc_xfer) {
+-		tx_multi_xfer->dma_buf = kcalloc(num, sizeof(void *), GFP_KERNEL);
+-		tx_multi_xfer->dma_addr = kzalloc_objs(dma_addr_t, num);
+-		if (!tx_multi_xfer->dma_buf || !tx_multi_xfer->dma_addr) {
+-			ret = -ENOMEM;
+-			goto err;
+-		}
++		tx_multi_xfer->buffers = kzalloc_objs(*tx_multi_xfer->buffers, num);
++		if (!tx_multi_xfer->buffers)
++			return -ENOMEM;
+ 	}
+ 
+ 	for (i = 0; i < num; i++) {
+-		gi2c->cur = &msgs[i];
+-		gi2c->err = 0;
+-		reinit_completion(&gi2c->done);
+-		dev_dbg(gi2c->se.dev, "msg[%d].len:%d\n", i, gi2c->cur->len);
++		scoped_guard(spinlock_irqsave, &gi2c->lock) {
++			gi2c->cur = &msgs[i];
++			if (!gi2c->is_tx_multi_desc_xfer)
++				gi2c->err = 0;
++			reinit_completion(&gi2c->done);
++		}
++		dev_dbg(gi2c->se.dev, "msg[%d].len:%d\n", i, msgs[i].len);
+ 
+ 		peripheral.stretch = 0;
+ 		if (i < num - 1)
+@@ -915,14 +943,12 @@ static int geni_i2c_gpi_xfer(struct geni_i2c_dev *gi2c, struct i2c_msg msgs[], i
+ 		if (i > 0 && (!(msgs[i].flags & I2C_M_RD)))
+ 			peripheral.multi_msg = false;
+ 
+-		ret =  geni_i2c_gpi(gi2c, msgs, &config,
+-				    &tx_addr, &tx_buf, I2C_WRITE, gi2c->tx_c);
++		ret = geni_i2c_gpi(gi2c, msgs, &config, I2C_WRITE, gi2c->tx_c);
+ 		if (ret)
+ 			goto err;
+ 
+ 		if (msgs[i].flags & I2C_M_RD) {
+-			ret =  geni_i2c_gpi(gi2c, msgs, &config,
+-					    &rx_addr, &rx_buf, I2C_READ, gi2c->rx_c);
++			ret = geni_i2c_gpi(gi2c, msgs, &config, I2C_READ, gi2c->rx_c);
+ 			if (ret)
+ 				goto err;
+ 
+@@ -934,31 +960,33 @@ static int geni_i2c_gpi_xfer(struct geni_i2c_dev *gi2c, struct i2c_msg msgs[], i
+ 			time_left = wait_for_completion_timeout(&gi2c->done, XFER_TIMEOUT);
+ 			if (!time_left) {
+ 				dev_err(gi2c->se.dev, "%s:I2C timeout\n", __func__);
+-				gi2c->err = -ETIMEDOUT;
++				ret = -ETIMEDOUT;
++				goto err;
+ 			}
+ 		}
+ 
+-		if (gi2c->err) {
+-			ret = gi2c->err;
++		ret = READ_ONCE(gi2c->err);
++		if (ret)
+ 			goto err;
+-		}
+ 
+-		if (!gi2c->is_tx_multi_desc_xfer)
+-			geni_i2c_gpi_unmap(gi2c, &msgs[i], tx_buf, tx_addr, rx_buf, rx_addr);
+-		else if (tx_multi_xfer->unmap_msg_cnt != tx_multi_xfer->irq_cnt)
+-			geni_i2c_gpi_multi_desc_unmap(gi2c, msgs, &peripheral);
++		if (gi2c->is_tx_multi_desc_xfer) {
++			geni_i2c_gpi_multi_desc_unmap(gi2c, READ_ONCE(tx_multi_xfer->irq_cnt));
++		} else {
++			geni_i2c_gpi_unmap(gi2c, &gi2c->gpi_tx, false, NULL);
++			geni_i2c_gpi_unmap(gi2c, &gi2c->gpi_rx, true, &msgs[i]);
++		}
+ 	}
+ 
++	geni_i2c_gpi_free_buffers(gi2c);
+ 	return num;
+ 
+ err:
+ 	dev_err(gi2c->se.dev, "GPI transfer failed: %d\n", ret);
+-	dmaengine_terminate_sync(gi2c->rx_c);
+-	dmaengine_terminate_sync(gi2c->tx_c);
+-	if (gi2c->is_tx_multi_desc_xfer)
+-		geni_i2c_gpi_multi_desc_unmap(gi2c, msgs, &peripheral);
+-	else
+-		geni_i2c_gpi_unmap(gi2c, &msgs[i], tx_buf, tx_addr, rx_buf, rx_addr);
++	if (geni_i2c_gpi_recover(gi2c)) {
++		/* GPI blocks old callbacks even when it cannot stop the channels. */
++		WRITE_ONCE(gi2c->gpi_failed, true);
++		dev_err(gi2c->se.dev, "GPI stop unconfirmed; retaining transfer buffers\n");
++	}
+ 
+ 	return ret;
+ }
+@@ -993,15 +1021,23 @@ static int geni_i2c_xfer(struct i2c_adapter *adap,
+ 			 int num)
+ {
+ 	struct geni_i2c_dev *gi2c = i2c_get_adapdata(adap);
++	unsigned long flags;
+ 	int ret;
+ 
+-	ret = pm_runtime_get_sync(gi2c->se.dev);
+-	if (ret < 0) {
+-		dev_err(gi2c->se.dev, "error turning SE resources:%d\n", ret);
+-		pm_runtime_put_noidle(gi2c->se.dev);
+-		/* Set device in suspended since resume failed */
+-		pm_runtime_set_suspended(gi2c->se.dev);
+-		return ret;
++	if (gi2c->gpi_failed) {
++		/* Reuse the runtime-PM reference held since the failure. */
++		ret = geni_i2c_gpi_recover(gi2c);
++		if (ret)
++			return ret;
++	} else {
++		ret = pm_runtime_get_sync(gi2c->se.dev);
++		if (ret < 0) {
++			dev_err(gi2c->se.dev, "error turning SE resources:%d\n", ret);
++			pm_runtime_put_noidle(gi2c->se.dev);
++			/* Set device in suspended since resume failed */
++			pm_runtime_set_suspended(gi2c->se.dev);
++			return ret;
++		}
+ 	}
+ 
+ 	ret = gi2c->dev_data->set_rate(&gi2c->se, gi2c->clk_freq_out);
+@@ -1014,9 +1050,12 @@ static int geni_i2c_xfer(struct i2c_adapter *adap,
+ 		ret = geni_i2c_fifo_xfer(gi2c, msgs, num);
+ 
+ out_pm:
+-	pm_runtime_put_autosuspend(gi2c->se.dev);
++	spin_lock_irqsave(&gi2c->lock, flags);
+ 	gi2c->cur = NULL;
+ 	gi2c->err = 0;
++	spin_unlock_irqrestore(&gi2c->lock, flags);
++	if (!gi2c->gpi_failed)
++		pm_runtime_put_autosuspend(gi2c->se.dev);
+ 	return ret;
+ }
+ 
+@@ -1236,15 +1275,34 @@ static void geni_i2c_remove(struct platform_device *pdev)
+ 	struct geni_i2c_dev *gi2c = platform_get_drvdata(pdev);
+ 
+ 	i2c_del_adapter(&gi2c->adap);
++	if (gi2c->gpi_failed) {
++		if (geni_i2c_gpi_recover(gi2c)) {
++			dev_err(gi2c->se.dev, "GPI stop unconfirmed; retaining DMA resources\n");
++			kfree(gi2c->i2c_multi_desc_config.buffers);
++			return;
++		}
++		pm_runtime_put_sync(gi2c->se.dev);
++	}
+ 	release_gpi_dma(gi2c);
+ }
+ 
+ static void geni_i2c_shutdown(struct platform_device *pdev)
+ {
+ 	struct geni_i2c_dev *gi2c = platform_get_drvdata(pdev);
++	int ret;
+ 
+ 	/* Make client i2c transfers start failing */
+ 	i2c_mark_adapter_suspended(&gi2c->adap);
++	if (!gi2c->gpi_failed)
++		return;
++
++	/* A new kernel could reuse these buffers even if this driver retains them. */
++	while ((ret = geni_i2c_gpi_recover(gi2c))) {
++		dev_err_ratelimited(gi2c->se.dev,
++				    "GPI DMA stop unconfirmed (%d); keeping the system on\n", ret);
++		msleep(1000);
++	}
++	pm_runtime_put_noidle(gi2c->se.dev);
+ }
+ 
+ static int __maybe_unused geni_i2c_runtime_suspend(struct device *dev)
+@@ -1252,6 +1310,9 @@ static int __maybe_unused geni_i2c_runtime_suspend(struct device *dev)
+ 	int ret = 0;
+ 	struct geni_i2c_dev *gi2c = dev_get_drvdata(dev);
+ 
++	if (READ_ONCE(gi2c->gpi_failed))
++		return -EBUSY;
++
+ 	disable_irq(gi2c->irq);
+ 
+ 	if (gi2c->dev_data->power_off) {

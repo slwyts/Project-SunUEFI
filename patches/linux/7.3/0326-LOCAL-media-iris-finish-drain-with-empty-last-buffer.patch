@@ -1,0 +1,70 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 07:56:01 +0800
+Subject: media: iris: finish drains when the final buffer has no valid payload
+
+Record LAST before returning an error buffer so the next capture
+QBUF does not emit another LAST into the new resolution queue.
+
+Link: https://github.com/slwyts/Project-SunUEFI/blob/e8fcf33971263f28085dbc0dbe5039438bf76c13/patches/linux/7.2.9/0046-media-iris-psc-last.patch
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ .../media/platform/qcom/iris/iris_buffer.c    | 24 +++++++++++--------
+ .../qcom/iris/iris_hfi_gen2_response.c        |  2 +-
+ 2 files changed, 15 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_buffer.c b/drivers/media/platform/qcom/iris/iris_buffer.c
+index eb8de60c1177f5e1ab83b90a3c8c80e0b4d1f02e..0921cf3cbd36d8e46188520de24954ce9398d9b2 100644
+--- a/drivers/media/platform/qcom/iris/iris_buffer.c
++++ b/drivers/media/platform/qcom/iris/iris_buffer.c
+@@ -896,6 +896,20 @@ int iris_vb2_buffer_done(struct iris_inst *inst, struct iris_buffer *buf)
+ 
+ 	vbuf->flags |= buf->flags;
+ 
++	/* LAST completes the drain even if the final frame has no valid payload.
++	 * Record it before returning an error buffer, otherwise the next capture
++	 * QBUF can emit another LAST into the new resolution's queue.
++	 */
++	if (vbuf->flags & V4L2_BUF_FLAG_LAST) {
++		if (!v4l2_m2m_has_stopped(m2m_ctx)) {
++			const struct v4l2_event ev = { .type = V4L2_EVENT_EOS };
++
++			v4l2_event_queue_fh(&inst->fh, &ev);
++			v4l2_m2m_mark_stopped(m2m_ctx);
++		}
++		inst->last_buffer_dequeued = true;
++	}
++
+ 	if (buf->flags & V4L2_BUF_FLAG_ERROR) {
+ 		state = VB2_BUF_STATE_ERROR;
+ 		vb2_set_plane_payload(vb2, 0, 0);
+@@ -912,16 +926,6 @@ int iris_vb2_buffer_done(struct iris_inst *inst, struct iris_buffer *buf)
+ 		vbuf->sequence = inst->sequence_out++;
+ 	}
+ 
+-	if (vbuf->flags & V4L2_BUF_FLAG_LAST) {
+-		if (!v4l2_m2m_has_stopped(m2m_ctx)) {
+-			const struct v4l2_event ev = { .type = V4L2_EVENT_EOS };
+-
+-			v4l2_event_queue_fh(&inst->fh, &ev);
+-			v4l2_m2m_mark_stopped(m2m_ctx);
+-		}
+-		inst->last_buffer_dequeued = true;
+-	}
+-
+ 	state = VB2_BUF_STATE_DONE;
+ 	vb2->timestamp = buf->timestamp;
+ 	v4l2_m2m_buf_done(vbuf, state);
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c b/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
+index 8c2644c7f6e85983d7ad7584fc0cb570e4813ae4..a80f41f7b88ff80230a6c77adcf20f8ca70482dc 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
+@@ -391,7 +391,7 @@ static int iris_hfi_gen2_handle_output_buffer(struct iris_inst *inst,
+ 	buf->flags = iris_hfi_gen2_get_driver_buffer_flags(inst, hfi_buffer->flags);
+ 
+ 	if (!buf->data_size && inst->state == IRIS_INST_STREAMING &&
+-	    !(hfi_buffer->flags & HFI_BUF_FW_FLAG_LAST)) {
++	    !(hfi_buffer->flags & (HFI_BUF_FW_FLAG_LAST | HFI_BUF_FW_FLAG_PSC_LAST))) {
+ 		buf->flags |= V4L2_BUF_FLAG_ERROR;
+ 	}
+ 

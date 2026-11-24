@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Thu, 12 Nov 2026 00:06:47 +0800
+Subject: dt-bindings: soc: qcom: allow Piano FFC cooling limits
+
+Raise the allowed total battery charge-current cooling table limit
+to 12.4 A for Piano fast full charging.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/9d4e5d1f72cb2bd592a5e0850336ed87b93c823d
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml b/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
+index 3f4170c920d18553c549ce5cc946a494dc14d7a2..a7a06878dca6efd2939b8eb620106bad606da755 100644
+--- a/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
++++ b/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
+@@ -96,7 +96,7 @@ properties:
+     minItems: 2
+     maxItems: 32
+     items:
+-      maximum: 8000000
++      maximum: 12400000
+       multipleOf: 1000
+     description: |
+       Strictly decreasing total battery charge current limits for the Xiaomi

@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: soc: qcom: describe SM8750 UBWC capabilities
+
+Carry the SM8750 compression parameters used by the downstream display driver.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/soc/qcom/ubwc_config.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/soc/qcom/ubwc_config.c b/drivers/soc/qcom/ubwc_config.c
+index 23901a4c51f7305d95ac65e2a651fc557863a4ac..6309b6994aa6aedb841ab84051b388daace79d43 100644
+--- a/drivers/soc/qcom/ubwc_config.c
++++ b/drivers/soc/qcom/ubwc_config.c
+@@ -166,6 +166,8 @@ static const struct of_device_id qcom_ubwc_configs[] __maybe_unused = {
+ 	{ .compatible = "qcom,sm8750", .data = &ubwc_5_0_hbb16, },
+ 	{ .compatible = "qcom,x1e80100", .data = &ubwc_4_0_hbb16, },
+ 	{ .compatible = "qcom,x1p42100", .data = &ubwc_4_0_hbb16, },
++	{ .compatible = "qcom,sun", .data = &ubwc_5_0_hbb16, },
++	{ .compatible = "qcom,sunp", .data = &ubwc_5_0_hbb16, },
+ 	{ }
+ };
+ 

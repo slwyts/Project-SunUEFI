@@ -1,0 +1,73 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Sat, 21 Nov 2026 00:14:56 +0800
+Subject: [PATCH] scsi: ufs: core: Skip the unsupported health event on
+ KLUGG8NHHB-F0G1
+
+Samsung KLUGG8NHHB-F0G1 firmware 1500 reports UFS 4.1 but
+rejects writes to bExceptionEventControl with QUERY_RESULT_INVALID_VALUE
+when the host enables the critical health event. The write is retried
+three times during initialization. The host does not enable temperature
+notifications and the device does not advertise device-level exception
+support. The urgent background operations event remains enabled.
+
+Use the product revision string descriptor to limit the workaround to
+the affected firmware. Skip only the asynchronous critical health event
+and retain the health descriptor and other exception events. Keep the
+standard probe if the revision is different or cannot be read.
+
+Fixes: edfaf868f3ae ("scsi: ufs: core: Critical health condition")
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/ufs/core/ufshcd.c | 30 ++++++++++++++++++++++++++----
+ 1 file changed, 26 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/ufs/core/ufshcd.c b/drivers/ufs/core/ufshcd.c
+index e61d6b60d588730098ca3990c925ca22ff4e6db2..42b9238a77c2ca7df5b22952d6cb826ca3854041 100644
+--- a/drivers/ufs/core/ufshcd.c
++++ b/drivers/ufs/core/ufshcd.c
+@@ -8691,6 +8691,31 @@ static void ufshcd_temp_notif_probe(struct ufs_hba *hba, const u8 *desc_buf)
+ 	}
+ }
+ 
++static void ufshcd_critical_health_probe(struct ufs_hba *hba, const u8 *desc_buf)
++{
++	const struct ufs_dev_info *dev_info = &hba->dev_info;
++	u8 rev_index = desc_buf[DEVICE_DESC_PARAM_PRDCT_REV];
++	bool unsupported;
++	u8 *revision;
++
++	if (dev_info->wspecversion < 0x410)
++		return;
++
++	hba->critical_health_count = 0;
++
++	/* The firmware rejects HEALTH_CRITICAL in bExceptionEventControl. */
++	if (dev_info->wmanufacturerid == UFS_VENDOR_SAMSUNG && dev_info->model &&
++	    !strcmp(dev_info->model, "KLUGG8NHHB-F0G1") && rev_index &&
++	    ufshcd_read_string_desc(hba, rev_index, &revision, SD_ASCII_STD) > 0) {
++		unsupported = !strcmp(revision, "1500");
++		kfree(revision);
++		if (unsupported)
++			return;
++	}
++
++	ufshcd_enable_ee(hba, MASK_EE_HEALTH_CRITICAL);
++}
++
+ static void ufshcd_device_lvl_exception_probe(struct ufs_hba *hba, u8 *desc_buf)
+ {
+ 	u32 ext_ufs_feature;
+@@ -8979,10 +9004,7 @@ static int ufs_get_device_desc(struct ufs_hba *hba)
+ 
+ 	ufshcd_temp_notif_probe(hba, desc_buf);
+ 
+-	if (dev_info->wspecversion >= 0x410) {
+-		hba->critical_health_count = 0;
+-		ufshcd_enable_ee(hba, MASK_EE_HEALTH_CRITICAL);
+-	}
++	ufshcd_critical_health_probe(hba, desc_buf);
+ 
+ 	ufs_init_rtc(hba, desc_buf);
+ 

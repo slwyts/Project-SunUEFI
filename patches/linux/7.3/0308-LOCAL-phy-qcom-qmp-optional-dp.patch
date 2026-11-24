@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: phy: qcom-qmp-combo: make the DisplayPort bridge optional
+
+Register the DisplayPort bridge only when a device graph is present.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/phy/qualcomm/phy-qcom-qmp-combo.c | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+index c39ced168d035ef200af301feb7bf45bb764aaaa..8009e29b7eb416133796d2bea29374f34df85f8b 100644
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+@@ -5283,9 +5283,12 @@ static int qmp_combo_probe(struct platform_device *pdev)
+ 		}
+ 	}
+ 
+-	ret = drm_aux_bridge_register(dev);
+-	if (ret)
+-		goto err_node_put;
++	/* USB-only descriptions do not have a downstream display bridge. */
++	if (of_graph_is_present(dev->of_node)) {
++		ret = drm_aux_bridge_register(dev);
++		if (ret)
++			goto err_node_put;
++	}
+ 
+ 	/*
+ 	 * Enable runtime PM before creating the PHYs, phy_create() only enables

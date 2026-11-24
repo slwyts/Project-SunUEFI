@@ -1,0 +1,99 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Mon, 9 Nov 2026 02:15:41 +0800
+Subject: ASoC: qcom: issue the APM state query when the transport is ready
+
+Wait for a registered APR transport before querying ADSP state. Set the correct command header and handle the immediate error response so the readiness check does not time out during probe.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e23ee71facf14deb81ff94afe2d0d29e0af0d001
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e23ee71facf14deb81ff94afe2d0d29e0af0d001
+Link: https://github.com/slwyts/Project-SunUEFI/commit/73557ef700fffec97757e3b81ca52e6b1681c684
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ sound/soc/qcom/qdsp6/q6apm.c | 38 +++++++++++++++++++++++++++++++++---
+ 1 file changed, 35 insertions(+), 3 deletions(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6apm.c b/sound/soc/qcom/qdsp6/q6apm.c
+index 6066f0a02a1706010c58dd9a8004d632995d9ecd..c79b94d57356215059da0cbfe3a1699b022b13b9 100644
+--- a/sound/soc/qcom/qdsp6/q6apm.c
++++ b/sound/soc/qcom/qdsp6/q6apm.c
+@@ -27,6 +27,9 @@ struct apm_graph_mgmt_cmd {
+ 
+ #define APM_GRAPH_MGMT_PSIZE(p, n) ALIGN(struct_size(p, sub_graph_id_list, n), 8)
+ 
++/* AudioReach AR_ENOTEXIST, returned before the APM service is registered. */
++#define APM_STATE_SERVICE_NOT_FOUND 19
++
+ static struct q6apm *g_apm;
+ static DEFINE_MUTEX(g_apm_lock);
+ 
+@@ -152,8 +155,8 @@ static void q6apm_put_audioreach_graph(struct kref *ref)
+ static int q6apm_get_apm_state(struct q6apm *apm)
+ {
+ 	int ret;
+-	struct gpr_pkt *pkt __free(kfree) = audioreach_alloc_apm_cmd_pkt(0,
+-								APM_CMD_GET_SPF_STATE, 0);
++	struct gpr_pkt *pkt __free(kfree) = audioreach_alloc_apm_pkt(0,
++			APM_CMD_GET_SPF_STATE, 0, apm->gdev->svc.id);
+ 	if (IS_ERR(pkt))
+ 		return PTR_ERR(pkt);
+ 
+@@ -166,13 +169,30 @@ static int q6apm_get_apm_state(struct q6apm *apm)
+ 
+ bool q6apm_is_adsp_ready(void)
+ {
++	struct device *dev, *parent;
+ 	bool ready = false;
+ 
+ 	/* A DSP restart removes the APM device. Keep it alive for the whole
+ 	 * query, including the synchronous command's wait for a reply. */
+ 	mutex_lock(&g_apm_lock);
+-	if (g_apm)
++	if (!g_apm)
++		goto out;
++
++	dev = g_apm->dev;
++	parent = dev->parent;
++	/* Synchronous child probes run before GLINK advertises receive intents.
++	 * Do not wait for a parent probe which is waiting for this child.
++	 */
++	if (!device_trylock(parent))
++		goto out;
++	if (!device_trylock(dev))
++		goto unlock_parent;
++	if (device_is_bound(parent) && device_is_bound(dev))
+ 		ready = q6apm_get_apm_state(g_apm) > 0;
++	device_unlock(dev);
++unlock_parent:
++	device_unlock(parent);
++out:
+ 	mutex_unlock(&g_apm_lock);
+ 
+ 	return ready;
+@@ -954,6 +974,8 @@ static int apm_callback(const struct gpr_resp_pkt *data, void *priv, int op)
+ 
+ 	switch (hdr->opcode) {
+ 	case APM_CMD_RSP_GET_SPF_STATE:
++		if (data->payload_size < sizeof(u32))
++			return -EINVAL;
+ 		apm->result.opcode = hdr->opcode;
+ 		apm->result.status = 0;
+ 		/* First word of result it state */
+@@ -961,7 +983,17 @@ static int apm_callback(const struct gpr_resp_pkt *data, void *priv, int op)
+ 		wake_up(&apm->wait);
+ 		break;
+ 	case GPR_BASIC_RSP_RESULT:
++		if (data->payload_size < sizeof(*result))
++			return -EINVAL;
+ 		switch (result->opcode) {
++		case APM_CMD_GET_SPF_STATE:
++			apm->state = 0;
++			apm->result = *result;
++			/* A missing service is not ready. The probing caller defers. */
++			if (result->status == APM_STATE_SERVICE_NOT_FOUND)
++				apm->result.status = 0;
++			wake_up(&apm->wait);
++			break;
+ 		case APM_CMD_SHARED_MEM_MAP_REGIONS:
+ 		case APM_CMD_GRAPH_START:
+ 		case APM_CMD_GRAPH_OPEN:

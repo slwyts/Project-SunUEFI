@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Thu, 22 Oct 2026 11:23:20 +0800
+Subject: [PATCH] soc: qcom: pmic_glink_altmode: enumerate only USB connector
+ children
+
+Piano also describes a firmware-controlled pen regulator below PMIC GLINK. Ignore non-connector resources instead of failing the USB Type-C probe on their missing reg property. Port-number validation remains unchanged for actual connectors.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/soc/qcom/pmic_glink_altmode.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/soc/qcom/pmic_glink_altmode.c b/drivers/soc/qcom/pmic_glink_altmode.c
+index 13c434f8d03..c06c0906872 100644
+--- a/drivers/soc/qcom/pmic_glink_altmode.c
++++ b/drivers/soc/qcom/pmic_glink_altmode.c
+@@ -594,6 +594,12 @@ static int pmic_glink_altmode_probe(struct auxiliary_device *adev,
+ 	mutex_init(&altmode->lock);
+ 
+ 	device_for_each_child_node(dev, fwnode) {
++		/* Other GLINK clients may describe resources such as regulators
++		 * alongside the USB connectors.
++		 */
++		if (!fwnode_device_is_compatible(fwnode, "usb-c-connector"))
++			continue;
++
+ 		ret = fwnode_property_read_u32(fwnode, "reg", &port);
+ 		if (ret < 0) {
+ 			dev_err(dev, "missing reg property of %pOFn\n", fwnode);

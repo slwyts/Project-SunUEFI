@@ -1,0 +1,176 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Sat, 7 Nov 2026 08:32:43 +0000
+Subject: [PATCH] media: camss: Preserve SM8750 TFE write-master address units
+
+The Gen4 address register stores addresses in 256-byte units. The
+SM8750 driver does not program the adjacent low address bits, so reject
+addresses with those bits set before queueing a buffer. The write-master
+callback takes a 32-bit byte address; verify the full negotiated buffer
+range before deriving either plane address.
+
+Keep the PIX row stride aligned to the same unit so that Y and UV
+offsets and frame increments are represented exactly. Round the stride
+ceiling down before adjusting an application-supplied stride.
+
+RDI uses the same address encoding, but its frame mode retains the
+existing stride and frame increment.
+
+Assisted-by: LLM
+Use the same write-master units with the VFE 980 backend.
+
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+---
+ drivers/media/platform/qcom/camss/camss-vfe-980.c | 15 ++++++++++-----
+ drivers/media/platform/qcom/camss/camss-vfe.c     |  6 ++++++
+ drivers/media/platform/qcom/camss/camss-vfe.h     |  2 ++
+ drivers/media/platform/qcom/camss/camss-video.c   | 13 +++++++++++--
+ drivers/media/platform/qcom/camss/camss-video.h   |  1 +
+ 5 files changed, 30 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe-980.c b/drivers/media/platform/qcom/camss/camss-vfe-980.c
+index 5df860a438..a3aa0d1e65 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe-980.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe-980.c
+@@ -466,7 +466,8 @@ static void vfe_pix_wm_start(struct vfe_device *vfe, u8 wm, u32 width,
+ 	writel(0, vfe->base + VFE_BUS_WM_IMAGE_CFG_1(wm));
+ 	writel((height << 16) | width, vfe->base + VFE_BUS_WM_IMAGE_CFG_0(wm));
+ 	writel(stride, vfe->base + VFE_BUS_WM_IMAGE_CFG_2(wm));
+-	writel(stride * height >> 8, vfe->base + VFE_BUS_WM_FRAME_INCR(wm));
++	writel(stride * height >> VFE_GEN4_ADDR_SHIFT,
++	       vfe->base + VFE_BUS_WM_FRAME_INCR(wm));
+ 	writel(WM_PACKER_PLAIN_8_LSB_MSB_10, vfe->base + VFE_BUS_WM_PACKER_CFG(wm));
+ 
+ 	writel(0, vfe->base + VFE_BUS_WM_FRAMEDROP_PERIOD(wm));
+@@ -631,7 +632,8 @@ static void vfe_wm_start(struct vfe_device *vfe, u8 wm, struct vfe_line *line)
+ 
+ 	writel(0x0, vfe->base + VFE_BUS_WM_TEST_BUS_CTRL);
+ 
+-	writel(ALIGN(pix->plane_fmt[0].bytesperline, 16) * pix->height >> 8,
++	writel(ALIGN(pix->plane_fmt[0].bytesperline, 16) * pix->height >>
++	       VFE_GEN4_ADDR_SHIFT,
+ 	       vfe->base + VFE_BUS_WM_FRAME_INCR(wm));
+ 	writel((WM_IMAGE_CFG_0_DEFAULT_WIDTH & 0xFFFF),
+ 	       vfe->base + VFE_BUS_WM_IMAGE_CFG_0(wm));
+@@ -680,13 +682,16 @@ static void vfe_wm_update(struct vfe_device *vfe, u8 wm, u32 addr,
+ 			&line->video_out.active_fmt.fmt.pix_mp;
+ 		u32 c_addr = addr + pix->plane_fmt[0].bytesperline * pix->height;
+ 
+-		writel(addr >> 8, vfe->base + VFE_BUS_WM_IMAGE_ADDR(FD_Y_WM));
+-		writel(c_addr >> 8, vfe->base + VFE_BUS_WM_IMAGE_ADDR(FD_C_WM));
++		writel(addr >> VFE_GEN4_ADDR_SHIFT,
++		       vfe->base + VFE_BUS_WM_IMAGE_ADDR(FD_Y_WM));
++		writel(c_addr >> VFE_GEN4_ADDR_SHIFT,
++		       vfe->base + VFE_BUS_WM_IMAGE_ADDR(FD_C_WM));
+ 		return;
+ 	}
+ 
+ 	wm = RDI_WM(wm);
+-	writel(addr >> 8, vfe->base + VFE_BUS_WM_IMAGE_ADDR(wm));
++	writel(addr >> VFE_GEN4_ADDR_SHIFT,
++	       vfe->base + VFE_BUS_WM_IMAGE_ADDR(wm));
+ 
+ 	dev_dbg(vfe->camss->dev, "wm:%d, image buf addr:0x%x\n", wm, addr);
+ }
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index 7ba863de3a..507ab4c287 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -2387,6 +2387,10 @@ static int vfe_bpl_align_pix(struct vfe_device *vfe)
+ 		 */
+ 		ret = 0;
+ 		break;
++	case CAMSS_8750:
++		/* TFE image addresses and frame increments use 256-byte units. */
++		ret = BIT(VFE_GEN4_ADDR_SHIFT);
++		break;
+ 	default:
+ 		break;
+ 	}
+@@ -2469,6 +2473,8 @@ int msm_vfe_register_entities(struct vfe_device *vfe,
+ 		}
+ 
+ 		video_out->ops = &vfe->video_ops;
++		if (vfe->camss->res->version == CAMSS_8750)
++			video_out->dma_addr_alignment = BIT(VFE_GEN4_ADDR_SHIFT);
+ 		video_out->frame_sync = IS_ENABLED(CONFIG_ARM64) &&
+ 					vfe->camss->res->version == CAMSS_8750 &&
+ 					!vfe->res->is_lite &&
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.h b/drivers/media/platform/qcom/camss/camss-vfe.h
+index 7238cb2edb..459fe3150a 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.h
++++ b/drivers/media/platform/qcom/camss/camss-vfe.h
+@@ -32,6 +32,8 @@
+ /* Frame drop value. VAL + UPDATES - 1 should not exceed 31 */
+ #define VFE_FRAME_DROP_VAL 30
+ 
++#define VFE_GEN4_ADDR_SHIFT 8
++
+ #define vfe_line_array(ptr_line)	\
+ 	((const struct vfe_line (*)[]) &(ptr_line)[-(ptr_line)->id])
+ 
+diff --git a/drivers/media/platform/qcom/camss/camss-video.c b/drivers/media/platform/qcom/camss/camss-video.c
+index 444de71643..9f79d5a110 100644
+--- a/drivers/media/platform/qcom/camss/camss-video.c
++++ b/drivers/media/platform/qcom/camss/camss-video.c
+@@ -169,6 +169,12 @@ static int video_buf_init(struct vb2_buffer *vb)
+ 			return -EFAULT;
+ 
+ 		buffer->addr[i] = sg_dma_address(sgt->sgl);
++		if (video->dma_addr_alignment &&
++		    (!IS_ALIGNED(buffer->addr[i], video->dma_addr_alignment) ||
++		     upper_32_bits(buffer->addr[i]) ||
++		     (u64)buffer->addr[i] + format->plane_fmt[i].sizeimage >
++				BIT_ULL(32)))
++			return -EINVAL;
+ 	}
+ 
+ 	if (format->pixelformat == V4L2_PIX_FMT_NV12 ||
+@@ -503,6 +509,7 @@ static int video_g_fmt(struct file *file, void *fh, struct v4l2_format *f)
+ static int __video_try_fmt(struct camss_video *video, struct v4l2_format *f)
+ {
+ 	unsigned int alignment = video->bpl_alignment;
++	unsigned int max_bpl = 65528;
+ 	struct v4l2_pix_format_mplane *pix_mp;
+ 	const struct camss_format_info *fi;
+ 	struct v4l2_plane_pix_format *p;
+@@ -513,12 +520,14 @@ static int __video_try_fmt(struct camss_video *video, struct v4l2_format *f)
+ 	int i, j;
+ 
+ 	pix_mp = &f->fmt.pix_mp;
++	if (video->line_based && video->dma_addr_alignment)
++		max_bpl = rounddown(max_bpl, alignment);
+ 
+ 	if (video->line_based)
+ 		for (i = 0; i < pix_mp->num_planes && i < 3; i++) {
+ 			p = &pix_mp->plane_fmt[i];
+ 			bytesperline[i] = clamp_t(u32, p->bytesperline,
+-						  1, 65528);
++						  1, max_bpl);
+ 			sizeimage[i] = clamp_t(u32, p->sizeimage,
+ 					       bytesperline[i],
+ 					       bytesperline[i] * CAMSS_FRAME_MAX_LINES_PIX);
+@@ -565,7 +574,7 @@ static int __video_try_fmt(struct camss_video *video, struct v4l2_format *f)
+ 		for (i = 0; i < pix_mp->num_planes; i++) {
+ 			p = &pix_mp->plane_fmt[i];
+ 			p->bytesperline = clamp_t(u32, p->bytesperline,
+-						  1, 65528);
++						  1, max_bpl);
+ 			p->sizeimage = clamp_t(u32, p->sizeimage,
+ 					       p->bytesperline,
+ 					       p->bytesperline * CAMSS_FRAME_MAX_LINES_PIX);
+diff --git a/drivers/media/platform/qcom/camss/camss-video.h b/drivers/media/platform/qcom/camss/camss-video.h
+index 69906409f4..048a9ac384 100644
+--- a/drivers/media/platform/qcom/camss/camss-video.h
++++ b/drivers/media/platform/qcom/camss/camss-video.h
+@@ -51,6 +51,7 @@ struct camss_video {
+ 	struct mutex lock;
+ 	struct mutex q_lock;
+ 	unsigned int bpl_alignment;
++	unsigned int dma_addr_alignment;
+ 	unsigned int line_based;
+ 	bool frame_sync;
+ 	const struct camss_format_info *formats;
+-- 
+2.55.0
+

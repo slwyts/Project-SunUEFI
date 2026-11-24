@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: clk: qcom: account for Piano GCC clocks
+
+Keep the clock behavior used by the Piano board port.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/clk/qcom/gcc-sm8750.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/clk/qcom/gcc-sm8750.c b/drivers/clk/qcom/gcc-sm8750.c
+index 6cfe90122268a8dea1f9b4db49f2ef03a0af37fc..7a52d55ad8d6c60e84c76e80f24de0ecc45bb45a 100644
+--- a/drivers/clk/qcom/gcc-sm8750.c
++++ b/drivers/clk/qcom/gcc-sm8750.c
+@@ -2889,6 +2889,7 @@ static struct gdsc gcc_pcie_0_gdsc = {
+ 	.collapse_mask = BIT(0),
+ 	.pd = {
+ 		.name = "gcc_pcie_0_gdsc",
++		.flags = GENPD_FLAG_ACTIVE_WAKEUP,
+ 	},
+ 	.pwrsts = PWRSTS_OFF_ON,
+ 	.flags = POLL_CFG_GDSCR | RETAIN_FF_ENABLE | VOTABLE,
+@@ -2903,6 +2904,7 @@ static struct gdsc gcc_pcie_0_phy_gdsc = {
+ 	.collapse_mask = BIT(2),
+ 	.pd = {
+ 		.name = "gcc_pcie_0_phy_gdsc",
++		.flags = GENPD_FLAG_ACTIVE_WAKEUP,
+ 	},
+ 	.pwrsts = PWRSTS_OFF_ON,
+ 	.flags = POLL_CFG_GDSCR | RETAIN_FF_ENABLE | VOTABLE,

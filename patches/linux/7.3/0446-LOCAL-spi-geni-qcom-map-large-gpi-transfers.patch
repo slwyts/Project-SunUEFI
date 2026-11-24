@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Thu, 19 Nov 2026 21:10:21 +0800
+Subject: [PATCH] spi: geni-qcom: map large GPI transfers as one DMA segment
+
+GENI maps SPI buffers through the QUP wrapper and GPI accepts
+only one scatterlist entry. The wrapper defaults to 64 KiB, so
+the SPI core splits otherwise valid contiguous buffers.
+
+Advertise the existing GENI transfer size to the SPI DMA mapper
+in GPI mode. One data TRE then carries a complete IR waveform
+without extra clocks or an inter-transfer gap.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/spi/spi-geni-qcom.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/spi/spi-geni-qcom.c b/drivers/spi/spi-geni-qcom.c
+index 40ff8414c..ecc38e59e 100644
+--- a/drivers/spi/spi-geni-qcom.c
++++ b/drivers/spi/spi-geni-qcom.c
+@@ -1207,8 +1207,15 @@ static int spi_geni_probe(struct platform_device *pdev)
+ 	/*
+ 	 * TX is required per GSI spec, see setup_gsi_xfer().
+ 	 */
+-	if (mas->cur_xfer_mode == GENI_GPI_DMA)
++	if (mas->cur_xfer_mode == GENI_GPI_DMA) {
+ 		spi->flags = SPI_CONTROLLER_MUST_TX;
++		/*
++		 * The SPI core uses the QUP wrapper to map buffers. A GPI
++		 * transfer can only use one segment, up to max_dma_len.
++		 */
++		if (dma_get_max_seg_size(spi->dma_map_dev) < spi->max_dma_len)
++			dma_set_max_seg_size(spi->dma_map_dev, spi->max_dma_len);
++	}
+ 
+ 	ret = devm_request_irq(dev, mas->irq, geni_spi_isr, 0, dev_name(dev), spi);
+ 	if (ret)

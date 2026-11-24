@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Sat, 21 Nov 2026 02:35:25 +0800
+Subject: [PATCH] spi: geni-qcom: Let the core complete successful GPI messages
+
+The GPI DMA completion callback writes zero to the current SPI message
+status when one transfer succeeds. The SPI core sees a status other than
+-EINPROGRESS and stops processing the message before it accounts for the
+transfer or starts any later transfer. A 238592-byte IR waveform sent on
+Piano completes successfully but spi_message_done reports zero bytes.
+
+Set the message status only on a DMA error or a nonzero residue. Always
+wake the core for the current transfer. The core then accounts for each
+successful transfer, handles chip-select transitions and completes the
+whole message. The existing error and DMA termination paths still apply.
+
+The linked QSPI proposal also leaves status unchanged on success, as part
+of converting the driver to own the entire message. This fix keeps the
+existing transfer_one() model and the core's message handling.
+
+Fixes: 74b86d6af81b ("spi: qcom: geni: set the error code for gpi transfer")
+Link: https://lore.kernel.org/linux-spi/20261106-qspi_upstream_series-v1-1-21f43042dd60@oss.qualcomm.com/
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/spi/spi-geni-qcom.c | 20 ++++++++------------
+ 1 file changed, 8 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/spi/spi-geni-qcom.c b/drivers/spi/spi-geni-qcom.c
+index a5f99338c..6f947d120 100644
+--- a/drivers/spi/spi-geni-qcom.c
++++ b/drivers/spi/spi-geni-qcom.c
+@@ -463,20 +463,16 @@ spi_gsi_callback_result(void *cb, const struct dmaengine_result *result)
+ 	struct spi_controller *spi = cb;
+ 	struct spi_geni_master *mas = spi_controller_get_devdata(spi);
+ 
+-	spi->cur_msg->status = -EIO;
+-	if (result->result != DMA_TRANS_NOERROR) {
+-		dev_err(&spi->dev, "DMA txn failed: %d\n", result->result);
++	if (result->result != DMA_TRANS_NOERROR || result->residue) {
++		spi->cur_msg->status = -EIO;
++		if (result->result != DMA_TRANS_NOERROR)
++			dev_err(&spi->dev, "DMA txn failed: %d\n", result->result);
++		else
++			dev_err(&spi->dev, "DMA xfer has pending: %u\n", result->residue);
+ 		trace_geni_se_regs(&mas->se);
+-		spi_finalize_current_transfer(spi);
+-		return;
+-	}
+-
+-	if (!result->residue) {
+-		spi->cur_msg->status = 0;
+-		dev_dbg(&spi->dev, "DMA txn completed\n");
+ 	} else {
+-		dev_err(&spi->dev, "DMA xfer has pending: %d\n", result->residue);
+-		trace_geni_se_regs(&mas->se);
++		/* Leave completion of the whole message to the SPI core. */
++		dev_dbg(&spi->dev, "DMA txn completed\n");
+ 	}
+ 
+ 	spi_finalize_current_transfer(spi);

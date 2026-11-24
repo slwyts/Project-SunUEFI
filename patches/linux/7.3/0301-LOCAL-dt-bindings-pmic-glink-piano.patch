@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: dt-bindings: soc: qcom: describe Piano PMIC GLINK
+
+Document the PMIC GLINK bindings consumed by the Piano transport.
+
+The cited SunUEFI changes were carried through the 7.3 port.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/f77aff981ba1f054ffb659a1e15eef44af19669f
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ .../bindings/soc/qcom/qcom,pmic-glink.yaml    | 24 +++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml b/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
+index 16ad4f5698fc3db0ed8650804ccfcff1ee29cfcc..b7acf4d2c4af9163b6faf1c47218275c5ebfb331 100644
+--- a/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
++++ b/Documentation/devicetree/bindings/soc/qcom/qcom,pmic-glink.yaml
+@@ -56,6 +56,30 @@ properties:
+   '#address-cells':
+     const: 1
+ 
++  xiaomi,mca-pd-protocol-version:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    enum: [1, 2]
++    default: 1
++    description: |
++      Property numbering of the Xiaomi MCA PD service in the loaded ADSP
++      firmware. Version 1 is used by Piano HyperOS 3. HyperOS 4 uses version
++      2, inserting one property before the data-role and source-PDO controls.
++      This must match the ADSP firmware shipped with the operating system.
++
++  regulators:
++    type: object
++    additionalProperties: false
++    description: Xiaomi MCA firmware-controlled pen transmitter supply.
++    properties:
++      pen-boost:
++        $ref: /schemas/regulator/regulator.yaml#
++        unevaluatedProperties: false
++        properties:
++          regulator-min-microvolt:
++            const: 6500000
++          regulator-max-microvolt:
++            const: 6500000
++
+   '#size-cells':
+     const: 0
+ 

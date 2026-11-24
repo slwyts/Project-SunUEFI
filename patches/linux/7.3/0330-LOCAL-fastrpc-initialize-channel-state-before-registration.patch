@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Thu, 22 Oct 2026 00:30:00 +0800
+Subject: [PATCH] misc: fastrpc: initialise channel state before registering
+ misc devices
+
+Opening a misc device can happen while RPMsg probe is still running.
+Initialise the refcount, lock, lists and invocation state before
+registering these devices so the open path can use the channel state.
+This also publishes the domain and RPMsg device before registration.
+
+Jianping Li identified the problem and originally moved kref_init() in
+the first version of the Qualcomm SSR series. The Piano adaptation
+also moved the remaining channel state used by opens and invocations.
+This patch reproduces that ordering from the existing Piano kernel.
+
+Link: https://lore.kernel.org/r/20261007084447.922-2-jianping.li@oss.qualcomm.com
+Link: https://github.com/qualcomm-linux/kernel/commit/a0741420ba061510b843fa98e40a1c3fa513e131
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/misc/fastrpc.c | 23 +++++++++++------------
+ 1 file changed, 11 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
+index 1cf56227373f02200c4f22a4c8fe25e8c10fde81..bb6403383d80f3078961b0f4686d3a5c801c0e5b 100644
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -2646,6 +2646,17 @@ static int fastrpc_rpmsg_probe(struct rpmsg_device *rpdev)
+ 	data->poll_mode_supported = soc_data->poll_mode_supported ||
+ 		of_machine_get_match(fastrpc_poll_supported_machines);
+ 
++	kref_init(&data->refcount);
++	atomic_set(&data->ctx_seq, 0);
++	atomic_set(&data->teardown, 0);
++	init_waitqueue_head(&data->ssr_wait_queue);
++	INIT_LIST_HEAD(&data->users);
++	INIT_LIST_HEAD(&data->invoke_interrupted_mmaps);
++	spin_lock_init(&data->lock);
++	idr_init(&data->ctx_idr);
++	data->domain_id = domain_id;
++	data->rpdev = rpdev;
++
+ 	switch (domain_id) {
+ 	case ADSP_DOMAIN_ID:
+ 	case MDSP_DOMAIN_ID:
+@@ -2673,20 +2684,8 @@ static int fastrpc_rpmsg_probe(struct rpmsg_device *rpdev)
+ 		goto err_free_data;
+ 	}
+ 
+-	kref_init(&data->refcount);
+-	atomic_set(&data->ctx_seq, 0);
+-
+ 	rdev->dma_mask = &data->dma_mask;
+ 	dma_set_mask_and_coherent(rdev, DMA_BIT_MASK(32));
+-	INIT_LIST_HEAD(&data->users);
+-	INIT_LIST_HEAD(&data->invoke_interrupted_mmaps);
+-	spin_lock_init(&data->lock);
+-	idr_init(&data->ctx_idr);
+-	atomic_set(&data->teardown, 0);
+-	data->invoke_cnt = 0;
+-	init_waitqueue_head(&data->ssr_wait_queue);
+-	data->domain_id = domain_id;
+-	data->rpdev = rpdev;
+ 	dev_set_drvdata(&rpdev->dev, data);
+ 
+ 	err = of_platform_populate(rdev->of_node, NULL, NULL, rdev);

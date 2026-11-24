@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Mon, 9 Nov 2026 03:55:38 +0800
+Subject: dt-bindings: nvmem: describe the Piano bootloader RTC offset
+
+Add the Piano bootloader RTC offset compatible to the reserved
+memory NVMEM binding. The cell carries the read-only offset used
+to recover calendar time from the protected PMIC counter.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/9c93f788af20a4cd686852626270a0fcf4cbe8fc
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ Documentation/devicetree/bindings/nvmem/rmem.yaml | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/nvmem/rmem.yaml b/Documentation/devicetree/bindings/nvmem/rmem.yaml
+index 85f9f5de3906d2f1afce74ce001cf5db06e50806..d70ea292119825de3f7bc2eef1edcb6ac98b0871 100644
+--- a/Documentation/devicetree/bindings/nvmem/rmem.yaml
++++ b/Documentation/devicetree/bindings/nvmem/rmem.yaml
+@@ -19,6 +19,7 @@ properties:
+           - mobileye,eyeq5-bootloader-config
+           - raspberrypi,bootloader-config
+           - raspberrypi,bootloader-public-key
++          - xiaomi,piano-rtc-offset
+       - const: nvmem-rmem
+ 
+   reg:

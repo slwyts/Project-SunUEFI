@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Wed, 21 Oct 2026 19:19:53 +0000
+Subject: [PATCH] ASoC: qcom: q6apm: avoid a readiness query before APR
+ callback registration
+
+apr_device_probe() installs the service callback only after apm_probe()
+returns. Querying SPF readiness inside probe therefore drops the valid
+response and waits five seconds for nothing. The result is unused, and
+q6apm_is_adsp_ready() already queries readiness for the PRM consumer.
+
+Remove the ineffective query. Piano packet tracing confirmed the DSP
+response was received and discarded because the callback was not ready.
+This does not claim to fix the separate capture-triggered DSP watchdog.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ sound/soc/qcom/qdsp6/q6apm.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6apm.c b/sound/soc/qcom/qdsp6/q6apm.c
+index 240d4a469ba..6066f0a02a1 100644
+--- a/sound/soc/qcom/qdsp6/q6apm.c
++++ b/sound/soc/qcom/qdsp6/q6apm.c
+@@ -901,8 +901,9 @@ static int apm_probe(gpr_device_t *gdev)
+ 
+ 	audioreach_set_apm_src_port(gdev->svc_id);
+ 
+-	q6apm_get_apm_state(apm);
+-
++	/* APR installs the response callback only after probe returns.
++	 * q6apm_is_adsp_ready() queries the state once replies can be handled.
++	 */
+ 	ret = snd_soc_register_component(dev, &q6apm_audio_component, NULL, 0);
+ 	if (ret < 0) {
+ 		dev_err(dev, "failed to register q6apm: %d\n", ret);

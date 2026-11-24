@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Sat, 14 Nov 2026 03:41:04 +0800
+Subject: power: supply: sc8541: use the Piano bus overvoltage threshold
+
+Use the factory 13 V bus overvoltage threshold so an allowed 11 V
+PPS request does not trigger the old 11 V hardware threshold.
+Keep the software voltage window and alarm thresholds.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e0d1223ff529dbd3e8fcb0003dc5747d5c1d8361
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/power/supply/sc8541_charger.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/power/supply/sc8541_charger.c b/drivers/power/supply/sc8541_charger.c
+index 7aa48b927814f5fdda159e559a34495a13107f30..8b3fc406da5c8c9e4a5ee692e69c608d52a735d7 100644
+--- a/drivers/power/supply/sc8541_charger.c
++++ b/drivers/power/supply/sc8541_charger.c
+@@ -69,12 +69,13 @@
+  * use Piano's factory 4800/4600 mV thresholds. The caller regulates the
+  * normal charge voltage below these limits; the alarm only asserts INT
+  * and cannot replace software voltage regulation. The bus limits fit
+- * a 2:1 stage fed from an 11 V PPS source; the bus over-current limit can
++ * a 2:1 stage fed from an 11 V PPS source, with the stock 13 V bus OVP;
++ * the bus over-current limit can
+  * be raised for sources that offer more than 3 A, up to the stock value.
+  */
+ #define SC8541_BATOVP_MV	4800
+ #define SC8541_BATOVP_ALM_MV	4600
+-#define SC8541_BUSOVP_MV	11000
++#define SC8541_BUSOVP_MV	13000
+ #define SC8541_BUSOVP_ALM_MV	10500
+ #define SC8541_BUSOCP_MA	3500
+ #define SC8541_BUSOCP_MIN_MA	1000

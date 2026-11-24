@@ -1,0 +1,741 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Mon, 16 Nov 2026 11:16:46 +0800
+Subject: [PATCH] media: i2c: support Giantec GT9764BA in the DW9768 actuator
+ driver
+
+GT9764BA uses the DW9768 register layout, SMBus word ordering, and
+vin/vdd supplies. Add the GT9764BA compatible to the existing driver
+and reuse its probe, controls, media entity, runtime PM integration,
+and register access.
+
+Keep the Piano bidirectional motor's neutral position, raw AAC
+settings and 50-step 10 ms parking. Retain the previous readback,
+position recovery, and power-retention behavior after an I2C failure.
+DW9768 and GT9769 continue to use their existing profile. Preserve the
+gt9764 V4L2 entity name and a gt9764 module alias for existing callers.
+
+The initialization and parking sequence is from the Piano
+OS3.0.309.0.WPYCNXM factory actuator module and the published GT9764
+driver.
+
+Link: https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/a369d30bd5df3fcfb4304ee9e7ae10fa4f11899a/drivers/misc/mediatek/lens/vcm/v4l2/gt9764/gt9764.c
+Link: https://github.com/slwyts/Project-SunUEFI/commit/442088b170459b8fbd838aa6ced3b683e98ba9ca
+Link: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/drivers/media/i2c/dw9768.c?id=65e4fd942f72a9dba0e4e257290c4fa1aa756854
+Signed-off-by: slwyts <slwyts@foxmail.com>
+Co-developed-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ MAINTAINERS                                   |   4 +-
+ drivers/media/i2c/Makefile                    |   1 +
+ drivers/media/i2c/{dw9768.c => dw9768-core.c} | 172 ++++++------
+ drivers/media/i2c/dw9768-gt9764ba.c           | 249 ++++++++++++++++++
+ drivers/media/i2c/dw9768.h                    |  84 ++++++
+ 5 files changed, 427 insertions(+), 83 deletions(-)
+ rename drivers/media/i2c/{dw9768.c => dw9768-core.c} (80%)
+ create mode 100644 drivers/media/i2c/dw9768-gt9764ba.c
+ create mode 100644 drivers/media/i2c/dw9768.h
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 820537bb4dc38c066136632f0963d68c325ee469..040427003fce9d99b7595566cfb55212d62b98a9 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -7873,7 +7873,8 @@ L:	linux-media@vger.kernel.org
+ S:	Orphan
+ T:	git git://linuxtv.org/media.git
+ F:	Documentation/devicetree/bindings/media/i2c/dongwoon,dw9768.yaml
+-F:	drivers/media/i2c/dw9768.c
++F:	drivers/media/i2c/dw9768-core.c
++F:	drivers/media/i2c/dw9768.h
+ 
+ DONGWOON DW9807 LENS VOICE COIL DRIVER
+ M:	Sakari Ailus <sakari.ailus@linux.intel.com>
+@@ -11110,6 +11111,7 @@ M:	slwyts <slwyts@foxmail.com>
+ L:	linux-media@vger.kernel.org
+ S:	Maintained
+ F:	Documentation/devicetree/bindings/media/i2c/giantec,gt9764ba.yaml
++F:	drivers/media/i2c/dw9768-gt9764ba.c
+ 
+ GIGABYTE WATERFORCE SENSOR DRIVER
+ M:	Aleksa Savic <savicaleksa83@gmail.com>
+diff --git a/drivers/media/i2c/Makefile b/drivers/media/i2c/Makefile
+index 8fc3a015112a2fe4a8bf11aae2bf632d4562c150..7ce7916ab62b01291b24062ca3ae426eb6cb655a 100644
+--- a/drivers/media/i2c/Makefile
++++ b/drivers/media/i2c/Makefile
+@@ -34,6 +34,7 @@ obj-$(CONFIG_VIDEO_DS90UB953) += ds90ub953.o
+ obj-$(CONFIG_VIDEO_DS90UB960) += ds90ub960.o
+ obj-$(CONFIG_VIDEO_DW9714) += dw9714.o
+ obj-$(CONFIG_VIDEO_DW9719) += dw9719.o
++dw9768-y := dw9768-core.o dw9768-gt9764ba.o
+ obj-$(CONFIG_VIDEO_DW9768) += dw9768.o
+ obj-$(CONFIG_VIDEO_DW9807_VCM) += dw9807-vcm.o
+ obj-$(CONFIG_VIDEO_ET8EK8) += et8ek8/
+diff --git a/drivers/media/i2c/dw9768.c b/drivers/media/i2c/dw9768-core.c
+similarity index 80%
+rename from drivers/media/i2c/dw9768.c
+rename to drivers/media/i2c/dw9768-core.c
+index d037d3009c9a5e312372390083855d9df8fe2abe..eaa1f6533e826fefc72bcab4c2039c8b10288b29 100644
+--- a/drivers/media/i2c/dw9768.c
++++ b/drivers/media/i2c/dw9768-core.c
+@@ -12,6 +12,8 @@
+ #include <media/v4l2-fwnode.h>
+ #include <media/v4l2-subdev.h>
+ 
++#include "dw9768.h"
++
+ #define DW9768_NAME				"dw9768"
+ #define DW9768_MAX_FOCUS_POS			(1024 - 1)
+ /*
+@@ -20,20 +22,7 @@
+  */
+ #define DW9768_FOCUS_STEPS			1
+ 
+-/*
+- * Ring control and Power control register
+- * Bit[1] RING_EN
+- * 0: Direct mode
+- * 1: AAC mode (ringing control mode)
+- * Bit[0] PD
+- * 0: Normal operation mode
+- * 1: Power down mode
+- * DW9768 requires waiting time of Topr after PD reset takes place.
+- */
+-#define DW9768_RING_PD_CONTROL_REG		0x02
+-#define DW9768_PD_MODE_OFF			0x00
+ #define DW9768_PD_MODE_EN			BIT(0)
+-#define DW9768_AAC_MODE_EN			BIT(1)
+ 
+ /*
+  * DW9768 separates two registers to control the VCM position.
+@@ -42,7 +31,6 @@
+  * DAC_LSB: D[7:0] (ADD: 0x04)
+  * D[9:0] DAC data input: positive output current = D[9:0] / 1023 * 100[mA]
+  */
+-#define DW9768_MSB_ADDR				0x03
+ #define DW9768_LSB_ADDR				0x04
+ #define DW9768_STATUS_ADDR			0x05
+ 
+@@ -78,7 +66,6 @@
+  * DW9768 requires waiting time (delay time) of t_OPR after power-up,
+  * or in the case of PD reset taking place.
+  */
+-#define DW9768_T_OPR_US				1000
+ #define DW9768_TVIB_MS_BASE10			(64 - 1)
+ #define DW9768_AAC_MODE_DEFAULT			2
+ #define DW9768_AAC_TIME_DEFAULT			0x20
+@@ -97,24 +84,6 @@ static const char * const dw9768_supply_names[] = {
+ 	"vdd",	/* Digital core power */
+ };
+ 
+-/* dw9768 device structure */
+-struct dw9768 {
+-	struct regulator_bulk_data supplies[ARRAY_SIZE(dw9768_supply_names)];
+-	struct v4l2_ctrl_handler ctrls;
+-	struct v4l2_ctrl *focus;
+-	struct v4l2_subdev sd;
+-
+-	u32 aac_mode;
+-	u32 aac_timing;
+-	u32 clock_presc;
+-	u32 move_delay_us;
+-};
+-
+-static inline struct dw9768 *sd_to_dw9768(struct v4l2_subdev *subdev)
+-{
+-	return container_of(subdev, struct dw9768, sd);
+-}
+-
+ struct dw9768_aac_mode_ot_multi {
+ 	u32 aac_mode_enum;
+ 	u32 ot_multi_base100;
+@@ -208,34 +177,12 @@ static int dw9768_mod_reg(struct dw9768 *dw9768, u8 reg, u8 mask, u8 val)
+ 	return i2c_smbus_write_byte_data(client, reg, val);
+ }
+ 
+-static int dw9768_set_dac(struct dw9768 *dw9768, u16 val)
+-{
+-	struct i2c_client *client = v4l2_get_subdevdata(&dw9768->sd);
+-
+-	/* Write VCM position to registers */
+-	return i2c_smbus_write_word_swapped(client, DW9768_MSB_ADDR, val);
+-}
+-
+ static int dw9768_init(struct dw9768 *dw9768)
+ {
+ 	struct i2c_client *client = v4l2_get_subdevdata(&dw9768->sd);
+ 	int ret, val;
+ 
+-	/* Reset DW9768_RING_PD_CONTROL_REG to default status 0x00 */
+-	ret = i2c_smbus_write_byte_data(client, DW9768_RING_PD_CONTROL_REG,
+-					DW9768_PD_MODE_OFF);
+-	if (ret < 0)
+-		return ret;
+-
+-	/*
+-	 * DW9769 requires waiting delay time of t_OPR
+-	 * after PD reset takes place.
+-	 */
+-	usleep_range(DW9768_T_OPR_US, DW9768_T_OPR_US + 100);
+-
+-	/* Set DW9768_RING_PD_CONTROL_REG to DW9768_AAC_MODE_EN(0x01) */
+-	ret = i2c_smbus_write_byte_data(client, DW9768_RING_PD_CONTROL_REG,
+-					DW9768_AAC_MODE_EN);
++	ret = dw9768_reset_aac(dw9768);
+ 	if (ret < 0)
+ 		return ret;
+ 
+@@ -313,6 +260,9 @@ static int dw9768_runtime_suspend(struct device *dev)
+ 	struct v4l2_subdev *sd = dev_get_drvdata(dev);
+ 	struct dw9768 *dw9768 = sd_to_dw9768(sd);
+ 
++	if (dw9768->gt9764ba)
++		return gt9764_suspend(dev);
++
+ 	dw9768_release(dw9768);
+ 	regulator_bulk_disable(ARRAY_SIZE(dw9768_supply_names),
+ 			       dw9768->supplies);
+@@ -326,6 +276,9 @@ static int dw9768_runtime_resume(struct device *dev)
+ 	struct dw9768 *dw9768 = sd_to_dw9768(sd);
+ 	int ret;
+ 
++	if (dw9768->gt9764ba)
++		return gt9764_resume(dev);
++
+ 	ret = regulator_bulk_enable(ARRAY_SIZE(dw9768_supply_names),
+ 				    dw9768->supplies);
+ 	if (ret < 0) {
+@@ -357,6 +310,9 @@ static int dw9768_set_ctrl(struct v4l2_ctrl *ctrl)
+ 	struct dw9768 *dw9768 = container_of(ctrl->handler,
+ 					     struct dw9768, ctrls);
+ 
++	if (dw9768->gt9764ba)
++		return gt9764_set_ctrl(ctrl);
++
+ 	if (ctrl->id == V4L2_CID_FOCUS_ABSOLUTE)
+ 		return dw9768_set_dac(dw9768, ctrl->val);
+ 
+@@ -369,6 +325,11 @@ static const struct v4l2_ctrl_ops dw9768_ctrl_ops = {
+ 
+ static int dw9768_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
+ {
++	struct dw9768 *dw9768 = sd_to_dw9768(sd);
++
++	if (dw9768->gt9764ba)
++		return gt9764_open(sd, fh);
++
+ 	return pm_runtime_resume_and_get(sd->dev);
+ }
+ 
+@@ -392,10 +353,13 @@ static int dw9768_init_controls(struct dw9768 *dw9768)
+ 	const struct v4l2_ctrl_ops *ops = &dw9768_ctrl_ops;
+ 
+ 	v4l2_ctrl_handler_init(hdl, 1);
++	if (dw9768->gt9764ba)
++		hdl->lock = &dw9768->lock;
+ 
+ 	dw9768->focus = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_FOCUS_ABSOLUTE, 0,
+ 					  DW9768_MAX_FOCUS_POS,
+-					  DW9768_FOCUS_STEPS, 0);
++					  DW9768_FOCUS_STEPS,
++					  dw9768->gt9764ba ? GT9764_NEUTRAL_POSITION : 0);
+ 
+ 	if (hdl->error)
+ 		return hdl->error;
+@@ -417,28 +381,42 @@ static int dw9768_probe(struct i2c_client *client)
+ 	if (!dw9768)
+ 		return -ENOMEM;
+ 
+-	/* Initialize subdev */
++	dw9768->gt9764ba = device_get_match_data(dev) != NULL;
++	if (dw9768->gt9764ba) {
++		if (!IS_ENABLED(CONFIG_PM) ||
++		    !i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_BYTE_DATA |
++						    I2C_FUNC_SMBUS_WORD_DATA))
++			return -EOPNOTSUPP;
++		ret = devm_mutex_init(dev, &dw9768->lock);
++		if (ret)
++			return ret;
++	}
++
+ 	v4l2_i2c_subdev_init(&dw9768->sd, client, &dw9768_ops);
+ 
+-	dw9768->aac_mode = DW9768_AAC_MODE_DEFAULT;
+-	dw9768->aac_timing = DW9768_AAC_TIME_DEFAULT;
+-	dw9768->clock_presc = DW9768_CLOCK_PRE_SCALE_DEFAULT;
++	if (dw9768->gt9764ba) {
++		v4l2_i2c_subdev_set_name(&dw9768->sd, client, "gt9764", NULL);
++	} else {
++		dw9768->aac_mode = DW9768_AAC_MODE_DEFAULT;
++		dw9768->aac_timing = DW9768_AAC_TIME_DEFAULT;
++		dw9768->clock_presc = DW9768_CLOCK_PRE_SCALE_DEFAULT;
+ 
+-	/* Optional indication of AAC mode select */
+-	fwnode_property_read_u32(dev_fwnode(dev), "dongwoon,aac-mode",
+-				 &dw9768->aac_mode);
++		/* Optional indication of AAC mode select */
++		fwnode_property_read_u32(dev_fwnode(dev), "dongwoon,aac-mode",
++					 &dw9768->aac_mode);
+ 
+-	/* Optional indication of clock pre-scale select */
+-	fwnode_property_read_u32(dev_fwnode(dev), "dongwoon,clock-presc",
+-				 &dw9768->clock_presc);
++		/* Optional indication of clock pre-scale select */
++		fwnode_property_read_u32(dev_fwnode(dev), "dongwoon,clock-presc",
++					 &dw9768->clock_presc);
+ 
+-	/* Optional indication of AAC Timing */
+-	fwnode_property_read_u32(dev_fwnode(dev), "dongwoon,aac-timing",
+-				 &dw9768->aac_timing);
++		/* Optional indication of AAC Timing */
++		fwnode_property_read_u32(dev_fwnode(dev), "dongwoon,aac-timing",
++					 &dw9768->aac_timing);
+ 
+-	dw9768->move_delay_us = dw9768_cal_move_delay(dw9768->aac_mode,
+-						      dw9768->clock_presc,
+-						      dw9768->aac_timing);
++		dw9768->move_delay_us = dw9768_cal_move_delay(dw9768->aac_mode,
++							      dw9768->clock_presc,
++							      dw9768->aac_timing);
++	}
+ 
+ 	for (i = 0; i < ARRAY_SIZE(dw9768_supply_names); i++)
+ 		dw9768->supplies[i].supply = dw9768_supply_names[i];
+@@ -483,6 +461,12 @@ static int dw9768_probe(struct i2c_client *client)
+ 		pm_runtime_set_active(dev);
+ 	}
+ 
++	if (dw9768->gt9764ba) {
++		pm_runtime_set_suspended(dev);
++		pm_runtime_set_autosuspend_delay(dev, 1000);
++		pm_runtime_use_autosuspend(dev);
++	}
++
+ 	pm_runtime_enable(dev);
+ 	ret = v4l2_async_register_subdev(&dw9768->sd);
+ 	if (ret < 0) {
+@@ -490,14 +474,18 @@ static int dw9768_probe(struct i2c_client *client)
+ 		goto err_power_off;
+ 	}
+ 
+-	pm_runtime_set_autosuspend_delay(dev, 1000);
+-	pm_runtime_use_autosuspend(dev);
+-	pm_runtime_idle(dev);
++	if (!dw9768->gt9764ba) {
++		pm_runtime_set_autosuspend_delay(dev, 1000);
++		pm_runtime_use_autosuspend(dev);
++		pm_runtime_idle(dev);
++	}
+ 
+ 	return 0;
+ 
+ err_power_off:
+ 	pm_runtime_disable(dev);
++	if (dw9768->gt9764ba)
++		pm_runtime_dont_use_autosuspend(dev);
+ 	if (full_power) {
+ 		dw9768_runtime_suspend(dev);
+ 		pm_runtime_set_suspended(dev);
+@@ -517,26 +505,45 @@ static void dw9768_remove(struct i2c_client *client)
+ 	struct device *dev = &client->dev;
+ 
+ 	v4l2_async_unregister_subdev(&dw9768->sd);
+-	v4l2_ctrl_handler_free(&dw9768->ctrls);
+-	media_entity_cleanup(&dw9768->sd.entity);
+ 	pm_runtime_disable(dev);
+-	if ((is_acpi_node(dev_fwnode(dev)) && acpi_dev_state_d0(dev)) ||
++	if (dw9768->gt9764ba) {
++		gt9764_stop_on_remove(dev, dw9768);
++		pm_runtime_dont_use_autosuspend(dev);
++	} else if ((is_acpi_node(dev_fwnode(dev)) && acpi_dev_state_d0(dev)) ||
+ 	    (is_of_node(dev_fwnode(dev)) && !IS_ENABLED(CONFIG_PM))) {
+ 		dw9768_runtime_suspend(dev);
+ 		pm_runtime_set_suspended(dev);
+ 	}
++	media_entity_cleanup(&dw9768->sd.entity);
++	v4l2_ctrl_handler_free(&dw9768->ctrls);
+ }
+ 
++static const bool gt9764ba_match = true;
++
+ static const struct of_device_id dw9768_of_table[] = {
+ 	{ .compatible = "dongwoon,dw9768" },
+ 	{ .compatible = "giantec,gt9769" },
++	{ .compatible = "giantec,gt9764ba", .data = &gt9764ba_match },
+ 	{}
+ };
+ MODULE_DEVICE_TABLE(of, dw9768_of_table);
+ 
++static int __maybe_unused dw9768_system_suspend(struct device *dev)
++{
++	struct dw9768 *dw9768 = sd_to_dw9768(dev_get_drvdata(dev));
++
++	return dw9768->gt9764ba ? 0 : pm_runtime_force_suspend(dev);
++}
++
++static int __maybe_unused dw9768_system_resume(struct device *dev)
++{
++	struct dw9768 *dw9768 = sd_to_dw9768(dev_get_drvdata(dev));
++
++	return dw9768->gt9764ba ? 0 : pm_runtime_force_resume(dev);
++}
++
+ static const struct dev_pm_ops dw9768_pm_ops = {
+-	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend,
+-				pm_runtime_force_resume)
++	SET_SYSTEM_SLEEP_PM_OPS(dw9768_system_suspend, dw9768_system_resume)
+ 	SET_RUNTIME_PM_OPS(dw9768_runtime_suspend, dw9768_runtime_resume, NULL)
+ };
+ 
+@@ -552,5 +559,6 @@ static struct i2c_driver dw9768_i2c_driver = {
+ module_i2c_driver(dw9768_i2c_driver);
+ 
+ MODULE_AUTHOR("Dongchun Zhu");
+-MODULE_DESCRIPTION("DW9768 VCM driver");
++MODULE_ALIAS("gt9764");
++MODULE_DESCRIPTION("DW9768 and GT9764BA VCM driver");
+ MODULE_LICENSE("GPL v2");
+diff --git a/drivers/media/i2c/dw9768-gt9764ba.c b/drivers/media/i2c/dw9768-gt9764ba.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..d4fcf488f6ec578ccd4ab9ef1c95def1092052c9
+--- /dev/null
++++ b/drivers/media/i2c/dw9768-gt9764ba.c
+@@ -0,0 +1,249 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Giantec GT9764BA bidirectional voice-coil lens actuator.
++ *
++ * Register values follow the Piano factory actuator description. The neutral
++ * position is also documented by MiCode's GPL GT9764 V4L2 driver.
++ */
++
++#include <linux/i2c.h>
++#include <linux/pm_runtime.h>
++
++#include "dw9768.h"
++
++#define GT9764_AAC_MODE			0x06
++#define GT9764_AAC_TIMING			0x07
++#define GT9764_MAX_POSITION		1023
++#define GT9764_PARK_STEP			50
++#define GT9764_PARK_DELAY_US		10000
++
++static int gt9764_set_position(struct dw9768 *lens, u16 position)
++{
++	int ret;
++
++	ret = dw9768_set_dac(lens, position);
++	lens->position_valid = !ret;
++	if (ret)
++		return ret;
++
++	lens->position = position;
++	return 0;
++}
++
++static int gt9764_move_gradually(struct dw9768 *lens, unsigned int target)
++{
++	int ret, position;
++
++	/* A failed transfer may have reached either byte of the DAC register. */
++	if (!lens->position_valid) {
++		struct i2c_client *client = v4l2_get_subdevdata(&lens->sd);
++
++		usleep_range(GT9764_PARK_DELAY_US, GT9764_PARK_DELAY_US + 1000);
++		ret = i2c_smbus_read_word_swapped(client, DW9768_MSB_ADDR);
++		if (ret < 0)
++			return ret;
++		if (ret > GT9764_MAX_POSITION)
++			return -EIO;
++		lens->position = ret;
++		lens->position_valid = true;
++	}
++
++	while (lens->position != target) {
++		position = lens->position;
++		position += clamp_t(int, (int)target - position,
++				    -GT9764_PARK_STEP, GT9764_PARK_STEP);
++		ret = gt9764_set_position(lens, position);
++		if (ret)
++			return ret;
++
++		usleep_range(GT9764_PARK_DELAY_US, GT9764_PARK_DELAY_US + 1000);
++	}
++
++	return 0;
++}
++
++static int gt9764_init(struct dw9768 *lens)
++{
++	struct i2c_client *client = v4l2_get_subdevdata(&lens->sd);
++	int ret;
++
++	if (lens->configured)
++		return 0;
++
++	ret = dw9768_reset_aac(lens);
++	if (ret)
++		return ret;
++
++	usleep_range(100, 200);
++	ret = i2c_smbus_write_byte_data(client, GT9764_AAC_MODE, 0x40);
++	if (ret)
++		return ret;
++
++	usleep_range(100, 200);
++	ret = i2c_smbus_write_byte_data(client, GT9764_AAC_TIMING, 0x73);
++	if (ret)
++		return ret;
++
++	usleep_range(100, 200);
++	lens->configured = true;
++	return 0;
++}
++
++static int gt9764_restore_focus(struct dw9768 *lens, bool cold)
++{
++	int ret = gt9764_init(lens);
++
++	if (ret)
++		return ret;
++
++	/* The factory power-on sequence starts at neutral once per power-up. */
++	if (cold) {
++		ret = gt9764_set_position(lens, GT9764_NEUTRAL_POSITION);
++		if (ret)
++			return ret;
++		usleep_range(GT9764_PARK_DELAY_US, GT9764_PARK_DELAY_US + 1000);
++	}
++
++	return gt9764_move_gradually(lens, lens->focus->cur.val);
++}
++
++static int gt9764_power_down(struct dw9768 *lens)
++{
++	int ret;
++
++	usleep_range(GT9764_PARK_DELAY_US, GT9764_PARK_DELAY_US + 1000);
++	ret = regulator_bulk_disable(ARRAY_SIZE(lens->supplies), lens->supplies);
++	/* A failed bulk disable can still have cycled one of the rails. */
++	lens->configured = false;
++	lens->position_valid = false;
++	if (!ret)
++		lens->powered = false;
++	return ret;
++}
++
++int gt9764_suspend(struct device *dev)
++{
++	struct dw9768 *lens = sd_to_dw9768(dev_get_drvdata(dev));
++	int ret;
++
++	mutex_lock(&lens->lock);
++	if (!lens->powered) {
++		ret = 0;
++		goto unlock;
++	}
++
++	if (lens->configured) {
++		ret = gt9764_move_gradually(lens, GT9764_NEUTRAL_POSITION);
++		if (ret) {
++			dev_err(dev, "Failed to park lens; power remains enabled: %d\n", ret);
++			ret = -EBUSY;
++			goto unlock;
++		}
++	}
++
++	ret = gt9764_power_down(lens);
++	if (ret) {
++		dev_err(dev, "Failed to disable regulators: %d\n", ret);
++		ret = -EBUSY;
++	}
++unlock:
++	mutex_unlock(&lens->lock);
++	return ret;
++}
++
++int gt9764_resume(struct device *dev)
++{
++	struct dw9768 *lens = sd_to_dw9768(dev_get_drvdata(dev));
++	bool cold;
++	int ret;
++
++	mutex_lock(&lens->lock);
++	cold = !lens->powered;
++	if (cold) {
++		ret = regulator_bulk_enable(ARRAY_SIZE(lens->supplies), lens->supplies);
++		if (ret)
++			goto unlock;
++		lens->powered = true;
++		usleep_range(5000, 6000);
++	}
++
++	ret = gt9764_restore_focus(lens, cold);
++	if (ret) {
++		int disable;
++
++		if (lens->configured) {
++			int park = gt9764_move_gradually(lens, GT9764_NEUTRAL_POSITION);
++
++			if (park) {
++				dev_err(dev, "Failed to park lens; power remains enabled: %d\n", park);
++				goto unlock;
++			}
++		}
++
++		disable = gt9764_power_down(lens);
++		if (disable)
++			dev_err(dev, "Failed to disable regulators: %d\n", disable);
++	}
++unlock:
++	mutex_unlock(&lens->lock);
++	return ret;
++}
++
++int gt9764_set_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct dw9768 *lens = container_of(ctrl->handler, struct dw9768, ctrls);
++	struct device *dev = lens->sd.dev;
++	int ret;
++
++	if (ctrl->id != V4L2_CID_FOCUS_ABSOLUTE)
++		return -EINVAL;
++
++	ret = pm_runtime_get_if_active(dev);
++	if (ret <= 0)
++		return ret;
++
++	ret = gt9764_init(lens);
++	if (!ret)
++		ret = gt9764_set_position(lens, ctrl->val);
++	pm_runtime_put_autosuspend(dev);
++	return ret;
++}
++
++int gt9764_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
++{
++	struct dw9768 *lens = sd_to_dw9768(sd);
++	int ret;
++
++	ret = pm_runtime_resume_and_get(sd->dev);
++	if (ret < 0)
++		return ret;
++
++	/* A busy suspend leaves runtime PM active without a resume callback. */
++	mutex_lock(&lens->lock);
++	if (!lens->configured || !lens->position_valid)
++		ret = gt9764_restore_focus(lens, false);
++	mutex_unlock(&lens->lock);
++	if (ret)
++		pm_runtime_put_autosuspend(sd->dev);
++	return ret;
++}
++
++void gt9764_stop_on_remove(struct device *dev, struct dw9768 *lens)
++{
++	if (lens->powered) {
++		int ret;
++
++		ret = gt9764_suspend(dev);
++		if (ret) {
++			/*
++			 * Runtime suspend can be retried; unbind cannot keep the
++			 * regulators enabled after it releases their handles.
++			 */
++			ret = regulator_bulk_disable(ARRAY_SIZE(lens->supplies), lens->supplies);
++			if (ret)
++				dev_err(dev, "Failed to disable regulators on remove: %d\n", ret);
++		}
++		if (!ret)
++			pm_runtime_set_suspended(dev);
++	}
++}
+diff --git a/drivers/media/i2c/dw9768.h b/drivers/media/i2c/dw9768.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..55d2b7123b8613002a4d467c06573d31a8c7941f
+--- /dev/null
++++ b/drivers/media/i2c/dw9768.h
+@@ -0,0 +1,84 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef _DW9768_H
++#define _DW9768_H
++
++#include <linux/delay.h>
++#include <linux/i2c.h>
++#include <linux/mutex.h>
++#include <linux/regulator/consumer.h>
++#include <media/v4l2-ctrls.h>
++#include <media/v4l2-subdev.h>
++
++/*
++ * Ring control and Power control register
++ * Bit[1] RING_EN
++ * 0: Direct mode
++ * 1: AAC mode (ringing control mode)
++ * Bit[0] PD
++ * 0: Normal operation mode
++ * 1: Power down mode
++ * DW9768 requires waiting time of Topr after PD reset takes place.
++ */
++#define DW9768_RING_PD_CONTROL_REG		0x02
++#define DW9768_PD_MODE_OFF			0x00
++#define DW9768_AAC_MODE_EN			BIT(1)
++#define DW9768_MSB_ADDR				0x03
++#define DW9768_T_OPR_US				1000
++#define GT9764_NEUTRAL_POSITION		512
++
++/* dw9768 device structure */
++struct dw9768 {
++	struct regulator_bulk_data supplies[2];
++	struct v4l2_ctrl_handler ctrls;
++	struct v4l2_ctrl *focus;
++	struct v4l2_subdev sd;
++
++	u32 aac_mode;
++	u32 aac_timing;
++	u32 clock_presc;
++	u32 move_delay_us;
++
++	bool gt9764ba;
++	/* Serialize bidirectional focus updates with power transitions. */
++	struct mutex lock;
++	u16 position;
++	bool position_valid;
++	bool configured;
++	bool powered;
++};
++
++static inline struct dw9768 *sd_to_dw9768(struct v4l2_subdev *subdev)
++{
++	return container_of(subdev, struct dw9768, sd);
++}
++
++static inline int dw9768_set_dac(struct dw9768 *dw9768, u16 val)
++{
++	struct i2c_client *client = v4l2_get_subdevdata(&dw9768->sd);
++
++	/* Write VCM position to registers */
++	return i2c_smbus_write_word_swapped(client, DW9768_MSB_ADDR, val);
++}
++
++static inline int dw9768_reset_aac(struct dw9768 *dw9768)
++{
++	struct i2c_client *client = v4l2_get_subdevdata(&dw9768->sd);
++	int ret;
++
++	ret = i2c_smbus_write_byte_data(client, DW9768_RING_PD_CONTROL_REG,
++					DW9768_PD_MODE_OFF);
++	if (ret < 0)
++		return ret;
++
++	usleep_range(DW9768_T_OPR_US, DW9768_T_OPR_US + 100);
++	return i2c_smbus_write_byte_data(client, DW9768_RING_PD_CONTROL_REG,
++					 DW9768_AAC_MODE_EN);
++}
++
++int gt9764_suspend(struct device *dev);
++int gt9764_resume(struct device *dev);
++int gt9764_set_ctrl(struct v4l2_ctrl *ctrl);
++int gt9764_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh);
++void gt9764_stop_on_remove(struct device *dev, struct dw9768 *lens);
++
++#endif

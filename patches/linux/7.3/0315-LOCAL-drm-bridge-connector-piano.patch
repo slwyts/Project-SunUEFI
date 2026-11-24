@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: drm/bridge: support the Piano connector sequence
+
+Carry the connector handling used by the Piano bridge pipeline.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/gpu/drm/display/drm_bridge_connector.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/drivers/gpu/drm/display/drm_bridge_connector.c b/drivers/gpu/drm/display/drm_bridge_connector.c
+index 8b54069fa53a42c0a02980f77405faffea89a16e..3949e042b5921368bf7395577b5cdeb6f29681b7 100644
+--- a/drivers/gpu/drm/display/drm_bridge_connector.c
++++ b/drivers/gpu/drm/display/drm_bridge_connector.c
+@@ -20,6 +20,7 @@
+ #include <drm/drm_modeset_helper_vtables.h>
+ #include <drm/drm_print.h>
+ #include <drm/drm_probe_helper.h>
++#include <drm/drm_property.h>
+ #include <drm/display/drm_hdcp_helper.h>
+ #include <drm/display/drm_hdmi_audio_helper.h>
+ #include <drm/display/drm_hdmi_cec_helper.h>
+@@ -276,6 +277,15 @@ drm_bridge_connector_create_state(struct drm_connector *connector)
+ 	if (IS_ERR(conn_state))
+ 		return conn_state;
+ 
++	if (!bridge_connector->bridge_hdmi &&
++	    connector->connector_type == DRM_MODE_CONNECTOR_DSI &&
++	    connector->max_bpc_property &&
++	    connector->max_bpc_property->values[0] ==
++		    connector->max_bpc_property->values[1]) {
++		conn_state->max_requested_bpc = connector->max_bpc_property->values[1];
++		conn_state->max_bpc = connector->max_bpc_property->values[1];
++	}
++
+ 	if (bridge_connector->bridge_hdmi)
+ 		__drm_atomic_helper_connector_hdmi_state_init(connector,
+ 							      conn_state);

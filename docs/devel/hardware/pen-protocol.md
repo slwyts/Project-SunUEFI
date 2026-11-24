@@ -7,7 +7,7 @@
 ## 内核输入与许可边界
 
 笔尖位置来自触屏的 SPI 控制器，蓝牙只提供压感和按键。触屏控制器重绑时，
-[GPI DMA 驱动](../../../patches/linux/7.3/0272-LOCAL-dmaengine-qcom-gpi-clear-config-on-release.patch)
+[GPI DMA 驱动](../../../patches/linux/7.3/0447-LOCAL-dmaengine-qcom-gpi-clear-config-on-release.patch)
 在释放通道时清除旧配置，避免下一次传输访问已释放的内存，导致触屏和笔尖失去响应。
 
 `hid-xiaomi` 将两个型号的 15 字节 Report5 首个小端 16 位字上报为标准
@@ -212,7 +212,7 @@ v2方法 `+0x30=0x26dec` 是另一条路径：HAL `0x26804..0x26834` 以cmd2/arg
 
 ## 笔的磁吸检测、供电与连接恢复
 
-默认内核的[平台补丁](../../../patches/linux/7.3/0134-LOCAL-power-supply-sc96231-piano.patch)驱动 SC96231 发射器；[设备树覆盖](../../../linux/dts/piano-pen-charger.dtso)将 QUP2 SE5 转换为主线 I²C，总线地址为 `0x38`。充电驱动读取两路 Hall GPIO，并通过 `Xiaomi Piano Pen Dock` 上报标准 `SW_PEN_INSERTED`。
+默认内核的[平台补丁](../../../patches/linux/7.3/0309-LOCAL-power-supply-sc96231-piano.patch)驱动 SC96231 发射器；[设备树覆盖](../../../linux/dts/piano-pen-charger.dtso)将 QUP2 SE5 转换为主线 I²C，总线地址为 `0x38`。充电驱动读取两路 Hall GPIO，并通过 `Xiaomi Piano Pen Dock` 上报标准 `SW_PEN_INSERTED`。
 
 实现依据是同机 HyperOS 4 的最终 DTB、`sc96231_tx.ko`／`mca_wireless_revchg.ko` 的反汇编，以及一次原厂启停的函数参数采集。原厂的独立笔供电通过 ADSP HBOOST 完成：属性 `0x2010` 选择源 1，按 5.0、5.5、6.0、6.5 V 升压，间隔 20 ms；`0x200f` 的客户端 2 控制启停。该电源以标准 regulator 提供给 SC96231，不改 USB VBUS。 Piano 路径使 GPIO14 高电平启用，不能单凭旧节点的 `reverse-txon-low` 属性推断极性。
 
@@ -238,7 +238,7 @@ v2方法 `+0x30=0x26dec` 是另一条路径：HAL `0x26804..0x26834` 以cmd2/arg
 
 悬停位置来自屏幕矩阵，笔尖压力来自 BLE HID Report5；因此悬停可用不代表点击通道已经准备好。压力设备现在通过 inotify 创建事件立即接入，不再等待一秒扫描周期；BlueZ 控制服务就绪后也会立即唤起初始化，不再固定等待两秒重试。记录第一份压力报告和无线参数设置的单调时钟，用于区分设备连接、初始化及点按的延迟，不伪造压力或提前发送点击。屏幕状态从内部 DRM 连接器读取，并同步原厂 `0x61` 命令；不再固定向笔报告屏幕常亮。若在同一 BLE 连接中重启助手、笔返回未分配的 `0xff` ID，则重新建立该笔连接再初始化，不使用该 ID 配置无线通道。
 
-`0042-input-nvt-defer-pen-mode-while-asleep.patch` 在面板休眠时保存请求的笔扫描模式，随固件恢复应用。触控服务启动不再强制解绑／重绑内核设备，面板复位和固件恢复统一由内核 panel follower 处理。
+内核触控驱动在面板休眠时保存请求的笔扫描模式，随固件恢复应用。触控服务启动不再强制解绑／重绑内核设备，面板复位和固件恢复统一由内核 panel follower 处理。
 
 ## 公开解析模块
 
@@ -320,7 +320,7 @@ Linux之前显示144Hz、hand180、pen240。两边笔扫描率相同；这一次
 
 当前590内核配置使用 `CONFIG_CMDLINE_FORCE=y`，因此只给ESP的boot header追加video参数不会生效；Mutter默认又选择DRM preferred模式。冷启动草案只交换Piano面板模式表的144／120顺序，使120成为preferred，并保留全部模式。当时的草案用于此项对照；2026-10-10 已将 120 Hz 纳入默认内核，保留其他模式；构建来源在 `build/panel-cold120-candidate/`。原厂触控portrait尺寸2136×3200与Linux原生显示模式3200×2136不同，不能用错video参数。
 
-触控面板监听生命周期修复位于[输入补丁](../../../patches/linux/7.3/0105-EXTERNAL-input-novatek-nt36532e.patch)，纳入默认内核源码准备流程。它只修注销与释放顺序，不启用笔接口或改变刷新率。
+触控面板监听生命周期修复位于[输入补丁](../../../patches/linux/7.3/0232-EXTERNAL-input-novatek-nt36532e.patch)，纳入默认内核源码准备流程。它只修注销与释放顺序，不启用笔接口或改变刷新率。
 
 
 ## 标准桌面输入已接通
@@ -402,7 +402,7 @@ Linux之前显示144Hz、hand180、pen240。两边笔扫描率相同；这一次
 
 ### 平板上的检查
 
-1. 运行 `sudo libinput debug-events --show-keycodes`，在笔身上滑、下滑：笔的键盘设备应显示 `KEY_PAGEUP`／`KEY_PAGEDOWN`。如果显示 `KEY_KP9`、`KEY_KP3`，或双击时出现 `KEY_KPENTER`，说明运行的内核还没有 `0025` 补丁。
+1. 运行 `sudo libinput debug-events --show-keycodes`，在笔身上滑、下滑：笔的键盘设备应显示 `KEY_PAGEUP`／`KEY_PAGEDOWN`。如果显示 `KEY_KP9`、`KEY_KP3`，或双击时出现 `KEY_KPENTER`，说明运行的内核还没有[笔身手势补丁](../../../patches/linux/7.3/0350-LOCAL-hid-xiaomi-p81c-body-gestures.patch)。
 2. 笔悬停在屏幕上方双击笔身，`libinput debug-events` 在 `Piano Focus Pen Pro` 上显示 `TABLET_TOOL_BUTTON` 的 `BTN_STYLUS2` 按下和松开；`sudo evtest` 选择同一设备可看到 `BTN_STYLUS2` 1 和 0。笔远离屏幕时双击不应有任何输出。
 3. 需要原始数据时，按 VID/PID `0022:5081` 找到 hidraw 节点，只打印 Report2：
 

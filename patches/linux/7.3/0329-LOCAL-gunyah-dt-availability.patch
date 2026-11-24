@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Tue, 20 Oct 2026 15:50:00 +0000
+Subject: virt: gunyah: respect disabled resource manager DT nodes
+
+Do not register stale capability handles when UEFI could not capture current resources. Let the scoped device_node cleanup release the reference exactly once.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/virt/gunyah/rsc_mgr.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/drivers/virt/gunyah/rsc_mgr.c b/drivers/virt/gunyah/rsc_mgr.c
+index b3ec2c9685e8fc88c648d6af196a176341a3d23b..b409ad05a1f5392b577a11933d9c66cf4575bd5f 100644
+--- a/drivers/virt/gunyah/rsc_mgr.c
++++ b/drivers/virt/gunyah/rsc_mgr.c
+@@ -849,7 +849,7 @@ static int gunyah_rm_get_of_info(struct gunyah_rm *rm)
+ 		return -ENODEV;
+ 
+ 	rm_np = of_get_compatible_child(gunyah_np, "gunyah-resource-manager");
+-	if (!rm_np)
++	if (!rm_np || !of_device_is_available(rm_np))
+ 		return -ENODEV;
+ 
+ 	rm->tx_ghrsc.type = GUNYAH_RESOURCE_TYPE_MSGQ_TX;
+@@ -872,7 +872,6 @@ static int gunyah_rm_get_of_info(struct gunyah_rm *rm)
+ 		return -EINVAL;
+ 	rm->rx_ghrsc.irq = ret;
+ 
+-	of_node_put(rm_np);
+ 	return 0;
+ }
+ 

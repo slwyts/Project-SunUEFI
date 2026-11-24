@@ -1,0 +1,129 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Sat, 21 Nov 2026 05:29:25 +0800
+Subject: [PATCH] ASoC: qcom: audioreach: apply static Dolby DAP calibration
+
+Load the OEM speaker calibration from the AudioReach topology widget before preparing its DSP graph. Keep complete APM parameter records together and split the configuration across transport-sized SET_CFG requests. The last parameter enables processing only after the earlier coefficients are accepted.
+
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ sound/soc/qcom/qdsp6/audioreach.c | 63 ++++++++++++++++++++++++++++---
+ sound/soc/qcom/qdsp6/audioreach.h |  1 +
+ 2 files changed, 58 insertions(+), 6 deletions(-)
+
+diff --git a/sound/soc/qcom/qdsp6/audioreach.c b/sound/soc/qcom/qdsp6/audioreach.c
+index 4f9e896d93912a55e2ac29e04461f89c4289eebe..bdf6c8642e85bfb4e5246d81a40b7b42091ecf3c 100644
+--- a/sound/soc/qcom/qdsp6/audioreach.c
++++ b/sound/soc/qcom/qdsp6/audioreach.c
+@@ -4,6 +4,7 @@
+ #include <linux/kernel.h>
+ #include <linux/slab.h>
+ #include <linux/soc/qcom/apr.h>
++#include <linux/unaligned.h>
+ #include <sound/soc.h>
+ #include <sound/soc-dai.h>
+ #include <sound/pcm.h>
+@@ -854,11 +855,9 @@ static int audioreach_gapless_set_media_format(struct q6apm_graph *graph,
+ 					 EARLY_EOS_DELAY_MS);
+ }
+ 
+-static int audioreach_set_module_config(struct q6apm_graph *graph,
+-					const struct audioreach_module *module,
+-					const struct audioreach_module_config *cfg)
++static int audioreach_send_module_config(struct q6apm_graph *graph,
++					const void *data, size_t size)
+ {
+-	int size = le32_to_cpu(module->data->size);
+ 	void *p;
+ 
+ 	struct gpr_pkt *pkt __free(kfree) = audioreach_alloc_apm_cmd_pkt(size, APM_CMD_SET_CFG, 0);
+@@ -867,11 +866,54 @@ static int audioreach_set_module_config(struct q6apm_graph *graph,
+ 
+ 	p = (void *)pkt + GPR_HDR_SIZE + APM_CMD_HDR_SIZE;
+ 
+-	memcpy(p, module->data->data, size);
++	memcpy(p, data, size);
+ 
+ 	return q6apm_send_cmd_sync(graph->apm, pkt, 0);
+ }
+ 
++/* Keep each parameter intact and send batches that fit the GLINK intents. */
++#define DAP_CFG_BATCH_MAX 3072
++
++static int audioreach_set_dap_config(struct q6apm_graph *graph,
++				     const struct audioreach_module *module)
++{
++	const u8 *data;
++	size_t size, offset = 0, batch = 0;
++	int ret;
++
++	if (!module->data || !module->data->size)
++		return -EINVAL;
++
++	data = (const u8 *)module->data->data;
++	size = le32_to_cpu(module->data->size);
++	while (offset < size) {
++		const struct apm_module_param_data *param = (const void *)(data + offset);
++		size_t record, payload;
++
++		if (size - offset < sizeof(*param) ||
++		    get_unaligned_le32(&param->module_instance_id) != module->instance_id)
++			return -EINVAL;
++
++		payload = get_unaligned_le32(&param->param_size);
++		if (payload > size - offset - sizeof(*param))
++			return -EINVAL;
++		record = sizeof(*param) + ALIGN(payload, 8);
++		if (record > size - offset || record > DAP_CFG_BATCH_MAX)
++			return -EINVAL;
++
++		if (batch + record > DAP_CFG_BATCH_MAX) {
++			ret = audioreach_send_module_config(graph, data + offset - batch, batch);
++			if (ret)
++				return ret;
++			batch = 0;
++		}
++		offset += record;
++		batch += record;
++	}
++
++	return audioreach_send_module_config(graph, data + size - batch, batch);
++}
++
+ static int audioreach_mfc_set_media_format(struct q6apm_graph *graph,
+ 					   const struct audioreach_module *module,
+ 					   const struct audioreach_module_config *cfg)
+@@ -1583,7 +1625,16 @@ int audioreach_set_media_format(struct q6apm_graph *graph,
+ 		rc = audioreach_display_port_set_media_format(graph, module, cfg);
+ 		break;
+ 	case  MODULE_ID_SMECNS_V2:
+-		rc = audioreach_set_module_config(graph, module, cfg);
++		rc = audioreach_send_module_config(graph, module->data->data,
++						  le32_to_cpu(module->data->size));
++		break;
++	case MODULE_ID_DOLBY_DAP:
++		rc = audioreach_set_dap_config(graph, module);
++		if (rc)
++			dev_err(graph->dev, "Dolby DAP calibration failed: %d\n", rc);
++		else
++			dev_dbg(graph->dev, "Dolby DAP instance %#x calibrated\n",
++				module->instance_id);
+ 		break;
+ 	case MODULE_ID_I2S_SOURCE:
+ 	case MODULE_ID_I2S_SINK:
+diff --git a/sound/soc/qcom/qdsp6/audioreach.h b/sound/soc/qcom/qdsp6/audioreach.h
+index 26d93fac477700f39702a99730b0bd4077e73f62..c34639a47c44684c50302c6238f902068f0d719d 100644
+--- a/sound/soc/qcom/qdsp6/audioreach.h
++++ b/sound/soc/qcom/qdsp6/audioreach.h
+@@ -37,6 +37,7 @@ struct q6apm_graph;
+ #define MODULE_ID_DISPLAY_PORT_SINK	0x07001069
+ #define MODULE_ID_SPEAKER_PROTECTION	0x070010E2
+ #define MODULE_ID_SPEAKER_PROTECTION_VI	0x070010E3
++#define MODULE_ID_DOLBY_DAP		0x100108DB
+ #define MODULE_ID_OPUS_DEC		0x07001174
+ #define MODULE_ID_AUDIO_IF_SINK		0x0700117C
+ #define MODULE_ID_AUDIO_IF_SOURCE	0x0700117D
+-- 
+2.55.0
+

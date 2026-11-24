@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia@gmail.com>
+Date: Tue, 20 Oct 2026 12:00:00 +0000
+Subject: PCI: qcom: reject short SID maps and invalid provider widths
+
+A nonempty IOMMU map can contain too few cells for a complete entry.
+Reject it before looking up its provider. Reject zero or excessive
+specifier widths before computing the entry stride. The four-cell
+legacy format for a two-cell provider remains valid.
+
+Fixes: 5121d76cb9dd ("PCI: qcom: Honor IOMMU provider's #iommu-cells in qcom_pcie_config_sid_1_9_0()")
+Link: https://github.com/slwyts/Project-SunUEFI/commit/e8fcf33971263f28085dbc0dbe5039438bf76c13
+Signed-off-by: Cryolitia PukNgae <cryolitia@gmail.com>
+---
+ drivers/pci/controller/dwc/pcie-qcom.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/pci/controller/dwc/pcie-qcom.c b/drivers/pci/controller/dwc/pcie-qcom.c
+index 95850f91c91b0d42dec1f33ca8f0db7f3690cec7..1f17d07c09b92f94ae997779f0caa928942f8b8c 100644
+--- a/drivers/pci/controller/dwc/pcie-qcom.c
++++ b/drivers/pci/controller/dwc/pcie-qcom.c
+@@ -1317,7 +1317,7 @@ static int qcom_pcie_config_sid_1_9_0(struct qcom_pcie *pcie)
+ 	if (!map || !size)
+ 		return 0;
+ 
+-	if (size % sizeof(*map)) {
++	if (size < 4 * sizeof(*map) || size % sizeof(*map)) {
+ 		dev_err(dev, "Malformed iommu-map property\n");
+ 		return -EINVAL;
+ 	}
+@@ -1340,6 +1340,11 @@ static int qcom_pcie_config_sid_1_9_0(struct qcom_pcie *pcie)
+ 		iommu_cells = 1;
+ 	of_node_put(iommu_np);
+ 
++	/* A four-cell legacy entry can reference a two-cell provider. */
++	if (!iommu_cells || iommu_cells > nr_cells - 2) {
++		dev_err(dev, "Invalid IOMMU specifier width in iommu-map\n");
++		return -EINVAL;
++	}
+ 	entry_cells = 3 + iommu_cells;
+ 
+ 	/*

@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Sun, 15 Nov 2026 00:53:33 +0800
+Subject: [PATCH] media: camss: validate formats on every CSID source pad
+
+CSID exposes four source pads and propagates sink formats to all of
+them. However, csid_try_format() handles only the first source pad.
+S_FMT on pads 2 through 4 consequently accepts arbitrary codes and
+dimensions, and frame-size enumeration does not use the sink format.
+
+Handle all source pads with the existing source-format logic. With
+the test generator disabled, derive their formats from the sink and
+the backend's supported output codes. Keep test-generator validation
+consistent on every source pad.
+
+This also covers the SM8750 IPP path on source pad 4 without changing
+the image capture format or adding a private interface.
+
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/media/platform/qcom/camss/camss-csid.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-csid.c b/drivers/media/platform/qcom/camss/camss-csid.c
+index 48459b46a..b55cf8a9b 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid.c
++++ b/drivers/media/platform/qcom/camss/camss-csid.c
+@@ -843,6 +843,9 @@ static void csid_try_format(struct csid_device *csid,
+ 		break;
+ 
+ 	case MSM_CSID_PAD_SRC:
++	case MSM_CSID_PAD_SRC + 1:
++	case MSM_CSID_PAD_SRC + 2:
++	case MSM_CSID_PAD_SRC + 3:
+ 		if (csid->testgen.nmodes == CSID_PAYLOAD_MODE_DISABLED ||
+ 		    csid->testgen_mode->cur.val == 0) {
+ 			/* Test generator is disabled, */
+-- 
+2.56.1
+

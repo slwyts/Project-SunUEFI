@@ -1,0 +1,150 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@tuta.io>
+Date: Wed, 18 Nov 2026 20:30:45 +0800
+Subject: [PATCH] media: iris: Keep encoder frame intervals in sync on OUTPUT
+ changes
+
+The stateful encoder API requires an OUTPUT frame interval change to
+also set the coded frame interval on CAPTURE. Iris instead changes
+only the operating rate, leaving the encoder at its previous coded
+frame rate. Clients that configure only OUTPUT can request 60 fps
+while the firmware is still configured to encode at 30 fps.
+
+Update both rates for OUTPUT and continue allowing CAPTURE to change
+the coded rate independently. Apply both limits to OUTPUT and return
+the integer frame interval actually selected. Preserve the previous
+configuration if the throughput checks fail.
+
+The firmware receives the coded rate when CAPTURE starts. Serialize
+rate changes against queue transitions and reject a different coded
+rate while CAPTURE is streaming.
+
+OpenAI Codex assisted with implementation and verification.
+
+Fixes: 4ff586ff28e3 ("media: iris: Add support for G/S_PARM for encoder video device")
+Assisted-by: LLM
+Signed-off-by: slwyts <slwyts@tuta.io>
+---
+ drivers/media/platform/qcom/iris/iris_venc.c | 73 ++++++++++----------
+ 1 file changed, 36 insertions(+), 37 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_venc.c b/drivers/media/platform/qcom/iris/iris_venc.c
+index a945992f63aa8a0c40b8d6bc473d0bc90270e6cd..a4d5e9c1c65f3b854a3c079529df08b2146d56b5 100644
+--- a/drivers/media/platform/qcom/iris/iris_venc.c
++++ b/drivers/media/platform/qcom/iris/iris_venc.c
+@@ -380,65 +380,62 @@ int iris_venc_s_param(struct iris_inst *inst, struct v4l2_streamparm *s_parm)
+ 	struct platform_inst_caps *caps = inst->core->iris_platform_data->inst_caps;
+ 	struct vb2_queue *src_q = v4l2_m2m_get_src_vq(inst->m2m_ctx);
+ 	struct vb2_queue *dst_q = v4l2_m2m_get_dst_vq(inst->m2m_ctx);
+-	struct v4l2_fract *timeperframe = NULL;
+-	u32 default_rate = DEFAULT_FPS;
+-	bool is_frame_rate = false;
++	bool output = V4L2_TYPE_IS_OUTPUT(s_parm->type);
++	u32 prev_frame_rate, prev_operating_rate;
++	struct v4l2_fract *timeperframe;
+ 	u32 fps, max_rate;
+-
+ 	int ret = 0;
+ 
+-	if (s_parm->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
++	if (output) {
+ 		timeperframe = &s_parm->parm.output.timeperframe;
+-		max_rate = caps->max_operating_rate;
++		max_rate = min(caps->max_operating_rate, caps->max_frame_rate);
+ 		s_parm->parm.output.capability = V4L2_CAP_TIMEPERFRAME;
+ 	} else {
+ 		timeperframe = &s_parm->parm.capture.timeperframe;
+-		is_frame_rate = true;
+ 		max_rate = caps->max_frame_rate;
+ 		s_parm->parm.capture.capability = V4L2_CAP_TIMEPERFRAME;
+ 	}
+ 
+-	if (!timeperframe->denominator || !timeperframe->numerator) {
+-		if (!timeperframe->numerator)
+-			timeperframe->numerator = 1;
+-		if (!timeperframe->denominator)
+-			timeperframe->denominator = default_rate;
+-	}
+-
+-	fps = timeperframe->denominator / timeperframe->numerator;
++	fps = (timeperframe->denominator ?: DEFAULT_FPS) /
++	      (timeperframe->numerator ?: 1);
+ 	if (!fps)
+ 		return -EINVAL;
+ 
+-	if (fps > max_rate) {
+-		ret = -ENOMEM;
+-		goto reset_rate;
++	if (fps > max_rate)
++		return -ENOMEM;
++
++	mutex_lock(&inst->ctx_q_lock);
++	mutex_lock(&inst->lock);
++
++	/* The coded frame rate is programmed when CAPTURE starts. */
++	if (vb2_is_streaming(dst_q) && fps != inst->frame_rate) {
++		ret = -EBUSY;
++		goto unlock;
+ 	}
+ 
+-	if (is_frame_rate)
+-		inst->frame_rate = fps;
+-	else
++	prev_frame_rate = inst->frame_rate;
++	prev_operating_rate = inst->operating_rate;
++	inst->frame_rate = fps;
++	if (output)
+ 		inst->operating_rate = fps;
+ 
+-	if ((s_parm->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE && vb2_is_streaming(src_q)) ||
+-	    (s_parm->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE && vb2_is_streaming(dst_q))) {
++	if (vb2_is_streaming(src_q) || vb2_is_streaming(dst_q)) {
+ 		ret = iris_check_core_mbpf(inst);
+-		if (ret)
+-			goto reset_rate;
+-		ret = iris_check_core_mbps(inst);
+-		if (ret)
+-			goto reset_rate;
++		if (!ret)
++			ret = iris_check_core_mbps(inst);
++		if (ret) {
++			inst->frame_rate = prev_frame_rate;
++			inst->operating_rate = prev_operating_rate;
++			goto unlock;
++		}
+ 	}
+ 
+-	return 0;
+-
+-reset_rate:
+-	if (ret) {
+-		if (is_frame_rate)
+-			inst->frame_rate = default_rate;
+-		else
+-			inst->operating_rate = default_rate;
+-	}
++	timeperframe->numerator = 1;
++	timeperframe->denominator = fps;
+ 
++unlock:
++	mutex_unlock(&inst->lock);
++	mutex_unlock(&inst->ctx_q_lock);
+ 	return ret;
+ }
+ 
+@@ -446,6 +443,7 @@ int iris_venc_g_param(struct iris_inst *inst, struct v4l2_streamparm *s_parm)
+ {
+ 	struct v4l2_fract *timeperframe = NULL;
+ 
++	mutex_lock(&inst->lock);
+ 	if (s_parm->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
+ 		timeperframe = &s_parm->parm.output.timeperframe;
+ 		timeperframe->numerator = 1;
+@@ -457,6 +455,7 @@ int iris_venc_g_param(struct iris_inst *inst, struct v4l2_streamparm *s_parm)
+ 		timeperframe->denominator = inst->frame_rate;
+ 		s_parm->parm.capture.capability = V4L2_CAP_TIMEPERFRAME;
+ 	}
++	mutex_unlock(&inst->lock);
+ 
+ 	return 0;
+ }

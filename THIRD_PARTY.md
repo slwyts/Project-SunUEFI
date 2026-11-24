@@ -16,7 +16,7 @@ SunUEFI 站在这些项目之上：EDK2 / Mu-Silicium 提供 UEFI 基础和高�
 | lwext4 | [gkostka/lwext4](https://github.com/gkostka/lwext4)，固定来源和归档摘要见 [uefi-ext4.json](config/uefi-ext4.json) | [prepare_ext4.py](tools/firmware/prepare_ext4.py) 暂存标准 ext4 库，UEFI 文件协议适配在 `uefi/components/ext4/`；不编译格式化或分区工具 | 多数文件 BSD-3-Clause；`ext4_extent.c`、`ext4_xattr.c` 含 GPL-2.0，组合库按 GPL-2.0 处理，保留源码版权与许可。 |
 | f2fs-tools | 官方 1.17.0，来源与保留布局扩容补丁见 [series.json](patches/f2fs-tools/1.17.0/series.json) | Android 模块内静态 `fsck.f2fs`／`resize.f2fs`，由 [build_f2fs_tools.py](tools/android/build_f2fs_tools.py) 构建 | GPL-2.0；模块附带 COPYING、源码来源和本地补丁。 |
 | Linux / linux-piano | [blu-sharky/linux-piano](https://github.com/blu-sharky/linux-piano)、[torvalds/linux](https://github.com/torvalds/linux)；救援 pin 见 [kernel-profiles.json](linux/kernel-profiles.json) | [build_kernel.py](tools/build_kernel.py)；完整基线见 [full builder](tools/build_piano_full_kernel.py) / [next builder](tools/build_piano_next_full.py) | 选定内核的 `COPYING`、`LICENSES/` 和文件声明；不改变主机脚本的许可。 |
-| BigfootACA 高通显示补丁（Junhao Xie） | [PLL 初始化 `67b3cbd4bab5`](https://github.com/BigfootACA/linux/commit/67b3cbd4bab5687c3aa3c9fe5a14c37433e28bbf)、[DPU 停止顺序 `8f353c130fee`](https://github.com/BigfootACA/linux/commit/8f353c130fee0fcf09afbe10e7fc58f901931418)、[PHY 运行时接口时钟 `b95037aef0a0`](https://github.com/BigfootACA/linux/commit/b95037aef0a0bf5cd612e7517a67644887e9fd5d) | 默认内核补丁 `0024`、`0026`、`0034`；分别修正 PLL 初始化、视频流水线停止顺序和 PHY 接口时钟的运行时管理 | 保留原作者与 Signed-off-by；沿用相应 Linux 源文件的 SPDX 和内核许可。PHY 补丁仅调整本地已有恢复辅助代码附近的上下文。 |
+| BigfootACA 高通显示补丁（Junhao Xie） | [PLL 初始化 `67b3cbd4bab5`](https://github.com/BigfootACA/linux/commit/67b3cbd4bab5687c3aa3c9fe5a14c37433e28bbf)、[DPU 停止顺序 `8f353c130fee`](https://github.com/BigfootACA/linux/commit/8f353c130fee0fcf09afbe10e7fc58f901931418)、[PHY 运行时接口时钟 `b95037aef0a0`](https://github.com/BigfootACA/linux/commit/b95037aef0a0bf5cd612e7517a67644887e9fd5d) | 用于修正 PLL 初始化、视频流水线停止顺序和 PHY 接口时钟的运行时管理 | 保留原作者与 Signed-off-by；沿用相应 Linux 源文件的 SPDX 和内核许可。PHY 补丁仅调整本地已有恢复辅助代码附近的上下文。 |
 | MiCode 板级资料 / 公开内核 | [MiCode/Xiaomi_Kernel_OpenSource](https://github.com/MiCode/Xiaomi_Kernel_OpenSource)，`45fb9bd6ae5ba2942fc1d53e4b6b46ef76992f71`；DTS pin 见 [来源集](docs/archive/linux-bringup/piano-full-linux-candidate.md) | [PianoKeys.c](uefi/core/PianoKeys.c) 等注明参考来源 | 原声明保留；本地 Keys 为 GPL-2.0-only，TouchProbe 为 GPL-2.0-or-later。 |
 | Debian/Piano 用户态、Mesa、固件 | 组件/精确 commit 见 [Linux 来源集](docs/archive/linux-bringup/piano-full-linux-candidate.md) | [stage_piano_full_userspace.py](tools/stage_piano_full_userspace.py) 等暂存到派生根系统 | 包、服务源码、Mesa 与固件按各自通知处理。 |
 | libcamera | [发布源码与 Debian 配方](config/libcamera.json)、[Hans de Goede 的 CAMSS 系列与本地 PIX 补丁](patches/libcamera/0.8.0/series.json) | `./build.sh libcamera` 生成 Debian ARM64 原生包 | 核心和 CAMSS 为 LGPL-2.1-or-later；工具、IPA 等按上游 [COPYING.rst](https://github.com/libcamera-org/libcamera/blob/v0.8.0/COPYING.rst) 和各文件声明，Debian 包保留版权清单。 |
@@ -27,7 +27,7 @@ SunUEFI 站在这些项目之上：EDK2 / Mu-Silicium 提供 UEFI 基础和高�
 
 小米平板相关参考还包括 [code002-2/Xiaomi-pad-6s-pro-Linux](https://github.com/code002-2/Xiaomi-pad-6s-pro-Linux/tree/053169b1ed48335d8139694ea6ccaacf52462dd9) 及其引用的 [debian-sheng](https://github.com/ianchb/debian-sheng)、[xiaomi-mipps-auth](https://github.com/ianchb/xiaomi-mipps-auth/tree/9176efbdf276b874fc0a97912a914449a88155fb) 和 [xiaomi-sheng-fingerprint](https://github.com/ianchb/xiaomi-sheng-fingerprint/tree/76e7301163b0e708f609c9864b3e5833e9f57402)。分别用于多发行版集成、MiPPS 认证和标准 libfprint/fprintd 接入的参考。指纹项目使用 FPC1553，Piano 原厂使用 Goodix，不能直接互换传感器协议。MiPPS 工具标注 GPL-2.0-only；指纹后端为 Apache-2.0，libfprint/fprintd 补丁及 QTEE 依赖遵循各自许可。
 
-内核 MiPPS [补丁](patches/linux/7.3/0173-LOCAL-power-piano-mipps-authentication.patch)移植了上述 `xiaomi-mipps-auth` 的协议常量和摘要计算，并参考 [blu-sharky/piano-mipps-auth](https://github.com/blu-sharky/piano-mipps-auth) 对 Piano 固件漏报充电器身份的处理及原厂命令顺序，保留 GPL-2.0-only。认证在内核工作队列中完成，不安装上游的用户空间服务、状态文件和通知。来源提交记录在[内核补丁清单](patches/linux/7.3/series.json)的 `mipps_authentication` 中，协议与限制见[内核说明](docs/devel/linux/kernel.md#usb-type-c)。
+内核 MiPPS [补丁](patches/linux/7.3/0348-LOCAL-power-piano-mipps-authentication.patch)移植了上述 `xiaomi-mipps-auth` 的协议常量和摘要计算，并参考 [blu-sharky/piano-mipps-auth](https://github.com/blu-sharky/piano-mipps-auth) 对 Piano 固件漏报充电器身份的处理及原厂命令顺序，保留 GPL-2.0-only。认证在内核工作队列中完成，不安装上游的用户空间服务、状态文件和通知。来源提交记录在[内核补丁清单](patches/linux/7.3/series.json)的 `mipps_authentication` 中，协议与限制见[内核说明](docs/devel/linux/kernel.md#usb-type-c)。
 
 SM8750 温区的 include 方案参考 Cryolitia 的
 [Piano TSENS overlay](https://github.com/Cryolitia/nixos-config/blob/096e88bfc641784cc291dfe54695c4811d8c61e5/hosts/xiaomi-piano/piano-tsens-temperatures.dts)，
@@ -60,14 +60,14 @@ Gunyah 的 Android 驱动与主线接口适配来自
 [SuperTurtleDev/iceland-mainline-kernel-linux](https://github.com/SuperTurtleDev/iceland-mainline-kernel-linux/tree/fd503a492d381687c143b7085ea79ebce58dcdc7)。
 驱动上游为 Android common `android17-6.18-2026-06_r1`，提交
 `30c0eaeef78d5c19f687ad8418c27b76353ab261`。本地
-[`0073-EXTERNAL-virt-gunyah-android-port.patch`](patches/linux/7.3/0073-EXTERNAL-virt-gunyah-android-port.patch)保留原作者、
+[`0200-EXTERNAL-virt-gunyah-android-port.patch`](patches/linux/7.3/0200-EXTERNAL-virt-gunyah-android-port.patch)保留原作者、
 版权和 GPL-2.0-only 等逐文件声明；未引入其他平板的设备树或内存预留。
 它们用于接入设备已有的 Gunyah 固件，不替换高通 Hypervisor。
 
 BORE 6.8.0 来自 Masahito Suzuki 的调度器实现，以及
 [CachyOS/kernel-patches](https://github.com/CachyOS/kernel-patches/blob/6266b5f33f4e8caaa452174f0132c8c82f919267/7.3/sched/0001-bore-cachy.patch)
 中 Piotr Gorski 整理的 Linux 7.3 补丁。本地
-[`0074-EXTERNAL-sched-bore-cachy.patch`](patches/linux/7.3/0074-EXTERNAL-sched-bore-cachy.patch)只调整了
+[`0201-EXTERNAL-sched-bore-cachy.patch`](patches/linux/7.3/0201-EXTERNAL-sched-bore-cachy.patch)只调整了
 `CONFIG_CACHY` 专用默认值的上下文及空白格式，保留 BORE 算法和运行参数默认值。
 代码沿用 Linux 内核许可；原始补丁校验值和提交记录在
 [`series.json`](patches/linux/7.3/series.json)中。MGLRU、ZRAM、
@@ -75,7 +75,7 @@ BORE 6.8.0 来自 Masahito Suzuki 的调度器实现，以及
 
 FastRPC 的 DSP 重启清理修复参考高通 Jianping Li 提交的
 [三个上游补丁](https://github.com/qualcomm-linux/kernel/pull/1212)，
-本地适配为 [`0156-LOCAL-fastrpc-adjust-ssr-synchronisation.patch`](patches/linux/7.3/0156-LOCAL-fastrpc-adjust-ssr-synchronisation.patch)。
+本地适配为 [`0331-LOCAL-fastrpc-adjust-ssr-synchronisation.patch`](patches/linux/7.3/0331-LOCAL-fastrpc-adjust-ssr-synchronisation.patch)。
 修复设备开放时的初始化顺序、轮询调用的退出通知，以及活动调用尚未退出就拆除 DMA 映射的竞态。
 原始提交记录在补丁正文与内核来源清单中，沿用 Linux 源文件的 GPL-2.0-only 许可。
 这些改动处理 DSP 崩溃后的清理，不代表已经解决 DSP 最初的崩溃原因。

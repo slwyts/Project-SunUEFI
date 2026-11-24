@@ -1,0 +1,206 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Fri, 20 Nov 2026 03:44:04 +0800
+Subject: backlight: ktz8866: report hardware brightness and dimming scale
+
+Read the latched brightness from both KTZ8866 controllers and require
+them to agree. Report zero when the LED strings are disabled and
+advertise a dimming scale only when both chips share the same mode.
+Serialize reads with brightness updates so the reported level cannot
+mix bytes from different writes.
+
+Reuse the readback at probe for the original bootloader handoff. Propagate
+partial-write errors and allow the next update to retry.
+
+Link: https://github.com/slwyts/Project-SunUEFI/commit/276dac061a74e6416678b4fb6ae2bf43c708c000
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/video/backlight/ktz8866.c | 98 ++++++++++++++++++++++++++-----
+ 1 file changed, 83 insertions(+), 15 deletions(-)
+
+diff --git a/drivers/video/backlight/ktz8866.c b/drivers/video/backlight/ktz8866.c
+index c237fe1aeeeaf33f9a88e810c285ed2a73625bf5..377d535b303bfa8ad1cde8fa3a5627347890f205 100644
+--- a/drivers/video/backlight/ktz8866.c
++++ b/drivers/video/backlight/ktz8866.c
+@@ -6,11 +6,13 @@
+  */
+ 
+ #include <linux/backlight.h>
++#include <linux/cleanup.h>
+ #include <linux/delay.h>
+ #include <linux/err.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/i2c.h>
+ #include <linux/module.h>
++#include <linux/mutex.h>
+ #include <linux/of.h>
+ #include <linux/regmap.h>
+ 
+@@ -40,14 +42,19 @@
+ #define PWM_RAMP_TIME 0x15
+ 
+ /* definition */
++#define BLED_MAP_LINEAR BIT(3)
+ #define BL_EN_BIT BIT(6)
++#define BL_SINK_MASK GENMASK(5, 0)
+ #define LCD_BIAS_EN 0x9F
+ #define PWM_HYST 0x5
+ 
+ struct ktz8866 {
+ 	struct i2c_client *client;
+ 	struct regmap *regmap;
++	/* Serialize readback with both chips' multi-register updates. */
++	struct mutex lock;
+ 	bool led_on;
++	int update_error;
+ 	struct gpio_desc *enable_gpio;
+ 	struct backlight_device *backlight;
+ 	/* Optional second chip mirroring every register write */
+@@ -84,15 +91,13 @@ static int ktz8866_update_bits(struct ktz8866 *ktz, unsigned int reg,
+ 	return ret;
+ }
+ 
+-static int ktz8866_backlight_update_status(struct backlight_device *backlight_dev)
++static int ktz8866_set_brightness(struct ktz8866 *ktz, unsigned int brightness)
+ {
+-	struct ktz8866 *ktz = bl_get_data(backlight_dev);
+-	unsigned int brightness = backlight_get_brightness(backlight_dev);
+ 	unsigned int dimming, secondary_dimming;
+ 	unsigned int ramp;
+ 	int ret;
+ 
+-	if (ktz->led_on && !brightness) {
++	if ((ktz->led_on || ktz->update_error) && !brightness) {
+ 		ret = regmap_read(ktz->regmap, BL_DIMMING, &dimming);
+ 		if (ret)
+ 			return ret;
+@@ -127,7 +132,7 @@ static int ktz8866_backlight_update_status(struct backlight_device *backlight_de
+ 	if (ret)
+ 		return ret;
+ 
+-	if (!ktz->led_on && brightness) {
++	if ((!ktz->led_on || ktz->update_error) && brightness) {
+ 		ret = ktz8866_update_bits(ktz, BL_EN, BL_EN_BIT, BL_EN_BIT);
+ 		if (ret)
+ 			return ret;
+@@ -137,15 +142,84 @@ static int ktz8866_backlight_update_status(struct backlight_device *backlight_de
+ 	return 0;
+ }
+ 
++static int ktz8866_backlight_update_status(struct backlight_device *backlight_dev)
++{
++	struct ktz8866 *ktz = bl_get_data(backlight_dev);
++
++	guard(mutex)(&ktz->lock);
++	ktz->update_error = ktz8866_set_brightness(ktz, backlight_get_brightness(backlight_dev));
++	return ktz->update_error;
++}
++
++static int ktz8866_read_brightness(struct regmap *regmap)
++{
++	unsigned int enable;
++	u8 values[2];
++	int ret;
++
++	ret = regmap_read(regmap, BL_EN, &enable);
++	if (ret)
++		return ret;
++	if (!(enable & BL_EN_BIT) || !(enable & BL_SINK_MASK))
++		return 0;
++
++	ret = regmap_bulk_read(regmap, BL_BRT_LSB, values, ARRAY_SIZE(values));
++	if (ret)
++		return ret;
++
++	return (values[1] << 3) | (values[0] & 0x7);
++}
++
++static int ktz8866_backlight_get_brightness(struct backlight_device *backlight_dev)
++{
++	struct ktz8866 *ktz = bl_get_data(backlight_dev);
++	int primary, secondary;
++
++	guard(mutex)(&ktz->lock);
++
++	/* Failed MSB writes can leave the LSB register updated but not latched. */
++	if (ktz->update_error)
++		return ktz->update_error;
++
++	primary = ktz8866_read_brightness(ktz->regmap);
++	if (primary < 0 || !ktz->secondary)
++		return primary;
++
++	secondary = ktz8866_read_brightness(ktz->secondary);
++	if (secondary < 0)
++		return secondary;
++	if (secondary != primary)
++		return -EIO;
++
++	return primary;
++}
++
+ static const struct backlight_ops ktz8866_backlight_ops = {
+ 	.options = BL_CORE_SUSPENDRESUME,
+ 	.update_status = ktz8866_backlight_update_status,
++	.get_brightness = ktz8866_backlight_get_brightness,
+ };
+ 
++static enum backlight_scale ktz8866_get_scale(struct ktz8866 *ktz)
++{
++	unsigned int primary, secondary;
++
++	if (regmap_read(ktz->regmap, BL_CFG1, &primary))
++		return BACKLIGHT_SCALE_UNKNOWN;
++	if (ktz->secondary &&
++	    (regmap_read(ktz->secondary, BL_CFG1, &secondary) ||
++	     ((primary ^ secondary) & BLED_MAP_LINEAR)))
++		return BACKLIGHT_SCALE_UNKNOWN;
++
++	return primary & BLED_MAP_LINEAR ? BACKLIGHT_SCALE_LINEAR :
++					  BACKLIGHT_SCALE_NON_LINEAR;
++}
++
+ static void ktz8866_init(struct ktz8866 *ktz)
+ {
+ 	unsigned int val = 0;
+ 
++	guard(mutex)(&ktz->lock);
+ 	if (!of_property_read_u32(ktz->client->dev.of_node, "current-num-sinks", &val))
+ 		ktz8866_write(ktz, BL_EN, BIT(val) - 1);
+ 	else
+@@ -179,16 +253,9 @@ static void ktz8866_init(struct ktz8866 *ktz)
+  */
+ static unsigned int ktz8866_get_initial_brightness(struct ktz8866 *ktz)
+ {
+-	unsigned int en, lsb, msb, brightness;
+-
+-	if (regmap_read(ktz->regmap, BL_EN, &en) || !(en & BL_EN_BIT) ||
+-	    regmap_read(ktz->regmap, BL_BRT_LSB, &lsb) ||
+-	    regmap_read(ktz->regmap, BL_BRT_MSB, &msb))
+-		return DEFAULT_BRIGHTNESS;
+-
+-	brightness = (msb << 3) | (lsb & 0x7);
++	int brightness = ktz8866_read_brightness(ktz->regmap);
+ 
+-	return brightness ?: DEFAULT_BRIGHTNESS;
++	return brightness > 0 ? brightness : DEFAULT_BRIGHTNESS;
+ }
+ 
+ static void ktz8866_put_device(void *data)
+@@ -239,6 +306,7 @@ static int ktz8866_probe(struct i2c_client *client)
+ 	if (!ktz)
+ 		return -ENOMEM;
+ 
++	mutex_init(&ktz->lock);
+ 	ktz->client = client;
+ 	ktz->regmap = devm_regmap_init_i2c(client, &ktz8866_regmap_config);
+ 	if (IS_ERR(ktz->regmap))
+@@ -269,7 +337,7 @@ static int ktz8866_probe(struct i2c_client *client)
+ 	props.type = BACKLIGHT_RAW;
+ 	props.max_brightness = MAX_BRIGHTNESS;
+ 	props.brightness = ktz8866_get_initial_brightness(ktz);
+-	props.scale = BACKLIGHT_SCALE_LINEAR;
++	props.scale = ktz8866_get_scale(ktz);
+ 
+ 	ktz->backlight = devm_backlight_device_register(&client->dev, "ktz8866-backlight",
+ 					&client->dev, ktz, &ktz8866_backlight_ops, &props);

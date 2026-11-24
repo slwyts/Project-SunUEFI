@@ -1,0 +1,249 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slwyts <slwyts@foxmail.com>
+Date: Sat, 14 Nov 2026 21:59:54 +0800
+Subject: [PATCH] media: camss: separate TFE980 sink and capture formats
+
+The SM8750 PIX path always enables the demosaic and FD Y/C write masters.
+Its video node cannot capture the Bayer formats accepted on the sink pad.
+
+Keep Bayer enumeration on the PIX sink and expose only NV12 on its capture
+node. Use a supported default sink code for SM8750 instead of advertising
+an unsupported UYVY format. Raw capture remains on the RDI nodes.
+
+Use the same stepwise geometry for the NV12 capture format and VFE crop.
+The luma and chroma write masters store height and half-height rows in
+one plane, so restrict the output height and crop origin to whole
+chroma samples. Keep the Bayer sink and RDI formats unchanged.
+
+Keep the scaled frame within the Bayer input. Round the scaler's
+minimum output up to an even dimension before clamping the NV12
+compose size so chroma alignment cannot exceed 16x downscaling.
+
+Assisted-by: LLM
+Signed-off-by: slwyts <slwyts@foxmail.com>
+---
+ drivers/media/platform/qcom/camss/camss-vfe.c | 91 +++++++++++++++++--
+ .../media/platform/qcom/camss/camss-video.c   | 19 +++-
+ .../media/platform/qcom/camss/camss-video.h   |  7 ++
+ 3 files changed, 108 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index 507ab4c287..1316f506a1 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -300,8 +300,6 @@ static const struct camss_format_info formats_pix_980[] = {
+ 	  PER_PLANE_DATA(0, 1, 1, 1, 1, 10) },
+ 	{ MEDIA_BUS_FMT_SRGGB10_1X10, 10, V4L2_PIX_FMT_SRGGB10P, 1,
+ 	  PER_PLANE_DATA(0, 1, 1, 1, 1, 10) },
+-	{ MEDIA_BUS_FMT_YUYV8_1_5X8, 8, V4L2_PIX_FMT_NV12, 1,
+-	  PER_PLANE_DATA(0, 1, 1, 2, 3, 8) },
+ };
+ 
+ const struct camss_formats vfe_formats_pix_980 = {
+@@ -309,14 +307,36 @@ const struct camss_formats vfe_formats_pix_980 = {
+ 	.formats = formats_pix_980
+ };
+ 
++static const struct camss_format_info formats_pix_980_output[] = {
++	{ MEDIA_BUS_FMT_YUYV8_1_5X8, 8, V4L2_PIX_FMT_NV12, 1,
++	  PER_PLANE_DATA(0, 1, 1, 2, 3, 8) },
++};
++
++/* Bound the FD output by the current VFE input range. */
++static const struct v4l2_frmsize_stepwise vfe_980_pix_sizes = {
++	.min_width = 16,
++	.max_width = 8176,
++	.step_width = 16,
++	.min_height = 4,
++	.max_height = 8190,
++	.step_height = 2,
++};
++
++static bool vfe_is_980_pix(struct vfe_line *line)
++{
++	struct vfe_device *vfe = to_vfe(line);
++
++	return vfe->camss->res->version == CAMSS_8750 &&
++	       !vfe->res->is_lite && line->id == VFE_LINE_PIX;
++}
++
+ static u32 vfe_src_pad_code(struct vfe_line *line, u32 sink_code,
+ 			    unsigned int index, u32 src_req_code)
+ {
+ 	struct vfe_device *vfe = to_vfe(line);
+ 
+ 	/* the SM8750 pixel path always produces NV12 */
+-	if (vfe->camss->res->version == CAMSS_8750 &&
+-	    line->id == VFE_LINE_PIX)
++	if (vfe_is_980_pix(line))
+ 		return index ? 0 : MEDIA_BUS_FMT_YUYV8_1_5X8;
+ 
+ 	switch (vfe->camss->res->version) {
+@@ -1583,12 +1603,20 @@ static void vfe_try_format(struct vfe_line *line,
+ 			if (fmt->code == line->formats[i].code)
+ 				break;
+ 
+-		/* If not found, use UYVY as default */
+-		if (i >= line->nformats)
+-			fmt->code = MEDIA_BUS_FMT_UYVY8_1X16;
++		if (i >= line->nformats) {
++			if (to_vfe(line)->camss->res->version == CAMSS_8750)
++				fmt->code = line->formats[0].code;
++			else
++				fmt->code = MEDIA_BUS_FMT_UYVY8_1X16;
++		}
+ 
+ 		fmt->width = clamp_t(u32, fmt->width, 1, 8191);
+ 		fmt->height = clamp_t(u32, fmt->height, 1, 8191);
++		if (vfe_is_980_pix(line)) {
++			/* The scaler cannot upscale to the minimum NV12 size. */
++			fmt->width = max(fmt->width, vfe_980_pix_sizes.min_width);
++			fmt->height = max(fmt->height, vfe_980_pix_sizes.min_height);
++		}
+ 
+ 		fmt->field = V4L2_FIELD_NONE;
+ 		fmt->colorspace = V4L2_COLORSPACE_SRGB;
+@@ -1619,6 +1647,15 @@ static void vfe_try_format(struct vfe_line *line,
+ 	fmt->colorspace = V4L2_COLORSPACE_SRGB;
+ }
+ 
++static u32 vfe_980_pix_compose_size(u32 requested, u32 input, u32 minimum)
++{
++	u32 scale_min = DIV_ROUND_UP(input, SCALER_RATIO_MAX);
++
++	/* Align chroma without exceeding the maximum downscale ratio. */
++	minimum = max(minimum, round_up(scale_min, 2));
++	return clamp(round_down(requested, 2), minimum, round_down(input, 2));
++}
++
+ /*
+  * vfe_try_compose - Handle try compose selection by pad subdev method
+  * @line: VFE line
+@@ -1635,6 +1672,16 @@ static void vfe_try_compose(struct vfe_line *line,
+ 
+ 	fmt = __vfe_get_format(line, sd_state, MSM_VFE_PAD_SINK, which);
+ 
++	if (vfe_is_980_pix(line)) {
++		rect->left = 0;
++		rect->top = 0;
++		rect->width = vfe_980_pix_compose_size(rect->width, fmt->width,
++						       vfe_980_pix_sizes.min_width);
++		rect->height = vfe_980_pix_compose_size(rect->height, fmt->height,
++							vfe_980_pix_sizes.min_height);
++		return;
++	}
++
+ 	if (rect->width > fmt->width)
+ 		rect->width = fmt->width;
+ 
+@@ -1658,6 +1705,26 @@ static void vfe_try_compose(struct vfe_line *line,
+ 		rect->height = 4;
+ }
+ 
++static void vfe_980_pix_try_crop(const struct v4l2_rect *compose,
++				 struct v4l2_rect *rect)
++{
++	const struct v4l2_frmsize_stepwise *size = &vfe_980_pix_sizes;
++	u32 width = min(compose->width, size->max_width);
++	u32 height = min(compose->height, size->max_height);
++	u32 left, top;
++
++	rect->width = camss_video_step_size(rect->width, size->min_width,
++					    width, size->step_width);
++	rect->height = camss_video_step_size(rect->height, size->min_height,
++					     height, size->step_height);
++
++	/* Both crop origins have to address whole chroma samples. */
++	left = clamp_t(s32, rect->left, 0, compose->width - rect->width);
++	top = clamp_t(s32, rect->top, 0, compose->height - rect->height);
++	rect->left = round_down(left, 2);
++	rect->top = round_down(top, 2);
++}
++
+ /*
+  * vfe_try_crop - Handle try crop selection by pad subdev method
+  * @line: VFE line
+@@ -1673,6 +1740,10 @@ static void vfe_try_crop(struct vfe_line *line,
+ 	struct v4l2_rect *compose;
+ 
+ 	compose = __vfe_get_compose(line, sd_state, which);
++	if (vfe_is_980_pix(line)) {
++		vfe_980_pix_try_crop(compose, rect);
++		return;
++	}
+ 
+ 	if (rect->width > compose->width)
+ 		rect->width = compose->width;
+@@ -2489,6 +2560,12 @@ int msm_vfe_register_entities(struct vfe_device *vfe,
+ 
+ 		video_out->nformats = vfe->line[i].nformats;
+ 		video_out->formats = vfe->line[i].formats;
++		if (vfe_is_980_pix(&vfe->line[i])) {
++			/* FD write masters produce NV12, not the Bayer input. */
++			video_out->nformats = ARRAY_SIZE(formats_pix_980_output);
++			video_out->formats = formats_pix_980_output;
++			video_out->frame_sizes = &vfe_980_pix_sizes;
++		}
+ 
+ 		snprintf(name, ARRAY_SIZE(name), "%s%d_%s%d",
+ 			 MSM_VFE_NAME, vfe->id, "video", i);
+diff --git a/drivers/media/platform/qcom/camss/camss-video.c b/drivers/media/platform/qcom/camss/camss-video.c
+index 9f79d5a110..122218ae07 100644
+--- a/drivers/media/platform/qcom/camss/camss-video.c
++++ b/drivers/media/platform/qcom/camss/camss-video.c
+@@ -485,6 +485,12 @@ static int video_enum_framesizes(struct file *file, void *fh,
+ 	if (i == video->nformats)
+ 		return -EINVAL;
+ 
++	if (video->frame_sizes) {
++		fsize->type = V4L2_FRMSIZE_TYPE_STEPWISE;
++		fsize->stepwise = *video->frame_sizes;
++		return 0;
++	}
++
+ 	fsize->type = V4L2_FRMSIZE_TYPE_CONTINUOUS;
+ 	fsize->stepwise.min_width = CAMSS_FRAME_MIN_WIDTH;
+ 	fsize->stepwise.max_width = CAMSS_FRAME_MAX_WIDTH;
+@@ -550,8 +556,17 @@ static int __video_try_fmt(struct camss_video *video, struct v4l2_format *f)
+ 	memset(pix_mp, 0, sizeof(*pix_mp));
+ 
+ 	pix_mp->pixelformat = fi->pixelformat;
+-	pix_mp->width = clamp_t(u32, width, 1, CAMSS_FRAME_MAX_WIDTH);
+-	pix_mp->height = clamp_t(u32, height, 1, CAMSS_FRAME_MAX_HEIGHT_RDI);
++	if (video->frame_sizes) {
++		const struct v4l2_frmsize_stepwise *size = video->frame_sizes;
++
++		pix_mp->width = camss_video_step_size(width, size->min_width,
++						      size->max_width, size->step_width);
++		pix_mp->height = camss_video_step_size(height, size->min_height,
++						       size->max_height, size->step_height);
++	} else {
++		pix_mp->width = clamp_t(u32, width, 1, CAMSS_FRAME_MAX_WIDTH);
++		pix_mp->height = clamp_t(u32, height, 1, CAMSS_FRAME_MAX_HEIGHT_RDI);
++	}
+ 	pix_mp->num_planes = fi->planes;
+ 	for (i = 0; i < pix_mp->num_planes; i++) {
+ 		bpl = pix_mp->width / fi->hsub[i].numerator *
+diff --git a/drivers/media/platform/qcom/camss/camss-video.h b/drivers/media/platform/qcom/camss/camss-video.h
+index 048a9ac384..dc62c1400e 100644
+--- a/drivers/media/platform/qcom/camss/camss-video.h
++++ b/drivers/media/platform/qcom/camss/camss-video.h
+@@ -56,8 +56,15 @@ struct camss_video {
+ 	bool frame_sync;
+ 	const struct camss_format_info *formats;
+ 	unsigned int nformats;
++	const struct v4l2_frmsize_stepwise *frame_sizes;
+ };
+ 
++static inline u32 camss_video_step_size(u32 requested, u32 min, u32 max, u32 step)
++{
++	requested = clamp(requested, min, max);
++	return requested - (requested - min) % step;
++}
++
+ int msm_video_register(struct camss_video *video, struct v4l2_device *v4l2_dev,
+ 		       const char *name);
+ 
+-- 
+2.55.0
+
