@@ -9,7 +9,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-26.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       SUNUEFI_TOOLCHAIN_ROOT: /usr
     steps:
@@ -18,15 +18,31 @@ jobs:
           persist-credentials: false
       - name: Install native test dependencies
         run: |
-          download_options=(-o Acquire::Retries=3)
-          sudo apt-get "${download_options[@]}" -o APT::Update::Error-Mode=any update
-          install_dependencies() {
-            sudo apt-get "${download_options[@]}" install -y --no-install-recommends \
-              alsa-utils binutils-aarch64-linux-gnu build-essential cargo clang \
-              debhelper libarchive-tools libjpeg-dev libssl-dev libyuv-dev m4 \
-              makepkg pacman-package-manager zstd
+          # The runner already ships Cargo and Rust. Do not download a second toolchain.
+          cargo --version
+          packages=(alsa-utils binutils-aarch64-linux-gnu build-essential clang
+            debhelper libarchive-tools libjpeg-dev libssl-dev libyuv-dev m4
+            makepkg pacman-package-manager zstd)
+          apt_options=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20
+            -o Acquire::https::Timeout=20 -o Acquire::Languages=none)
+          apt_sources=()
+          download_dependencies() {
+            local -a apt=(apt-get "${apt_options[@]}" "${apt_sources[@]}")
+            sudo timeout --kill-after=10s 3m "${apt[@]}" -o APT::Update::Error-Mode=any update &&
+              sudo timeout --kill-after=10s 4m "${apt[@]}" install -y --download-only \
+                --no-install-recommends "${packages[@]}"
           }
-          install_dependencies || install_dependencies
+          if ! download_dependencies; then
+            echo "::warning::The runner's Ubuntu mirror did not finish; retrying on the official archive."
+            . /etc/os-release
+            archive_sources="$RUNNER_TEMP/sunuefi-ubuntu.sources"
+            printf 'Types: deb\nURIs: https://archive.ubuntu.com/ubuntu\nSuites: %s %s-updates\nComponents: main universe\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n\nTypes: deb\nURIs: https://security.ubuntu.com/ubuntu\nSuites: %s-security\nComponents: main universe\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' \
+              "$VERSION_CODENAME" "$VERSION_CODENAME" "$VERSION_CODENAME" > "$archive_sources"
+            apt_sources=(-o "Dir::Etc::sourcelist=$archive_sources" -o Dir::Etc::sourceparts=-)
+            download_dependencies
+          fi
+          sudo apt-get "${apt_options[@]}" "${apt_sources[@]}" install -y --no-download \
+            --no-install-recommends "${packages[@]}"
       - name: Check out fixed test sources
         run: |
           git submodule update --init --depth 1 -- upstream/Mu-Silicium \
