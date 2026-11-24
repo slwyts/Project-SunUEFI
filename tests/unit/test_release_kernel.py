@@ -24,6 +24,11 @@ SOURCE_URL = "https://github.com/example/release-kernel-fixture.git"
 PREPARATION_ERRORS = (ValueError, RuntimeError, subprocess.CalledProcessError)
 
 
+class CheckedInReleaseSeriesTests(unittest.TestCase):
+    def test_checked_in_series_has_complete_replay_metadata(self):
+        builder.load_series(ROOT, builder.DEFAULT_TARGET)
+
+
 @unittest.skipUnless(shutil.which("git"), "Git is required for release source fixtures")
 class ReleaseKernelTests(unittest.TestCase):
     def setUp(self):

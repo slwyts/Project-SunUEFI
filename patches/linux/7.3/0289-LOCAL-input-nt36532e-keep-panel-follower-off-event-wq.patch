@@ -1,42 +1,77 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: SakiMidare <ssmzhn@163.com>
 Date: Tue, 24 Nov 2026 16:50:29 +0800
-Subject: [PATCH] Input: nt36532e: keep the panel follower off the event
- workqueue
+Subject: [PATCH] Input: nt36532e: do not wait for charger queries during panel
+ disable
 
-panel_unpreparing() runs in the DRM atomic commit path and flushes the
-driver's ordered event workqueue.  nvt_power_supply_work() runs on that
-same workqueue and calls power_supply_is_system_supplied(), which walks
-every registered power supply.  If one of those get_property() callbacks
-blocks (for example sc96231_charger waiting on its own mutex), the flush
-never returns, the atomic commit stays pending and the Wayland compositor
-ends up in uninterruptible sleep; the panel stays dark and the session
-cannot be recovered.
+The DRM panel follower flushes the touchscreen event workqueue when
+changing panel state. A charger property callback can block inside
+power_supply_is_system_supplied(), leaving a DRM atomic commit pending
+and the display dark.
 
-Run the power supply work on system_dfl_wq instead of the event workqueue,
-skip it while the panel is off, and stop flushing the workqueue from the
-panel follower callbacks.  nvt_ts_suspend() already disables the IRQ and
-clears bTouchIsAwake, and the work checks both before issuing a command.
+Move the charger query to the system workqueue and run it without a
+touchscreen lock. Recheck the panel, firmware and suspend state under
+the touchscreen lock before sending a command. Cache the charger mode
+only after the controller accepts it and refresh it on resume.
 
+At panel shutdown cancel only resume_work, so a pending firmware
+restore cannot wake the touchscreen after the display turns off.
+
+Link: https://github.com/slwyts/Project-SunUEFI/pull/28
 Signed-off-by: SakiMidare <ssmzhn@163.com>
 ---
- drivers/input/touchscreen/nt36532e/nt36xxx.c | 17 +++++++++++------
- 1 file changed, 11 insertions(+), 6 deletions(-)
+ drivers/input/touchscreen/nt36532e/nt36xxx.c | 74 +++++++++++---------
+ drivers/input/touchscreen/nt36532e/nt36xxx.h |  1 -
+ 2 files changed, 39 insertions(+), 36 deletions(-)
 
 diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx.c b/drivers/input/touchscreen/nt36532e/nt36xxx.c
-index e9adeb2..588feff 100644
+index e9adeb2ea..baa8e7460 100644
 --- a/drivers/input/touchscreen/nt36532e/nt36xxx.c
 +++ b/drivers/input/touchscreen/nt36532e/nt36xxx.c
-@@ -1251,7 +1251,7 @@ static void nvt_power_supply_work(struct work_struct *work)
+@@ -1250,29 +1250,32 @@ static void nvt_power_supply_work(struct work_struct *work)
+ 	int supplied;
  	int ret;
  
- 	mutex_lock(&ts_core->power_supply_lock);
+-	mutex_lock(&ts_core->power_supply_lock);
 -	if (READ_ONCE(bTouchIsAwake) != 1)
-+	if (READ_ONCE(bTouchIsAwake) != 1 || !READ_ONCE(ts_core->panel_on))
+-		goto out;
++	if (!READ_ONCE(ts_core->panel_on))
++		return;
+ 
++	/* Charger property callbacks may sleep independently of the panel. */
+ 	supplied = !!power_supply_is_system_supplied();
+-	if (ts_core->power_supply_status == supplied)
++
++	mutex_lock(&ts_core->lock);
++	if (!READ_ONCE(ts_core->panel_on) || !READ_ONCE(bTouchIsAwake) ||
++	    READ_ONCE(ts_core->dev_pm_suspend) || !ts_core->thp_firmware_ready ||
++	    ts_core->power_supply_status == supplied)
  		goto out;
  
- 	supplied = !!power_supply_is_system_supplied();
-@@ -1281,7 +1281,7 @@ static int nvt_power_supply_callback(struct notifier_block *nb,
+-	ts_core->power_supply_status = supplied;
+ 	command[1] = supplied ? 0x53 : 0x51;
+ 	/* the host command byte lives in the event buffer page */
+-	mutex_lock(&ts_core->lock);
+ 	ret = nvt_set_page(ts_core->mmap->EVENT_BUF_ADDR | EVENT_MAP_HOST_CMD);
+ 	if (!ret)
+ 		ret = CTP_SPI_WRITE(ts_core->client, command, sizeof(command));
+-	mutex_unlock(&ts_core->lock);
+-	if (ret)
++	if (ret) {
+ 		NVT_ERR("USB status set failed, ret=%d\n", ret);
+-	else
++	} else {
++		ts_core->power_supply_status = supplied;
+ 		NVT_LOG("charger mode=%d\n", supplied);
++	}
+ 
+ out:
+-	mutex_unlock(&ts_core->power_supply_lock);
++	mutex_unlock(&ts_core->lock);
+ }
+ 
+ static int nvt_power_supply_callback(struct notifier_block *nb,
+@@ -1281,19 +1284,19 @@ static int nvt_power_supply_callback(struct notifier_block *nb,
  	struct nvt_ts_data *ts_core = container_of(nb, struct nvt_ts_data,
  						    power_supply_notifier);
  
@@ -45,40 +80,171 @@ index e9adeb2..588feff 100644
  	return NOTIFY_OK;
  }
  
-@@ -1293,7 +1293,7 @@ void nvt_power_supply_restore(void)
- 	mutex_lock(&ts->power_supply_lock);
+ void nvt_power_supply_restore(void)
+ {
+-	if (!ts || !ts->power_supply_registered || !ts->event_wq)
++	if (!ts || !READ_ONCE(ts->power_supply_registered))
+ 		return;
+ 
+-	mutex_lock(&ts->power_supply_lock);
++	mutex_lock(&ts->lock);
  	ts->power_supply_status = -1;
- 	mutex_unlock(&ts->power_supply_lock);
+-	mutex_unlock(&ts->power_supply_lock);
 -	queue_work(ts->event_wq, &ts->power_supply_work);
++	mutex_unlock(&ts->lock);
 +	queue_work(system_dfl_wq, &ts->power_supply_work);
  }
  
  /*******************************************************
-@@ -3046,7 +3046,6 @@ static int panel_prepared(struct drm_panel_follower *follower)
- 		return 0;
+@@ -2493,7 +2496,9 @@ static int32_t nvt_ts_check_chip_ver_trim_loop(void)
+ static void nvt_resume_work(struct work_struct *work)
+ {
+ 	struct nvt_ts_data *ts_core = container_of(work, struct nvt_ts_data, resume_work);
+-	nvt_ts_resume(&ts_core->client->dev);
++
++	if (READ_ONCE(ts_core->panel_on))
++		nvt_ts_resume(&ts_core->client->dev);
+ }
+ 
+ /*******************************************************
+@@ -2593,7 +2598,7 @@ static int32_t nvt_ts_probe(struct spi_device *client)
+ 		ts->panel_on = true;
  	}
  
+-	while (!ts->panel_on) {
++	while (!READ_ONCE(ts->panel_on)) {
+ 		if (retry_count > 5) {
+ 			ret = -EPROBE_DEFER;
+ 			NVT_ERR("panel wait failed, ret=%d\n", ret);
+@@ -2677,7 +2682,6 @@ static int32_t nvt_ts_probe(struct spi_device *client)
+ 		goto err_alloc_work_thread_failed;
+ 	}
+ 
+-	mutex_init(&ts->power_supply_lock);
+ 	ts->power_supply_status = -1;
+ 	INIT_WORK(&ts->power_supply_work, nvt_power_supply_work);
+ 	ts->power_supply_notifier.notifier_call = nvt_power_supply_callback;
+@@ -2686,7 +2690,7 @@ static int32_t nvt_ts_probe(struct spi_device *client)
+ 		NVT_ERR("register power_supply_notifier failed, ret=%d\n", ret);
+ 		goto err_register_power_supply_notifier;
+ 	}
+-	ts->power_supply_registered = true;
++	WRITE_ONCE(ts->power_supply_registered, true);
+ 
+ 	ts->thp_raw_proc = proc_create("nvt_thp_raw", 0200, NULL,
+ 				       &nvt_thp_raw_ops);
+@@ -2753,11 +2757,10 @@ static int32_t nvt_ts_probe(struct spi_device *client)
+ 	if (ts->thp_raw_proc)
+ 		proc_remove(ts->thp_raw_proc);
+ 	power_supply_unreg_notifier(&ts->power_supply_notifier);
+-	ts->power_supply_registered = false;
++	WRITE_ONCE(ts->power_supply_registered, false);
+ 	cancel_work_sync(&ts->power_supply_work);
+ err_register_power_supply_notifier:
+ 	nvt_panel_remove_follower(ts);
+-	mutex_destroy(&ts->power_supply_lock);
+ 	destroy_workqueue(ts->event_wq);
+ 	ts->event_wq = NULL;
+ 
+@@ -2834,7 +2837,7 @@ static void nvt_ts_remove(struct spi_device *client)
+ 	proc_remove(ts->thp_raw_proc);
+ 	if (ts->power_supply_registered) {
+ 		power_supply_unreg_notifier(&ts->power_supply_notifier);
+-		ts->power_supply_registered = false;
++		WRITE_ONCE(ts->power_supply_registered, false);
+ 	}
+ 	cancel_work_sync(&ts->resume_work);
+ 
+@@ -2851,7 +2854,6 @@ static void nvt_ts_remove(struct spi_device *client)
+ 	cancel_work_sync(&ts->power_supply_work);
+ 	destroy_workqueue(ts->event_wq);
+ 	ts->event_wq = NULL;
+-	mutex_destroy(&ts->power_supply_lock);
+ 	nvt_input_free();
+ 
+ 	mutex_destroy(&ts->xbuf_lock);
+@@ -2896,7 +2898,7 @@ static void nvt_ts_shutdown(struct spi_device *client)
+ 
+ 	if (ts->power_supply_registered) {
+ 		power_supply_unreg_notifier(&ts->power_supply_notifier);
+-		ts->power_supply_registered = false;
++		WRITE_ONCE(ts->power_supply_registered, false);
+ 	}
+ 	cancel_work_sync(&ts->resume_work);
+ 
+@@ -3040,14 +3042,10 @@ static int panel_prepared(struct drm_panel_follower *follower)
+ {
+ 	struct nvt_ts_data *ts = container_of(follower, struct nvt_ts_data, panel_follower);
+ 
+-	ts->panel_on = true;
++	WRITE_ONCE(ts->panel_on, true);
+ 
+-	if (!ts->event_wq) {
+-		return 0;
+-	}
+-
 -	flush_workqueue(ts->event_wq);
- 	queue_work(ts->event_wq, &ts->resume_work);
+-	queue_work(ts->event_wq, &ts->resume_work);
++	if (ts->event_wq)
++		queue_work(ts->event_wq, &ts->resume_work);
  
  	return 0;
-@@ -3058,8 +3057,14 @@ static int panel_unpreparing(struct drm_panel_follower *follower)
+ }
+@@ -3056,10 +3054,11 @@ static int panel_unpreparing(struct drm_panel_follower *follower)
+ {
+ 	struct nvt_ts_data *ts = container_of(follower, struct nvt_ts_data, panel_follower);
  
- 	ts->panel_on = false;
+-	ts->panel_on = false;
++	WRITE_ONCE(ts->panel_on, false);
  
--	if (ts->event_wq)
++	/* Finish an in-flight firmware restore before the panel powers down. */
+ 	if (ts->event_wq)
 -		flush_workqueue(ts->event_wq);
-+	/*
-+	 * Do not flush the event workqueue here.  This runs inside the DRM
-+	 * atomic commit path; a work item blocked on another subsystem (for
-+	 * example the power supply query below taking the charger lock) would
-+	 * stall the commit and leave the compositor stuck in D state forever.
-+	 * nvt_ts_suspend() disables the IRQ and clears bTouchIsAwake, and
-+	 * nvt_power_supply_work() checks both before touching the panel.
-+	 */
++		cancel_work_sync(&ts->resume_work);
  	return nvt_ts_suspend(&ts->client->dev);
  }
  
+@@ -3108,8 +3107,10 @@ static int nvt_pm_suspend(struct device *dev)
+ 
+ static int nvt_pm_resume(struct device *dev)
+ {
++	bool restore_power_supply = false;
++
+ 	NVT_LOG("system resume from pm_suspend");
+-	ts->dev_pm_suspend = false;
++	WRITE_ONCE(ts->dev_pm_suspend, false);
+ 	complete(&ts->dev_pm_suspend_completion);
+ 	/* The runtime path re-enables the IRQ; system resume must too, or the
+ 	 * controller keeps sampling while the driver sees no frames. When a
+@@ -3118,12 +3119,15 @@ static int nvt_pm_resume(struct device *dev)
+ 	mutex_lock(&ts->lock);
+ 	if (ts->thp_firmware_ready &&
+ 	    ts->ic_state != NVT_IC_SUSPEND_IN && ts->ic_state != NVT_IC_SUSPEND_OUT &&
+-	    (!ts->panel_follower_registered || ts->panel_on)) {
++	    READ_ONCE(ts->panel_on)) {
+ 		bTouchIsAwake = 1;
+ 		nvt_thp_restore_stylus();
+ 		nvt_irq_enable(true);
++		restore_power_supply = true;
+ 	}
+ 	mutex_unlock(&ts->lock);
++	if (restore_power_supply)
++		nvt_power_supply_restore();
+ 	NVT_LOG("system resume from pm_suspend2");
+ 	return 0;
+ }
+diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx.h b/drivers/input/touchscreen/nt36532e/nt36xxx.h
+index 1138be7ab..6f6d4cb6b 100644
+--- a/drivers/input/touchscreen/nt36532e/nt36xxx.h
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx.h
+@@ -146,7 +146,6 @@ struct nvt_ts_data {
+ 	uint32_t crc_err_flag_addr;
+ 	struct workqueue_struct *event_wq;
+ 	struct work_struct resume_work;
+-	struct mutex power_supply_lock;
+ 	struct work_struct power_supply_work;
+ 	struct notifier_block power_supply_notifier;
+ 	int power_supply_status;
 -- 
 2.56.1
 

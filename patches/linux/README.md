@@ -7,7 +7,7 @@
 ## 许可
 
 本目录中的项目贡献默认按 [GPL-2.0-or-later](LICENSE) 提供，外部代码保留其原有
-许可和署名。应用补丁不会改变既有源文件的 SPDX 标识；投稿时遵循
+许可和署名。此许可声明不改变源文件的 SPDX 标识；投稿时遵循
 [Linux 内核的许可规则](https://docs.kernel.org/process/license-rules.html)。
 
 ## 维护与构建
