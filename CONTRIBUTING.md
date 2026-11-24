@@ -13,6 +13,7 @@ Project SunUEFI 为小米平板 8 Pro（`piano`）提供统一 UEFI 和 Linux �
 3. 提交前运行 `./build.sh check`，构建方法见[构建手册](docs/devel/building.md)。
 4. 提交信息使用 Conventional Commits，如 `fix(uefi): 修复……`、`feat(linux): ……`。
 5. 使用 AI 编程助手时遵循 [AGENTS.md](AGENTS.md)。
+6. 提交原创 Linux 补丁改动时，按[内核补丁许可](patches/linux/README.md#许可)以 GPL-2.0-or-later 提供原创部分。移植现有代码时保留它的许可证、版权和原作者署名。
 
 ## 约定
 
