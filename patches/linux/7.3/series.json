@@ -3806,6 +3806,15 @@
         "url": "https://github.com/slwyts/Project-SunUEFI",
         "drop_when": "The Linux AudioReach driver applies the stock DAP calibration in DSP transport-sized batches."
       }
+    },
+    {
+      "file": "0289-LOCAL-input-nt36532e-keep-panel-follower-off-event-wq.patch",
+      "sha256": "567f2cee7d638bc21b63c71342a85348684348f481dda57704d31d63dadc6f77",
+      "upstream": {
+        "status": "downstream",
+        "url": "https://github.com/slwyts/Project-SunUEFI/pull/28",
+        "drop_when": "Remove once the nt36532e driver no longer flushes its ordered event workqueue from the DRM panel follower callbacks."
+      }
     }
   ],
   "provenance": {

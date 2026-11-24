@@ -1,0 +1,84 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SakiMidare <ssmzhn@163.com>
+Date: Tue, 24 Nov 2026 16:50:29 +0800
+Subject: [PATCH] Input: nt36532e: keep the panel follower off the event
+ workqueue
+
+panel_unpreparing() runs in the DRM atomic commit path and flushes the
+driver's ordered event workqueue.  nvt_power_supply_work() runs on that
+same workqueue and calls power_supply_is_system_supplied(), which walks
+every registered power supply.  If one of those get_property() callbacks
+blocks (for example sc96231_charger waiting on its own mutex), the flush
+never returns, the atomic commit stays pending and the Wayland compositor
+ends up in uninterruptible sleep; the panel stays dark and the session
+cannot be recovered.
+
+Run the power supply work on system_dfl_wq instead of the event workqueue,
+skip it while the panel is off, and stop flushing the workqueue from the
+panel follower callbacks.  nvt_ts_suspend() already disables the IRQ and
+clears bTouchIsAwake, and the work checks both before issuing a command.
+
+Signed-off-by: SakiMidare <ssmzhn@163.com>
+---
+ drivers/input/touchscreen/nt36532e/nt36xxx.c | 17 +++++++++++------
+ 1 file changed, 11 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/input/touchscreen/nt36532e/nt36xxx.c b/drivers/input/touchscreen/nt36532e/nt36xxx.c
+index e9adeb2..588feff 100644
+--- a/drivers/input/touchscreen/nt36532e/nt36xxx.c
++++ b/drivers/input/touchscreen/nt36532e/nt36xxx.c
+@@ -1251,7 +1251,7 @@ static void nvt_power_supply_work(struct work_struct *work)
+ 	int ret;
+ 
+ 	mutex_lock(&ts_core->power_supply_lock);
+-	if (READ_ONCE(bTouchIsAwake) != 1)
++	if (READ_ONCE(bTouchIsAwake) != 1 || !READ_ONCE(ts_core->panel_on))
+ 		goto out;
+ 
+ 	supplied = !!power_supply_is_system_supplied();
+@@ -1281,7 +1281,7 @@ static int nvt_power_supply_callback(struct notifier_block *nb,
+ 	struct nvt_ts_data *ts_core = container_of(nb, struct nvt_ts_data,
+ 						    power_supply_notifier);
+ 
+-	queue_work(ts_core->event_wq, &ts_core->power_supply_work);
++	queue_work(system_dfl_wq, &ts_core->power_supply_work);
+ 	return NOTIFY_OK;
+ }
+ 
+@@ -1293,7 +1293,7 @@ void nvt_power_supply_restore(void)
+ 	mutex_lock(&ts->power_supply_lock);
+ 	ts->power_supply_status = -1;
+ 	mutex_unlock(&ts->power_supply_lock);
+-	queue_work(ts->event_wq, &ts->power_supply_work);
++	queue_work(system_dfl_wq, &ts->power_supply_work);
+ }
+ 
+ /*******************************************************
+@@ -3046,7 +3046,6 @@ static int panel_prepared(struct drm_panel_follower *follower)
+ 		return 0;
+ 	}
+ 
+-	flush_workqueue(ts->event_wq);
+ 	queue_work(ts->event_wq, &ts->resume_work);
+ 
+ 	return 0;
+@@ -3058,8 +3057,14 @@ static int panel_unpreparing(struct drm_panel_follower *follower)
+ 
+ 	ts->panel_on = false;
+ 
+-	if (ts->event_wq)
+-		flush_workqueue(ts->event_wq);
++	/*
++	 * Do not flush the event workqueue here.  This runs inside the DRM
++	 * atomic commit path; a work item blocked on another subsystem (for
++	 * example the power supply query below taking the charger lock) would
++	 * stall the commit and leave the compositor stuck in D state forever.
++	 * nvt_ts_suspend() disables the IRQ and clears bTouchIsAwake, and
++	 * nvt_power_supply_work() checks both before touching the panel.
++	 */
+ 	return nvt_ts_suspend(&ts->client->dev);
+ }
+ 
+-- 
+2.56.1
+
