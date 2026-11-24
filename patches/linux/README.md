@@ -6,14 +6,9 @@
 
 ## 许可
 
-本目录内由 Project SunUEFI 贡献者授权的原创补丁内容，包括对已有内核代码的
-原创改动，均可依照 [GNU 通用公共许可证第 2 版或任何更新版本（GPL-2.0-or-later）](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
-使用、修改和再分发，许可全文见 [COPYING](COPYING)。这项许可适用于整个补丁系列中的上述贡献，不取决于补丁的分类前缀。
-
-从 Linux、邮件列表或其他仓库引入的代码仍遵循其原有许可，保留版权和署名。
-本声明不改变补丁应用后内核文件的 SPDX 标识，也不将 GPL-2.0-only 或带例外的
-第三方代码重新授权。投稿时按 [Linux 内核的许可规则](https://docs.kernel.org/process/license-rules.html)
-填写源文件标识，并保留作者及其 `Signed-off-by`。
+本目录中的项目贡献默认按 [GPL-2.0-or-later](LICENSE) 提供，外部代码保留其原有
+许可和署名。应用补丁不会改变既有源文件的 SPDX 标识；投稿时遵循
+[Linux 内核的许可规则](https://docs.kernel.org/process/license-rules.html)。
 
 ## 维护与构建
 

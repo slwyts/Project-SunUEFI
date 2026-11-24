@@ -1,6 +1,8 @@
 # 许可证范围说明
 
-本仓库采用文件级许可。Linux 内核补丁中由权利人授权的原创改动统一按 GPL-2.0-or-later 提供，见[内核补丁许可](patches/linux/README.md#许可)。
+Project SunUEFI 在 `patches/linux/` 及其所有子目录中的贡献默认采用 GNU 通用公共许可证第 2 版或任何后续版本（`GPL-2.0-or-later`）。有明确许可的内容适用各自条款。来自 Linux 内核或其他项目的内容保留原有许可、版权声明及署名。完整条款和贡献者名单见[内核补丁目录许可证](patches/linux/LICENSE)。
+
+仓库其他目录采用已有的文件级许可。
 
 ## 已有声明
 
@@ -13,4 +15,4 @@
 | BSD-3-Clause | [Linux DT overlays](linux/dts/piano-linux-owned-dma.dtso) 等带相同标识的文件 | 以文件自身声明为准。 |
 | 原文件内的版权及分发条款 | [AOSP Font.h](uefi/platforms/pianoProbePkg/Library/RamLogSerialPortLib/Font.h) | 原声明保留在文件头，不由本说明替换。 |
 
-上表列代表文件；其他文件按各自 SPDX、版权和来源声明处理。许可正文可按 ID 查阅 [SPDX License List](https://spdx.org/licenses/) 第三方与二进制材料说明见 [THIRD_PARTY.md](THIRD_PARTY.md)。
+上表列出代表文件。其他文件按各自 SPDX、版权和来源声明处理。许可正文可按 ID 查阅 [SPDX License List](https://spdx.org/licenses/)。第三方与二进制材料说明见 [THIRD_PARTY.md](THIRD_PARTY.md)。
