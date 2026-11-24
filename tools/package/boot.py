@@ -12,6 +12,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 BOOT_SPACE_HOOK = Path(__file__).with_name('85-piano-boot-space.install')
+BOOT_HISTORY_HOOK = Path(__file__).with_name('95-piano-boot-history.install')
 PACMAN_BOOT_CONFIG_PKGREL = '3'
 PACMAN_REPOSITORIES = ('sunuefi', 'sunuefi-steamos')
 PUBLIC_REPOSITORY_URL = 'https://sunuefi-repo.okassets.uk'
@@ -78,6 +79,7 @@ def add_packages(plan, output, manifest, digest, *, image_modules=()):
         'usr/lib/systemd/system/systemd-boot-update.service.d/20-piano-esp.conf': (
             '[Unit]\nAfter=efi.mount boot.mount boot-efi.mount\n'),
         f'usr/lib/kernel/install.d/{BOOT_SPACE_HOOK.name}': BOOT_SPACE_HOOK.read_text(),
+        f'usr/lib/kernel/install.d/{BOOT_HISTORY_HOOK.name}': BOOT_HISTORY_HOOK.read_text(),
         'usr/lib/kernel/install.d/89-piano-loaderentry-remove.install': (
             '#!/bin/sh\nset -eu\n'
             'case "$1:$2" in remove:*-piano-*) ;; *) exit 0 ;; esac\n'
@@ -103,7 +105,7 @@ def add_packages(plan, output, manifest, digest, *, image_modules=()):
     # retaining the distro's unmodified mkinitcpio and systemd plugins.
     if plan['format'] == 'debian':
         dependencies = ('systemd (>= 258), systemd-boot, systemd-boot-efi, '
-                        'systemd-ukify, initramfs-tools')
+                        'systemd-ukify, initramfs-tools, python3')
         install['usr/share/initramfs-tools/hooks/piano'] = (
             '#!/bin/sh\nset -eu\n'
             'case "${1:-}" in prereqs) exit 0 ;; esac\n'
@@ -127,7 +129,7 @@ def add_packages(plan, output, manifest, digest, *, image_modules=()):
             'Suites: sid\nComponents: main\nArchitectures: arm64\n'
             'Signed-By: /usr/share/keyrings/sunuefi-archive-keyring.gpg\n')
     else:
-        dependencies = "'systemd>=258' systemd-ukify mkinitcpio"
+        dependencies = "'systemd>=258' systemd-ukify mkinitcpio python"
         install['etc/kernel/install.conf'] += 'initrd_generator=mkinitcpio\n'
         install['etc/mkinitcpio.conf.d/zz-piano.conf'] = (
             'MODULES+=(arm_smmu ufs_qcom phy_qcom_qmp_ufs pinctrl_sm8750 \'hid_nanosic_wn8030?\')\n'

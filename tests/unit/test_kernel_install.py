@@ -1,6 +1,7 @@
 """Exercise native boot entry updates with systemd and a disposable boot directory."""
 import os
 from pathlib import Path
+import runpy
 import shutil
 import subprocess
 import tempfile
@@ -10,9 +11,73 @@ import unittest
 BLS_PLUGIN = Path('/usr/lib/kernel/install.d/90-loaderentry.install')
 UKI_PLUGIN = BLS_PLUGIN.with_name('90-uki-copy.install')
 BOOT_SPACE_PLUGIN = Path(__file__).resolve().parents[2] / 'tools/package/85-piano-boot-space.install'
+BOOT_HISTORY_PLUGIN = BOOT_SPACE_PLUGIN.with_name('95-piano-boot-history.install')
 
 
 class KernelInstallTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('kernel-install') and shutil.which('bootctl')
+                         and BLS_PLUGIN.is_file(), 'systemd BLS tools required')
+    def test_bls_retains_two_generations_after_successful_kernel_install(self):
+        with tempfile.TemporaryDirectory(prefix='kernel-install-history-') as folder:
+            work = Path(folder)
+            esp = work / 'esp'
+            config = work / 'config'
+            entries = esp / 'loader/entries'
+            entries.mkdir(parents=True)
+            config.mkdir()
+            (config / 'install.conf').write_text('layout=bls\ninitrd_generator=none\n')
+            (config / 'cmdline').write_text('root=LABEL=PIANOROOT rw\n')
+            (config / 'devicetree').write_text('board.dtb\n')
+            (config / 'board.dtb').write_bytes(b'board')
+            (config / 'tries').write_text('3\n')
+            image, initrd = work / 'Image', work / 'initrd'
+            image.write_bytes(b'kernel')
+            initrd.write_bytes(b'initramfs')
+            unmanaged = entries / 'another-os.conf'
+            unmanaged.write_text('title Another OS\nlinux /another-os/Image\n')
+            other_kernel = esp / 'another-os/Image'
+            other_kernel.parent.mkdir()
+            other_kernel.write_bytes(b'another kernel')
+            env = dict(os.environ, KERNEL_INSTALL_CONF_ROOT=str(config),
+                       KERNEL_INSTALL_PLUGINS=f'{BLS_PLUGIN} {BOOT_HISTORY_PLUGIN}',
+                       SYSTEMD_ESP_PATH=str(esp), SYSTEMD_RELAX_XBOOTLDR_CHECKS='1',
+                       BOOT_ROOT=str(esp), BOOT_MNT=str(esp), SYSTEMD_LOG_LEVEL='warning')
+            command = ['kernel-install', '--entry-token=literal:linux', 'add']
+            versions = [f'7.3.3-piano-b{i}-g123456789abc' for i in (10, 20, 30, 40)]
+            for version in versions[:3]:
+                subprocess.run([*command, version, image, initrd], env=env, check=True)
+
+            def check_entries():
+                self.assertEqual({path.name for path in entries.glob('*.conf')},
+                                 {'another-os.conf',
+                                  *(f'linux-{version}+3.conf' for version in versions[1:3])})
+                self.assertEqual(other_kernel.read_bytes(), b'another kernel')
+                for name in ('linux', 'initrd', 'board.dtb'):
+                    self.assertFalse((esp / 'linux' / versions[0] / name).exists())
+                    for version in versions[1:3]:
+                        self.assertTrue((esp / 'linux' / version / name).is_file())
+
+            check_entries()
+            # A package trigger that refreshes an older initramfs must not
+            # turn the retired release into the latest one.
+            subprocess.run([*command, versions[0], image, initrd], env=env, check=True)
+            check_entries()
+            (config / 'devicetree').write_text('missing-board.dtb\n')
+            failed = subprocess.run([*command, versions[3], image, initrd], env=env,
+                                    capture_output=True)
+            self.assertNotEqual(failed.returncode, 0)
+            check_entries()
+
+    def test_running_older_generation_is_the_fallback(self):
+        retire = runpy.run_path(str(BOOT_HISTORY_PLUGIN))['retire']
+        old, previous, current = [f'7.3.3-piano-b{i}-g123456789abc' for i in (10, 20, 30)]
+        entries = [(old, 'type1', 'old.conf'), (current, 'type2', 'current.efi'),
+                   (current, 'type1', 'current.conf'), (previous, 'type1', 'previous.conf')]
+        self.assertEqual(retire(entries, old, 'type2'),
+                         [('type1', 'current.conf'), ('type1', 'previous.conf')])
+        self.assertEqual(retire(entries, 'outside', 'type2'),
+                         [('type1', 'old.conf'), ('type1', 'current.conf')])
+
     @unittest.skipUnless(shutil.which('kernel-install') and BLS_PLUGIN.is_file(),
                          'systemd kernel-install and BLS plugin required')
     def test_bls_add_upgrade_remove_and_failed_generation(self):

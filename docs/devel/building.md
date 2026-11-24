@@ -457,8 +457,10 @@ Arch 系运行 `sudo kernel-install add-all`；Debian 的内核文件在 `/boot`
 共用的初装启动项不设排序键，升级后由发行版生成的入口优先；
 仍可从菜单选择旧入口，也可改用自己的启动参数、名称和更新方式。
 
-回退必须同时保留旧启动文件、模块和 DTB。Debian 和 Arch 的设备内核都按
-release 使用不同包名，元包升级不会替换旧版本包；从 systemd-boot 菜单选择旧版即可。
+成功安装新启动项以后，启动分区保留最新内核和一份回退内核；连续升级但还没重启时，
+优先把正在运行的版本留作回退。通过 systemd 的 `bootctl` 移除更早的 Piano 启动项及
+不再被引用的文件，不改其他系统的引导。Debian 和 Arch 的设备内核都按 release 使用
+不同包名，旧版本的模块和 DTB 仍由包管理器管理；需要回退时，在 systemd-boot 菜单选旧版。
 相机 `v4l2loopback` 模块也按 release 并存，由内核元包安装匹配版本并交给
 包管理器更新模块索引。
 Arch 默认不生成可选的 `fallback` initramfs；它包含同一内核的更多模块，

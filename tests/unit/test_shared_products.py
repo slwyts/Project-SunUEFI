@@ -72,6 +72,7 @@ class SharedProductsTests(unittest.TestCase):
         not_inputs = ('tools/check_host.py', 'tools/build/check_patch_series.py',
                       'tools/repo/products.py', 'tools/repo/publish.py',
                       'tools/package/85-piano-boot-space.install', 'tools/package/boot.py',
+                      'tools/package/95-piano-boot-history.install',
                       'tools/package/camera.py', 'tools/build_release_rootfs.py',
                       'tools/build_nyarch_rootfs.py', 'tools/build_steamos_rootfs.py')
         inputs = ('tools/build_product.sh', 'tools/build_android_product_module.py',
@@ -99,6 +100,7 @@ class SharedProductsTests(unittest.TestCase):
         (self.root / 'config/release.json').write_bytes((ROOT / 'config/release.json').read_bytes())
         helpers = ('tools/compose_piano_dtb.py', 'tools/prepare_boot_files.py',
                    'tools/package/85-piano-boot-space.install', 'tools/package/boot.py',
+                   'tools/package/95-piano-boot-history.install',
                    'tools/package/kernel.py', 'tools/package/v4l2loopback.py',
                    'tools/package/archive.py', 'tools/package/download.py',
                    'tools/build/cache.py')

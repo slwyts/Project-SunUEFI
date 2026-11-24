@@ -145,6 +145,9 @@ class KernelPackageTests(unittest.TestCase):
             self.assertEqual(boot_space.read_bytes(), boot.BOOT_SPACE_HOOK.read_bytes())
             self.assertEqual(boot_space.stat().st_mode & 0o777, 0o755)
             subprocess.run(['sh', '-n', boot_space], check=True)
+            history = root / 'usr/lib/kernel/install.d' / boot.BOOT_HISTORY_HOOK.name
+            self.assertEqual(history.read_bytes(), boot.BOOT_HISTORY_HOOK.read_bytes())
+            self.assertEqual(history.stat().st_mode & 0o777, 0o755)
             initramfs_config = root / 'etc/mkinitcpio.conf.d/zz-piano.conf'
             initramfs = subprocess.check_output(['bash', '-ec',
                 'HOOKS=(base systemd keyboard blockdev_ro partsets initrd_shell factory_reset '
@@ -190,6 +193,10 @@ class KernelPackageTests(unittest.TestCase):
                 f'piano-boot-config_*/usr/lib/kernel/install.d/{boot.BOOT_SPACE_HOOK.name}'))
             self.assertEqual(boot_space.read_bytes(), boot.BOOT_SPACE_HOOK.read_bytes())
             self.assertEqual(boot_space.stat().st_mode & 0o777, 0o755)
+            history = next(output.glob(
+                f'piano-boot-config_*/usr/lib/kernel/install.d/{boot.BOOT_HISTORY_HOOK.name}'))
+            self.assertEqual(history.read_bytes(), boot.BOOT_HISTORY_HOOK.read_bytes())
+            self.assertEqual(history.stat().st_mode & 0o777, 0o755)
             boot_package = next(path for path in packages if path.name.startswith('piano-boot-config_'))
             self.assertBootUpdateOrder(output / boot_package.stem)
             self.assertIn('systemd (>= 258)', subprocess.check_output(

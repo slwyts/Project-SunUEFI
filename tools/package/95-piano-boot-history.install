@@ -1,0 +1,95 @@
+#!/usr/bin/python3
+"""Keep two Piano kernel generations after kernel-install adds a boot entry."""
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+
+
+PIANO_RELEASE = r'(\d+(?:\.\d+){1,2})(?:-rc(\d+))?-piano-[a-zA-Z0-9._-]+'
+ENTRY_TYPES = {'bls': 'type1', 'uki': 'type2'}
+
+
+def piano_entries(entries, boot, token, entry_type):
+    # An ID passed to bootctl unlink is a pattern. Match exact filenames and
+    # leave ambiguous IDs (including copies on another boot partition) alone.
+    counts = {}
+    for entry in entries:
+        name = entry.get('id')
+        counts[name] = counts.get(name, 0) + 1
+    for entry in entries:
+        name = entry.get('id', '')
+        kind = entry.get('type')
+        if counts.get(name) != 1 or kind not in ('type1', 'type2'):
+            continue
+        if entry_type != 'all' and kind != entry_type:
+            continue
+        suffix = 'conf' if kind == 'type1' else 'efi'
+        match = re.fullmatch(rf'{re.escape(token)}-({PIANO_RELEASE})\.{suffix}', name)
+        if not match:
+            continue
+        version = match[1]
+        directory = boot / ('loader/entries' if kind == 'type1' else 'EFI/Linux')
+        path = Path(entry.get('path', ''))
+        if path.parent != directory or not path.is_file():
+            continue
+        if kind == 'type1':
+            prefix = f'/{token}/{version}/'
+            initrds = entry.get('initrd', [])
+            dtb = entry.get('devicetree', '')
+            if (entry.get('version') != version or entry.get('linux') != prefix + 'linux'
+                    or not initrds or not dtb or entry.get('efi')):
+                continue
+            payloads = [entry['linux'], dtb, *initrds, *entry.get('devicetreeOverlay', [])]
+            if not all(resource.startswith(prefix)
+                       and Path(resource).parent == Path(prefix)
+                       and (boot / resource.lstrip('/')).is_file() for resource in payloads):
+                continue
+        yield version, kind, name
+
+
+def release_order(version):
+    kernel, rc = re.fullmatch(PIANO_RELEASE, version).groups()
+    abi = re.search(r'-b(\d+)-g[0-9a-f]+$', version)
+    return tuple(map(int, kernel.split('.'))), rc is None, int(rc or 0), int(abi[1]) if abi else 0
+
+
+def retire(entries, running, layout):
+    # Menu sort keys and boot counting do not describe the package version.
+    versions = sorted({version for version, _, _ in entries}, key=release_order, reverse=True)
+    keep = {versions[0]}
+    if len(versions) > 1:
+        keep.add(running if running in versions[1:] else versions[1])
+    preferred = {version for version, kind, _ in entries if kind == layout}
+    return [(kind, name) for version, kind, name in entries if version not in keep
+            or (version in preferred and kind != layout)]
+
+
+def main():
+    layout = ENTRY_TYPES.get(os.environ.get('KERNEL_INSTALL_LAYOUT'))
+    if len(sys.argv) < 3 or sys.argv[1] != 'add' or not layout:
+        return
+    version = sys.argv[2]
+    token = os.environ['KERNEL_INSTALL_ENTRY_TOKEN']
+    if not re.fullmatch(PIANO_RELEASE, version) or not re.fullmatch(r'[a-zA-Z0-9._-]+', token):
+        return
+    boot = Path(os.environ['KERNEL_INSTALL_BOOT_ROOT']).resolve()
+    command = ['bootctl', '--no-pager', '--variables=no', '--boot-path=' + str(boot)]
+    listed = subprocess.run([*command, '--json=short', 'list'], stdout=subprocess.PIPE)
+    if listed.returncode:
+        return
+    entry_type = os.environ.get('KERNEL_INSTALL_BOOT_ENTRY_TYPE', 'all')
+    entries = list(piano_entries(json.loads(listed.stdout), boot, token, entry_type))
+    if any(added == version and kind == layout for added, kind, _ in entries):
+        for kind, name in retire(entries, os.uname().release, layout):
+            if subprocess.run([*command, 'unlink', name]).returncode == 0 and kind == 'type2':
+                # Boot counting changes the UKI filename but not its addon
+                # directory. bootctl may leave that uncounted directory behind.
+                shutil.rmtree(boot / 'EFI/Linux' / (name + '.extra.d'), ignore_errors=True)
+
+
+if __name__ == '__main__':
+    main()
