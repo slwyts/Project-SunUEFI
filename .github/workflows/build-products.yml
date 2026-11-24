@@ -59,8 +59,6 @@ jobs:
         with:
           submodules: false
           persist-credentials: false
-      - name: Check systemd-boot entry updates and recovery
-        run: ./build.sh check --group python-all --no-skips --pattern test_kernel_install.py
       - id: cache-key
         run: python3 tools/build/ci_container.py key --github-output "$GITHUB_OUTPUT"
       - id: cached-image

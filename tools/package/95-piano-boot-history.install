@@ -14,16 +14,16 @@ ENTRY_TYPES = {'bls': 'type1', 'uki': 'type2'}
 
 
 def piano_entries(entries, boot, token, entry_type):
-    # An ID passed to bootctl unlink is a pattern. Match exact filenames and
-    # leave ambiguous IDs (including copies on another boot partition) alone.
+    # bootctl unlink matches IDs case-insensitively across boot partitions.
     counts = {}
     for entry in entries:
-        name = entry.get('id')
-        counts[name] = counts.get(name, 0) + 1
+        if (name := entry.get('id')):
+            key = name.casefold()
+            counts[key] = counts.get(key, 0) + 1
     for entry in entries:
-        name = entry.get('id', '')
+        name = entry.get('id') or ''
         kind = entry.get('type')
-        if counts.get(name) != 1 or kind not in ('type1', 'type2'):
+        if counts.get(name.casefold()) != 1 or kind not in ('type1', 'type2'):
             continue
         if entry_type != 'all' and kind != entry_type:
             continue
@@ -77,7 +77,9 @@ def main():
     if not re.fullmatch(PIANO_RELEASE, version) or not re.fullmatch(r'[a-zA-Z0-9._-]+', token):
         return
     boot = Path(os.environ['KERNEL_INSTALL_BOOT_ROOT']).resolve()
-    command = ['bootctl', '--no-pager', '--variables=no', '--boot-path=' + str(boot)]
+    # Let bootctl find the ESP and any XBOOTLDR. --boot-path would treat
+    # the selected partition as XBOOTLDR even if kernel-install uses the ESP.
+    command = ['bootctl', '--no-pager', '--variables=no']
     listed = subprocess.run([*command, '--json=short', 'list'], stdout=subprocess.PIPE)
     if listed.returncode:
         return

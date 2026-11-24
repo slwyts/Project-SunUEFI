@@ -40,7 +40,7 @@ class KernelInstallTests(unittest.TestCase):
             other_kernel.write_bytes(b'another kernel')
             env = dict(os.environ, KERNEL_INSTALL_CONF_ROOT=str(config),
                        KERNEL_INSTALL_PLUGINS=f'{BLS_PLUGIN} {BOOT_HISTORY_PLUGIN}',
-                       SYSTEMD_ESP_PATH=str(esp), SYSTEMD_RELAX_XBOOTLDR_CHECKS='1',
+                       SYSTEMD_ESP_PATH=str(esp), SYSTEMD_XBOOTLDR_PATH=str(esp),
                        BOOT_ROOT=str(esp), BOOT_MNT=str(esp), SYSTEMD_LOG_LEVEL='warning')
             command = ['kernel-install', '--entry-token=literal:linux', 'add']
             versions = [f'7.3.3-piano-b{i}-g123456789abc' for i in (10, 20, 30, 40)]
