@@ -112,6 +112,14 @@ class CiBuildTargetsTests(unittest.TestCase):
                          ['debian-denial', 'arch-denial'])
         self.assertEqual(targets.select([*publication, '.github/workflows/_rootfs.yml']), PRODUCTS)
 
+    def test_linux_patch_documentation_does_not_rebuild_products(self):
+        documentation = ['LICENSE.md', 'patches/linux/LICENSE', 'patches/linux/AGENTS.md',
+                         'patches/linux/README.md', 'patches/linux/7.3/README.md']
+        self.assertEqual(targets.select(documentation), [])
+        self.assertEqual(targets.select([*documentation, 'patches/linux/7.3/series.json']), PRODUCTS)
+        self.assertEqual(targets.select([*documentation, 'patches/linux/7.3/0001-LOCAL-fix.patch']),
+                         PRODUCTS)
+
 
 if __name__ == '__main__':
     unittest.main()

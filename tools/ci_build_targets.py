@@ -42,6 +42,8 @@ NON_PRODUCT_FILES = {
     '.github/workflows/_checks.yml', '.github/workflows/_downloads.yml',
     '.github/scripts/publish_build_downloads.py', '.github/scripts/publish_release_images.py',
     'tools/check_host.py', 'tools/build/check_patch_series.py', 'tools/ci_build_targets.py',
+    'patches/linux/AGENTS.md', 'patches/linux/LICENSE', 'patches/linux/README.md',
+    'patches/linux/7.3/README.md',
 }
 
 
