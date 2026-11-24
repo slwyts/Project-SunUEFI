@@ -111,7 +111,7 @@ def target_identity(root):
         binaries[name] = {'version': row['Version'], 'source': source,
                           'source_version': version, 'sha256': row['SHA256']}
     return debian.TargetIdentity({'suite': 'sid', 'architecture': 'arm64',
-        'sources': {'mesa': data['debian']['recipe_source_version']},
+        'sources': {'mesa': data['debian']['recipe']['version']},
         'binaries': binaries, 'libraries': libraries}, root)
 
 
@@ -233,23 +233,28 @@ def package_identity(path):
         ['dpkg-deb', '-f', path, 'Package', 'Version', 'Architecture']).splitlines())
 
 
-def packaging_source(root, output, log):
-    from desktop import debian_package as signed
-    version = policy()['debian']['recipe_source_version']
-    cache = output / 'archives/mesa'
-    cache.mkdir(parents=True, exist_ok=True)
-    checksums = debian.source_checksums(root, {'mesa': version})['mesa']
-    if not all((cache / name).is_file() and package_build.sha(cache / name) == row['sha256']
-               for name, row in checksums.items()):
-        debian.command(root, {}, cache, ['apt-get', 'source', '--download-only', '--only-source',
-                                        'mesa=' + version], log)
-    origin = signed.verify_source(root, cache, 'mesa', version)
-    archive = next(row['file'] for row in origin['archives'] if '.debian.tar.' in row['file'])
-    with tarfile.open(cache / archive) as source:
+def packaging_origin():
+    pin = policy()['debian']['recipe']
+    version = pin['version']
+    return {'package': 'mesa', 'version': version, 'suite': 'sid',
+            'url': pin['url'], 'archives': [{'file': f'mesa_{version}.debian.tar.xz',
+                                             'sha256': pin['sha256'], 'size': pin['size']}]}
+
+
+def packaging_matches(origin):
+    return all(origin.get(key) == value for key, value in packaging_origin().items())
+
+
+def packaging_source(output):
+    # Only the packaging recipe is used; build dependencies come from current sid.
+    origin = packaging_origin()
+    archive, = origin['archives']
+    path = download(origin['url'], output / 'archives/mesa' / archive['file'],
+                    archive['sha256'], archive['size'])
+    with tarfile.open(path) as source:
         recipe = {name: source.extractfile(name).read() for name in ('debian/rules', 'debian/control')}
-    origin['archives'] = [origin.pop('dsc'), *origin['archives']]
     origin['recipe'] = {name: hashlib.sha256(data).hexdigest() for name, data in recipe.items()}
-    return origin, recipe
+    return path, origin, recipe
 
 
 def reusable(output, target=None):
@@ -277,14 +282,9 @@ def reusable(output, target=None):
                     continue
                 if built_version != target['libraries'][name]['version']:
                     return None
-        root = getattr(target, 'root', output / 'builder/rootfs')
-        source_checksums = debian.source_checksums(root, {'mesa': policy()['debian']['recipe_source_version']})
-        expected = {row['file']: {'sha256': row['sha256'], 'size': row['size']}
-                    for row in record['source']['archives']}
-        if expected != source_checksums['mesa']:
+        if not packaging_matches(record['source']):
             return None
-        signed_packaging = next(row for row in record['source']['archives'] if '.debian.tar.' in row['file'])
-        if record.get('packaging_archive_sha256') != signed_packaging['sha256']:
+        if record.get('packaging_archive_sha256') != record['source']['archives'][0]['sha256']:
             return None
         if Path(record['changes']['file']).name != record['changes']['file']:
             return None
@@ -368,7 +368,7 @@ def build_package(output, sysroot, jobs, resume):
     with debian.builder(output, sysroot) as (root, env), (output / 'build.log').open('a') as log:
         (output / '.incomplete').write_text('Mesa package build has not completed.\n')
         debian.dependencies(root, log, resume)
-        origin, original_recipe = packaging_source(root, output, log)
+        archive, origin, original_recipe = packaging_source(output)
         work = output / 'mesa-27/source'
         stamp = work.parent / 'SOURCE.json'
         if not work.exists():
@@ -381,16 +381,15 @@ def build_package(output, sysroot, jobs, resume):
             # dpkg-buildpackage may have been interrupted after applying quilt.
             debian.command(root, {}, work, ['dpkg-source', '--after-build', '.'], log)
         verify_official_source(work, proof)
-        packaging = next(row for row in origin['archives'] if '.debian.tar.' in row['file'])
         producer = package_build.sha(__file__)
         recipe = {'package_version': version, 'patches': patches, 'producer_sha256': producer,
-                  'packaging_archive_sha256': packaging['sha256']}
+                  'packaging_archive_sha256': origin['archives'][0]['sha256']}
         reset = proof.get('recipe') != recipe
         resume = resume and not reset
         changes = work.parent / f'mesa_{version}_arm64.changes'
         if not resume:
             changes.unlink(missing_ok=True)
-        series = prepare_debian(work, output / 'archives/mesa' / packaging['file'], version, patches, reset)
+        series = prepare_debian(work, archive, version, patches, reset)
         generated_version = version.split('-', 1)[0].replace('~', '-')
         if (work / 'VERSION').read_text().strip() not in (
                 data['source']['version'], version, generated_version):
@@ -450,7 +449,7 @@ def build_package(output, sysroot, jobs, resume):
             'source_files_sha256': hashlib.sha256(json.dumps(proof['files'], sort_keys=True).encode()).hexdigest(),
             'source_patch_series': series,
             'changes': {'file': receipt.name, 'sha256': package_build.sha(receipt)},
-            'packaging_archive_sha256': packaging['sha256'],
+            'packaging_archive_sha256': origin['archives'][0]['sha256'],
             'recipe': 'original Debian rules and control with the shared Mesa patch series'}
         debian.write_manifest(output, record)
         (output / '.incomplete').unlink()

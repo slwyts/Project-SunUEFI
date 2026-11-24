@@ -6,6 +6,7 @@ import io
 import json
 from pathlib import Path
 import sys
+import tarfile
 import tempfile
 import threading
 import unittest
@@ -66,6 +67,28 @@ class MesaTests(unittest.TestCase):
         self.assertNotIn('GALLIUM_DEFAULTS = softpipe', changed)
         self.assertIn('vram-report-limit', changed)
         self.assertNotIn('anti-lag', changed)
+
+    def test_debian_recipe_uses_pinned_archive_without_live_source_index(self):
+        recipe = {'debian/rules': b'#!/usr/bin/make -f\n',
+                  'debian/control': b'Source: mesa\n'}
+        payload = io.BytesIO()
+        with tarfile.open(fileobj=payload, mode='w:xz') as archive:
+            for name, data in recipe.items():
+                member = tarfile.TarInfo(name)
+                member.size = len(data)
+                archive.addfile(member, io.BytesIO(data))
+        data = payload.getvalue()
+        with (archive_server([(200, data, len(data))]) as (url, calls),
+              tempfile.TemporaryDirectory() as temporary,
+              patch.object(mesa, 'policy', return_value={'debian': {'recipe': {
+                  'version': '26.2.7-1', 'url': url, 'size': len(data),
+                  'sha256': hashlib.sha256(data).hexdigest()}}})):
+            path, origin, extracted = mesa.packaging_source(Path(temporary))
+            self.assertEqual(extracted, recipe)
+            self.assertTrue(mesa.packaging_matches(origin))
+            self.assertEqual(path.name, 'mesa_26.2.7-1.debian.tar.xz')
+            self.assertEqual(mesa.packaging_source(Path(temporary))[1], origin)
+            self.assertEqual(len(calls), 1)
 
     def test_official_source_integrity_refuses_local_edits(self):
         with tempfile.TemporaryDirectory() as temporary:

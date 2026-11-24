@@ -11,7 +11,12 @@
   "source_verification": "Official Mesa GitLab commit and HTTPS archive; pinned SHA256. The development commit has no release signature.",
   "patch_series": "patches/mesa/27.0/series.json",
   "debian": {
-    "recipe_source_version": "26.2.6-1",
+    "recipe": {
+      "version": "26.2.7-1",
+      "url": "https://snapshot.debian.org/file/ebd272f59bfce8f66fcf87c4616f0458bebaedb6",
+      "sha256": "fbabbe677fa3e901f625ff0c9a1fa17e11acf114129f19610f1476489424e7a9",
+      "size": 109804
+    },
     "package_version": "27.0.0~devel+gitd4d193a29952-2",
     "llvm_version": "22"
   },

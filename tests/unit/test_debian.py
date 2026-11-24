@@ -60,7 +60,7 @@ class DebianSourceTests(unittest.TestCase):
             self.assertIsNone(debian.project_source_version('mesa', version))
             with self.assertRaisesRegex(ValueError, 'known project revision'):
                 debian.official_candidate('libgbm1', version, self.candidate_records(),
-                                         libraries, policy['debian']['recipe_source_version'])
+                                         libraries, policy['debian']['recipe']['version'])
 
     def test_local_gbm_requires_unambiguous_signed_packaging_source(self):
         installed = ('version: development\nsource: mesa\nsource_version: development\n'

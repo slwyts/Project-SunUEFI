@@ -53,6 +53,7 @@ CI_UNIT = (
     'test_gt9764.py',
     'test_debian.py',
     'test_debian_package.py',
+    'test_mesa.py',
     'test_kernel_install.py',
     'test_kernel_install_uki.py',
     'test_build_libcamera_packages.py',

@@ -77,9 +77,9 @@ class DebianPackageTests(unittest.TestCase):
             output = root / 'build/mesa/SOURCE.json'
             output.parent.mkdir(parents=True)
             policy = mesa.policy()
-            version = policy['debian']['recipe_source_version']
+            version = policy['debian']['recipe']['version']
             patches = mesa.patch_proof()
-            record = {'official_source': policy['source'], 'source': {'version': version},
+            record = {'official_source': policy['source'], 'source': mesa.packaging_origin(),
                       'patches': patches, 'source_patch_series': mesa.quilt_series(patches),
                       'config_sha256': debian_package.sha(mesa.CONFIG),
                       'producer_sha256': debian_package.sha(mesa.__file__)}
@@ -94,6 +94,7 @@ class DebianPackageTests(unittest.TestCase):
                     debian_package.local_package_spec('libgbm1', {**installed, 'version': '99+piano1'}, official)
                 for change in ({'official_source': {'version': 'different'}}, {'patches': []},
                                {'source_patch_series': []},
+                               {'source': {**record['source'], 'archives': []}},
                                {'patches': [{**row, 'sha256': 'bad-digest'} for row in patches]}):
                     with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'provenance'):
                         output.write_text(json.dumps({**record, **change}))

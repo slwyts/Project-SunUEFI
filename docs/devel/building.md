@@ -125,7 +125,7 @@ x86 主机用 `./build.sh ffmpeg --sysroot 已完成的sid_ARM64根目录` 构�
 交叉编译使用 GNU 汇编器与链接器，保留 Debian 的符号版本表和调试信息处理。
 产品 CI 使用原生 ARM64 构建机，缓存与源码、补丁匹配的 Debian 运行包。
 
-Debian 的 Mesa、FFmpeg、sensors 在 sid 根目录的隔离副本中构建，不安装宿主容器的库或混用 trixie-backports。`--sysroot` 不修改输入根目录；包版本、源码归档、补丁和二进制哈希记录在各输出目录。Debian、Arch Linux ARM 和 SteamOS 共用 `config/mesa.json` 固定的 Mesa 27 开发源码和[显示缓冲修正](hardware/display-depth.md#分辨率与刷新率)。Debian 使用 sid 的完整配方，经 quilt 应用补丁；pacman 包在原生 PKGBUILD 中应用补丁。
+Debian 的 Mesa、FFmpeg、sensors 在 sid 根目录的隔离副本中构建，不安装宿主容器的库或混用 trixie-backports。`--sysroot` 不修改输入根目录；包版本、源码归档、补丁和二进制哈希记录在各输出目录。Debian、Arch Linux ARM 和 SteamOS 共用 `config/mesa.json` 固定的 Mesa 27 开发源码和[显示缓冲修正](hardware/display-depth.md#分辨率与刷新率)。Debian 从官方 Snapshot 获取完整打包配方，SHA-256 取自 Debian 签名索引；编译依赖仍从当前 sid 安装。Debian 经 quilt 应用补丁，pacman 包在原生 PKGBUILD 中应用补丁。
 
 已有 sid ARM64 根目录时，可以单独重建这三组包：
 

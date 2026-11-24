@@ -282,7 +282,7 @@ def local_package_spec(name, installed, official, *, package_output=None):
                 record.get('config_sha256') != sha(mesa.CONFIG) or
                 record.get('official_source') != policy['source'] or record.get('patches') != proof or
                 record.get('source_patch_series') != mesa.quilt_series(proof) or
-                record.get('source', {}).get('version') != policy['debian']['recipe_source_version']):
+                not mesa.packaging_matches(record.get('source', {}))):
             raise ValueError('Local Mesa provenance does not match the selected Mesa builder')
         upstream = policy['source']
         if (upstream.get('repository') != 'https://gitlab.freedesktop.org/mesa/mesa.git' or
@@ -362,7 +362,6 @@ def verify_local_package(rootfs, name, installed, official, sources, *, package_
     folder, patches = local_package_spec(name, installed, official, package_output=package_output)
     record = json.loads((folder / 'SOURCE.json').read_text())
     source, version = source_identity(official)
-    expected = checksum_rows(sources)
     origin = record.get('source', {})
     archives = [*origin.get('archives', []), *([origin['dsc']] if 'dsc' in origin else [])]
     checksums = {row['file']: {'sha256': row['sha256'], 'size': row['size']} for row in archives}
@@ -370,7 +369,7 @@ def verify_local_package(rootfs, name, installed, official, sources, *, package_
             record.get('patches') != patches or
             (folder / '.incomplete').exists()):
         raise ValueError('Local package provenance differs from the signed source or current patches: ' + name)
-    if (checksums != expected or
+    if name != 'libgbm1' and (checksums != checksum_rows(sources) or
             (origin.get('package'), origin.get('version'), origin.get('suite')) != (source, version, 'sid')):
         raise ValueError('Local desktop package differs from the signed sid source: ' + name)
     package = record.get('packages', {}).get(name, {})
