@@ -1,0 +1,79 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Wed, 25 Nov 2026 20:37:42 +0800
+Subject: [PATCH] media: iris: Use the measured decoder input rate for
+ bandwidth
+
+The decoder already tracks the rate at which source buffers arrive for
+clock scaling, but the bandwidth lookup always uses 30 frames per
+second. Use the observed decode rate for the bandwidth vote while
+preserving the encoder default.
+
+Calculate the rate from the number of inter-buffer intervals and their
+elapsed time. At stream start the input rate is unknown, so start
+conservatively until the first window of samples is available, as the
+Qualcomm VIDC driver does for startup.
+
+Codex compared the vendor and Linux source, checked the rate calculation
+and built the modified objects. The combined change was tested on Piano
+with 1080p60 and 4K60, and with 1080p playback switching between 30 and
+60 frames per second, including a pause and resume.
+
+Link: https://github.com/OnePlusOSS/android_kernel_modules_and_devicetree_oneplus_sm8750/blob/d50b305f7da9e14715a25120a4ac7b1a4b8b97c3/vendor/qcom/opensource/video-driver/driver/vidc/src/msm_vidc_power.c#L217-L250
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/media/platform/qcom/iris/iris_power.c | 2 +-
+ drivers/media/platform/qcom/iris/iris_vdec.c  | 9 +++++++--
+ 2 files changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_power.c b/drivers/media/platform/qcom/iris/iris_power.c
+index cceb31b80..94b9f5606 100644
+--- a/drivers/media/platform/qcom/iris/iris_power.c
++++ b/drivers/media/platform/qcom/iris/iris_power.c
+@@ -69,7 +69,7 @@ static int iris_vote_interconnects(struct iris_inst *inst)
+ 
+ 	vote_data->width = inp_f->fmt.pix_mp.width;
+ 	vote_data->height = inp_f->fmt.pix_mp.height;
+-	vote_data->fps = DEFAULT_FPS;
++	vote_data->fps = inst->domain == DECODER ? inst->frame_rate : DEFAULT_FPS;
+ 
+ 	inst->power.icc_bw = iris_calc_bw(inst, vote_data);
+ 
+diff --git a/drivers/media/platform/qcom/iris/iris_vdec.c b/drivers/media/platform/qcom/iris/iris_vdec.c
+index 9e228b704..282989249 100644
+--- a/drivers/media/platform/qcom/iris/iris_vdec.c
++++ b/drivers/media/platform/qcom/iris/iris_vdec.c
+@@ -3,6 +3,7 @@
+  * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+  */
+ 
++#include <linux/math64.h>
+ #include <media/v4l2-event.h>
+ #include <media/v4l2-mem2mem.h>
+ 
+@@ -385,6 +386,7 @@ int iris_vdec_streamon_input(struct iris_inst *inst)
+ 		return ret;
+ 
+ 	inst->frame_counter = 0;
++	inst->frame_rate = MAXIMUM_FPS;
+ 
+ 	return iris_process_streamon_input(inst);
+ }
+@@ -455,8 +457,11 @@ int iris_vdec_qbuf(struct iris_inst *inst, struct vb2_v4l2_buffer *vbuf)
+ 		delta_ns = cur_buf_ns - inst->last_buf_ns;
+ 
+ 		if (delta_ns >= NSEC_PER_SEC) {
+-			inst->frame_rate = clamp_t(u32, inst->frame_counter, DEFAULT_FPS,
+-						   MAXIMUM_FPS);
++			/* Measure the intervals between the queued buffers. */
++			u64 frames = inst->frame_counter - 1;
++			u64 fps = DIV64_U64_ROUND_CLOSEST(frames * NSEC_PER_SEC, delta_ns);
++
++			inst->frame_rate = clamp_t(u32, fps, DEFAULT_FPS, MAXIMUM_FPS);
+ 			inst->frame_counter = 0;
+ 		}
+ 	}
+-- 
+2.55.0
+

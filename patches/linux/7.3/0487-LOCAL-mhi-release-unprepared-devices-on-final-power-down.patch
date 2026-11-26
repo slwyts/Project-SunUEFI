@@ -1,0 +1,129 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Thu, 26 Nov 2026 05:56:20 +0800
+Subject: [PATCH] bus: mhi: host: Release unprepared devices during final power
+ down
+
+An MHI transfer device retained across suspend can outlive the channel
+context. Release it when the controller powers down for good and skip
+ring cleanup if the driver already unprepared the channel.
+
+Codex combined the cleanup changes and compared their combined tree.
+The Piano cold-resume tests reused and reopened the IPCR transfer device.
+
+Link: https://android.googlesource.com/kernel/msm/+/b12578d7731ada3b0477db98b1257e4fa537b97b/drivers/bus/mhi/core/mhi_main.c
+Link: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=813e0ae613d6ee1b3e11f1c41f8b9e9df8ef0493
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/bus/mhi/host/init.c |  8 ++++----
+ drivers/bus/mhi/host/main.c | 19 +++++++++++++++++--
+ drivers/bus/mhi/host/pm.c   |  5 ++++-
+ include/linux/mhi.h         |  2 ++
+ 4 files changed, 27 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/bus/mhi/host/init.c b/drivers/bus/mhi/host/init.c
+index 95bd18137..5418b5888 100644
+--- a/drivers/bus/mhi/host/init.c
++++ b/drivers/bus/mhi/host/init.c
+@@ -613,13 +613,13 @@ void mhi_deinit_chan_ctxt(struct mhi_controller *mhi_cntrl,
+ 	struct mhi_chan_ctxt *chan_ctxt;
+ 	u32 tmp;
+ 
+-	buf_ring = &mhi_chan->buf_ring;
+ 	tre_ring = &mhi_chan->tre_ring;
+-	chan_ctxt = &mhi_cntrl->mhi_ctxt->chan_ctxt[mhi_chan->chan];
+-
+-	if (!chan_ctxt->rbase) /* Already uninitialized */
++	if (!tre_ring->ctxt_wp)
+ 		return;
+ 
++	buf_ring = &mhi_chan->buf_ring;
++	chan_ctxt = &mhi_cntrl->mhi_ctxt->chan_ctxt[mhi_chan->chan];
++
+ 	dma_free_coherent(mhi_cntrl->cntrl_dev, tre_ring->alloc_size,
+ 			  tre_ring->pre_aligned, tre_ring->dma_handle);
+ 	vfree(buf_ring->base);
+diff --git a/drivers/bus/mhi/host/main.c b/drivers/bus/mhi/host/main.c
+index 2234c4d04..d5da7d4b1 100644
+--- a/drivers/bus/mhi/host/main.c
++++ b/drivers/bus/mhi/host/main.c
+@@ -322,6 +322,15 @@ int mhi_destroy_device(struct device *dev, void *data)
+ 	     (dl_chan && !(dl_chan->ee_mask & BIT(ee)))))
+ 		return 0;
+ 
++	/*
++	 * An already disabled controller may retain channels. Remove only
++	 * children with no host rings or offload-owned channels in this case.
++	 */
++	if (mhi_cntrl->pm_state == MHI_PM_DISABLE &&
++	    ((ul_chan && (ul_chan->tre_ring.ctxt_wp || ul_chan->offload_ch)) ||
++	     (dl_chan && (dl_chan->tre_ring.ctxt_wp || dl_chan->offload_ch))))
++		return 0;
++
+ 	dev_dbg(&mhi_cntrl->mhi_dev->dev, "destroy device for chan:%s\n",
+ 		mhi_dev->name);
+ 
+@@ -1407,6 +1416,11 @@ static void mhi_unprepare_channel(struct mhi_controller *mhi_cntrl,
+ 
+ 	mutex_lock(&mhi_chan->mutex);
+ 
++	if (!mhi_cntrl->mhi_ctxt) {
++		WARN_ON_ONCE(mhi_chan->tre_ring.ctxt_wp);
++		goto unlock;
++	}
++
+ 	if (!(BIT(mhi_cntrl->ee) & mhi_chan->ee_mask)) {
+ 		dev_dbg(dev, "Current EE: %s Required EE Mask: 0x%x\n",
+ 			TO_MHI_EXEC_STR(mhi_cntrl->ee), mhi_chan->ee_mask);
+@@ -1431,6 +1445,7 @@ exit_unprepare_channel:
+ 	}
+ 	dev_dbg(dev, "%d: successfully reset\n", mhi_chan->chan);
+ 
++unlock:
+ 	mutex_unlock(&mhi_chan->mutex);
+ }
+ 
+@@ -1554,8 +1569,8 @@ void mhi_reset_chan(struct mhi_controller *mhi_cntrl, struct mhi_chan *mhi_chan)
+ 	struct mhi_event_ctxt *er_ctxt;
+ 	int chan = mhi_chan->chan;
+ 
+-	/* Nothing to reset, client doesn't queue buffers */
+-	if (mhi_chan->offload_ch)
++	/* Offload and unprepared channels have no host rings to reset. */
++	if (mhi_chan->offload_ch || !mhi_chan->tre_ring.ctxt_wp)
+ 		return;
+ 
+ 	read_lock_bh(&mhi_cntrl->pm_lock);
+diff --git a/drivers/bus/mhi/host/pm.c b/drivers/bus/mhi/host/pm.c
+index 852a47702..ed7019c9b 100644
+--- a/drivers/bus/mhi/host/pm.c
++++ b/drivers/bus/mhi/host/pm.c
+@@ -1246,7 +1246,10 @@ static void __mhi_power_down(struct mhi_controller *mhi_cntrl, bool graceful,
+ 	if (cur_state == MHI_PM_DISABLE) {
+ 		write_unlock_irq(&mhi_cntrl->pm_lock);
+ 		mutex_unlock(&mhi_cntrl->pm_mutex);
+-		return; /* Already powered down */
++
++		if (destroy_device)
++			device_for_each_child(dev, NULL, mhi_destroy_device);
++		return;
+ 	}
+ 
+ 	/* If it's not a graceful shutdown, force MHI to linkdown state */
+diff --git a/include/linux/mhi.h b/include/linux/mhi.h
+index d0a975f2e..a5431be73 100644
+--- a/include/linux/mhi.h
++++ b/include/linux/mhi.h
+@@ -655,6 +655,8 @@ int mhi_sync_power_up(struct mhi_controller *mhi_cntrl);
+ /**
+  * mhi_power_down - Power down the MHI device and also destroy the
+  *                  'struct device' for the channels associated with it.
++ *                  If the controller is already powered down, remove retained
++ *                  channel devices with unprepared host-owned channels.
+  *                  See also mhi_power_down_keep_dev() which is a variant
+  *                  of this API that keeps the 'struct device' for channels
+  *                  (useful during suspend/hibernation).
+-- 
+2.55.0
+

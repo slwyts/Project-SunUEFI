@@ -1,0 +1,696 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Thu, 26 Nov 2026 07:46:46 +0800
+Subject: [PATCH] wifi: ath12k: Suspend Piano WLAN with MHI M3 before PME
+ turn-off
+
+On Piano, resetting the PEACH endpoint before PME_Turn_Off leaves the
+link in L0 or L0s until the root port times out. Follow the ordinary
+factory suspend order: stop IPCR, wait for the firmware WMI suspend
+acknowledgment, then enter MHI M3. Disable endpoint bus mastering
+before the PCI core places the endpoint in D3hot. Leave the existing
+root port PME timeout and PCI power-state transitions in place.
+
+For an abort, restore MHI and accept the WMI resume event only for
+the matching pdev. On cold resume, keep the old MHI context until
+reset is confirmed. Drain CE receive refill while its interrupts are
+off and wait for MHI mission mode before QRTR resumes. Use the
+standard path on other boards, for hibernation and with WLAN wake
+enabled.
+
+The complete fourth-batch image reached L2 about 1 ms after PME and
+recovered WLAN and IPCR after RTC deep suspend. Codex reused that
+driver sequence, scoped it to Piano, built the changed ARM64 modules,
+and verified that the previous whole-image suspend reset still needs
+separate validation on the current kernel.
+
+Link: https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/45fb9bd6ae5ba2942fc1d53e4b6b46ef76992f71/drivers/pci/controller/pci-msm.c#L9002-L9031
+
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/net/wireless/ath/ath12k/ce.c   |   4 +
+ drivers/net/wireless/ath/ath12k/core.h |   2 +
+ drivers/net/wireless/ath/ath12k/mac.c  |   5 +
+ drivers/net/wireless/ath/ath12k/mhi.c  |  50 +++-
+ drivers/net/wireless/ath/ath12k/mhi.h  |   6 +-
+ drivers/net/wireless/ath/ath12k/pci.c  | 340 ++++++++++++++++++++++++-
+ drivers/net/wireless/ath/ath12k/pci.h  |  13 +-
+ 7 files changed, 400 insertions(+), 20 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/ce.c b/drivers/net/wireless/ath/ath12k/ce.c
+index 67bbc6d8d..e41234583 100644
+--- a/drivers/net/wireless/ath/ath12k/ce.c
++++ b/drivers/net/wireless/ath/ath12k/ce.c
+@@ -568,6 +568,10 @@ void ath12k_ce_rx_replenish_retry(struct timer_list *t)
+ {
+ 	struct ath12k_base *ab = timer_container_of(ab, t, rx_replenish_retry);
+ 
++	if (test_bit(ATH12K_FLAG_PDEV_PM, &ab->dev_flags) &&
++	    !test_bit(ATH12K_FLAG_CE_IRQ_ENABLED, &ab->dev_flags))
++		return;
++
+ 	ath12k_ce_rx_post_buf(ab);
+ }
+ 
+diff --git a/drivers/net/wireless/ath/ath12k/core.h b/drivers/net/wireless/ath/ath12k/core.h
+index 41855397c..1e1b8381e 100644
+--- a/drivers/net/wireless/ath/ath12k/core.h
++++ b/drivers/net/wireless/ath/ath12k/core.h
+@@ -274,6 +274,8 @@ enum ath12k_dev_flags {
+ 	ATH12K_FLAG_QMI_FW_READY_COMPLETE,
+ 	ATH12K_FLAG_FTM_SEGMENTED,
+ 	ATH12K_FLAG_FIXED_MEM_REGION,
++	ATH12K_FLAG_PDEV_PM,
++	ATH12K_FLAG_PDEV_RDDM,
+ };
+ 
+ struct ath12k_tx_conf {
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index 8e0ef7de1..914d8c6ab 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -9891,6 +9891,11 @@ int ath12k_mac_op_start(struct ieee80211_hw *hw)
+ 
+ 	lockdep_assert_wiphy(hw->wiphy);
+ 
++	for_each_ar(ah, ar, i) {
++		if (test_bit(ATH12K_FLAG_PDEV_PM, &ar->ab->dev_flags))
++			return -ENETDOWN;
++	}
++
+ 	ath12k_drain_tx(ah);
+ 
+ 	guard(mutex)(&ah->hw_mutex);
+diff --git a/drivers/net/wireless/ath/ath12k/mhi.c b/drivers/net/wireless/ath/ath12k/mhi.c
+index fd9d02d10..7c2b21cf4 100644
+--- a/drivers/net/wireless/ath/ath12k/mhi.c
++++ b/drivers/net/wireless/ath/ath12k/mhi.c
+@@ -151,23 +151,27 @@ static void ath12k_mhi_op_status_cb(struct mhi_controller *mhi_cntrl,
+ 		ath12k_warn(ab, "firmware crashed: MHI_CB_SYS_ERROR\n");
+ 		break;
+ 	case MHI_CB_EE_RDDM:
+-		if (ab_pci->mhi_pre_cb == MHI_CB_EE_RDDM) {
++		if (READ_ONCE(ab_pci->mhi_pre_cb) == MHI_CB_EE_RDDM) {
+ 			ath12k_dbg(ab, ATH12K_DBG_BOOT,
+ 				   "do not queue again for consecutive RDDM event\n");
+ 			break;
+ 		}
+ 
+-		if (!(test_bit(ATH12K_FLAG_UNREGISTERING, &ab->dev_flags))) {
++		spin_lock_bh(&ab->base_lock);
++		if (test_bit(ATH12K_FLAG_PDEV_PM, &ab->dev_flags)) {
++			set_bit(ATH12K_FLAG_PDEV_RDDM, &ab->dev_flags);
++		} else if (!test_bit(ATH12K_FLAG_UNREGISTERING, &ab->dev_flags)) {
+ 			set_bit(ATH12K_FLAG_CRASH_FLUSH, &ab->dev_flags);
+ 			set_bit(ATH12K_FLAG_RECOVERY, &ab->dev_flags);
+ 			queue_work(ab->workqueue_aux, &ab->reset_work);
+ 		}
++		spin_unlock_bh(&ab->base_lock);
+ 		break;
+ 	default:
+ 		break;
+ 	}
+ 
+-	ab_pci->mhi_pre_cb = cb;
++	WRITE_ONCE(ab_pci->mhi_pre_cb, cb);
+ }
+ 
+ static int ath12k_mhi_op_read_reg(struct mhi_controller *mhi_cntrl,
+@@ -279,7 +283,7 @@ free_controller:
+ }
+ 
+ /* MHI stays prepared after a failed power up, release it here */
+-static void ath12k_mhi_unprepare_stale(struct ath12k_pci *ab_pci)
++void ath12k_mhi_unprepare_stale(struct ath12k_pci *ab_pci)
+ {
+ 	if (!test_bit(ATH12K_MHI_INIT, &ab_pci->mhi_state) ||
+ 	    test_bit(ATH12K_MHI_POWER_ON, &ab_pci->mhi_state))
+@@ -342,13 +346,17 @@ static void ath12k_mhi_set_state_bit(struct ath12k_pci *ab_pci,
+ 		break;
+ 	case ATH12K_MHI_POWER_ON:
+ 		set_bit(ATH12K_MHI_POWER_ON, &ab_pci->mhi_state);
++		ab_pci->mhi_keep_devices = false;
+ 		break;
+ 	case ATH12K_MHI_POWER_OFF:
+ 	case ATH12K_MHI_POWER_OFF_KEEP_DEV:
+ 	case ATH12K_MHI_FORCE_POWER_OFF:
+ 		clear_bit(ATH12K_MHI_POWER_ON, &ab_pci->mhi_state);
++		clear_bit(ATH12K_MHI_SUSPEND, &ab_pci->mhi_state);
+ 		clear_bit(ATH12K_MHI_TRIGGER_RDDM, &ab_pci->mhi_state);
+ 		clear_bit(ATH12K_MHI_RDDM_DONE, &ab_pci->mhi_state);
++		ab_pci->mhi_keep_devices = mhi_state == ATH12K_MHI_POWER_OFF_KEEP_DEV &&
++					   test_bit(ATH12K_FLAG_PDEV_PM, &ab_pci->ab->dev_flags);
+ 		break;
+ 	case ATH12K_MHI_SUSPEND:
+ 		set_bit(ATH12K_MHI_SUSPEND, &ab_pci->mhi_state);
+@@ -438,7 +446,7 @@ static int ath12k_mhi_pm_suspend(struct ath12k_pci *ab_pci)
+ }
+ 
+ static int ath12k_mhi_set_state(struct ath12k_pci *ab_pci,
+-				enum ath12k_mhi_state mhi_state)
++			       enum ath12k_mhi_state mhi_state)
+ {
+ 	struct ath12k_base *ab = ab_pci->ab;
+ 	int ret;
+@@ -470,7 +478,14 @@ static int ath12k_mhi_set_state(struct ath12k_pci *ab_pci,
+ 		 * The 'sync' version works for non-resume (normal power on)
+ 		 * case as well.
+ 		 */
+-		ret = mhi_sync_power_up(ab_pci->mhi_ctrl);
++		if (ab_pci->mhi_keep_devices) {
++			/* The PCI caller must fence DMA before failed-start cleanup. */
++			ret = mhi_async_power_up(ab_pci->mhi_ctrl);
++			if (!ret)
++				ret = mhi_wait_for_mission_mode(ab_pci->mhi_ctrl);
++		} else {
++			ret = mhi_sync_power_up(ab_pci->mhi_ctrl);
++		}
+ 		break;
+ 	case ATH12K_MHI_POWER_OFF:
+ 		mhi_power_down(ab_pci->mhi_ctrl, true);
+@@ -549,14 +564,29 @@ void ath12k_mhi_stop(struct ath12k_pci *ab_pci, bool is_suspend)
+ 	ath12k_mhi_set_state(ab_pci, ATH12K_MHI_DEINIT);
+ }
+ 
+-void ath12k_mhi_suspend(struct ath12k_pci *ab_pci)
++int ath12k_mhi_halt_for_reset(struct ath12k_pci *ab_pci)
++{
++	struct mhi_controller *mhi = ab_pci->mhi_ctrl;
++
++	/* The PCI caller has fenced DMA. Keep the context until reset is verified. */
++	if (!test_bit(ATH12K_MHI_POWER_ON, &ab_pci->mhi_state) ||
++	    !test_bit(ATH12K_MHI_INIT, &ab_pci->mhi_state) ||
++	    atomic_read(&mhi->dev_wake) || atomic_read(&mhi->pending_pkts))
++		return -EBUSY;
++
++	mhi_power_down_keep_dev(mhi, false);
++	ath12k_mhi_set_state_bit(ab_pci, ATH12K_MHI_POWER_OFF_KEEP_DEV);
++	return 0;
++}
++
++int ath12k_mhi_suspend(struct ath12k_pci *ab_pci)
+ {
+-	ath12k_mhi_set_state(ab_pci, ATH12K_MHI_SUSPEND);
++	return ath12k_mhi_set_state(ab_pci, ATH12K_MHI_SUSPEND);
+ }
+ 
+-void ath12k_mhi_resume(struct ath12k_pci *ab_pci)
++int ath12k_mhi_resume(struct ath12k_pci *ab_pci)
+ {
+-	ath12k_mhi_set_state(ab_pci, ATH12K_MHI_RESUME);
++	return ath12k_mhi_set_state(ab_pci, ATH12K_MHI_RESUME);
+ }
+ 
+ void ath12k_mhi_coredump(struct mhi_controller *mhi_ctrl, bool in_panic)
+diff --git a/drivers/net/wireless/ath/ath12k/mhi.h b/drivers/net/wireless/ath/ath12k/mhi.h
+index 367432676..42db20ec0 100644
+--- a/drivers/net/wireless/ath/ath12k/mhi.h
++++ b/drivers/net/wireless/ath/ath12k/mhi.h
+@@ -38,7 +38,9 @@ void ath12k_mhi_unregister(struct ath12k_pci *ar_pci);
+ void ath12k_mhi_set_mhictrl_reset(struct ath12k_base *ab);
+ void ath12k_mhi_clear_vector(struct ath12k_base *ab);
+ 
+-void ath12k_mhi_suspend(struct ath12k_pci *ar_pci);
+-void ath12k_mhi_resume(struct ath12k_pci *ar_pci);
++int ath12k_mhi_halt_for_reset(struct ath12k_pci *ab_pci);
++void ath12k_mhi_unprepare_stale(struct ath12k_pci *ab_pci);
++int ath12k_mhi_suspend(struct ath12k_pci *ab_pci);
++int ath12k_mhi_resume(struct ath12k_pci *ab_pci);
+ void ath12k_mhi_coredump(struct mhi_controller *mhi_ctrl, bool in_panic);
+ #endif
+diff --git a/drivers/net/wireless/ath/ath12k/pci.c b/drivers/net/wireless/ath/ath12k/pci.c
+index 3fa523fb5..fb8160ed5 100644
+--- a/drivers/net/wireless/ath/ath12k/pci.c
++++ b/drivers/net/wireless/ath/ath12k/pci.c
+@@ -11,11 +11,13 @@
+ #include <linux/of.h>
+ #include <linux/of_reserved_mem.h>
+ #include <linux/pci.h>
++#include <linux/suspend.h>
+ #include <linux/time.h>
+ #include <linux/vmalloc.h>
+ 
+ #include "pci.h"
+ #include "core.h"
++#include "acpi.h"
+ #include "hif.h"
+ #include "mhi.h"
+ #include "debug.h"
+@@ -713,18 +715,20 @@ static void ath12k_pci_init_qmi_ce_config(struct ath12k_base *ab)
+ 	}
+ }
+ 
+-static void ath12k_pci_ce_irqs_enable(struct ath12k_base *ab)
++static bool ath12k_pci_ce_irqs_enable(struct ath12k_base *ab)
+ {
+ 	int i;
+ 
+ 	if (test_and_set_bit(ATH12K_FLAG_CE_IRQ_ENABLED, &ab->dev_flags))
+-		return;
++		return false;
+ 
+ 	for (i = 0; i < ab->hw_params->ce_count; i++) {
+ 		if (ath12k_ce_get_attr_flags(ab, i) & CE_ATTR_DIS_INTR)
+ 			continue;
+ 		ath12k_pci_ce_irq_enable(ab, i);
+ 	}
++
++	return true;
+ }
+ 
+ static void ath12k_pci_msi_config(struct ath12k_pci *ab_pci, bool enable)
+@@ -1171,6 +1175,36 @@ void ath12k_pci_get_ce_msi_idx(struct ath12k_base *ab, u32 ce_id,
+ 	*msi_idx = msi_data_idx;
+ }
+ 
++static bool ath12k_pci_ce_can_resume(struct ath12k_pci *ab_pci)
++{
++	struct mhi_controller *mhi = ab_pci->mhi_ctrl;
++	enum mhi_state state;
++	u16 command;
++
++	if (!test_bit(ATH12K_PCI_FLAG_INIT_DONE, &ab_pci->flags) ||
++	    test_bit(ATH12K_FLAG_CRASH_FLUSH, &ab_pci->ab->dev_flags) ||
++	    !mhi_pm_is_active(mhi) ||
++	    ath12k_pci_pdev_read_command(ab_pci->pdev, &command) ||
++	    !(command & PCI_COMMAND_MASTER))
++		return false;
++
++	state = mhi_get_mhi_state(mhi);
++	return state == MHI_STATE_M0 || state == MHI_STATE_M1 || state == MHI_STATE_M2;
++}
++
++static int ath12k_pci_pdev_ce_irq_enable(struct ath12k_base *ab)
++{
++	struct ath12k_pci *ab_pci = ath12k_pci_priv(ab);
++
++	if (!ath12k_pci_ce_can_resume(ab_pci))
++		return -EIO;
++
++	if (ath12k_pci_ce_irqs_enable(ab))
++		ath12k_ce_rx_post_buf(ab);
++
++	return 0;
++}
++
+ void ath12k_pci_hif_ce_irq_enable(struct ath12k_base *ab)
+ {
+ 	ath12k_pci_ce_irqs_enable(ab);
+@@ -1637,6 +1671,8 @@ int ath12k_pci_power_up(struct ath12k_base *ab)
+ 					    fence_ret);
+ 				return ret;
+ 			}
++			if (ab_pci->mhi_keep_devices)
++				mhi_power_down_keep_dev(ab_pci->mhi_ctrl, false);
+ 		}
+ 		ath12k_pci_msi_disable(ab_pci);
+ 		ath12k_pci_aspm_restore(ab_pci);
+@@ -1665,7 +1701,7 @@ void ath12k_pci_power_down(struct ath12k_base *ab, bool is_suspend)
+ 	ath12k_pci_msi_disable(ab_pci);
+ 	ath12k_mhi_stop(ab_pci, is_suspend);
+ 	clear_bit(ATH12K_PCI_FLAG_INIT_DONE, &ab_pci->flags);
+-	ath12k_pci_sw_reset(ab_pci->ab, false);
++	ath12k_pci_sw_reset(ab, false);
+ }
+ 
+ static const struct ath12k_hif_ops ath12k_pci_hif_ops = {
+@@ -1934,11 +1970,288 @@ static void ath12k_pci_shutdown(struct pci_dev *pdev)
+ 	ath12k_pci_hw_group_power_down(ab->ag);
+ }
+ 
++static bool ath12k_pci_pdev_suspend_supported(struct ath12k_pci *ab_pci)
++{
++	struct ath12k_base *ab = ab_pci->ab;
++	struct ath12k *ar = ab->pdevs[0].ar;
++
++	/* This sequence has been validated on PEACH with WLAN wake disabled. */
++	return pm_suspend_in_progress() &&
++	       ath12k_pci_is_piano_wlan(ab_pci->pdev) &&
++	       !device_may_wakeup(ab->dev) &&
++	       !ab_pci->mhi_ctrl->no_m3 &&
++	       ar && ar->ah && ar->ah->state == ATH12K_HW_STATE_OFF &&
++	       ab->fw_pdev_count &&
++	       test_bit(ATH12K_FLAG_QMI_FW_READY_COMPLETE, &ab->dev_flags) &&
++	       test_bit(ATH12K_PCI_FLAG_INIT_DONE, &ab_pci->flags);
++}
++
++static int ath12k_pci_pdev_pm_claim(struct ath12k_base *ab)
++{
++	int ret = 0;
++
++	spin_lock_bh(&ab->base_lock);
++	if (test_bit(ATH12K_FLAG_RECOVERY, &ab->dev_flags) ||
++	    test_bit(ATH12K_FLAG_UNREGISTERING, &ab->dev_flags) ||
++	    test_bit(ATH12K_FLAG_PDEV_PM, &ab->dev_flags))
++		ret = -EBUSY;
++	else
++		set_bit(ATH12K_FLAG_PDEV_PM, &ab->dev_flags);
++	spin_unlock_bh(&ab->base_lock);
++
++	return ret;
++}
++
++static int ath12k_pci_pdev_pm_finish(struct ath12k_pci *ab_pci)
++{
++	struct ath12k_base *ab = ab_pci->ab;
++	int ret = 0;
++
++	spin_lock_bh(&ab->base_lock);
++	if (test_bit(ATH12K_FLAG_PDEV_RDDM, &ab->dev_flags))
++		ret = -EIO;
++	else
++		clear_bit(ATH12K_FLAG_PDEV_PM, &ab->dev_flags);
++	spin_unlock_bh(&ab->base_lock);
++
++	if (!ret)
++		memset(&ab_pci->pdev_pm, 0, sizeof(ab_pci->pdev_pm));
++
++	return ret;
++}
++
++static int ath12k_pci_pdev_restore_master(struct ath12k_pci *ab_pci)
++{
++	struct pci_dev *pdev = ab_pci->pdev;
++	u16 command;
++	int ret;
++
++	ret = ath12k_pci_pdev_read_command(pdev, &command);
++	if (ret)
++		return ret;
++
++	if (ab_pci->pdev_pm.restore_bus_master) {
++		pci_set_master(pdev);
++		ret = ath12k_pci_pdev_read_command(pdev, &command);
++		if (ret)
++			return ret;
++	}
++
++	if (!(command & PCI_COMMAND_MASTER))
++		return -EIO;
++
++	ab_pci->pdev_pm.restore_bus_master = false;
++	return 0;
++}
++
++static void ath12k_pci_pdev_mask_irqs(struct ath12k_pci *ab_pci)
++{
++	struct ath12k_base *ab = ab_pci->ab;
++
++	if (test_bit(ATH12K_FLAG_EXT_IRQ_ENABLED, &ab->dev_flags)) {
++		ab_pci->pdev_pm.restore_ext_irq = true;
++		ath12k_hif_irq_disable(ab);
++	}
++
++	if (test_bit(ATH12K_FLAG_CE_IRQ_ENABLED, &ab->dev_flags)) {
++		ab_pci->pdev_pm.restore_ce_irq = true;
++		ath12k_pci_ce_stop(ab);
++	}
++}
++
++static int ath12k_pci_pdev_stop_dma(struct ath12k_pci *ab_pci)
++{
++	int ret;
++
++	ret = ath12k_pci_fence_master(ab_pci->pdev,
++				      &ab_pci->pdev_pm.restore_bus_master);
++	if (ret)
++		return ret;
++
++	return ab_pci->pdev_pm.restore_bus_master ? 0 : -EIO;
++}
++
++static int ath12k_pci_pdev_recover_cold(struct ath12k_pci *ab_pci)
++{
++	struct mhi_controller *mhi = ab_pci->mhi_ctrl;
++	struct ath12k_base *ab = ab_pci->ab;
++	u16 command;
++	int ret;
++
++	ret = ath12k_pci_pdev_read_command(ab_pci->pdev, &command);
++	if (ret)
++		return ret;
++
++	ath12k_pci_pdev_mask_irqs(ab_pci);
++	ret = ath12k_pci_pdev_stop_dma(ab_pci);
++	if (ret)
++		return ret;
++
++	ret = ath12k_mhi_halt_for_reset(ab_pci);
++	if (ret)
++		return ret;
++
++	/* The old MHI IRQ handlers are drained. Discard their recovery request. */
++	clear_bit(ATH12K_FLAG_PDEV_RDDM, &ab->dev_flags);
++
++	if (!ath12k_pci_pdev_in_reset(ab_pci)) {
++		ret = ath12k_pci_pdev_read_command(ab_pci->pdev, &command);
++		if (ret || (command & PCI_COMMAND_MASTER))
++			return -EIO;
++
++		mhi_soc_reset(mhi);
++		ret = ath12k_pci_pdev_wait_for_reset(ab_pci);
++		if (ret)
++			return ret;
++	}
++
++	ath12k_mhi_unprepare_stale(ab_pci);
++	ath12k_acpi_stop(ab);
++	reinit_completion(&ab->restart_completed);
++	ret = ath12k_hif_power_up(ab);
++	if (ret)
++		return ret;
++
++	ab_pci->pdev_pm.restore_bus_master = false;
++	/* QRTR reopens IPCR in resume_early before we wait for firmware. */
++	ab_pci->pdev_pm.restart_pending = true;
++	return 0;
++}
++
++static int ath12k_pci_pdev_resume_warm(struct ath12k_pci *ab_pci)
++{
++	struct ath12k_base *ab = ab_pci->ab;
++	int ret;
++
++	if (test_bit(ATH12K_FLAG_PDEV_RDDM, &ab->dev_flags))
++		return -EIO;
++
++	ret = ath12k_pci_pdev_restore_master(ab_pci);
++	if (ret)
++		return ret;
++
++	if (ab_pci->pdev_pm.mhi_suspended) {
++		ret = ath12k_mhi_resume(ab_pci);
++		if (ret)
++			return ret;
++		ab_pci->pdev_pm.mhi_suspended = false;
++	}
++
++	/* CE must be running to receive the firmware's WMI response. */
++	if (ab_pci->pdev_pm.restore_ce_irq) {
++		ret = ath12k_pci_pdev_ce_irq_enable(ab);
++		if (ret)
++			return ret;
++		ab_pci->pdev_pm.restore_ce_irq = false;
++	}
++
++	ret = ath12k_wmi_pdev_resume(ab->pdevs[0].ar, ab->fw_pdev[0].pdev_id);
++	if (ret)
++		return ret;
++
++	if (ab_pci->pdev_pm.restore_ext_irq)
++		ath12k_hif_irq_enable(ab);
++
++	return ath12k_pci_pdev_pm_finish(ab_pci);
++}
++
++static int ath12k_pci_pdev_suspend(struct ath12k_pci *ab_pci)
++{
++	struct ath12k_base *ab = ab_pci->ab;
++	struct pci_dev *pdev = ab_pci->pdev;
++	u16 command;
++	int ret;
++
++	ret = ath12k_pci_pdev_read_command(pdev, &command);
++	if (ret)
++		return ret;
++
++	if (pdev->state_saved || !(command & PCI_COMMAND_MASTER))
++		return -EBUSY;
++
++	ret = ath12k_pci_pdev_pm_claim(ab);
++	if (ret)
++		return ret;
++
++	ret = ath12k_wmi_pdev_suspend(ab->pdevs[0].ar, WMI_PDEV_SUSPEND,
++				      ab->fw_pdev[0].pdev_id);
++	if (ret && ret != -ETIMEDOUT) {
++		if (!ath12k_pci_pdev_pm_finish(ab_pci))
++			return ret;
++		goto recover_cold;
++	}
++
++	/* A missing completion still leaves the target's state uncertain. */
++	if (ret)
++		goto resume_warm;
++
++	ath12k_pci_pdev_mask_irqs(ab_pci);
++
++	ret = ath12k_mhi_suspend(ab_pci);
++	if (ret == -EBUSY)
++		goto resume_warm;
++	/* MHI may have begun the transition without completing it. */
++	if (ret)
++		goto recover_cold;
++	ab_pci->pdev_pm.mhi_suspended = true;
++
++	if (!pci_wait_for_pending_transaction(pdev)) {
++		ret = -EBUSY;
++		goto resume_warm;
++	}
++
++	ret = ath12k_pci_pdev_stop_dma(ab_pci);
++	if (ret)
++		goto resume_warm;
++
++	if (test_bit(ATH12K_FLAG_PDEV_RDDM, &ab->dev_flags)) {
++		ret = -EIO;
++		goto recover_cold;
++	}
++
++	/* The PCI core now saves the endpoint state and selects its power state. */
++	return 0;
++
++resume_warm:
++	/* The PM core skips our resume_early callback if suspend_late fails. */
++	if (!ath12k_pci_pdev_resume_warm(ab_pci))
++		return ret;
++recover_cold:
++	ab_pci->pdev_pm.resume_error = ath12k_pci_pdev_recover_cold(ab_pci);
++	return ret;
++}
++
++static int ath12k_pci_pdev_resume(struct ath12k_pci *ab_pci)
++{
++	struct mhi_controller *mhi = ab_pci->mhi_ctrl;
++	enum mhi_state state;
++	enum mhi_ee_type ee;
++	u16 command;
++	int ret;
++
++	ret = ath12k_pci_pdev_read_command(ab_pci->pdev, &command);
++	if (ret)
++		return ret;
++
++	ee = mhi_get_exec_env(mhi);
++	state = mhi_get_mhi_state(mhi);
++	if (ee == MHI_EE_AMSS && state == MHI_STATE_M3) {
++		ret = ath12k_pci_pdev_resume_warm(ab_pci);
++		if (!ret)
++			return 0;
++	}
++
++	return ath12k_pci_pdev_recover_cold(ab_pci);
++}
++
+ static __maybe_unused int ath12k_pci_pm_suspend(struct device *dev)
+ {
+ 	struct ath12k_base *ab = dev_get_drvdata(dev);
+ 	int ret;
+ 
++	if (test_bit(ATH12K_FLAG_PDEV_PM, &ab->dev_flags))
++		return -EBUSY;
++
+ 	ret = ath12k_core_suspend(ab);
+ 	if (ret)
+ 		ath12k_warn(ab, "failed to suspend core: %d\n", ret);
+@@ -1949,9 +2262,16 @@ static __maybe_unused int ath12k_pci_pm_suspend(struct device *dev)
+ static __maybe_unused int ath12k_pci_pm_resume(struct device *dev)
+ {
+ 	struct ath12k_base *ab = dev_get_drvdata(dev);
++	struct ath12k_pci *ab_pci = ath12k_pci_priv(ab);
+ 	int ret;
+ 
++	if (test_bit(ATH12K_FLAG_PDEV_PM, &ab->dev_flags) &&
++	    !ab_pci->pdev_pm.restart_pending)
++		return ab_pci->pdev_pm.resume_error ?: -EIO;
++
+ 	ret = ath12k_core_resume(ab);
++	if (!ret && ab_pci->pdev_pm.restart_pending)
++		ret = ath12k_pci_pdev_pm_finish(ab_pci);
+ 	if (ret)
+ 		ath12k_warn(ab, "failed to resume core: %d\n", ret);
+ 
+@@ -1961,9 +2281,13 @@ static __maybe_unused int ath12k_pci_pm_resume(struct device *dev)
+ static __maybe_unused int ath12k_pci_pm_suspend_late(struct device *dev)
+ {
+ 	struct ath12k_base *ab = dev_get_drvdata(dev);
++	struct ath12k_pci *ab_pci = ath12k_pci_priv(ab);
+ 	int ret;
+ 
+-	ret = ath12k_core_suspend_late(ab);
++	if (ath12k_pci_pdev_suspend_supported(ab_pci))
++		ret = ath12k_pci_pdev_suspend(ab_pci);
++	else
++		ret = ath12k_core_suspend_late(ab);
+ 	if (ret)
+ 		ath12k_warn(ab, "failed to late suspend core: %d\n", ret);
+ 
+@@ -2006,9 +2330,15 @@ static int ath12k_pci_check_resume_bus(struct ath12k_base *ab)
+ static __maybe_unused int ath12k_pci_pm_resume_early(struct device *dev)
+ {
+ 	struct ath12k_base *ab = dev_get_drvdata(dev);
++	struct ath12k_pci *ab_pci = ath12k_pci_priv(ab);
+ 	int ret;
+ 
+-	ret = ath12k_core_resume_early(ab, ath12k_pci_check_resume_bus);
++	if (test_bit(ATH12K_FLAG_PDEV_PM, &ab->dev_flags)) {
++		ret = ath12k_pci_pdev_resume(ab_pci);
++		ab_pci->pdev_pm.resume_error = ret;
++	} else {
++		ret = ath12k_core_resume_early(ab, ath12k_pci_check_resume_bus);
++	}
+ 	if (ret)
+ 		ath12k_warn(ab, "failed to early resume core: %d\n", ret);
+ 
+diff --git a/drivers/net/wireless/ath/ath12k/pci.h b/drivers/net/wireless/ath/ath12k/pci.h
+index bb56a10b5..2c67bb039 100644
+--- a/drivers/net/wireless/ath/ath12k/pci.h
++++ b/drivers/net/wireless/ath/ath12k/pci.h
+@@ -9,9 +9,6 @@
+ #include <linux/mhi.h>
+ #include <linux/pci.h>
+ 
+-#include <linux/mhi.h>
+-#include <linux/pci.h>
+-
+ #include "core.h"
+ 
+ #define ATH12K_PCI_DEVICE_ID_PEACH		0x110e
+@@ -123,6 +120,7 @@ struct ath12k_pci {
+ 	char amss_path[100];
+ 	u32 msi_ep_base_data;
+ 	struct mhi_controller *mhi_ctrl;
++	bool mhi_keep_devices;
+ 	const struct ath12k_msi_config *msi_config;
+ 	unsigned long mhi_state;
+ 	enum mhi_callback mhi_pre_cb;
+@@ -142,6 +140,15 @@ struct ath12k_pci {
+ 	const struct ath12k_pci_reg_base *reg_base;
+ 
+ 	u32 window_reg_addr;
++
++	struct {
++		bool mhi_suspended;
++		bool restore_ce_irq;
++		bool restore_ext_irq;
++		bool restore_bus_master;
++		bool restart_pending;
++		int resume_error;
++	} pdev_pm;
+ };
+ 
+ struct ath12k_pci_driver {
+-- 
+2.55.0
+

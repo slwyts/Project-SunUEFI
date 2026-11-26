@@ -231,6 +231,122 @@ class ReleasePackageTests(unittest.TestCase):
             if path.startswith(adc + '/'):
                 self.assertEqual(after[path], before[path], path)
 
+    def test_folded_board_keeps_ap_power_suppliers_and_disables_unbound_clients(self):
+        shutil.copyfile(pr.ROOT / 'vendor/piano-linux/board.dtb', self.dtb)
+        before = pr.read_fdt(self.dtb.read_bytes())['tree']
+        rsc = '/soc/rsc@16500000'
+        ss3 = '/soc/psci/cluster-pd2'
+        port = '/soc/pcie@1c00000/pcie0_rp'
+        wlan = port + '/wifi@0'
+
+        pr.normalize_mainline_bindings(self.dtb)
+        after = pr.read_fdt(self.dtb.read_bytes())['tree']
+        self.assertEqual(after[rsc], {**before[rsc], 'power-domains': after[ss3]['phandle']})
+        self.assertEqual(after[ss3], before[ss3])
+        expected_port = before[port].copy()
+        wake_gpio = expected_port.pop('wake-gpios')
+        self.assertEqual(wake_gpio, before['/soc/pinctrl@f100000']['phandle'] + struct.pack('>II', 104, 1))
+        self.assertEqual(after[port], expected_port)
+        self.assertEqual(after[wlan], {**before[wlan], 'wake-gpios': wake_gpio})
+
+        disabled = (
+            '/soc/rpmhpd-hold-ml',
+            '/soc/cluster-device0', '/soc/cluster-device1', '/soc/cluster-device2',
+            '/soc/qcom,cnss-peach@b0000000', '/soc/qcedev@1de0000',
+            '/soc/qcom,dcvs', '/soc/qcom,ddr-cdev',
+            '/soc/remoteproc-soccp@a3380000', '/soc/remoteproc-spss@1880000',
+            '/soc/kgsl-smmu@3da0000', '/soc/qcom,gdsc@adf134c',
+            '/soc/clock-controller@1760000', '/soc/clock-controller@3d90000',
+            '/soc/clock-controller@aaf0000', '/soc/clock-controller@abf0000',
+            '/soc/clock-controller@ade0000', '/soc/clock-controller@af00000',
+            '/soc/qcom,cc-debug', '/soc/qcom,gmu@3d37000',
+            '/soc/qcom,gdsc@abf8034', '/soc/qcom,gdsc@abf8068',
+            '/soc/qcom,gdsc@adf00c8', '/soc/qcom,gdsc@adf017c',
+            '/soc/qcom,gdsc@adf1004', '/soc/qcom,gdsc@adf1084',
+            '/soc/qcom,gdsc@adf10ec',
+            '/soc/interconnect@7e40000', '/soc/interconnect@7400000', '/soc/interconnect@7420000',
+            '/soc/qcom,qupv3_1_geni_se@ac0000/i2c@a8c000',
+            '/soc/qcom,qupv3_2_geni_se@8c0000/i2c@888000',
+        )
+        for node in disabled:
+            self.assertEqual(after[node], {**before[node], 'status': b'disabled\0'}, node)
+
+        for node in (rsc + '/power-controller-ml', '/soc/interconnect@1',
+                     '/soc/interconnect@24100000',
+                     '/soc/iommu@3da0000', '/soc/gmu@3d6c000',
+                     '/soc/clock-controller-ml@1760000', '/soc/clock-controller-ml@3d90000',
+                     '/soc/clock-controller-ml@aaf0000', '/soc/clock-controller-ml@ade0000',
+                     '/soc/clock-controller-ml@af00000'):
+            self.assertEqual(after[node], before[node], node)
+        self.assertEqual(pr.normalize_mainline_bindings(self.dtb)['changes'], [])
+
+    def test_folded_dt_keeps_legacy_camera_domains_if_replacement_is_unavailable(self):
+        legacy = '/soc/qcom,gdsc@adf1004'
+        replacement = '/soc/clock-controller-ml@ade0000'
+        tree = {'/': {}, '/soc': {}, legacy: {'compatible': b'qcom,gdsc\0'}}
+        for substitute in ({}, {replacement: {'status': b'disabled\0'}}):
+            with self.subTest(substitute=substitute):
+                nodes = {**tree, **substitute}
+                self.dtb.write_bytes(pr.write_fdt({'tree': nodes, 'reservations': [], 'boot_cpu': 0}))
+                self.assertEqual(pr.normalize_mainline_bindings(self.dtb)['changes'], [])
+                self.assertEqual(pr.read_fdt(self.dtb.read_bytes())['tree'], nodes)
+
+    def test_folded_board_keeps_an_explicit_wlan_wake_gpio(self):
+        port = '/soc/pcie@1c00000/pcie0_rp'
+        wlan = port + '/wifi@0'
+        parsed = pr.read_fdt((pr.ROOT / 'vendor/piano-linux/board.dtb').read_bytes())
+        tree = parsed['tree']
+        tlmm = tree['/soc/pinctrl@f100000']['phandle']
+        tree[wlan]['wake-gpios'] = tlmm + struct.pack('>II', 105, 1)
+        self.dtb.write_bytes(pr.write_fdt(parsed))
+        pr.normalize_mainline_bindings(self.dtb)
+        after = pr.read_fdt(self.dtb.read_bytes())['tree']
+        self.assertEqual(after[port], tree[port])
+        self.assertEqual(after[wlan], tree[wlan])
+
+    def test_llcc_rebind_matches_stock_resources_and_preserves_references(self):
+        old = '/soc/cache-controller@24800000'
+        new = '/soc/system-cache-controller@24800000'
+        perfmon = old + '/llcc_perfmon'
+        heuristics = old + '/scid_heuristics'
+        clock = '/soc/clock-controller@c2a0000'
+        reg = struct.pack('>12I', 0x24800000, 0x200000, 0x25800000, 0x200000,
+                          0x24c00000, 0x200000, 0x25c00000, 0x200000,
+                          0x26800000, 0x200000, 0x26c00000, 0x200000)
+        irq = struct.pack('>III', 0, 266, 4)
+        tree = {'/': {}, '/soc': {
+                    '#address-cells': struct.pack('>I', 1),
+                    '#size-cells': struct.pack('>I', 1)},
+                '/aliases': {}, clock: {'phandle': struct.pack('>I', 3)},
+                old: {'compatible': b'qcom,sun-llcc\0', 'reg': reg,
+                      'reg-names': b'llcc0_base\0llcc1_base\0llcc2_base\0llcc3_base\0'
+                                   b'llcc_broadcast_or_base\0llcc_broadcast_and_base\0',
+                      'interrupts': irq, 'cap-based-alloc-and-pwr-collapse': b''},
+                perfmon: {'compatible': b'qcom,llcc-perfmon\0',
+                          'clocks': struct.pack('>II', 3, 0)},
+                heuristics: {'compatible': b'qcom,scid-heuristics\0'}}
+
+        for path, prop, value in ((perfmon, 'phandle', struct.pack('>I', 5)),
+                                  ('/aliases', 'llcc', old.encode() + b'\0'),
+                                  (old, 'interrupts', struct.pack('>III', 0, 265, 4))):
+            with self.subTest(path=path, prop=prop):
+                altered = {node: dict(props) for node, props in tree.items()}
+                altered[path][prop] = value
+                self.dtb.write_bytes(pr.write_fdt({'tree': altered, 'reservations': [], 'boot_cpu': 0}))
+                self.assertEqual(pr.normalize_mainline_bindings(self.dtb)['changes'], [])
+                self.assertEqual(pr.read_fdt(self.dtb.read_bytes())['tree'], altered)
+
+        self.dtb.write_bytes(pr.write_fdt({'tree': tree, 'reservations': [], 'boot_cpu': 0}))
+        self.assertEqual(pr.normalize_mainline_bindings(self.dtb)['changes'], [new + ':compatible'])
+        after = pr.read_fdt(self.dtb.read_bytes())['tree']
+        self.assertEqual(after.pop(new), {'compatible': b'qcom,sm8750-llcc\0', 'reg': reg,
+                                        'reg-names': b'llcc0_base\0llcc1_base\0llcc2_base\0llcc3_base\0'
+                                                     b'llcc_broadcast_base\0llcc_broadcast_and_base\0',
+                                        'interrupts': irq})
+        self.assertEqual(after, {node: props for node, props in tree.items()
+                                 if node not in (old, perfmon, heuristics)})
+        self.assertEqual(pr.normalize_mainline_bindings(self.dtb)['changes'], [])
+
     def test_rpmh_stats_keeps_qmp_and_the_board_register_window(self):
         node = '/soc/ram@c3f0000'
         props = {'compatible': b'qcom,rpmh-stats-v4\0',

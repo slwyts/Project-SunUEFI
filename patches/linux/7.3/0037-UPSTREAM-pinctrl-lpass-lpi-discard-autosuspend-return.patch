@@ -1,0 +1,85 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Brian Norris <briannorris@chromium.org>
+Date: Tue, 6 Oct 2026 16:13:33 -0700
+Subject: [PATCH] pinctrl: qcom: lpass-lpi: Discard
+ pm_runtime_put_autosuspend() return values
+
+Passing the pm_runtime_put_autosuspend() return value to callers is not
+particularly useful.
+
+Returning an error code from pm_runtime_put_autosuspend() merely means
+that it has not queued up a timer or work item to check whether or not
+the device can be suspended and there are many perfectly valid
+situations in which that can happen, like after writing "on" to the
+device's runtime PM "control" attribute in sysfs for one example.
+
+Accordingly, update the LPASS LPI pinctrl driver to simply discard the
+return value of pm_runtime_put_autosuspend() and return 0 to the
+callers.
+
+This will facilitate a planned change of the
+pm_runtime_put_autosuspend() return type to void in the future, similar
+to commit 3afd8df02433 ("PM: runtime: Change pm_runtime_put() return
+type to void").
+
+Codex verified the maintainer-tree change against the Piano release
+source and compiled the LPASS LPI driver for arm64.
+
+Signed-off-by: Brian Norris <briannorris@chromium.org>
+Acked-by: Linus Walleij <linusw@kernel.org>
+Link: https://patch.msgid.link/20261006161337.5.Ica4bfaf179a86c8d77f8f845826602914b81181b@changeid
+Signed-off-by: Bartosz Golaszewski <bartosz.golaszewski@oss.qualcomm.com>
+Link: https://git.kernel.org/pub/scm/linux/kernel/git/brgl/linux.git/commit/?id=9bcd1725b0cc7954525e3d0d02fecaec7c7aab33
+Assisted-by: LLM
+---
+ drivers/pinctrl/qcom/pinctrl-lpass-lpi.c | 16 ++++++++++++----
+ 1 file changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/pinctrl/qcom/pinctrl-lpass-lpi.c b/drivers/pinctrl/qcom/pinctrl-lpass-lpi.c
+index 5fd4a4e..b93f661 100644
+--- a/drivers/pinctrl/qcom/pinctrl-lpass-lpi.c
++++ b/drivers/pinctrl/qcom/pinctrl-lpass-lpi.c
+@@ -76,7 +76,9 @@ static int lpi_gpio_read(struct lpi_pinctrl *state, unsigned int pin,
+ 
+ 	lpi_gpio_read_reg(state, pin, addr, val);
+ 
+-	return pm_runtime_put_autosuspend(state->dev);
++	pm_runtime_put_autosuspend(state->dev);
++
++	return 0;
+ }
+ 
+ static const struct pinctrl_ops lpi_gpio_pinctrl_ops = {
+@@ -164,7 +166,9 @@ static int lpi_gpio_set_mux(struct pinctrl_dev *pctldev, unsigned int function,
+ 	u32p_replace_bits(&val, i, LPI_GPIO_FUNCTION_MASK);
+ 	lpi_gpio_write_reg(pctrl, pin, LPI_GPIO_CFG_REG, val);
+ 
+-	return pm_runtime_put_autosuspend(pctrl->dev);
++	pm_runtime_put_autosuspend(pctrl->dev);
++
++	return 0;
+ }
+ 
+ static const struct pinmux_ops lpi_gpio_pinmux_ops = {
+@@ -261,7 +265,9 @@ static int lpi_config_set_slew_rate(struct lpi_pinctrl *pctrl,
+ 
+ 	mutex_unlock(&pctrl->lock);
+ 
+-	return pm_runtime_put_autosuspend(pctrl->dev);
++	pm_runtime_put_autosuspend(pctrl->dev);
++
++	return 0;
+ }
+ 
+ static int lpi_config_set(struct pinctrl_dev *pctldev, unsigned int group,
+@@ -335,7 +341,9 @@ static int lpi_config_set(struct pinctrl_dev *pctldev, unsigned int group,
+ 
+ 	lpi_gpio_write_reg(pctrl, group, LPI_GPIO_CFG_REG, val);
+ 
+-	return pm_runtime_put_autosuspend(pctrl->dev);
++	pm_runtime_put_autosuspend(pctrl->dev);
++
++	return 0;
+ }
+ 
+ static const struct pinconf_ops lpi_gpio_pinconf_ops = {

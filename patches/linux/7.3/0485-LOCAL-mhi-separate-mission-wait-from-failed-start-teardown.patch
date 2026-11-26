@@ -1,0 +1,91 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Thu, 26 Nov 2026 05:45:47 +0800
+Subject: [PATCH] bus: mhi: host: Separate mission-mode wait from startup
+ teardown
+
+mhi_sync_power_up() tears down MHI devices if startup fails. A driver
+recovering across a PCIe reset needs to fence the transport first, so
+it cannot use the synchronous API to wait for mission mode.
+
+Extract the current wait into mhi_wait_for_mission_mode(), for use
+after successful mhi_async_power_up(). Keep the normal synchronous
+helper's error handling unchanged. The new wait does not stop
+asynchronous state transitions.
+
+The LLM implemented the extraction, checked the worker boundaries,
+compiled ARM64 pm.o and tested both startup APIs on the host.
+
+Link: https://kernel.googlesource.com/pub/scm/linux/kernel/git/torvalds/linux/+/1f7267d8043e394933b0ed06070bfa7921d7c830/drivers/bus/mhi/host/pm.c
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/bus/mhi/host/pm.c | 20 ++++++++++++++------
+ include/linux/mhi.h       | 13 +++++++++++++
+ 2 files changed, 27 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/bus/mhi/host/pm.c b/drivers/bus/mhi/host/pm.c
+index 702c12ba2..2a983bcb0 100644
+--- a/drivers/bus/mhi/host/pm.c
++++ b/drivers/bus/mhi/host/pm.c
+@@ -1308,14 +1308,10 @@ void mhi_power_down_keep_dev(struct mhi_controller *mhi_cntrl,
+ }
+ EXPORT_SYMBOL_GPL(mhi_power_down_keep_dev);
+ 
+-int mhi_sync_power_up(struct mhi_controller *mhi_cntrl)
++int mhi_wait_for_mission_mode(struct mhi_controller *mhi_cntrl)
+ {
+-	int ret = mhi_async_power_up(mhi_cntrl);
+ 	u32 timeout_ms;
+ 
+-	if (ret)
+-		return ret;
+-
+ 	/* Some devices need more time to set ready during power up */
+ 	timeout_ms = mhi_cntrl->ready_timeout_ms ?
+ 		mhi_cntrl->ready_timeout_ms : mhi_cntrl->timeout_ms;
+@@ -1324,7 +1320,19 @@ int mhi_sync_power_up(struct mhi_controller *mhi_cntrl)
+ 			   MHI_PM_FATAL_ERROR(mhi_cntrl->pm_state),
+ 			   msecs_to_jiffies(timeout_ms));
+ 
+-	ret = (MHI_IN_MISSION_MODE(mhi_cntrl->ee)) ? 0 : -ETIMEDOUT;
++	return MHI_IN_MISSION_MODE(mhi_cntrl->ee) ? 0 : -ETIMEDOUT;
++}
++EXPORT_SYMBOL_GPL(mhi_wait_for_mission_mode);
++
++int mhi_sync_power_up(struct mhi_controller *mhi_cntrl)
++{
++	int ret;
++
++	ret = mhi_async_power_up(mhi_cntrl);
++	if (ret)
++		return ret;
++
++	ret = mhi_wait_for_mission_mode(mhi_cntrl);
+ 	if (ret)
+ 		mhi_power_down(mhi_cntrl, false);
+ 
+diff --git a/include/linux/mhi.h b/include/linux/mhi.h
+index d26165660..bcb8fbd82 100644
+--- a/include/linux/mhi.h
++++ b/include/linux/mhi.h
+@@ -634,6 +634,19 @@ int mhi_prepare_for_power_up(struct mhi_controller *mhi_cntrl);
+  */
+ int mhi_async_power_up(struct mhi_controller *mhi_cntrl);
+ 
++/**
++ * mhi_wait_for_mission_mode - Wait for an asynchronous MHI startup
++ * @mhi_cntrl: MHI controller
++ *
++ * Call after mhi_async_power_up() succeeds. This function does not power down
++ * the controller or synchronize asynchronous work on failure. The controller
++ * driver remains responsible for quiescing the transport and shutting down
++ * MHI before releasing any DMA resources.
++ *
++ * Return: 0 if the device reaches mission mode, or -ETIMEDOUT otherwise.
++ */
++int mhi_wait_for_mission_mode(struct mhi_controller *mhi_cntrl);
++
+ /**
+  * mhi_sync_power_up - Start MHI power up sequence and wait till the device
+  *                     enters valid EE state

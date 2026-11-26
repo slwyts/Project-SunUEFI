@@ -44,8 +44,8 @@
   },
   "kernel": {
     "target": "release",
-    "abi_epoch": 1795512178,
-    "package_epoch": 1795516217,
+    "abi_epoch": 1795652618,
+    "package_epoch": 1795652618,
     "public_baseline": "352508459733d3e6d349ea5581a8dd2fd8bb4180",
     "patch_series": "patches/linux/7.3/series.json",
     "stable_source_mirrors": [
@@ -56,6 +56,7 @@
     "additional_dtb_overlays": [
       "linux/dts/piano-cma.dtso",
       "linux/dts/piano-pcie-interrupt-map.dtso",
+      "linux/dts/piano-tlmm-wakeup.dtso",
       "linux/dts/piano-pcie-clocks.dtso",
       "linux/dts/piano-usb-typec.dtso",
       "linux/dts/piano-displayport.dtso",
@@ -77,6 +78,7 @@
       "linux/dts/piano-bluetooth-nvm.dtso",
       "linux/dts/piano-ir-spi-controller.dtso",
       "linux/dts/piano-display-interconnects.dtso",
+      "linux/dts/piano-video-interconnects.dtso",
       "linux/dts/piano-tsens.dtso"
     ],
     "root_policy": "LABEL=PIANOROOT",

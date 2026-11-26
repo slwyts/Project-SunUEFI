@@ -1,0 +1,137 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Wed, 25 Nov 2026 07:41:25 +0800
+Subject: [PATCH] net: qrtr: Remember whether suspend stopped MHI channels
+
+The MHI controller can change state between the QRTR suspend and resume
+callbacks. Testing M3 again on resume can skip channel setup when the
+driver stopped its channels, or try to prepare channels that it left
+active. A second prepare can overwrite the active channel's ring
+pointers before MHI rejects the channel state.
+
+Track whether QRTR unprepared its own channels. Only prepare them when
+that is necessary, and clear the flag once both channels and receive
+buffers are ready. Report -EBUSY while the controller is entering or
+retaining M3. The host PM state can move first while the cached device
+state still says M0. Neither check reads the PCI BAR during resume.
+
+Codex identified the ordering issue, wrote the change and tested
+retained channels, controller resume and retry after receive setup
+failures with source-based ASan/UBSan tests and ARM64 Kbuild. Codex
+also tested entry to M3 with a cached M0 state and confirmed that
+channel preparation is skipped while the transition is pending.
+
+Fixes: e0cd1185900e ("net: qrtr: support suspend/hibernation")
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/bus/mhi/host/pm.c |  6 ++++++
+ include/linux/mhi.h       |  8 ++++++++
+ net/qrtr/mhi.c            | 21 +++++++++++++--------
+ 3 files changed, 27 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/bus/mhi/host/pm.c b/drivers/bus/mhi/host/pm.c
+index ced83fbb1..079322b29 100644
+--- a/drivers/bus/mhi/host/pm.c
++++ b/drivers/bus/mhi/host/pm.c
+@@ -1047,6 +1047,12 @@ int mhi_pm_resume_force(struct mhi_controller *mhi_cntrl)
+ }
+ EXPORT_SYMBOL_GPL(mhi_pm_resume_force);
+ 
++bool mhi_pm_is_suspended(struct mhi_controller *mhi_cntrl)
++{
++	return MHI_PM_IN_SUSPEND_STATE(READ_ONCE(mhi_cntrl->pm_state));
++}
++EXPORT_SYMBOL_GPL(mhi_pm_is_suspended);
++
+ int __mhi_device_get_sync(struct mhi_controller *mhi_cntrl)
+ {
+ 	int ret;
+diff --git a/include/linux/mhi.h b/include/linux/mhi.h
+index 8616bacd8..2078b9976 100644
+--- a/include/linux/mhi.h
++++ b/include/linux/mhi.h
+@@ -693,6 +693,14 @@ int mhi_pm_resume(struct mhi_controller *mhi_cntrl);
+  */
+ int mhi_pm_resume_force(struct mhi_controller *mhi_cntrl);
+ 
++/**
++ * mhi_pm_is_suspended - Check whether the host is entering or retaining M3
++ * @mhi_cntrl: MHI controller
++ *
++ * This is a software state snapshot and does not prevent transitions.
++ */
++bool mhi_pm_is_suspended(struct mhi_controller *mhi_cntrl);
++
+ /**
+  * mhi_download_rddm_image - Download ramdump image from device for
+  *                           debugging purpose.
+diff --git a/net/qrtr/mhi.c b/net/qrtr/mhi.c
+index c55705d77..abe7948bb 100644
+--- a/net/qrtr/mhi.c
++++ b/net/qrtr/mhi.c
+@@ -14,6 +14,7 @@ struct qrtr_mhi_dev {
+ 	struct qrtr_endpoint ep;
+ 	struct mhi_device *mhi_dev;
+ 	struct device *dev;
++	bool needs_reprepare;
+ };
+ 
+ /* From MHI to QRTR */
+@@ -166,8 +167,12 @@ MODULE_DEVICE_TABLE(mhi, qcom_mhi_qrtr_id_table);
+ static int __maybe_unused qcom_mhi_qrtr_pm_suspend_late(struct device *dev)
+ {
+ 	struct mhi_device *mhi_dev = container_of(dev, struct mhi_device, dev);
++	struct qrtr_mhi_dev *qdev = dev_get_drvdata(dev);
+ 	enum mhi_state state;
+ 
++	if (qdev->needs_reprepare)
++		return 0;
++
+ 	state = mhi_get_mhi_state(mhi_dev->mhi_cntrl);
+ 	/*
+ 	 * If the device is in suspend state, then no need for the
+@@ -177,6 +182,7 @@ static int __maybe_unused qcom_mhi_qrtr_pm_suspend_late(struct device *dev)
+ 		return 0;
+ 
+ 	mhi_unprepare_from_transfer(mhi_dev);
++	qdev->needs_reprepare = true;
+ 
+ 	return 0;
+ }
+@@ -185,18 +191,16 @@ static int __maybe_unused qcom_mhi_qrtr_pm_resume_early(struct device *dev)
+ {
+ 	struct mhi_device *mhi_dev = container_of(dev, struct mhi_device, dev);
+ 	struct qrtr_mhi_dev *qdev = dev_get_drvdata(dev);
+-	enum mhi_state state;
+ 	int rc;
+ 
+-	state = mhi_get_mhi_state(mhi_dev->mhi_cntrl);
+-	/*
+-	 * If the device is in suspend state, we won't unprepare channels
+-	 * in suspend callback, therefore no need to prepare channels when
+-	 * resume.
+-	 */
+-	if (state == MHI_STATE_M3)
++	if (!qdev->needs_reprepare)
+ 		return 0;
+ 
++	/* The cached device state can still be M0 as the host enters M3. */
++	if (mhi_pm_is_suspended(mhi_dev->mhi_cntrl) ||
++	    READ_ONCE(mhi_dev->mhi_cntrl->dev_state) == MHI_STATE_M3)
++		return -EBUSY;
++
+ 	rc = mhi_prepare_for_transfer(mhi_dev);
+ 	if (rc) {
+ 		dev_err(dev, "failed to prepare for autoqueue transfer %d\n", rc);
+@@ -209,6 +213,7 @@ static int __maybe_unused qcom_mhi_qrtr_pm_resume_early(struct device *dev)
+ 		return rc;
+ 	}
+ 
++	qdev->needs_reprepare = false;
+ 	qrtr_endpoint_hello(&qdev->ep);
+ 
+ 	return 0;
+-- 
+2.55.0
+

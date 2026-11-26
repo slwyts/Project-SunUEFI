@@ -1,0 +1,240 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Wed, 25 Nov 2026 03:34:30 +0800
+Subject: [PATCH] ASoC: codecs: lpass-va-macro: order managed resource release
+
+An active VA macro can still own its clock references when the driver
+is removed or a late probe fails. The runtime PM action disables
+further callbacks but does not guarantee that the runtime suspend
+callback ran. The ASoC component can also need fsgen to shut down DAPM.
+
+Register the component after fsgen so DAPM is shut down while its
+clock operations are still present. Use managed actions to quiesce
+runtime PM before releasing any remaining active clock references and
+to detach the optional power domains afterward. Switch regmap to
+cache-only before releasing those clocks. The active-clock flag keeps
+this cleanup from releasing references already put by autosuspend or
+a partial resume failure.
+
+Codex developed the lifetime ordering and checked the kernel devres,
+runtime PM and clock paths. The exact VA source passed ARM64 Kbuild;
+30 host callback cases covered active and idle cleanup, shared clock
+references, clock-enable errors and regcache sync failure. Piano
+confirmed normal audio/SSC and DSP vote release with runtime PM and
+the old board floor removed. Full device removal and late probe
+rollback still need hardware coverage.
+
+Fixes: 7b982a5e39b1 ("ASoC: codecs: lpass-va-macro: manage clocks in runtime PM")
+Link: https://git.kernel.org/pub/scm/linux/kernel/git/broonie/sound.git/commit/?id=7b982a5e39b19126f9d424f04628005b3720d69b
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ sound/soc/codecs/lpass-va-macro.c | 95 +++++++++++++++++--------------
+ 1 file changed, 52 insertions(+), 43 deletions(-)
+
+diff --git a/sound/soc/codecs/lpass-va-macro.c b/sound/soc/codecs/lpass-va-macro.c
+index 224261f..575b6a8 100644
+--- a/sound/soc/codecs/lpass-va-macro.c
++++ b/sound/soc/codecs/lpass-va-macro.c
+@@ -209,6 +209,7 @@ struct va_macro {
+ 	u16 dmic_clk_div;
+ 	bool has_swr_master;
+ 	bool has_npl_clk;
++	bool runtime_clocks_enabled;
+ 
+ 	int dec_mode[VA_MACRO_NUM_DECIMATORS];
+ 	struct regmap *regmap;
+@@ -218,7 +219,6 @@ struct va_macro {
+ 	struct clk *dcodec;
+ 	struct clk *fsgen;
+ 	struct clk_hw hw;
+-	struct lpass_macro *pds;
+ 
+ 	s32 dmic_0_1_clk_cnt;
+ 	s32 dmic_2_3_clk_cnt;
+@@ -265,6 +265,22 @@ static void va_macro_disable_clocks(struct va_macro *va)
+ 	clk_disable_unprepare(va->mclk);
+ 	clk_disable_unprepare(va->dcodec);
+ 	clk_disable_unprepare(va->macro);
++	va->runtime_clocks_enabled = false;
++}
++
++static void va_macro_release_runtime_clocks(void *data)
++{
++	struct va_macro *va = data;
++
++	if (va->runtime_clocks_enabled) {
++		regcache_cache_only(va->regmap, true);
++		va_macro_disable_clocks(va);
++	}
++}
++
++static void va_macro_release_pds(void *data)
++{
++	lpass_macro_pds_exit(data);
+ }
+ 
+ static int va_macro_enable_clocks(struct va_macro *va)
+@@ -287,6 +303,7 @@ static int va_macro_enable_clocks(struct va_macro *va)
+ 	if (ret)
+ 		goto err_npl;
+ 
++	va->runtime_clocks_enabled = true;
+ 	return 0;
+ 
+ err_npl:
+@@ -1616,6 +1633,7 @@ static int va_macro_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+ 	const struct va_macro_data *data;
++	struct lpass_macro *pds;
+ 	struct va_macro *va;
+ 	void __iomem *base;
+ 	u32 sample_rate = 0;
+@@ -1640,9 +1658,14 @@ static int va_macro_probe(struct platform_device *pdev)
+ 	if (IS_ERR(va->mclk))
+ 		return dev_err_probe(dev, PTR_ERR(va->mclk), "unable to get mclk clock\n");
+ 
+-	va->pds = lpass_macro_pds_init(dev);
+-	if (IS_ERR(va->pds))
+-		return PTR_ERR(va->pds);
++	pds = lpass_macro_pds_init(dev);
++	if (IS_ERR(pds))
++		return PTR_ERR(pds);
++	if (pds) {
++		ret = devm_add_action_or_reset(dev, va_macro_release_pds, pds);
++		if (ret)
++			return ret;
++	}
+ 
+ 	ret = of_property_read_u32(dev->of_node, "qcom,dmic-sample-rate",
+ 				   &sample_rate);
+@@ -1651,23 +1674,17 @@ static int va_macro_probe(struct platform_device *pdev)
+ 		va->dmic_clk_div = VA_MACRO_CLK_DIV_2;
+ 	} else {
+ 		ret = va_macro_validate_dmic_sample_rate(sample_rate, va);
+-		if (!ret) {
+-			ret = -EINVAL;
+-			goto err;
+-		}
++		if (!ret)
++			return -EINVAL;
+ 	}
+ 
+ 	base = devm_platform_ioremap_resource(pdev, 0);
+-	if (IS_ERR(base)) {
+-		ret = PTR_ERR(base);
+-		goto err;
+-	}
++	if (IS_ERR(base))
++		return PTR_ERR(base);
+ 
+ 	va->regmap = devm_regmap_init_mmio(dev, base,  &va_regmap_config);
+-	if (IS_ERR(va->regmap)) {
+-		ret = -EINVAL;
+-		goto err;
+-	}
++	if (IS_ERR(va->regmap))
++		return -EINVAL;
+ 
+ 	dev_set_drvdata(dev, va);
+ 
+@@ -1678,31 +1695,32 @@ static int va_macro_probe(struct platform_device *pdev)
+ 	/* mclk rate */
+ 	ret = clk_set_rate(va->mclk, 2 * VA_MACRO_MCLK_FREQ);
+ 	if (ret)
+-		goto err;
++		return ret;
+ 
+ 	if (va->has_npl_clk) {
+ 		va->npl = devm_clk_get(dev, "npl");
+-		if (IS_ERR(va->npl)) {
+-			ret = PTR_ERR(va->npl);
+-			goto err;
+-		}
++		if (IS_ERR(va->npl))
++			return PTR_ERR(va->npl);
+ 
+ 		ret = clk_set_rate(va->npl, 2 * VA_MACRO_MCLK_FREQ);
+ 		if (ret)
+-			goto err;
++			return ret;
+ 	}
+ 
++	/* Unwind active clocks after disabling runtime PM. */
++	ret = devm_add_action_or_reset(dev, va_macro_release_runtime_clocks, va);
++	if (ret)
++		return ret;
++
+ 	pm_runtime_set_autosuspend_delay(dev, 100);
+ 	pm_runtime_use_autosuspend(dev);
+ 	ret = devm_pm_runtime_enable(dev);
+ 	if (ret)
+-		goto err;
++		return ret;
+ 
+ 	rpm_ret = pm_runtime_resume_and_get(dev);
+-	if (rpm_ret < 0) {
+-		ret = rpm_ret;
+-		goto err;
+-	}
++	if (rpm_ret < 0)
++		return rpm_ret;
+ 
+ 	/**
+ 	 * old version of codecs do not have a reliable way to determine the
+@@ -1740,12 +1758,6 @@ static int va_macro_probe(struct platform_device *pdev)
+ 				   CDC_VA_SWR_RESET_MASK, 0x0);
+ 	}
+ 
+-	ret = devm_snd_soc_register_component(dev, &va_macro_component_drv,
+-					      va_macro_dais,
+-					      ARRAY_SIZE(va_macro_dais));
+-	if (ret)
+-		goto err_rpm_put;
+-
+ 	ret = va_macro_register_fsgen_output(va);
+ 	if (ret)
+ 		goto err_rpm_put;
+@@ -1756,6 +1768,13 @@ static int va_macro_probe(struct platform_device *pdev)
+ 		goto err_rpm_put;
+ 	}
+ 
++	/* Tear down DAPM before removing the clock it uses. */
++	ret = devm_snd_soc_register_component(dev, &va_macro_component_drv,
++					      va_macro_dais,
++					      ARRAY_SIZE(va_macro_dais));
++	if (ret)
++		goto err_rpm_put;
++
+ 	rpm_ret = pm_runtime_put_autosuspend(dev);
+ 	if (rpm_ret < 0)
+ 		dev_warn(dev, "runtime PM put failed after probe: %d\n", rpm_ret);
+@@ -1766,19 +1785,10 @@ err_rpm_put:
+ 	rpm_ret = pm_runtime_put_sync_suspend(dev);
+ 	if (rpm_ret < 0)
+ 		dev_warn(dev, "runtime PM sync suspend failed in probe unwind: %d\n", rpm_ret);
+-err:
+-	lpass_macro_pds_exit(va->pds);
+ 
+ 	return ret;
+ }
+ 
+-static void va_macro_remove(struct platform_device *pdev)
+-{
+-	struct va_macro *va = dev_get_drvdata(&pdev->dev);
+-
+-	lpass_macro_pds_exit(va->pds);
+-}
+-
+ static int va_macro_runtime_suspend(struct device *dev)
+ {
+ 	struct va_macro *va = dev_get_drvdata(dev);
+@@ -1837,7 +1847,6 @@ static struct platform_driver va_macro_driver = {
+ 		.pm = pm_ptr(&va_macro_pm_ops),
+ 	},
+ 	.probe = va_macro_probe,
+-	.remove = va_macro_remove,
+ };
+ 
+ module_platform_driver(va_macro_driver);

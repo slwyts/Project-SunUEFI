@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Wed, 25 Nov 2026 09:47:08 +0800
+Subject: [PATCH] ASoC: qcom: keep the CPU DAI name across component rebind
+
+The Qualcomm machine driver parses its CPU link directly instead of
+using snd_soc_of_get_dai_link_cpus(). Its name can still point into
+memory owned by a component which may unbind before the card.
+
+Use the managed lookup for the CPU link. Keep the parsed arguments
+available for the existing link ID selection.
+
+Codex verified the ARM64 Qualcomm machine helper and its link to the
+new ASoC core export.
+
+Link: https://github.com/torvalds/linux/commit/33a130f6ed8c75ed59b12889a417a57fb80d0abf
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ sound/soc/qcom/common.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sound/soc/qcom/common.c b/sound/soc/qcom/common.c
+index d9f256d51..f84be0689 100644
+--- a/sound/soc/qcom/common.c
++++ b/sound/soc/qcom/common.c
+@@ -262,7 +262,7 @@ int qcom_snd_parse_of(struct snd_soc_card *card)
+ 			return -EINVAL;
+ 		}
+ 
+-		ret = snd_soc_of_get_dlc(cpu, &args, link->cpus, 0);
++		ret = devm_snd_soc_of_get_dlc(dev, cpu, &args, link->cpus, 0);
+ 		if (ret) {
+ 			dev_err_probe(dev, ret,
+ 				      "%s: error getting cpu dai name\n", link->name);
+-- 
+2.55.0
+

@@ -100,17 +100,80 @@ def preserve_charger_thermistor_pin(tree):
     return [adc + ':pinctrl-0']
 
 
+def normalize_llcc(tree):
+    """Fit the Piano stock LLCC resources to the SM8750 mainline binding."""
+    path = '/soc/cache-controller@24800000'
+    target = '/soc/system-cache-controller@24800000'
+    props = tree.get(path, {})
+    if props.get('compatible') != b'qcom,sun-llcc\0' or target in tree:
+        return []
+
+    soc = tree['/soc']
+    if any(soc.get(key) != struct.pack('>I', 1) for key in ('#address-cells', '#size-cells')):
+        return []
+    reg = struct.pack('>12I', 0x24800000, 0x200000, 0x25800000, 0x200000,
+                      0x24c00000, 0x200000, 0x25c00000, 0x200000,
+                      0x26800000, 0x200000, 0x26c00000, 0x200000)
+    names = (b'llcc0_base\0llcc1_base\0llcc2_base\0llcc3_base\0'
+             b'llcc_broadcast_or_base\0llcc_broadcast_and_base\0')
+    expected = {'compatible': b'qcom,sun-llcc\0', 'reg': reg, 'reg-names': names,
+                'interrupts': struct.pack('>III', 0, 266, 4),
+                'cap-based-alloc-and-pwr-collapse': b''}
+    if props != expected:
+        return []
+
+    children = {
+        path + '/llcc_perfmon': b'qcom,llcc-perfmon\0',
+        path + '/scid_heuristics': b'qcom,scid-heuristics\0',
+    }
+    if {node for node in tree if node.startswith(path + '/')} != children.keys():
+        return []
+    if any(tree[node].get('compatible') != compatible or
+           {'phandle', 'linux,phandle'} & tree[node].keys()
+           for node, compatible in children.items()):
+        return []
+    # Removing the downstream monitor and heuristic nodes must leave no DT references.
+    if any(path.encode() + suffix in prop for node, node_props in tree.items()
+           if node not in children and node != path for prop in node_props.values()
+           for suffix in (b'\0', b'/', b':')):
+        return []
+
+    del tree[path]
+    for node in children:
+        del tree[node]
+    tree[target] = {'compatible': b'qcom,sm8750-llcc\0', 'reg': reg,
+                    'reg-names': names.replace(b'_or_base\0', b'_base\0'),
+                    'interrupts': props['interrupts']}
+    return [target + ':compatible']
+
+
 def normalize_mainline_bindings(board):
     """Adapt the folded Android DT to the active Linux bindings."""
     parsed = read_fdt(board.read_bytes())
     tree = parsed['tree']
     changes = normalize_boot_framebuffer(tree)
     changes.extend(preserve_charger_thermistor_pin(tree))
-    # A folded Android tree contains debug blocks and suppliers whose binding
-    # is not implemented by mainline. Disable those devices in the DT rather
-    # than suppressing autoload for every platform/OF device in userspace.
-    inactive_compatibles = {b'arm,coresight-static-funnel',
-                           b'arm,coresight-static-replicator', b'qcom,spmi-temp-alarm'}
+    changes.extend(normalize_llcc(tree))
+    # Unbound downstream devices keep their suppliers waiting for sync_state.
+    inactive_compatibles = {
+        b'arm,coresight-static-funnel', b'arm,coresight-static-replicator',
+        b'qcom,spmi-temp-alarm',
+        # The Linux RPMh and PSCI drivers own these resources directly.
+        b'piano,rpmhpd-hold', b'qcom,lpm-cluster-dev',
+        # ath12k replaces CNSS. The other vendor consumers have no Linux driver.
+        b'qcom,cnss-peach', b'qcom,qcedev', b'qcom,dcvs',
+        b'qcom,ddr-cooling-device', b'qcom,sun-soccp-pas', b'qcom,sun-spss-pas',
+        # These have no Linux clients and would keep ICC's provider count open.
+        b'qcom,sun-lpass_ag_noc', b'qcom,sun-lpass_lpiaon_noc',
+        b'qcom,sun-lpass_lpicx_noc',
+        # Linux has no clients for the vendor EVA clock or debug muxes.
+        b'qcom,sun-evacc-v2', b'qcom,sun-debugcc',
+    }
+    # The legacy FSA4480 and NTAG buses have no bound clients in this tree.
+    legacy_i2c = {
+        '/soc/qcom,qupv3_1_geni_se@ac0000/i2c@a8c000',
+        '/soc/qcom,qupv3_2_geni_se@8c0000/i2c@888000',
+    }
     trace_peripheral_ids = {0xbb908, 0xbb909, 0xbb961, 0xbb962, 0xbb922}
 
     def enabled(path):
@@ -119,6 +182,37 @@ def normalize_mainline_bindings(board):
                 return False
             path = path.rsplit('/', 1)[0]
         return True
+
+    rsc_path = '/soc/rsc@16500000'
+    rsc = tree.get(rsc_path, {})
+    system_domain = tree.get('/soc/psci/cluster-pd2', {})
+    ss3 = tree.get('/cpus/idle-states/cluster-ss3', {})
+    domain_handle = system_domain.get('phandle', b'')
+    if (rsc.get('compatible') == b'qcom,rpmh-rsc\0' and
+            rsc.get('label') == b'apps_rsc\0' and rsc.get('power-domains') == b'' and
+            enabled(rsc_path) and len(domain_handle) == 4 and
+            system_domain.get('#power-domain-cells') == bytes(4) and
+            system_domain.get('domain-idle-states') == ss3.get('phandle') and
+            ss3.get('arm,psci-suspend-param') == struct.pack('>I', 0x0200c354)):
+        # The stock and mainline SM8750 both attach APPS RSC to the SS3 domain.
+        # This lets the RSC driver flush sleep and wake votes on domain suspend.
+        rsc['power-domains'] = domain_handle
+        changes.append(rsc_path + ':power-domains')
+
+    root_port = '/soc/pcie@1c00000/pcie0_rp'
+    wlan_path = root_port + '/wifi@0'
+    port = tree.get(root_port, {})
+    wlan = tree.get(wlan_path, {})
+    tlmm = tree.get('/soc/pinctrl@f100000', {}).get('phandle', b'')
+    wake_gpio = tlmm + struct.pack('>II', 104, 1)  # GPIO_ACTIVE_LOW
+    if (len(tlmm) == 4 and port.get('wake-gpios') == wake_gpio and
+            wlan.get('compatible') == b'pci17cb,110e\0' and
+            wlan.get('wake-gpios', wake_gpio) == wake_gpio):
+        # This line is dedicated to WLAN. Its IRQ follows the endpoint's
+        # system wake policy, including changes made through WoWLAN.
+        wlan['wake-gpios'] = port.pop('wake-gpios')
+        changes.extend((root_port + ':wake-gpios', wlan_path + ':wake-gpios'))
+
     legacy = (
         '/soc/qcom,sde_cesta@0x0af30000',
         '/soc/qcom,mdss_mdp@ae00000',
@@ -214,9 +308,7 @@ def normalize_mainline_bindings(board):
         if path in tree and tree[path].get('status') != b'disabled\0':
             tree[path]['status'] = b'disabled\0'
             changes.append(path + ':status')
-    # Folded Android trees also retain devices superseded by mainline
-    # nodes. Do not let their drivers wait on the old downstream TLMM, or
-    # compete for the same GPIOs with the active display/camera supplies.
+    # The matching Linux device owns these resources when it is enabled.
     replaced = {
         '/soc/display_gpio_regulator_vsp': '/panel-avdd-ml',
         '/soc/display_gpio_regulator_vsn': '/panel-avee-ml',
@@ -224,11 +316,26 @@ def normalize_mainline_bindings(board):
         '/soc/gpio-regulator@1': '/cam-front-avdd-ml',
         '/soc/qcom,cci0@ac7b000': '/soc/cci-ml@ac7b000',
         '/soc/qcom,dsi-display-primary': '/soc/display-subsystem@ae00000',
+        '/soc/kgsl-smmu@3da0000': '/soc/iommu@3da0000',
+        '/soc/clock-controller@1760000': '/soc/clock-controller-ml@1760000',
+        '/soc/clock-controller@3d90000': '/soc/clock-controller-ml@3d90000',
+        '/soc/clock-controller@aaf0000': '/soc/clock-controller-ml@aaf0000',
+        '/soc/clock-controller@ade0000': '/soc/clock-controller-ml@ade0000',
+        '/soc/clock-controller@af00000': '/soc/clock-controller-ml@af00000',
+        '/soc/qcom,gmu@3d37000': '/soc/gmu@3d6c000',
+        '/soc/qcom,gdsc@adf00c8': '/soc/clock-controller-ml@ade0000',
+        '/soc/qcom,gdsc@adf017c': '/soc/clock-controller-ml@ade0000',
+        '/soc/qcom,gdsc@adf1004': '/soc/clock-controller-ml@ade0000',
+        '/soc/qcom,gdsc@adf1084': '/soc/clock-controller-ml@ade0000',
+        '/soc/qcom,gdsc@adf10ec': '/soc/clock-controller-ml@ade0000',
+        '/soc/qcom,gdsc@adf134c': '/soc/clock-controller-ml@ade0000',
     }
     unused = (
         '/soc/qcom,cci1@ac7c000', '/soc/qcom,cci2@ac7d000',
         '/soc/qcom,qupv3_1_geni_se@ac0000/qcom,qup_uart@a9c000',
         '/soc/touch_avdd_vreg', '/soc/usb_nop_phy',
+        # EVA domains have no Linux consumer.
+        '/soc/qcom,gdsc@abf8034', '/soc/qcom,gdsc@abf8068',
     )
     for path in (*replaced, *unused):
         replacement = tree.get(replaced.get(path))
@@ -278,7 +385,8 @@ def normalize_mainline_bindings(board):
         peripheral_id = props.get('arm,primecell-periphid', b'')
         trace = (b'arm,primecell' in compatibles and len(peripheral_id) == 4 and
                  struct.unpack('>I', peripheral_id)[0] & 0x000fffff in trace_peripheral_ids)
-        if (inactive_compatibles.intersection(compatibles) or trace) and enabled(path):
+        old_i2c = path in legacy_i2c and b'qcom,i2c-geni' in compatibles
+        if (inactive_compatibles.intersection(compatibles) or trace or old_i2c) and enabled(path):
             props['status'] = b'disabled\0'
             changes.append(path + ':status')
     if changes:

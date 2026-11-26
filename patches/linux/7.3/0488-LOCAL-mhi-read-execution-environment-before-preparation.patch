@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Thu, 26 Nov 2026 07:46:45 +0800
+Subject: [PATCH] bus: mhi: host: Read execution environment before controller
+ preparation
+
+PCI resume may need to check that the target is back in PBL before
+releasing an old context or enabling bus mastering. Read the BHI offset
+from the mapped controller when mhi_prepare_for_power_up() has not
+cached it, and reject an offset outside the mapped register window.
+
+Codex carried the fourth-batch implementation to the current MHI host
+and built the ARM64 MHI module with the Piano configuration.
+
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/bus/mhi/host/main.c | 17 ++++++++++++++++-
+ include/linux/mhi.h         |  3 +++
+ 2 files changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/bus/mhi/host/main.c b/drivers/bus/mhi/host/main.c
+index d5da7d4b1..2546ebb73 100644
+--- a/drivers/bus/mhi/host/main.c
++++ b/drivers/bus/mhi/host/main.c
+@@ -152,8 +152,23 @@ void mhi_ring_chan_db(struct mhi_controller *mhi_cntrl,
+ 
+ enum mhi_ee_type mhi_get_exec_env(struct mhi_controller *mhi_cntrl)
+ {
++	void __iomem *bhi = mhi_cntrl->bhi;
++	u32 bhi_off;
+ 	u32 exec;
+-	int ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->bhi, BHI_EXECENV, &exec);
++	int ret;
++
++	if (!bhi) {
++		/* The controller may need to inspect the device before power-up. */
++		if (mhi_cntrl->reg_len < BHI_EXECENV + sizeof(exec) ||
++		    mhi_read_reg(mhi_cntrl, mhi_cntrl->regs, BHIOFF, &bhi_off) ||
++		    !bhi_off || !IS_ALIGNED(bhi_off, sizeof(exec)) ||
++		    bhi_off > mhi_cntrl->reg_len - BHI_EXECENV - sizeof(exec))
++			return MHI_EE_MAX;
++
++		bhi = mhi_cntrl->regs + bhi_off;
++	}
++
++	ret = mhi_read_reg(mhi_cntrl, bhi, BHI_EXECENV, &exec);
+ 
+ 	return (ret) ? MHI_EE_MAX : exec;
+ }
+diff --git a/include/linux/mhi.h b/include/linux/mhi.h
+index 258902225..07166ab15 100644
+--- a/include/linux/mhi.h
++++ b/include/linux/mhi.h
+@@ -739,6 +739,9 @@ int mhi_force_rddm_mode(struct mhi_controller *mhi_cntrl);
+ /**
+  * mhi_get_exec_env - Get BHI execution environment of the device
+  * @mhi_cntrl: MHI controller
++ *
++ * The controller registers must be mapped and accessible. This function can
++ * be called before mhi_prepare_for_power_up() without creating a context.
+  */
+ enum mhi_ee_type mhi_get_exec_env(struct mhi_controller *mhi_cntrl);
+ 
+-- 
+2.55.0
+

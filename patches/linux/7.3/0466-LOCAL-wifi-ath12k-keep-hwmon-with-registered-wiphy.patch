@@ -1,0 +1,213 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Wed, 25 Nov 2026 03:27:10 +0800
+Subject: [PATCH] wifi: ath12k: Keep hwmon with the registered wiphy
+
+A cold resume rebuilds the radio cooling state while the wiphy remains
+registered. Creating its hwmon child again during resume triggers
+"PM: parent phy0 should not be sleeping" and changes the identity of
+the sensor. ath11k addresses the same parent lifetime issue by avoiding
+registration of an already registered thermal device.
+
+Register and unregister each temperature sensor with the wiphy, and
+leave cooling-device setup and teardown with the radio. Reject
+firmware temperature requests while the device is shutting down or
+recovering, including a request racing with recovery.
+
+Codex developed the change, compiled ath12k with arm64 Kbuild and
+checked thermal register/unregister handling. A Piano original/fixed/
+original deep-suspend test verified that the same sensor stayed readable
+and the PM warning disappeared only with the fix.
+Link: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=50556081e09b9e2b75a215694dd2d166de611f56
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Assisted-by: LLM
+---
+ drivers/net/wireless/ath/ath12k/mac.c     |  6 ++
+ drivers/net/wireless/ath/ath12k/thermal.c | 76 +++++++++++++++++------
+ drivers/net/wireless/ath/ath12k/thermal.h | 13 ++++
+ 3 files changed, 77 insertions(+), 18 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index 62363f2..8e0ef7d 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -14742,6 +14742,8 @@ static void ath12k_mac_hw_unregister(struct ath12k_hw *ah)
+ 	struct ath12k *ar;
+ 	int i;
+ 
++	ath12k_thermal_hwmon_unregister(ah);
++
+ 	for_each_ar(ah, ar, i) {
+ 		cancel_work_sync(&ar->regd_channel_update_work);
+ 		cancel_work_sync(&ar->regd_update_work);
+@@ -15072,6 +15074,10 @@ static int ath12k_mac_hw_register(struct ath12k_hw *ah)
+ 		ath12k_debugfs_register(ar);
+ 	}
+ 
++	ret = ath12k_thermal_hwmon_register(ah);
++	if (ret)
++		goto err_unregister_hw;
++
+ 	return 0;
+ 
+ err_unregister_hw:
+diff --git a/drivers/net/wireless/ath/ath12k/thermal.c b/drivers/net/wireless/ath/ath12k/thermal.c
+index 7707ae4..af4f25a 100644
+--- a/drivers/net/wireless/ath/ath12k/thermal.c
++++ b/drivers/net/wireless/ath/ath12k/thermal.c
+@@ -143,6 +143,14 @@ static const struct thermal_cooling_device_ops ath12k_thermal_ops = {
+ 	.set_cur_state = ath12k_thermal_set_cur_throttle_state,
+ };
+ 
++static bool ath12k_thermal_hwmon_unavailable(struct ath12k *ar)
++{
++	return !test_bit(ATH12K_FLAG_REGISTERED, &ar->ab->dev_flags) ||
++	       test_bit(ATH12K_FLAG_UNREGISTERING, &ar->ab->dev_flags) ||
++	       test_bit(ATH12K_FLAG_CRASH_FLUSH, &ar->ab->dev_flags) ||
++	       test_bit(ATH12K_FLAG_RECOVERY, &ar->ab->dev_flags);
++}
++
+ static ssize_t ath12k_thermal_temp_show(struct device *dev,
+ 					struct device_attribute *attr,
+ 					char *buf)
+@@ -156,6 +164,9 @@ static ssize_t ath12k_thermal_temp_show(struct device *dev,
+ 	if (ar->ah->state != ATH12K_HW_STATE_ON)
+ 		return -ENETDOWN;
+ 
++	if (ath12k_thermal_hwmon_unavailable(ar))
++		return -ESHUTDOWN;
++
+ 	reinit_completion(&ar->thermal.wmi_sync);
+ 	ret = ath12k_wmi_send_pdev_temperature_cmd(ar);
+ 	if (ret) {
+@@ -163,11 +174,14 @@ static ssize_t ath12k_thermal_temp_show(struct device *dev,
+ 		return ret;
+ 	}
+ 
+-	if (test_bit(ATH12K_FLAG_CRASH_FLUSH, &ar->ab->dev_flags))
++	if (ath12k_thermal_hwmon_unavailable(ar))
+ 		return -ESHUTDOWN;
+ 
+ 	time_left = wait_for_completion_timeout(&ar->thermal.wmi_sync,
+ 						ATH12K_THERMAL_SYNC_TIMEOUT_HZ);
++	if (ath12k_thermal_hwmon_unavailable(ar))
++		return -ESHUTDOWN;
++
+ 	if (!time_left) {
+ 		ath12k_warn(ar->ab, "failed to synchronize thermal read\n");
+ 		return -ETIMEDOUT;
+@@ -197,6 +211,49 @@ static struct attribute *ath12k_hwmon_attrs[] = {
+ };
+ ATTRIBUTE_GROUPS(ath12k_hwmon);
+ 
++int ath12k_thermal_hwmon_register(struct ath12k_hw *ah)
++{
++	struct device *parent = &ah->hw->wiphy->dev;
++	struct device *hwmon;
++	struct ath12k *ar;
++	int i, ret;
++
++	if (!IS_REACHABLE(CONFIG_HWMON))
++		return 0;
++
++	for_each_ar(ah, ar, i) {
++		hwmon = hwmon_device_register_with_groups(parent, "ath12k_hwmon",
++							  ar, ath12k_hwmon_groups);
++		if (IS_ERR(hwmon)) {
++			ret = PTR_ERR(hwmon);
++			ath12k_err(ar->ab, "failed to register hwmon device: %d\n", ret);
++			ath12k_thermal_hwmon_unregister(ah);
++			return ret;
++		}
++
++		ar->thermal.hwmon_dev = hwmon;
++	}
++
++	return 0;
++}
++
++void ath12k_thermal_hwmon_unregister(struct ath12k_hw *ah)
++{
++	struct ath12k *ar;
++	int i;
++
++	if (!IS_REACHABLE(CONFIG_HWMON))
++		return;
++
++	for_each_ar(ah, ar, i) {
++		if (!ar->thermal.hwmon_dev)
++			continue;
++
++		hwmon_device_unregister(ar->thermal.hwmon_dev);
++		ar->thermal.hwmon_dev = NULL;
++	}
++}
++
+ static int ath12k_thermal_setup_radio(struct ath12k_base *ab, int i)
+ {
+ 	char pdev_name[20];
+@@ -229,22 +286,8 @@ static int ath12k_thermal_setup_radio(struct ath12k_base *ab, int i)
+ 		goto unregister_cdev;
+ 	}
+ 
+-	ar->thermal.hwmon_dev =
+-		hwmon_device_register_with_groups(&ar->ah->hw->wiphy->dev,
+-						  "ath12k_hwmon", ar,
+-						  ath12k_hwmon_groups);
+-	if (IS_ERR(ar->thermal.hwmon_dev)) {
+-		ret = PTR_ERR(ar->thermal.hwmon_dev);
+-		ar->thermal.hwmon_dev = NULL;
+-		ath12k_err(ar->ab, "failed to register hwmon device: %d\n",
+-			   ret);
+-		goto remove_sysfs;
+-	}
+-
+ 	return 0;
+ 
+-remove_sysfs:
+-	sysfs_remove_link(&ar->ah->hw->wiphy->dev.kobj, pdev_name);
+ unregister_cdev:
+ 	thermal_cooling_device_unregister(ar->thermal.cdev);
+ 	ar->thermal.cdev = NULL;
+@@ -260,9 +303,6 @@ static void ath12k_thermal_cleanup_radio(struct ath12k_base *ab, int i)
+ 	if (!ar || !ar->thermal.cdev)
+ 		return;
+ 
+-	hwmon_device_unregister(ar->thermal.hwmon_dev);
+-	ar->thermal.hwmon_dev = NULL;
+-
+ 	scnprintf(pdev_name, sizeof(pdev_name), "cooling_device%u",
+ 		  ar->hw_link_id);
+ 	sysfs_remove_link(&ar->ah->hw->wiphy->dev.kobj, pdev_name);
+diff --git a/drivers/net/wireless/ath/ath12k/thermal.h b/drivers/net/wireless/ath/ath12k/thermal.h
+index 30e7b08..7c20d42 100644
+--- a/drivers/net/wireless/ath/ath12k/thermal.h
++++ b/drivers/net/wireless/ath/ath12k/thermal.h
+@@ -35,7 +35,11 @@ struct ath12k_thermal {
+ 	u32 throttle_state;
+ };
+ 
++struct ath12k_hw;
++
+ #if IS_REACHABLE(CONFIG_THERMAL)
++int ath12k_thermal_hwmon_register(struct ath12k_hw *ah);
++void ath12k_thermal_hwmon_unregister(struct ath12k_hw *ah);
+ int ath12k_thermal_register(struct ath12k_base *ab);
+ void ath12k_thermal_unregister(struct ath12k_base *ab);
+ void ath12k_thermal_event_temperature(struct ath12k *ar, int temperature);
+@@ -43,6 +47,15 @@ int ath12k_thermal_throttling_config_default(struct ath12k *ar);
+ void ath12k_thermal_init_configs(struct ath12k *ar);
+ int ath12k_thermal_set_throttling(struct ath12k *ar, u32 throttle_state);
+ #else
++static inline int ath12k_thermal_hwmon_register(struct ath12k_hw *ah)
++{
++	return 0;
++}
++
++static inline void ath12k_thermal_hwmon_unregister(struct ath12k_hw *ah)
++{
++}
++
+ static inline int ath12k_thermal_register(struct ath12k_base *ab)
+ {
+ 	return 0;

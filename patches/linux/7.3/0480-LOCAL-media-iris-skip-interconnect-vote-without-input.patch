@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Wed, 25 Nov 2026 20:34:06 +0800
+Subject: [PATCH] media: iris: Skip interconnect updates when no input is
+ pending
+
+Scale power stops its clock update when the source queue has no
+payload, but still recalculates the interconnect vote. On Piano this
+alternates the memory path between the minimum and the active vote at
+the frame rate while playing H.264. Capture buffers can be queued
+in between input submissions.
+
+Match the Qualcomm VIDC driver's no-pending-input behavior and skip
+the interconnect update along with the clock update. Subsequent input
+continues to update its vote, and runtime suspend still clears both
+paths.
+
+Codex analyzed Piano's interconnect trace, compared the empty queue
+path against the Qualcomm driver, tested six paths on the host, and
+compiled the changed object with ARM64 Kbuild.
+
+Link: https://github.com/OnePlusOSS/android_kernel_modules_and_devicetree_oneplus_sm8750/blob/d50b305f7da9e14715a25120a4ac7b1a4b8b97c3/vendor/qcom/opensource/video-driver/driver/vidc/src/msm_vidc_power.c#L509-L610
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/media/platform/qcom/iris/iris_power.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_power.c b/drivers/media/platform/qcom/iris/iris_power.c
+index 91aa21d40..8969982df 100644
+--- a/drivers/media/platform/qcom/iris/iris_power.c
++++ b/drivers/media/platform/qcom/iris/iris_power.c
+@@ -133,7 +133,7 @@ int iris_scale_power(struct iris_inst *inst)
+ 	}
+ 
+ 	ret = iris_scale_clocks(inst);
+-	if (ret)
++	if (ret || !inst->max_input_data_size)
+ 		return ret;
+ 
+ 	return iris_vote_interconnects(inst);
+-- 
+2.55.0
+

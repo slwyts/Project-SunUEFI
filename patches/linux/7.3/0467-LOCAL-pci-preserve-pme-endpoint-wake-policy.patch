@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Wed, 25 Nov 2026 04:12:02 +0800
+Subject: [PATCH] PCI: Preserve PME endpoint wake policy when adding WAKE# GPIO
+
+PCI PM marks PME-capable devices as wakeup-capable without enabling
+system wakeup. Configuring a WAKE# GPIO subsequently enables system
+wakeup unconditionally. A PME-capable WLAN endpoint can then assert
+WAKE# during system suspend even when its driver has configured no
+WoWLAN triggers.
+
+For PME-capable endpoints, keep the wakeup policy initialized by PCI PM
+when attaching the dedicated GPIO IRQ. The PM core arms it when the
+endpoint is allowed to wake the system. Keep default activation on
+bridges and on devices whose GPIO adds the wakeup capability.
+
+Codex traced PCI enumeration and PM wake IRQ setup and drafted the
+change. Validation covers Linux 7.3.3 patch replay and the ARM64 PCI OF
+object under the Piano configuration.
+
+Fixes: 071e245ab749 ("PCI: Add support for PCIe WAKE# interrupt")
+Link: https://kernel.googlesource.com/pub/scm/linux/kernel/git/torvalds/linux.git/+/071e245ab749c52338ec4eb7fe0a9bb2cee97492
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/pci/of.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/pci/of.c b/drivers/pci/of.c
+index a51dff91b..53c969bfe 100644
+--- a/drivers/pci/of.c
++++ b/drivers/pci/of.c
+@@ -628,7 +628,13 @@ static void pci_configure_wake_irq(struct pci_dev *pdev, struct gpio_desc *wake)
+ 		return;
+ 	}
+ 
+-	device_init_wakeup(&pdev->dev, true);
++	/*
++	 * pci_pm_init() already set the wakeup capability for endpoints
++	 * that support PME. Registering an additional wake signal must
++	 * preserve their system wakeup policy.
++	 */
++	if (pci_is_bridge(pdev) || !pdev->pme_support)
++		device_init_wakeup(&pdev->dev, true);
+ }
+ 
+ void pci_configure_of_wake_gpio(struct pci_dev *dev)
+-- 
+2.55.0
+

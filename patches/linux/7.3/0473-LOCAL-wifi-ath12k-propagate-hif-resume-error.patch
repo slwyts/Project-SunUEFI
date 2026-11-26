@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Wed, 25 Nov 2026 07:54:12 +0800
+Subject: [PATCH] wifi: ath12k: Propagate HIF power-up failure to system resume
+
+The ordinary resume callback waits for firmware restart completion even
+when resume_early() failed to power up the HIF. The firmware cannot
+signal completion in this case. Preserve the HIF error and return it
+from the ordinary resume callback without waiting for the reset timeout.
+
+Reset the saved error at the beginning of suspend so an aborted later
+cycle cannot report a stale failure. Keep waiting for firmware after a
+successful HIF start.
+
+Codex wrote the change and checked successful restart, HIF error,
+missing completion and suspend cancellation with source-based tests.
+
+Fixes: 8d5f4da8d70b ("wifi: ath12k: support suspend/resume")
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/net/wireless/ath/ath12k/core.c | 7 +++++++
+ drivers/net/wireless/ath/ath12k/core.h | 1 +
+ 2 files changed, 8 insertions(+)
+
+diff --git a/drivers/net/wireless/ath/ath12k/core.c b/drivers/net/wireless/ath/ath12k/core.c
+index 97b42e6..ab2ea99 100644
+--- a/drivers/net/wireless/ath/ath12k/core.c
++++ b/drivers/net/wireless/ath/ath12k/core.c
+@@ -126,6 +126,8 @@ int ath12k_core_suspend(struct ath12k_base *ab)
+ 	struct ath12k *ar;
+ 	int ret, i;
+ 
++	ab->resume_early_error = 0;
++
+ 	ret = ath12k_core_continue_suspend_resume(ab);
+ 	if (ret <= 0)
+ 		return ret;
+@@ -193,6 +195,7 @@ int ath12k_core_resume_early(struct ath12k_base *ab)
+ 
+ 	reinit_completion(&ab->restart_completed);
+ 	ret = ath12k_hif_power_up(ab);
++	ab->resume_early_error = ret;
+ 	if (ret)
+ 		ath12k_warn(ab, "failed to power up hif during resume: %d\n", ret);
+ 
+@@ -205,6 +208,10 @@ int ath12k_core_resume(struct ath12k_base *ab)
+ 	long time_left;
+ 	int ret;
+ 
++	/* No firmware restart can complete when powering up the HIF failed. */
++	if (ab->resume_early_error)
++		return ab->resume_early_error;
++
+ 	ret = ath12k_core_continue_suspend_resume(ab);
+ 	if (ret <= 0)
+ 		return ret;
+diff --git a/drivers/net/wireless/ath/ath12k/core.h b/drivers/net/wireless/ath/ath12k/core.h
+index 674f7e7..27c071b 100644
+--- a/drivers/net/wireless/ath/ath12k/core.h
++++ b/drivers/net/wireless/ath/ath12k/core.h
+@@ -1112,6 +1112,7 @@ struct ath12k_base {
+ 	} fw;
+ 
+ 	struct completion restart_completed;
++	int resume_early_error;
+ 
+ #ifdef CONFIG_ACPI
+ 
+-- 
+2.55.0
+

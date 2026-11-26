@@ -1,0 +1,208 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Wed, 25 Nov 2026 09:47:06 +0800
+Subject: [PATCH] ASoC: soc-core: copy card DAI names under the component lock
+
+The DAI name returned by snd_soc_get_dlc() can belong to a
+component. The card helpers copy it after releasing client_mutex, so
+component teardown can invalidate it before the managed copy.
+
+Add a managed lookup that copies the name under client_mutex and use
+it for the CPU and codec lists. Drop the parsed node reference when
+managed lookup fails. Keep the existing borrowed-name helpers for
+callers that only need the original lookup semantics.
+
+Codex verified ARM64 Kbuild for the core and existing callers and
+checked eight lookup, ownership and unwinding cases.
+
+Fixes: 33a130f6ed8c ("ASoC: soc-core: copy the DAI link names into the card")
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ include/sound/soc.h  |  3 ++
+ sound/soc/soc-core.c | 97 +++++++++++++++++++++++++++++++-------------
+ 2 files changed, 71 insertions(+), 29 deletions(-)
+
+diff --git a/include/sound/soc.h b/include/sound/soc.h
+index 5afc34b14..92a8abd89 100644
+--- a/include/sound/soc.h
++++ b/include/sound/soc.h
+@@ -1364,6 +1364,9 @@ int snd_soc_of_get_dlc(struct device_node *of_node,
+ 		       struct of_phandle_args *args,
+ 		       struct snd_soc_dai_link_component *dlc,
+ 		       int index);
++int devm_snd_soc_of_get_dlc(struct device *dev, struct device_node *of_node,
++			    struct of_phandle_args *args,
++			    struct snd_soc_dai_link_component *dlc, int index);
+ int snd_soc_get_dai_id(struct device_node *ep);
+ int snd_soc_get_dai_name(const struct of_phandle_args *args,
+ 			 const char **dai_name);
+diff --git a/sound/soc/soc-core.c b/sound/soc/soc-core.c
+index 2ba53102a..118001388 100644
+--- a/sound/soc/soc-core.c
++++ b/sound/soc/soc-core.c
+@@ -3434,9 +3434,12 @@ int snd_soc_get_dai_id(struct device_node *ep)
+ }
+ EXPORT_SYMBOL_GPL(snd_soc_get_dai_id);
+ 
+-int snd_soc_get_dlc(const struct of_phandle_args *args, struct snd_soc_dai_link_component *dlc)
++static int snd_soc_get_dlc_with_dev(struct device *dev,
++				    const struct of_phandle_args *args,
++				    struct snd_soc_dai_link_component *dlc)
+ {
+ 	struct snd_soc_component *pos;
++	const char *dai_name = NULL;
+ 	int ret = -EPROBE_DEFER;
+ 	guard(mutex)(&client_mutex);
+ 
+@@ -3446,7 +3449,8 @@ int snd_soc_get_dlc(const struct of_phandle_args *args, struct snd_soc_dai_link_
+ 		if (component_of_node != args->np || !pos->num_dai)
+ 			continue;
+ 
+-		ret = snd_soc_component_of_xlate_dai_name(pos, args, &dlc->dai_name);
++		dai_name = NULL;
++		ret = snd_soc_component_of_xlate_dai_name(pos, args, &dai_name);
+ 		if (ret == -ENOTSUPP) {
+ 			struct snd_soc_dai *dai;
+ 			int id = -1;
+@@ -3477,7 +3481,7 @@ int snd_soc_get_dlc(const struct of_phandle_args *args, struct snd_soc_dai_link_
+ 				id--;
+ 			}
+ 
+-			dlc->dai_name	= snd_soc_dai_name_get(dai);
++			dai_name = snd_soc_dai_name_get(dai);
+ 		} else if (ret) {
+ 			/*
+ 			 * if another error than ENOTSUPP is returned go on and
+@@ -3491,17 +3495,33 @@ int snd_soc_get_dlc(const struct of_phandle_args *args, struct snd_soc_dai_link_
+ 		break;
+ 	}
+ 
+-	if (ret == 0)
+-		dlc->of_node = args->np;
++	if (ret)
++		return ret;
+ 
+-	return ret;
++	/* A component may unbind independently of the card. */
++	if (dev && dai_name) {
++		dai_name = devm_kstrdup_const(dev, dai_name, GFP_KERNEL);
++		if (!dai_name)
++			return -ENOMEM;
++	}
++
++	dlc->dai_name = dai_name;
++	dlc->of_node = args->np;
++
++	return 0;
++}
++
++int snd_soc_get_dlc(const struct of_phandle_args *args, struct snd_soc_dai_link_component *dlc)
++{
++	return snd_soc_get_dlc_with_dev(NULL, args, dlc);
+ }
+ EXPORT_SYMBOL_GPL(snd_soc_get_dlc);
+ 
+-int snd_soc_of_get_dlc(struct device_node *of_node,
+-		       struct of_phandle_args *args,
+-		       struct snd_soc_dai_link_component *dlc,
+-		       int index)
++static int snd_soc_of_get_dlc_with_dev(struct device *dev,
++				       struct device_node *of_node,
++				       struct of_phandle_args *args,
++				       struct snd_soc_dai_link_component *dlc,
++				       int index)
+ {
+ 	struct of_phandle_args __args;
+ 	int ret;
+@@ -3514,10 +3534,45 @@ int snd_soc_of_get_dlc(struct device_node *of_node,
+ 	if (ret)
+ 		return ret;
+ 
+-	return snd_soc_get_dlc(args, dlc);
++	ret = snd_soc_get_dlc_with_dev(dev, args, dlc);
++	if (ret && dev) {
++		of_node_put(args->np);
++		args->np = NULL;
++	}
++
++	return ret;
++}
++
++int snd_soc_of_get_dlc(struct device_node *of_node,
++		       struct of_phandle_args *args,
++		       struct snd_soc_dai_link_component *dlc,
++		       int index)
++{
++	return snd_soc_of_get_dlc_with_dev(NULL, of_node, args, dlc, index);
+ }
+ EXPORT_SYMBOL_GPL(snd_soc_of_get_dlc);
+ 
++/**
++ * devm_snd_soc_of_get_dlc - Parse a link with a card-owned DAI name
++ * @dev: Card device that owns the DAI name
++ * @of_node: Device tree node containing the sound-dai property
++ * @args: Optional output for the parsed phandle arguments
++ * @dlc: Link component to fill on success
++ * @index: Index in the sound-dai property
++ *
++ * On success the caller owns the reference to @dlc->of_node and must put it
++ * when releasing the link. If provided, @args->np aliases that reference.
++ *
++ * Return: 0 on success or a negative error code.
++ */
++int devm_snd_soc_of_get_dlc(struct device *dev, struct device_node *of_node,
++			    struct of_phandle_args *args,
++			    struct snd_soc_dai_link_component *dlc, int index)
++{
++	return snd_soc_of_get_dlc_with_dev(dev, of_node, args, dlc, index);
++}
++EXPORT_SYMBOL_GPL(devm_snd_soc_of_get_dlc);
++
+ int snd_soc_get_dai_name(const struct of_phandle_args *args,
+ 			 const char **dai_name)
+ {
+@@ -3610,18 +3665,6 @@ void snd_soc_of_put_dai_link_codecs(struct snd_soc_dai_link *dai_link)
+ }
+ EXPORT_SYMBOL_GPL(snd_soc_of_put_dai_link_codecs);
+ 
+-/* dai_name belongs to the component, which can unbind before the card. */
+-static int snd_soc_of_dup_dai_name(struct device *dev,
+-				   struct snd_soc_dai_link_component *dlc)
+-{
+-	if (!dlc->dai_name)
+-		return 0;
+-
+-	dlc->dai_name = devm_kstrdup_const(dev, dlc->dai_name, GFP_KERNEL);
+-
+-	return dlc->dai_name ? 0 : -ENOMEM;
+-}
+-
+ /*
+  * snd_soc_of_get_dai_link_codecs - Parse a list of CODECs in the devicetree
+  * @dev: Card device
+@@ -3650,9 +3693,7 @@ int snd_soc_of_get_dai_link_codecs(struct device *dev,
+ 
+ 	/* Parse the list */
+ 	for_each_link_codecs(dai_link, index, component) {
+-		ret = snd_soc_of_get_dlc(of_node, NULL, component, index);
+-		if (!ret)
+-			ret = snd_soc_of_dup_dai_name(dev, component);
++		ret = devm_snd_soc_of_get_dlc(dev, of_node, NULL, component, index);
+ 		if (ret)
+ 			goto err;
+ 	}
+@@ -3707,9 +3748,7 @@ int snd_soc_of_get_dai_link_cpus(struct device *dev,
+ 
+ 	/* Parse the list */
+ 	for_each_link_cpus(dai_link, index, component) {
+-		ret = snd_soc_of_get_dlc(of_node, NULL, component, index);
+-		if (!ret)
+-			ret = snd_soc_of_dup_dai_name(dev, component);
++		ret = devm_snd_soc_of_get_dlc(dev, of_node, NULL, component, index);
+ 		if (ret)
+ 			goto err;
+ 	}
+-- 
+2.55.0
+

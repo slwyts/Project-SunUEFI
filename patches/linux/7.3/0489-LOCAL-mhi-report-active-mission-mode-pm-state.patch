@@ -1,0 +1,70 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Thu, 26 Nov 2026 07:46:45 +0800
+Subject: [PATCH] bus: mhi: host: Report active mission-mode PM state
+
+The PCI client restoring CE interrupts needs to distinguish an active
+mission-mode host from a pending suspend or an error transition. Read
+the host PM state and execution environment together under pm_lock.
+The query is a snapshot and does not prevent a subsequent transition.
+
+Codex adapted the fourth-batch check and built the affected ARM64
+MHI module with the Piano configuration.
+
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/bus/mhi/host/pm.c | 16 ++++++++++++++++
+ include/linux/mhi.h       |  9 +++++++++
+ 2 files changed, 25 insertions(+)
+
+diff --git a/drivers/bus/mhi/host/pm.c b/drivers/bus/mhi/host/pm.c
+index 832bd926e..7c16b4828 100644
+--- a/drivers/bus/mhi/host/pm.c
++++ b/drivers/bus/mhi/host/pm.c
+@@ -1058,6 +1058,22 @@ int mhi_pm_resume_force(struct mhi_controller *mhi_cntrl)
+ }
+ EXPORT_SYMBOL_GPL(mhi_pm_resume_force);
+ 
++bool mhi_pm_is_active(struct mhi_controller *mhi_cntrl)
++{
++	unsigned long flags;
++	bool active;
++	u32 state;
++
++	read_lock_irqsave(&mhi_cntrl->pm_lock, flags);
++	state = mhi_cntrl->pm_state;
++	active = (state == MHI_PM_M0 || state == MHI_PM_M2) &&
++		 MHI_IN_MISSION_MODE(mhi_cntrl->ee);
++	read_unlock_irqrestore(&mhi_cntrl->pm_lock, flags);
++
++	return active;
++}
++EXPORT_SYMBOL_GPL(mhi_pm_is_active);
++
+ bool mhi_pm_is_suspended(struct mhi_controller *mhi_cntrl)
+ {
+ 	return MHI_PM_IN_SUSPEND_STATE(READ_ONCE(mhi_cntrl->pm_state));
+diff --git a/include/linux/mhi.h b/include/linux/mhi.h
+index 07166ab15..50d598db6 100644
+--- a/include/linux/mhi.h
++++ b/include/linux/mhi.h
+@@ -714,6 +714,15 @@ int mhi_pm_resume(struct mhi_controller *mhi_cntrl);
+  */
+ int mhi_pm_resume_force(struct mhi_controller *mhi_cntrl);
+ 
++/**
++ * mhi_pm_is_active - Check whether the host is active in mission mode
++ * @mhi_cntrl: MHI controller
++ *
++ * This is a snapshot of the software state. It does not wake the device or
++ * prevent a power or reset transition.
++ */
++bool mhi_pm_is_active(struct mhi_controller *mhi_cntrl);
++
+ /**
+  * mhi_pm_is_suspended - Check whether the host is entering or retaining M3
+  * @mhi_cntrl: MHI controller
+-- 
+2.55.0
+

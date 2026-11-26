@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+/dts-v1/;
+/plugin/;
+
+/ {
+	fragment@0 {
+		target-path = "/soc/pinctrl@f100000";
+		__overlay__ {
+			wakeup-parent = <&pdc>;
+		};
+	};
+};

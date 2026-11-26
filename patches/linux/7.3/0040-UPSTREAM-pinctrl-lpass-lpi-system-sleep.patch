@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Gopi Chandra Sekhar Reddy Kanala <gopi.kanala@oss.qualcomm.com>
+Date: Wed, 18 Nov 2026 19:07:31 +0530
+Subject: [PATCH] pinctrl: qcom: lpass-lpi: Force runtime suspend on system
+ sleep
+
+The LPASS LPI pin controllers vote for their LPASS clocks through pm_clk
+and only implement runtime PM callbacks. Their consumers, such as the
+SoundWire controllers, keep them runtime active through their device
+links. If a consumer is active when system suspend starts, or is resumed
+during it, the runtime PM usage count the PM core holds from the prepare
+phase keeps the pin controller from runtime suspending, and its clock
+votes are held for the whole suspend. On Glymur CRD this keeps CX and
+DDR from collapsing in s2idle.
+
+Use pm_runtime_force_suspend() and pm_runtime_force_resume() as the
+system sleep callbacks in the common dev_pm_ops, so the clocks are
+always released at system suspend for all the SoC-specific drivers.
+Consumers are suspended before their suppliers, so the pin controller
+goes down after them and comes back before them.
+
+Codex confirmed this patch applies after the shared PM operations
+and verified the resulting ARM64 modules. Piano completed RTC wake
+and audio and SSC checks with these system sleep callbacks.
+
+Signed-off-by: Gopi Chandra Sekhar Reddy Kanala <gopi.kanala@oss.qualcomm.com>
+Link: https://patch.msgid.link/20261118-lpass-lpi-system-sleep-v2-2-a6ec7f2ba424@oss.qualcomm.com
+Signed-off-by: Bartosz Golaszewski <bartosz.golaszewski@oss.qualcomm.com>
+Link: https://git.kernel.org/pub/scm/linux/kernel/git/brgl/linux.git/commit/?id=55d571be69fa9b1ecf8b417fdf768c4eb8b28d23
+Assisted-by: LLM
+---
+ drivers/pinctrl/qcom/pinctrl-lpass-lpi.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/pinctrl/qcom/pinctrl-lpass-lpi.c b/drivers/pinctrl/qcom/pinctrl-lpass-lpi.c
+index ad208f7..b4b0c91 100644
+--- a/drivers/pinctrl/qcom/pinctrl-lpass-lpi.c
++++ b/drivers/pinctrl/qcom/pinctrl-lpass-lpi.c
+@@ -608,6 +608,7 @@ void lpi_pinctrl_remove(struct platform_device *pdev)
+ EXPORT_SYMBOL_GPL(lpi_pinctrl_remove);
+ 
+ EXPORT_GPL_DEV_PM_OPS(lpi_pinctrl_pm_ops) = {
++	SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
+ 	RUNTIME_PM_OPS(pm_clk_suspend, pm_clk_resume, NULL)
+ };
+ 

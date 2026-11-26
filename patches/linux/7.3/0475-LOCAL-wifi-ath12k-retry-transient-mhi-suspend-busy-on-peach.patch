@@ -1,0 +1,84 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Wed, 25 Nov 2026 08:05:17 +0800
+Subject: [PATCH] wifi: ath12k: Retry transient MHI suspend busy on PEACH
+
+The MHI host can temporarily reject suspend while a client still
+holds a device wake reference or a packet is pending. Its -EBUSY
+return precedes the M3 request, so those cases can be retried without
+overlapping an in-progress state transition.
+
+Match the original Piano CNSS driver. For PEACH, allow up to three
+additional attempts spaced 5 to 6 milliseconds apart. Return the
+first error other than -EBUSY immediately since an error can follow
+the M3 request. Keep the existing policy for other hardware.
+
+Codex checked the original CNSS control flow and the Linux MHI error
+paths, then verified the retry counts, early errors and PEACH scope
+with ARM64 Kbuild and eight source-based tests.
+
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/net/wireless/ath/ath12k/mhi.c | 24 +++++++++++++++++++++++-
+ 1 file changed, 23 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/mhi.c b/drivers/net/wireless/ath/ath12k/mhi.c
+index 1b8d47e..fd9d02d 100644
+--- a/drivers/net/wireless/ath/ath12k/mhi.c
++++ b/drivers/net/wireless/ath/ath12k/mhi.c
+@@ -4,6 +4,7 @@
+  * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+  */
+ 
++#include <linux/delay.h>
+ #include <linux/msi.h>
+ #include <linux/pci.h>
+ #include <linux/firmware.h>
+@@ -14,6 +15,7 @@
+ #include "pci.h"
+ 
+ #define MHI_TIMEOUT_DEFAULT_MS	90000
++#define ATH12K_PEACH_MHI_SUSPEND_RETRIES	3
+ #define OTP_INVALID_BOARD_ID	0xFFFF
+ #define OTP_VALID_DUALMAC_BOARD_ID_MASK		0x1000
+ #define MHI_CB_INVALID	0xff
+@@ -415,6 +417,26 @@ static int ath12k_mhi_check_state_bit(struct ath12k_pci *ab_pci,
+ 	return -EINVAL;
+ }
+ 
++static int ath12k_mhi_pm_suspend(struct ath12k_pci *ab_pci)
++{
++	struct mhi_controller *mhi = ab_pci->mhi_ctrl;
++	int retries = 0;
++	int ret;
++
++	if (ab_pci->ab->hw_rev == ATH12K_HW_PEACH_HW20)
++		retries = ATH12K_PEACH_MHI_SUSPEND_RETRIES;
++
++	ret = mhi_pm_suspend(mhi);
++	/* A busy return precedes the M3 request. Let in-flight work drain. */
++	while (ret == -EBUSY && retries > 0) {
++		retries--;
++		usleep_range(5000, 6000);
++		ret = mhi_pm_suspend(mhi);
++	}
++
++	return ret;
++}
++
+ static int ath12k_mhi_set_state(struct ath12k_pci *ab_pci,
+ 				enum ath12k_mhi_state mhi_state)
+ {
+@@ -463,7 +485,7 @@ static int ath12k_mhi_set_state(struct ath12k_pci *ab_pci,
+ 		ret = 0;
+ 		break;
+ 	case ATH12K_MHI_SUSPEND:
+-		ret = mhi_pm_suspend(ab_pci->mhi_ctrl);
++		ret = ath12k_mhi_pm_suspend(ab_pci);
+ 		break;
+ 	case ATH12K_MHI_RESUME:
+ 		ret = mhi_pm_resume(ab_pci->mhi_ctrl);
+-- 
+2.55.0
+

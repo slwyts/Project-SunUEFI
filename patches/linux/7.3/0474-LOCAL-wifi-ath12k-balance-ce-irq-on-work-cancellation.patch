@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Wed, 25 Nov 2026 07:54:13 +0800
+Subject: [PATCH] wifi: ath12k: Balance PCI CE IRQs when cancelling interrupt
+ work
+
+The PCI CE interrupt handler disables the IRQ before queuing service
+work. Normally the worker enables it again. When suspend or shutdown
+cancels pending work before it can run, the interrupt remains disabled
+one level too deep for the next device start to unmask it.
+
+Pair the handler's disable with an enable when cancel_work_sync()
+reports that it cancelled pending work. The enclosing suspend or
+shutdown path still owns its separate mask.
+
+Codex identified the IRQ nesting issue, implemented the cancellation
+unwind and verified the mask depths with source-based tests.
+
+Fixes: cdad73716057 ("wifi: ath12k: convert tasklet to BH workqueue for CE interrupts")
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/net/wireless/ath/ath12k/pci.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/pci.c b/drivers/net/wireless/ath/ath12k/pci.c
+index 3ea95d8..e77644d 100644
+--- a/drivers/net/wireless/ath/ath12k/pci.c
++++ b/drivers/net/wireless/ath/ath12k/pci.c
+@@ -988,7 +988,9 @@ static void ath12k_pci_cancel_workqueue(struct ath12k_base *ab)
+ 		if (ath12k_ce_get_attr_flags(ab, i) & CE_ATTR_DIS_INTR)
+ 			continue;
+ 
+-		cancel_work_sync(&ce_pipe->intr_wq);
++		/* The interrupt handler disabled the IRQ before queuing this work. */
++		if (cancel_work_sync(&ce_pipe->intr_wq))
++			enable_irq(ab->irq_num[ATH12K_PCI_IRQ_CE0_OFFSET + i]);
+ 	}
+ }
+ 
+-- 
+2.55.0
+

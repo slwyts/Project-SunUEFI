@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Wed, 25 Nov 2026 07:41:25 +0800
+Subject: [PATCH] net: qrtr: Unwind MHI receive buffer setup on resume failure
+
+When an initial IPCR receive buffer fails to queue, MHI has not taken
+ownership of it. Release that buffer immediately. On resume, undo
+mhi_prepare_for_transfer() if receive buffer setup fails, matching the
+probe path. Unpreparing returns any buffers already queued through the
+existing channel reset callback.
+
+This prevents partially started channels from surviving failed resume
+and allows a later transfer preparation to start with empty rings.
+
+Codex found and implemented the unwind and validated allocation and
+queue failures at each position of a four-buffer ring using
+source-based ASan/UBSan tests and the ARM64 QRTR MHI module build.
+
+Fixes: 51731792a25c ("net: qrtr: Drop the MHI auto_queue feature for IPCR DL channels")
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ net/qrtr/mhi.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/net/qrtr/mhi.c b/net/qrtr/mhi.c
+index e9a4bb9..c55705d 100644
+--- a/net/qrtr/mhi.c
++++ b/net/qrtr/mhi.c
+@@ -99,6 +99,7 @@ static int qcom_mhi_qrtr_queue_dl_buffers(struct mhi_device *mhi_dev)
+ 				    MHI_EOT);
+ 		if (ret) {
+ 			dev_err(&mhi_dev->dev, "Failed to queue buffer: %d\n", ret);
++			devm_kfree(&mhi_dev->dev, buf);
+ 			return ret;
+ 		}
+ 	}
+@@ -203,8 +204,10 @@ static int __maybe_unused qcom_mhi_qrtr_pm_resume_early(struct device *dev)
+ 	}
+ 
+ 	rc = qcom_mhi_qrtr_queue_dl_buffers(mhi_dev);
+-	if (rc)
++	if (rc) {
++		mhi_unprepare_from_transfer(mhi_dev);
+ 		return rc;
++	}
+ 
+ 	qrtr_endpoint_hello(&qdev->ep);
+ 
+-- 
+2.55.0
+

@@ -1,0 +1,154 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Wed, 25 Nov 2026 07:50:55 +0800
+Subject: [PATCH] wifi: ath12k: unregister the MAC after a late QMI failure
+
+A WLFW host-capability exchange can fail after the hardware group
+registered with mac80211. The bus remove handlers currently skip group
+cleanup whenever QMI_FAIL is set. A registered wiphy can then retain
+the driver's ops table after its module has been unloaded.
+
+Check the group's registration state under its mutex before taking the
+early QMI failure exit. Drain QMI events first so they cannot queue new
+restart work while the device is being removed. Leave power-down and
+resource release to the existing core deinitialization.
+
+On Xiaomi Pad 8 Pro, reproduced a rejected HOST_CAP while the wiphy
+remained registered. The corrected PCI path unregistered the wiphy,
+unloaded both WLAN modules and reconnected on the same boot. The AHB
+path was compile-tested.
+
+Codex investigated the WLAN suspend and remove paths, wrote the change,
+and validated it with an ARM64 module build and a controlled D0 rollback.
+
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/net/wireless/ath/ath12k/ahb.c  | 11 +++--------
+ drivers/net/wireless/ath/ath12k/core.c | 22 +++++++++++++++-------
+ drivers/net/wireless/ath/ath12k/core.h |  2 +-
+ drivers/net/wireless/ath/ath12k/pci.c  | 11 ++++-------
+ 4 files changed, 23 insertions(+), 23 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/ahb.c b/drivers/net/wireless/ath/ath12k/ahb.c
+index d89a49c..9549be2 100644
+--- a/drivers/net/wireless/ath/ath12k/ahb.c
++++ b/drivers/net/wireless/ath/ath12k/ahb.c
+@@ -1276,8 +1276,9 @@ static void ath12k_ahb_remove_prepare(struct ath12k_base *ab)
+ 	}
+ 
+ 	set_bit(ATH12K_FLAG_UNREGISTERING, &ab->dev_flags);
++	if (ab->qmi.ab)
++		flush_work(&ab->qmi.event_work);
+ 	cancel_work_sync(&ab->restart_work);
+-	cancel_work_sync(&ab->qmi.event_work);
+ }
+ 
+ static void ath12k_ahb_free_resources(struct ath12k_base *ab)
+@@ -1300,14 +1301,8 @@ static void ath12k_ahb_remove(struct platform_device *pdev)
+ {
+ 	struct ath12k_base *ab = platform_get_drvdata(pdev);
+ 
+-	if (test_bit(ATH12K_FLAG_QMI_FAIL, &ab->dev_flags)) {
+-		ath12k_ahb_power_down(ab, false);
+-		goto qmi_fail;
+-	}
+-
+ 	ath12k_ahb_remove_prepare(ab);
+-	ath12k_core_hw_group_cleanup(ab->ag);
+-qmi_fail:
++	ath12k_core_hw_group_cleanup(ab);
+ 	ath12k_core_deinit(ab);
+ 	ath12k_ahb_free_resources(ab);
+ }
+diff --git a/drivers/net/wireless/ath/ath12k/core.c b/drivers/net/wireless/ath/ath12k/core.c
+index e97c952..97b42e6 100644
+--- a/drivers/net/wireless/ath/ath12k/core.c
++++ b/drivers/net/wireless/ath/ath12k/core.c
+@@ -2092,9 +2092,10 @@ static void ath12k_core_hw_group_destroy(struct ath12k_hw_group *ag)
+ 	}
+ }
+ 
+-void ath12k_core_hw_group_cleanup(struct ath12k_hw_group *ag)
++void ath12k_core_hw_group_cleanup(struct ath12k_base *ab)
+ {
+-	struct ath12k_base *ab;
++	struct ath12k_hw_group *ag = ab->ag;
++	struct ath12k_base *member;
+ 	int i;
+ 
+ 	if (!ag)
+@@ -2107,18 +2108,25 @@ void ath12k_core_hw_group_cleanup(struct ath12k_hw_group *ag)
+ 		return;
+ 	}
+ 
++	/* A failed QMI handshake can also happen after MAC registration. */
++	if (test_bit(ATH12K_FLAG_QMI_FAIL, &ab->dev_flags) &&
++	    !test_bit(ATH12K_GROUP_FLAG_REGISTERED, &ag->flags)) {
++		mutex_unlock(&ag->mutex);
++		return;
++	}
++
+ 	set_bit(ATH12K_GROUP_FLAG_UNREGISTER, &ag->flags);
+ 
+ 	ath12k_core_hw_group_stop(ag);
+ 
+ 	for (i = 0; i < ag->num_devices; i++) {
+-		ab = ag->ab[i];
+-		if (!ab)
++		member = ag->ab[i];
++		if (!member)
+ 			continue;
+ 
+-		mutex_lock(&ab->core_lock);
+-		ath12k_core_stop(ab);
+-		mutex_unlock(&ab->core_lock);
++		mutex_lock(&member->core_lock);
++		ath12k_core_stop(member);
++		mutex_unlock(&member->core_lock);
+ 	}
+ 
+ 	mutex_unlock(&ag->mutex);
+diff --git a/drivers/net/wireless/ath/ath12k/core.h b/drivers/net/wireless/ath/ath12k/core.h
+index e008208..674f7e7 100644
+--- a/drivers/net/wireless/ath/ath12k/core.h
++++ b/drivers/net/wireless/ath/ath12k/core.h
+@@ -1254,7 +1254,7 @@ struct ath12k_fw_stats_pdev {
+ };
+ 
+ int ath12k_core_qmi_firmware_ready(struct ath12k_base *ab);
+-void ath12k_core_hw_group_cleanup(struct ath12k_hw_group *ag);
++void ath12k_core_hw_group_cleanup(struct ath12k_base *ab);
+ int ath12k_core_pre_init(struct ath12k_base *ab);
+ int ath12k_core_init(struct ath12k_base *ath12k);
+ void ath12k_core_deinit(struct ath12k_base *ath12k);
+diff --git a/drivers/net/wireless/ath/ath12k/pci.c b/drivers/net/wireless/ath/ath12k/pci.c
+index 6ba7145..40ee82d 100644
+--- a/drivers/net/wireless/ath/ath12k/pci.c
++++ b/drivers/net/wireless/ath/ath12k/pci.c
+@@ -1727,18 +1727,15 @@ static void ath12k_pci_remove(struct pci_dev *pdev)
+ 
+ 	ath12k_pci_set_irq_affinity_hint(ab_pci, NULL);
+ 
+-	if (test_bit(ATH12K_FLAG_QMI_FAIL, &ab->dev_flags)) {
+-		ath12k_pci_power_down(ab, false);
+-		goto qmi_fail;
+-	}
+-
+ 	set_bit(ATH12K_FLAG_UNREGISTERING, &ab->dev_flags);
+ 
+ 	cancel_work_sync(&ab->reset_work);
+ 	cancel_work_sync(&ab->dump_work);
+-	ath12k_core_hw_group_cleanup(ab->ag);
++	if (ab->qmi.ab)
++		flush_work(&ab->qmi.event_work);
++	cancel_work_sync(&ab->restart_work);
++	ath12k_core_hw_group_cleanup(ab);
+ 
+-qmi_fail:
+ 	ath12k_core_deinit(ab);
+ 	ath12k_fw_unmap(ab);
+ 	ath12k_mhi_unregister(ab_pci);
+-- 
+2.55.0
+

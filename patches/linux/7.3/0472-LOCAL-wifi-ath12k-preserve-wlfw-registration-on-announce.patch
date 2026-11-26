@@ -1,0 +1,84 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Wed, 25 Nov 2026 07:50:55 +0800
+Subject: [PATCH] wifi: ath12k: keep an existing WLFW registration on repeated
+ announce
+
+Reopening the QRTR MHI channels can cause the same WLFW service to be
+announced again. If firmware retained its session, a second HOST_CAP
+request may be rejected with QMI_ERR_INCOMPATIBLE_STATE.
+
+Use the already-registered bit in the IND_REGISTER response, as
+Qualcomm CNSS does. Skip the initial host-capability exchange when the
+host still has a registered wiphy and is not recovering. Keep the
+existing exchange for a fresh or resetting session.
+
+On Xiaomi Pad 8 Pro, initial firmware start reported status 0 and warm
+D0 rollback reported 0xd. The driver kept the warm registration and
+reconnected without repeating the rejected HOST_CAP request.
+
+Codex investigated the WLAN suspend and remove paths, wrote the change,
+and validated it with an ARM64 module build and a controlled D0 rollback.
+
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/net/wireless/ath/ath12k/qmi.c | 19 +++++++++++++++++--
+ 1 file changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/qmi.c b/drivers/net/wireless/ath/ath12k/qmi.c
+index 2e52849..c3d457c 100644
+--- a/drivers/net/wireless/ath/ath12k/qmi.c
++++ b/drivers/net/wireless/ath/ath12k/qmi.c
+@@ -2707,7 +2707,10 @@ out:
+ 		   ab->qmi.num_radios);
+ }
+ 
+-static int ath12k_qmi_fw_ind_register_send(struct ath12k_base *ab)
++#define ATH12K_QMI_FW_ALREADY_REGISTERED BIT_ULL(0)
++
++static int ath12k_qmi_fw_ind_register_send(struct ath12k_base *ab,
++					   bool *already_registered)
+ {
+ 	struct qmi_wlanfw_ind_register_req_msg_v01 *req;
+ 	struct qmi_wlanfw_ind_register_resp_msg_v01 *resp;
+@@ -2770,6 +2773,9 @@ static int ath12k_qmi_fw_ind_register_send(struct ath12k_base *ab)
+ 		goto out;
+ 	}
+ 
++	*already_registered = resp->fw_status_valid &&
++			      (resp->fw_status & ATH12K_QMI_FW_ALREADY_REGISTERED);
++
+ out:
+ 	kfree(resp);
+ resp_out:
+@@ -4343,16 +4349,25 @@ int ath12k_qmi_event_server_arrive(struct ath12k_qmi *qmi)
+ {
+ 	struct ath12k_base *ab = qmi->ab, *block_ab;
+ 	struct ath12k_hw_group *ag = ab->ag;
++	bool already_registered;
+ 	int ret;
+ 
+ 	ath12k_qmi_phy_cap_send(ab);
+ 
+-	ret = ath12k_qmi_fw_ind_register_send(ab);
++	ret = ath12k_qmi_fw_ind_register_send(ab, &already_registered);
+ 	if (ret < 0) {
+ 		ath12k_warn(ab, "qmi failed to send FW indication QMI:%d\n", ret);
+ 		return ret;
+ 	}
+ 
++	/* QRTR can announce a service again without a WLAN firmware restart. */
++	if (already_registered &&
++	    test_bit(ATH12K_FLAG_QMI_FW_READY_COMPLETE, &ab->dev_flags) &&
++	    test_bit(ATH12K_FLAG_REGISTERED, &ab->dev_flags) &&
++	    !test_bit(ATH12K_FLAG_CRASH_FLUSH, &ab->dev_flags) &&
++	    !test_bit(ATH12K_FLAG_RECOVERY, &ab->dev_flags))
++		return 0;
++
+ 	spin_lock(&qmi->event_lock);
+ 
+ 	ath12k_qmi_set_event_block(qmi, true);
+-- 
+2.55.0
+

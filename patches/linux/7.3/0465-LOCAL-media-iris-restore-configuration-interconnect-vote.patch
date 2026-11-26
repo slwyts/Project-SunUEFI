@@ -1,0 +1,179 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Wed, 25 Nov 2026 03:27:10 +0800
+Subject: [PATCH] media: iris: Restore configuration interconnect votes
+
+Runtime suspend zeros the configuration and memory interconnect votes.
+The next runtime resume only reprograms video-mem, leaving cpu-cfg
+at zero even while Iris is decoding. SM8750 describes cpu-cfg and
+video-mem separately, as does the Piano board overlay.
+
+Vote the configured minimum for the configuration path whenever Iris
+resumes or scales its resources. Keep the existing memory bandwidth
+bounds and hysteresis. If setting a path fails, restore the previous
+votes on paths already updated so future operations can retry. Drop
+both votes at runtime suspend.
+
+Codex developed and reviewed the change and ran arm64 Kbuild and vote
+state tests. Piano decode and interconnect traces checked the fixed
+configuration vote across reopen and zero votes after runtime suspend.
+Link: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=c0d11ff904753a99e0f6efd29e614268bc6e98db
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Assisted-by: LLM
+---
+ .../platform/qcom/iris/iris_platform_common.h |  1 -
+ drivers/media/platform/qcom/iris/iris_probe.c |  5 +-
+ .../media/platform/qcom/iris/iris_resources.c | 89 +++++++++++++------
+ 3 files changed, 64 insertions(+), 31 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_common.h b/drivers/media/platform/qcom/iris/iris_platform_common.h
+index 9faab3a..7796e54 100644
+--- a/drivers/media/platform/qcom/iris/iris_platform_common.h
++++ b/drivers/media/platform/qcom/iris/iris_platform_common.h
+@@ -226,7 +226,6 @@ struct bw_info {
+ 
+ struct iris_core_power {
+ 	u64 clk_freq;
+-	u64 icc_bw;
+ };
+ 
+ struct iris_inst_power {
+diff --git a/drivers/media/platform/qcom/iris/iris_probe.c b/drivers/media/platform/qcom/iris/iris_probe.c
+index e4acf4a..569f870 100644
+--- a/drivers/media/platform/qcom/iris/iris_probe.c
++++ b/drivers/media/platform/qcom/iris/iris_probe.c
+@@ -30,11 +30,8 @@ static int iris_init_icc(struct iris_core *core)
+ 	if (!core->icc_tbl)
+ 		return -ENOMEM;
+ 
+-	for (i = 0; i < core->icc_count; i++) {
++	for (i = 0; i < core->icc_count; i++)
+ 		core->icc_tbl[i].name = icc_tbl[i].name;
+-		core->icc_tbl[i].avg_bw = icc_tbl[i].bw_min_kbps;
+-		core->icc_tbl[i].peak_bw = 0;
+-	}
+ 
+ 	return devm_of_icc_bulk_get(core->dev, core->icc_count, core->icc_tbl);
+ }
+diff --git a/drivers/media/platform/qcom/iris/iris_resources.c b/drivers/media/platform/qcom/iris/iris_resources.c
+index 2c4d34c..330283d 100644
+--- a/drivers/media/platform/qcom/iris/iris_resources.c
++++ b/drivers/media/platform/qcom/iris/iris_resources.c
+@@ -6,6 +6,7 @@
+ #include <linux/clk.h>
+ #include <linux/devfreq.h>
+ #include <linux/interconnect.h>
++#include <linux/math.h>
+ #include <linux/pm_domain.h>
+ #include <linux/pm_opp.h>
+ #include <linux/pm_runtime.h>
+@@ -16,47 +17,83 @@
+ 
+ #define BW_THRESHOLD 50000
+ 
+-int iris_set_icc_bw(struct iris_core *core, unsigned long icc_bw)
++static u32 iris_icc_get_bw(struct iris_core *core, unsigned int index,
++			   bool enable, unsigned long icc_bw)
++{
++	const struct icc_info *info = &core->iris_platform_data->icc_tbl[index];
++	u32 prev_bw = core->icc_tbl[index].avg_bw;
++	u32 bw;
++
++	if (!enable)
++		return 0;
++
++	if (strcmp(info->name, "video-mem"))
++		return info->bw_min_kbps;
++
++	bw = clamp_t(unsigned long, icc_bw, info->bw_min_kbps, info->bw_max_kbps);
++	if (prev_bw && abs_diff(bw, prev_bw) < BW_THRESHOLD)
++		return prev_bw;
++
++	return bw;
++}
++
++static int iris_update_icc_bw(struct iris_core *core, bool enable,
++			      unsigned long icc_bw)
+ {
+-	unsigned long bw_kbps = 0, bw_prev = 0;
+-	const struct icc_info *icc_tbl;
+-	int ret = 0, i;
++	struct icc_bulk_data *paths = core->icc_tbl;
++	unsigned int i;
++	u32 bw;
++	int ret;
+ 
+-	icc_tbl = core->iris_platform_data->icc_tbl;
++	lockdep_assert_held(&core->lock);
+ 
+ 	for (i = 0; i < core->icc_count; i++) {
+-		if (!strcmp(core->icc_tbl[i].name, "video-mem")) {
+-			bw_kbps = icc_bw;
+-			bw_prev = core->power.icc_bw;
++		bw = iris_icc_get_bw(core, i, enable, icc_bw);
++		if (bw == paths[i].avg_bw)
++			continue;
++
++		ret = icc_set_bw(paths[i].path, bw, 0);
++		if (ret)
++			goto rollback;
++	}
++
++	for (i = 0; i < core->icc_count; i++)
++		paths[i].avg_bw = iris_icc_get_bw(core, i, enable, icc_bw);
+ 
+-			bw_kbps = clamp_t(typeof(bw_kbps), bw_kbps,
+-					  icc_tbl[i].bw_min_kbps, icc_tbl[i].bw_max_kbps);
++	return 0;
++
++rollback:
++	/* The cached votes retain their prior values until all writes succeed. */
++	dev_err(core->dev, "failed to set %s interconnect bandwidth: %d\n",
++		paths[i].name, ret);
+ 
+-			if (abs(bw_kbps - bw_prev) < BW_THRESHOLD && bw_prev)
+-				return ret;
++	while (i) {
++		int err;
+ 
+-			core->icc_tbl[i].avg_bw = bw_kbps;
++		i--;
++		bw = iris_icc_get_bw(core, i, enable, icc_bw);
++		if (bw == paths[i].avg_bw)
++			continue;
+ 
+-			core->power.icc_bw = bw_kbps;
+-			break;
++		err = icc_set_bw(paths[i].path, paths[i].avg_bw, 0);
++		if (err) {
++			dev_err(core->dev, "failed to restore %s interconnect bandwidth: %d\n",
++				paths[i].name, err);
++			paths[i].avg_bw = bw;
+ 		}
+ 	}
+ 
+-	return icc_bulk_set_bw(core->icc_count, core->icc_tbl);
++	return ret;
+ }
+ 
+-int iris_unset_icc_bw(struct iris_core *core)
++int iris_set_icc_bw(struct iris_core *core, unsigned long icc_bw)
+ {
+-	u32 i;
+-
+-	core->power.icc_bw = 0;
+-
+-	for (i = 0; i < core->icc_count; i++) {
+-		core->icc_tbl[i].avg_bw = 0;
+-		core->icc_tbl[i].peak_bw = 0;
+-	}
++	return iris_update_icc_bw(core, true, icc_bw);
++}
+ 
+-	return icc_bulk_set_bw(core->icc_count, core->icc_tbl);
++int iris_unset_icc_bw(struct iris_core *core)
++{
++	return iris_update_icc_bw(core, false, 0);
+ }
+ 
+ int iris_opp_set_rate(struct device *dev, unsigned long freq)

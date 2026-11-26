@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ulf Hansson <ulf.hansson@oss.qualcomm.com>
+Date: Mon, 14 Sep 2026 17:01:41 +0200
+Subject: [PATCH] cpuidle: psci: Move initialization a bit earlier in the boot
+ sequence
+
+When using PSCI OS-initiated mode along with the cpuidle-psci-domain driver
+it's of great benefit to attach the CPU devices to their CPU PM domains as
+soon as possible, as other non-CPU devices sharing the same PM domains
+depends on it to allow their devices to be probed.
+
+Let's therefore move to a subsys_initcall, which should be soon enough
+after the cpuidle-psci-domain have initialized the PM domain topology.
+
+Codex verified this backport on the Piano 7.3.3 configuration. It
+applies without code changes as part of the PSCI OSI series.
+
+Reviewed-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+Tested-by: Yuanfang Zhang <yuanfang.zhang@oss.qualcomm.com>
+Signed-off-by: Ulf Hansson <ulf.hansson@oss.qualcomm.com>
+Reviewed-by: Dhruva Gole <goledhruva@gmail.com>
+Signed-off-by: Ulf Hansson <ulfh@kernel.org>
+Link: https://github.com/torvalds/linux/commit/65705b18162bbf0771adf742ee528521957fb496
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/cpuidle/cpuidle-psci.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/cpuidle/cpuidle-psci.c b/drivers/cpuidle/cpuidle-psci.c
+index b250d0dde..0187d6a90 100644
+--- a/drivers/cpuidle/cpuidle-psci.c
++++ b/drivers/cpuidle/cpuidle-psci.c
+@@ -479,4 +479,4 @@ static int __init psci_idle_init(void)
+ 
+ 	return 0;
+ }
+-device_initcall(psci_idle_init);
++subsys_initcall(psci_idle_init);
+-- 
+2.55.0
+

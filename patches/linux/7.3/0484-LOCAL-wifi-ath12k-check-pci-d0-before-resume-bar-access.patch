@@ -1,0 +1,121 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Thu, 26 Nov 2026 04:46:36 +0800
+Subject: [PATCH] wifi: ath12k: Check PCI accessibility before powering up on
+ resume
+
+A PCI endpoint's resume_early callback may still run after its host
+fails to resume. The ath12k restart then attempts software reset using
+BAR registers even though the endpoint has not returned to D0 or
+its memory decoding has not been restored.
+
+Check PCI configuration before invoking HIF power-up in the existing
+ordinary resume path. Require D0 and an enabled memory decoder, and
+propagate the failure through resume_early_error to avoid waiting for
+an unstarted firmware. Skip the new check when the core does not need
+a power cycle.
+
+The LLM traced the PCI callback order and verified this change with
+16 host cases and ARM64 core.o and pci.o builds.
+
+Link: https://docs.kernel.org/power/pci.html
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/net/wireless/ath/ath12k/core.c |  9 ++++++-
+ drivers/net/wireless/ath/ath12k/core.h |  3 ++-
+ drivers/net/wireless/ath/ath12k/pci.c  | 35 +++++++++++++++++++++++++-
+ 3 files changed, 44 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/core.c b/drivers/net/wireless/ath/ath12k/core.c
+index 64edcd2de..5b6c69d52 100644
+--- a/drivers/net/wireless/ath/ath12k/core.c
++++ b/drivers/net/wireless/ath/ath12k/core.c
+@@ -185,7 +185,8 @@ int ath12k_core_suspend_late(struct ath12k_base *ab)
+ }
+ EXPORT_SYMBOL(ath12k_core_suspend_late);
+ 
+-int ath12k_core_resume_early(struct ath12k_base *ab)
++int ath12k_core_resume_early(struct ath12k_base *ab,
++			     int (*check_bus)(struct ath12k_base *ab))
+ {
+ 	int ret;
+ 
+@@ -193,6 +194,12 @@ int ath12k_core_resume_early(struct ath12k_base *ab)
+ 	if (ret <= 0)
+ 		return ret;
+ 
++	ret = check_bus(ab);
++	if (ret) {
++		ab->resume_early_error = ret;
++		return ret;
++	}
++
+ 	reinit_completion(&ab->restart_completed);
+ 	ret = ath12k_hif_power_up(ab);
+ 	ab->resume_early_error = ret;
+diff --git a/drivers/net/wireless/ath/ath12k/core.h b/drivers/net/wireless/ath/ath12k/core.h
+index 27c071bbb..5b8a177a4 100644
+--- a/drivers/net/wireless/ath/ath12k/core.h
++++ b/drivers/net/wireless/ath/ath12k/core.h
+@@ -1272,7 +1272,8 @@ int ath12k_core_fetch_regdb(struct ath12k_base *ab, struct ath12k_board_data *bd
+ int ath12k_core_check_dt(struct ath12k_base *ath12k);
+ int ath12k_core_check_smbios(struct ath12k_base *ab);
+ void ath12k_core_halt(struct ath12k *ar);
+-int ath12k_core_resume_early(struct ath12k_base *ab);
++int ath12k_core_resume_early(struct ath12k_base *ab,
++			     int (*check_bus)(struct ath12k_base *ab));
+ int ath12k_core_resume(struct ath12k_base *ab);
+ int ath12k_core_suspend(struct ath12k_base *ab);
+ int ath12k_core_suspend_late(struct ath12k_base *ab);
+diff --git a/drivers/net/wireless/ath/ath12k/pci.c b/drivers/net/wireless/ath/ath12k/pci.c
+index 9ab955179..e27d0220d 100644
+--- a/drivers/net/wireless/ath/ath12k/pci.c
++++ b/drivers/net/wireless/ath/ath12k/pci.c
+@@ -1828,12 +1828,45 @@ static __maybe_unused int ath12k_pci_pm_suspend_late(struct device *dev)
+ 	return ret;
+ }
+ 
++static int ath12k_pci_check_resume_bus(struct ath12k_base *ab)
++{
++	struct pci_dev *pdev = to_pci_dev(ab->dev);
++	u16 pmcsr, command;
++	int ret;
++
++	/* PCI child resume callbacks also run when host resume failed. */
++	if (pci_channel_offline(pdev) || pdev->current_state == PCI_D3cold)
++		return -ENODEV;
++
++	if (pdev->pm_cap) {
++		ret = pci_read_config_word(pdev, pdev->pm_cap + PCI_PM_CTRL, &pmcsr);
++		if (ret)
++			return pcibios_err_to_errno(ret);
++		if (PCI_POSSIBLE_ERROR(pmcsr))
++			return -ENODEV;
++		if ((pmcsr & PCI_PM_CTRL_STATE_MASK) != PCI_D0)
++			return -EIO;
++	} else if (pdev->current_state != PCI_D0) {
++		return -EIO;
++	}
++
++	ret = pci_read_config_word(pdev, PCI_COMMAND, &command);
++	if (ret)
++		return pcibios_err_to_errno(ret);
++	if (PCI_POSSIBLE_ERROR(command))
++		return -ENODEV;
++	if (!(command & PCI_COMMAND_MEMORY))
++		return -EIO;
++
++	return 0;
++}
++
+ static __maybe_unused int ath12k_pci_pm_resume_early(struct device *dev)
+ {
+ 	struct ath12k_base *ab = dev_get_drvdata(dev);
+ 	int ret;
+ 
+-	ret = ath12k_core_resume_early(ab);
++	ret = ath12k_core_resume_early(ab, ath12k_pci_check_resume_bus);
+ 	if (ret)
+ 		ath12k_warn(ab, "failed to early resume core: %d\n", ret);
+ 

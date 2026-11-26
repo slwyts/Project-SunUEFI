@@ -1,0 +1,168 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Thu, 26 Nov 2026 07:46:46 +0800
+Subject: [PATCH] wifi: ath12k: Wait for firmware pdev power transitions
+
+Wait for the target to suspend before changing the transport state.
+When WLAN stays in firmware suspend across an aborted system suspend
+or a warm resume, wait for WMI_PDEV_RESUME_EVENTID for the pdev that
+the command addressed.
+
+Use the existing HTC completion for suspend and keep the resume
+completion scoped to the pdev. Codex separated the acknowledgment
+handling from PCI suspend and checked the regular resume call paths.
+
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/net/wireless/ath/ath12k/core.c |  1 +
+ drivers/net/wireless/ath/ath12k/core.h |  6 +++
+ drivers/net/wireless/ath/ath12k/wmi.c  | 58 ++++++++++++++++++++++++--
+ 3 files changed, 62 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/core.c b/drivers/net/wireless/ath/ath12k/core.c
+index 5b6c69d52..059e859d4 100644
+--- a/drivers/net/wireless/ath/ath12k/core.c
++++ b/drivers/net/wireless/ath/ath12k/core.c
+@@ -2319,6 +2319,7 @@ struct ath12k_base *ath12k_core_alloc(struct device *dev, size_t priv_size,
+ 
+ 	timer_setup(&ab->rx_replenish_retry, ath12k_ce_rx_replenish_retry, 0);
+ 	init_completion(&ab->htc_suspend);
++	init_completion(&ab->pdev_resume.done);
+ 	init_completion(&ab->restart_completed);
+ 	init_completion(&ab->wow.wakeup_completed);
+ 
+diff --git a/drivers/net/wireless/ath/ath12k/core.h b/drivers/net/wireless/ath/ath12k/core.h
+index 5b8a177a4..41855397c 100644
+--- a/drivers/net/wireless/ath/ath12k/core.h
++++ b/drivers/net/wireless/ath/ath12k/core.h
+@@ -1078,6 +1078,12 @@ struct ath12k_base {
+ 	u32 num_db_cap;
+ 
+ 	struct completion htc_suspend;
++	struct {
++		/* Protected by base_lock. */
++		struct completion done;
++		u32 pdev_id;
++		bool pending;
++	} pdev_resume;
+ 
+ 	u64 fw_soc_drop_count;
+ 	bool static_window_map;
+diff --git a/drivers/net/wireless/ath/ath12k/wmi.c b/drivers/net/wireless/ath/ath12k/wmi.c
+index aa2e8d646..71005da0e 100644
+--- a/drivers/net/wireless/ath/ath12k/wmi.c
++++ b/drivers/net/wireless/ath/ath12k/wmi.c
+@@ -211,6 +211,8 @@ static const struct ath12k_wmi_tlv_policy ath12k_wmi_tlv_policies[] = {
+ 		.min_len = sizeof(struct wmi_obss_color_collision_event) },
+ 	[WMI_TAG_PDEV_CSA_SWITCH_COUNT_STATUS_EVENT] = {
+ 		.min_len = sizeof(struct ath12k_wmi_pdev_csa_event) },
++	[WMI_TAG_PDEV_RESUME_EVENT] = {
++		.min_len = sizeof(__le32) },
+ };
+ 
+ __le32 ath12k_wmi_tlv_hdr(u32 cmd, u32 len)
+@@ -1678,6 +1680,7 @@ int ath12k_wmi_pdev_set_ps_mode(struct ath12k *ar, int vdev_id, u32 enable)
+ int ath12k_wmi_pdev_suspend(struct ath12k *ar, u32 suspend_opt,
+ 			    u32 pdev_id)
+ {
++	struct ath12k_base *ab = ar->ab;
+ 	struct ath12k_wmi_pdev *wmi = ar->wmi;
+ 	struct wmi_pdev_suspend_cmd *cmd;
+ 	struct sk_buff *skb;
+@@ -1698,17 +1701,24 @@ int ath12k_wmi_pdev_suspend(struct ath12k *ar, u32 suspend_opt,
+ 	ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+ 		   "WMI pdev suspend pdev_id %d\n", pdev_id);
+ 
++	reinit_completion(&ab->htc_suspend);
++	clear_bit(ATH12K_FLAG_HTC_SUSPEND_COMPLETE, &ab->dev_flags);
+ 	ret = ath12k_wmi_cmd_send(wmi, skb, WMI_PDEV_SUSPEND_CMDID);
+ 	if (ret) {
+-		ath12k_warn(ar->ab, "failed to send WMI_PDEV_SUSPEND cmd\n");
++		ath12k_warn(ab, "failed to send WMI_PDEV_SUSPEND cmd\n");
+ 		dev_kfree_skb(skb);
++		return ret;
+ 	}
+ 
+-	return ret;
++	if (!wait_for_completion_timeout(&ab->htc_suspend, WMI_SEND_TIMEOUT_HZ))
++		return -ETIMEDOUT;
++
++	return test_bit(ATH12K_FLAG_HTC_SUSPEND_COMPLETE, &ab->dev_flags) ? 0 : -EBUSY;
+ }
+ 
+ int ath12k_wmi_pdev_resume(struct ath12k *ar, u32 pdev_id)
+ {
++	struct ath12k_base *ab = ar->ab;
+ 	struct ath12k_wmi_pdev *wmi = ar->wmi;
+ 	struct wmi_pdev_resume_cmd *cmd;
+ 	struct sk_buff *skb;
+@@ -1727,15 +1737,54 @@ int ath12k_wmi_pdev_resume(struct ath12k *ar, u32 pdev_id)
+ 	ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+ 		   "WMI pdev resume pdev id %d\n", pdev_id);
+ 
++	spin_lock_bh(&ab->base_lock);
++	if (ab->pdev_resume.pending) {
++		spin_unlock_bh(&ab->base_lock);
++		dev_kfree_skb(skb);
++		return -EBUSY;
++	}
++	reinit_completion(&ab->pdev_resume.done);
++	ab->pdev_resume.pdev_id = pdev_id;
++	ab->pdev_resume.pending = true;
++	spin_unlock_bh(&ab->base_lock);
++
+ 	ret = ath12k_wmi_cmd_send(wmi, skb, WMI_PDEV_RESUME_CMDID);
+ 	if (ret) {
+-		ath12k_warn(ar->ab, "failed to send WMI_PDEV_RESUME cmd\n");
++		ath12k_warn(ab, "failed to send WMI_PDEV_RESUME cmd\n");
+ 		dev_kfree_skb(skb);
++	} else if (!wait_for_completion_timeout(&ab->pdev_resume.done,
++						 WMI_SEND_TIMEOUT_HZ)) {
++		ret = -ETIMEDOUT;
+ 	}
+ 
++	spin_lock_bh(&ab->base_lock);
++	ab->pdev_resume.pending = false;
++	spin_unlock_bh(&ab->base_lock);
++
+ 	return ret;
+ }
+ 
++static void ath12k_wmi_pdev_resume_event(struct ath12k_base *ab,
++					 struct sk_buff *skb)
++{
++	const __le32 *pdev_id;
++	const void **tb;
++
++	tb = ath12k_wmi_tlv_parse(ab, skb);
++	if (IS_ERR(tb))
++		return;
++
++	pdev_id = tb[WMI_TAG_PDEV_RESUME_EVENT];
++	if (!pdev_id)
++		return;
++
++	spin_lock_bh(&ab->base_lock);
++	if (ab->pdev_resume.pending &&
++	    ab->pdev_resume.pdev_id == le32_to_cpu(*pdev_id))
++		complete(&ab->pdev_resume.done);
++	spin_unlock_bh(&ab->base_lock);
++}
++
+ /* TODO FW Support for the cmd is not available yet.
+  * Can be tested once the command and corresponding
+  * event is implemented in FW
+@@ -10464,6 +10513,9 @@ static void ath12k_wmi_op_rx(struct ath12k_base *ab, struct sk_buff *skb)
+ 	case WMI_WOW_WAKEUP_HOST_EVENTID:
+ 		ath12k_wmi_event_wow_wakeup_host(ab, skb);
+ 		break;
++	case WMI_PDEV_RESUME_EVENTID:
++		ath12k_wmi_pdev_resume_event(ab, skb);
++		break;
+ 	case WMI_GTK_OFFLOAD_STATUS_EVENTID:
+ 		ath12k_wmi_gtk_offload_status_event(ab, skb);
+ 		break;
+-- 
+2.55.0
+

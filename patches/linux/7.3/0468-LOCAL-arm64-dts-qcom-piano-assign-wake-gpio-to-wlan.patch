@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Wed, 25 Nov 2026 04:12:02 +0800
+Subject: [PATCH] arm64: dts: qcom: piano: Assign active-low WAKE# to WLAN
+
+GPIO104 is the dedicated active-low PEACH WAKE# line. Describing it
+on the PCIe root port lets it wake the system even when WLAN wake
+is disabled. Move the GPIO to the fixed WLAN endpoint so PCI uses
+the WLAN device wake policy. The active-low polarity matches the
+board wiring and Qualcomm's correction for the same signal.
+
+Codex checked the board DTBs and combined the polarity correction
+with the move. GPIO104 did not end the unplugged RTC suspend test
+early on the Piano development image.
+
+Link: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=eec036783b2e633302bcf277ae36742dfd3402fc
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ arch/arm64/boot/dts/qcom/sm8750-xiaomi-piano.dts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8750-xiaomi-piano.dts b/arch/arm64/boot/dts/qcom/sm8750-xiaomi-piano.dts
+index 9312b3e3c..0fc4ed6d5 100644
+--- a/arch/arm64/boot/dts/qcom/sm8750-xiaomi-piano.dts
++++ b/arch/arm64/boot/dts/qcom/sm8750-xiaomi-piano.dts
+@@ -1367,12 +1367,12 @@
+ };
+ 
+ &pcieport0 {
+-	wake-gpios = <&tlmm 104 GPIO_ACTIVE_HIGH>;
+ 	reset-gpios = <&tlmm 102 GPIO_ACTIVE_LOW>;
+ 
+ 	wifi@0 {
+ 		compatible = "pci17cb,110e";
+ 		reg = <0x10000 0x0 0x0 0x0 0x0>;
++		wake-gpios = <&tlmm 104 GPIO_ACTIVE_LOW>;
+ 
+ 		vddrfacmn-supply = <&vreg_pmu_rfa_cmn>;
+ 		vddaon-supply = <&vreg_pmu_aon_0p59>;
+-- 
+2.55.0
+

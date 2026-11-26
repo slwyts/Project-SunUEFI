@@ -1,0 +1,155 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ajay Kumar Nandam <ajay.nandam@oss.qualcomm.com>
+Date: Mon, 28 Sep 2026 16:02:21 +0530
+Subject: [PATCH] ASoC: codecs: lpass-va-macro: manage clocks in runtime PM
+
+Replace PM clock framework usage with explicit clock prepare/enable and
+disable/unprepare operations from runtime PM callbacks. This keeps the VA
+macro clock prepare state tied to the runtime PM active state, so idle
+suspend can release parent clock votes.
+
+Use DEFINE_RUNTIME_DEV_PM_OPS() so system suspend forces the same runtime
+suspend path for an active device.
+
+Codex verified the accepted change against the Piano release source.
+A Piano same-Image A/B used this change in both variants and
+checked PCM and SSC before and after system suspend.
+
+Signed-off-by: Ajay Kumar Nandam <ajay.nandam@oss.qualcomm.com>
+Link: https://patch.msgid.link/20260928-xo-sd-runtimepm-v1-final-v1-3-e3ebade3aeb7@oss.qualcomm.com
+Signed-off-by: Mark Brown <broonie@kernel.org>
+Link: https://git.kernel.org/pub/scm/linux/kernel/git/broonie/sound.git/commit/?id=7b982a5e39b19126f9d424f04628005b3720d69b
+Assisted-by: LLM
+---
+ sound/soc/codecs/lpass-va-macro.c | 74 +++++++++++++++++++------------
+ 1 file changed, 46 insertions(+), 28 deletions(-)
+
+diff --git a/sound/soc/codecs/lpass-va-macro.c b/sound/soc/codecs/lpass-va-macro.c
+index 526f664..224261f 100644
+--- a/sound/soc/codecs/lpass-va-macro.c
++++ b/sound/soc/codecs/lpass-va-macro.c
+@@ -10,7 +10,6 @@
+ #include <linux/of_clk.h>
+ #include <linux/of_platform.h>
+ #include <linux/platform_device.h>
+-#include <linux/pm_clock.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/regmap.h>
+ #include <linux/regulator/consumer.h>
+@@ -260,6 +259,46 @@ static const struct va_macro_data sm8550_va_data = {
+ 	.has_npl_clk = false,
+ };
+ 
++static void va_macro_disable_clocks(struct va_macro *va)
++{
++	clk_disable_unprepare(va->npl);
++	clk_disable_unprepare(va->mclk);
++	clk_disable_unprepare(va->dcodec);
++	clk_disable_unprepare(va->macro);
++}
++
++static int va_macro_enable_clocks(struct va_macro *va)
++{
++	int ret;
++
++	ret = clk_prepare_enable(va->macro);
++	if (ret)
++		return ret;
++
++	ret = clk_prepare_enable(va->dcodec);
++	if (ret)
++		goto err_dcodec;
++
++	ret = clk_prepare_enable(va->mclk);
++	if (ret)
++		goto err_mclk;
++
++	ret = clk_prepare_enable(va->npl);
++	if (ret)
++		goto err_npl;
++
++	return 0;
++
++err_npl:
++	clk_disable_unprepare(va->mclk);
++err_mclk:
++	clk_disable_unprepare(va->dcodec);
++err_dcodec:
++	clk_disable_unprepare(va->macro);
++
++	return ret;
++}
++
+ static bool va_is_volatile_register(struct device *dev, unsigned int reg)
+ {
+ 	switch (reg) {
+@@ -1653,14 +1692,6 @@ static int va_macro_probe(struct platform_device *pdev)
+ 			goto err;
+ 	}
+ 
+-	ret = devm_pm_clk_create(dev);
+-	if (ret)
+-		goto err;
+-
+-	ret = of_pm_clk_add_clks(dev);
+-	if (ret < 0)
+-		goto err;
+-
+ 	pm_runtime_set_autosuspend_delay(dev, 100);
+ 	pm_runtime_use_autosuspend(dev);
+ 	ret = devm_pm_runtime_enable(dev);
+@@ -1751,16 +1782,9 @@ static void va_macro_remove(struct platform_device *pdev)
+ static int va_macro_runtime_suspend(struct device *dev)
+ {
+ 	struct va_macro *va = dev_get_drvdata(dev);
+-	int ret;
+ 
+ 	regcache_cache_only(va->regmap, true);
+-
+-	ret = pm_clk_suspend(dev);
+-	if (ret) {
+-		regcache_cache_only(va->regmap, false);
+-		return ret;
+-	}
+-
++	va_macro_disable_clocks(va);
+ 	regcache_mark_dirty(va->regmap);
+ 
+ 	return 0;
+@@ -1769,9 +1793,9 @@ static int va_macro_runtime_suspend(struct device *dev)
+ static int va_macro_runtime_resume(struct device *dev)
+ {
+ 	struct va_macro *va = dev_get_drvdata(dev);
+-	int ret, sret;
++	int ret;
+ 
+-	ret = pm_clk_resume(dev);
++	ret = va_macro_enable_clocks(va);
+ 	if (ret) {
+ 		regcache_cache_only(va->regmap, true);
+ 		regcache_mark_dirty(va->regmap);
+@@ -1784,21 +1808,15 @@ static int va_macro_runtime_resume(struct device *dev)
+ 	if (ret) {
+ 		regcache_cache_only(va->regmap, true);
+ 		regcache_mark_dirty(va->regmap);
+-		sret = pm_clk_suspend(dev);
+-		if (sret)
+-			dev_err(va->dev,
+-				"failed to suspend clocks after regcache sync failure: %d\n",
+-				sret);
++		va_macro_disable_clocks(va);
+ 		return ret;
+ 	}
+ 
+ 	return 0;
+ }
+ 
+-
+-static const struct dev_pm_ops va_macro_pm_ops = {
+-	RUNTIME_PM_OPS(va_macro_runtime_suspend, va_macro_runtime_resume, NULL)
+-};
++static DEFINE_RUNTIME_DEV_PM_OPS(va_macro_pm_ops, va_macro_runtime_suspend,
++				 va_macro_runtime_resume, NULL);
+ 
+ static const struct of_device_id va_macro_dt_match[] = {
+ 	{ .compatible = "qcom,sc7280-lpass-va-macro", .data = &sc7280_va_data },

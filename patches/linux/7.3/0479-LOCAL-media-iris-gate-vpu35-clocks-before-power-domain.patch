@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Wed, 25 Nov 2026 19:19:44 +0800
+Subject: [PATCH] media: iris: Gate all VPU 3.5 clocks before powering off the
+ domain
+
+The SM8750 power-on path enables the VPU core, freerun and AXI0
+clocks after resuming the hardware power domain. On shutdown,
+iris_vpu35_power_off_hw() drops the domain in the shared VPU 3.3
+helper and gates the freerun and AXI0 clocks afterwards. The freerun
+branch in particular still accesses the VideoCC clock registers.
+
+Split the VPU 3.3 shutdown preparation from resource release so
+that VPU 3.5 can gate its three clocks in reverse power-on order
+before dropping the domain. Keep the NoC and AHB preparation and
+the VPU 3.3 cleanup unchanged. Gate the clocks on every exit from
+shutdown preparation, including an already collapsed core and a
+polling timeout.
+
+The original SM8750 driver submission used this order. The newer
+per-block Qualcomm proposal also groups these three clocks under
+the VPU domain and gates them before the PM put. This patch keeps
+the clock and power domain interfaces of the 7.3 driver.
+
+Codex checked the stock Piano module, the Linux call paths and the
+Qualcomm proposal. It implemented the sequencing change and verified
+the shutdown branches with a host fixture and ARM64 Kbuild.
+
+Fixes: dbd57932f8d0 ("media: iris: Add support for SM8750 (VPU v3.5)")
+Link: https://lore.kernel.org/r/20250714-sm8750-iris-v1-3-3006293a5bc7@linaro.org
+Link: https://lore.kernel.org/r/20261125-glymur-v12-3-5c34dfd73fc2@oss.qualcomm.com
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/media/platform/qcom/iris/iris_vpu3x.c | 19 +++++++++++++------
+ 1 file changed, 13 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_vpu3x.c b/drivers/media/platform/qcom/iris/iris_vpu3x.c
+index 3dad47be7..baf51a33c 100644
+--- a/drivers/media/platform/qcom/iris/iris_vpu3x.c
++++ b/drivers/media/platform/qcom/iris/iris_vpu3x.c
+@@ -71,7 +71,7 @@ disable_power:
+ 	iris_vpu_power_off_hw(core);
+ }
+ 
+-static void iris_vpu33_power_off_hardware(struct iris_core *core)
++static void iris_vpu33_prepare_power_off(struct iris_core *core)
+ {
+ 	bool handshake_done = false, handshake_busy = false;
+ 	u32 reg_val = 0, value, i;
+@@ -79,7 +79,7 @@ static void iris_vpu33_power_off_hardware(struct iris_core *core)
+ 	int ret;
+ 
+ 	if (iris_vpu3x_hw_power_collapsed(core))
+-		goto disable_power;
++		return;
+ 
+ 	dev_err(core->dev, "video hw is power on\n");
+ 
+@@ -91,7 +91,7 @@ static void iris_vpu33_power_off_hardware(struct iris_core *core)
+ 		ret = readl_poll_timeout(core->reg_base + VCODEC_SS_IDLE_STATUSN + 4 * i,
+ 					 reg_val, reg_val & 0x400000, 2000, 20000);
+ 		if (ret)
+-			goto disable_power;
++			return;
+ 	}
+ 
+ 	/* Retry up to 1000 times as recommended by hardware documentation */
+@@ -121,7 +121,7 @@ static void iris_vpu33_power_off_hardware(struct iris_core *core)
+ 	ret = readl_poll_timeout(core->reg_base + AON_WRAPPER_MVP_NOC_LPI_STATUS,
+ 				 reg_val, reg_val & BIT(0), 200, 2000);
+ 	if (ret)
+-		goto disable_power;
++		return;
+ 
+ 	writel(0, core->reg_base + AON_WRAPPER_MVP_NOC_LPI_CONTROL);
+ 
+@@ -129,8 +129,11 @@ static void iris_vpu33_power_off_hardware(struct iris_core *core)
+ 	       core->reg_base + CPU_CS_AHB_BRIDGE_SYNC_RESET);
+ 	writel(CORE_BRIDGE_HW_RESET_DISABLE, core->reg_base + CPU_CS_AHB_BRIDGE_SYNC_RESET);
+ 	writel(0x0, core->reg_base + CPU_CS_AHB_BRIDGE_SYNC_RESET);
++}
+ 
+-disable_power:
++static void iris_vpu33_power_off_hardware(struct iris_core *core)
++{
++	iris_vpu33_prepare_power_off(core);
+ 	iris_vpu_power_off_hw(core);
+ }
+ 
+@@ -248,10 +251,14 @@ err_disable_power:
+ 
+ static void iris_vpu35_power_off_hw(struct iris_core *core)
+ {
+-	iris_vpu33_power_off_hardware(core);
++	struct device *pd = core->pmdomain_tbl->pd_devs[IRIS_HW_POWER_DOMAIN];
+ 
++	iris_vpu33_prepare_power_off(core);
++	dev_pm_genpd_set_hwmode(pd, false);
++	iris_disable_unprepare_clock(core, IRIS_HW_CLK);
+ 	iris_disable_unprepare_clock(core, IRIS_HW_FREERUN_CLK);
+ 	iris_disable_unprepare_clock(core, IRIS_AXI_CLK);
++	iris_disable_power_domains(core, pd);
+ }
+ 
+ const struct vpu_ops iris_vpu3_ops = {
+-- 
+2.55.0
+

@@ -1,0 +1,186 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Thu, 26 Nov 2026 05:52:36 +0800
+Subject: [PATCH] bus: mhi: host: Unlink channels when transfer-device
+ registration ends
+
+Transfer-device creation associates the channel before the device is
+added so a driver can prepare it during probe. Clear the association if
+device_add() fails or after the transfer device's remove callback.
+Use the same clearing path in controller unprepare.
+
+Codex combined both call paths and checked the resulting source tree.
+The Piano cold-resume and module tests covered IPCR teardown and setup.
+
+Link: https://cos.googlesource.com/third_party/kernel/+/5587e7871ce994bb079f97fe7e430d99627e5292
+Link: https://docs.kernel.org/driver-api/infrastructure.html#c.device_unregister
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/bus/mhi/host/init.c | 16 +-------
+ drivers/bus/mhi/host/main.c | 76 +++++++++++++++++++------------------
+ 2 files changed, 41 insertions(+), 51 deletions(-)
+
+diff --git a/drivers/bus/mhi/host/init.c b/drivers/bus/mhi/host/init.c
+index fd3050889..95bd18137 100644
+--- a/drivers/bus/mhi/host/init.c
++++ b/drivers/bus/mhi/host/init.c
+@@ -1209,21 +1209,7 @@ EXPORT_SYMBOL_GPL(mhi_unprepare_after_power_down);
+ 
+ static void mhi_release_device(struct device *dev)
+ {
+-	struct mhi_device *mhi_dev = to_mhi_device(dev);
+-
+-	/*
+-	 * We need to set the mhi_chan->mhi_dev to NULL here since the MHI
+-	 * devices for the channels will only get created if the mhi_dev
+-	 * associated with it is NULL. This scenario will happen during the
+-	 * controller suspend and resume.
+-	 */
+-	if (mhi_dev->ul_chan)
+-		mhi_dev->ul_chan->mhi_dev = NULL;
+-
+-	if (mhi_dev->dl_chan)
+-		mhi_dev->dl_chan->mhi_dev = NULL;
+-
+-	kfree(mhi_dev);
++	kfree(to_mhi_device(dev));
+ }
+ 
+ struct mhi_device *mhi_alloc_device(struct mhi_controller *mhi_cntrl)
+diff --git a/drivers/bus/mhi/host/main.c b/drivers/bus/mhi/host/main.c
+index 4d4583962..2234c4d04 100644
+--- a/drivers/bus/mhi/host/main.c
++++ b/drivers/bus/mhi/host/main.c
+@@ -280,6 +280,21 @@ static bool is_valid_ring_ptr(struct mhi_ring *ring, dma_addr_t addr)
+ 			!(addr & (sizeof(struct mhi_ring_element) - 1));
+ }
+ 
++static void mhi_unlink_channels(struct mhi_device *mhi_dev)
++{
++	if (mhi_dev->ul_chan) {
++		mhi_dev->ul_chan->mhi_dev = NULL;
++		mhi_dev->ul_chan = NULL;
++		put_device(&mhi_dev->dev);
++	}
++
++	if (mhi_dev->dl_chan) {
++		mhi_dev->dl_chan->mhi_dev = NULL;
++		mhi_dev->dl_chan = NULL;
++		put_device(&mhi_dev->dev);
++	}
++}
++
+ int mhi_destroy_device(struct device *dev, void *data)
+ {
+ 	struct mhi_chan *ul_chan, *dl_chan;
+@@ -293,47 +308,26 @@ int mhi_destroy_device(struct device *dev, void *data)
+ 	mhi_dev = to_mhi_device(dev);
+ 	mhi_cntrl = mhi_dev->mhi_cntrl;
+ 
+-	/* Only destroy virtual devices thats attached to bus */
+ 	if (mhi_dev->dev_type == MHI_DEVICE_CONTROLLER)
+ 		return 0;
+ 
+ 	ul_chan = mhi_dev->ul_chan;
+ 	dl_chan = mhi_dev->dl_chan;
+ 
+-	/*
+-	 * If execution environment is specified, remove only those devices that
+-	 * started in them based on ee_mask for the channels as we move on to a
+-	 * different execution environment
+-	 */
++	/* Remove only channels from the selected execution environment. */
+ 	if (data)
+ 		ee = *(enum mhi_ee_type *)data;
+-
+-	/*
+-	 * For the suspend and resume case, this function will get called
+-	 * without mhi_unregister_controller(). Hence, we need to drop the
+-	 * references to mhi_dev created for ul and dl channels. We can
+-	 * be sure that there will be no instances of mhi_dev left after
+-	 * this.
+-	 */
+-	if (ul_chan) {
+-		if (ee != MHI_EE_MAX && !(ul_chan->ee_mask & BIT(ee)))
+-			return 0;
+-
+-		put_device(&ul_chan->mhi_dev->dev);
+-	}
+-
+-	if (dl_chan) {
+-		if (ee != MHI_EE_MAX && !(dl_chan->ee_mask & BIT(ee)))
+-			return 0;
+-
+-		put_device(&dl_chan->mhi_dev->dev);
+-	}
++	if (ee != MHI_EE_MAX &&
++	    ((ul_chan && !(ul_chan->ee_mask & BIT(ee))) ||
++	     (dl_chan && !(dl_chan->ee_mask & BIT(ee)))))
++		return 0;
+ 
+ 	dev_dbg(&mhi_cntrl->mhi_dev->dev, "destroy device for chan:%s\n",
+-		 mhi_dev->name);
++		mhi_dev->name);
+ 
+-	/* Notify the client and remove the device from MHI bus */
++	/* Client remove callbacks still need both channel links. */
+ 	device_del(dev);
++	mhi_unlink_channels(mhi_dev);
+ 	put_device(dev);
+ 
+ 	return 0;
+@@ -370,6 +364,7 @@ void mhi_create_devices(struct mhi_controller *mhi_cntrl)
+ {
+ 	struct mhi_chan *mhi_chan;
+ 	struct mhi_device *mhi_dev;
++	enum dma_data_direction peer_dir;
+ 	struct device *dev = &mhi_cntrl->mhi_dev->dev;
+ 	int i, ret;
+ 
+@@ -402,8 +397,11 @@ void mhi_create_devices(struct mhi_controller *mhi_cntrl)
+ 		get_device(&mhi_dev->dev);
+ 		mhi_chan->mhi_dev = mhi_dev;
+ 
+-		/* Check next channel if it matches */
+-		if ((i + 1) < mhi_cntrl->max_chan && mhi_chan[1].configured) {
++		/* Pair only an unbound channel in the opposite direction. */
++		peer_dir = mhi_chan->dir == DMA_TO_DEVICE ? DMA_FROM_DEVICE :
++			   DMA_TO_DEVICE;
++		if ((i + 1) < mhi_cntrl->max_chan && mhi_chan[1].configured &&
++		    !mhi_chan[1].mhi_dev && mhi_chan[1].dir == peer_dir) {
+ 			if (!strcmp(mhi_chan[1].name, mhi_chan->name)) {
+ 				i++;
+ 				mhi_chan++;
+@@ -421,17 +419,23 @@ void mhi_create_devices(struct mhi_controller *mhi_cntrl)
+ 
+ 		/* Channel name is same for both UL and DL */
+ 		mhi_dev->name = mhi_chan->name;
+-		dev_set_name(&mhi_dev->dev, "%s_%s",
+-			     dev_name(&mhi_cntrl->mhi_dev->dev),
+-			     mhi_dev->name);
++		ret = dev_set_name(&mhi_dev->dev, "%s_%s",
++				   dev_name(&mhi_cntrl->mhi_dev->dev), mhi_dev->name);
++		if (ret)
++			goto err_unlink;
+ 
+ 		/* Init wakeup source if available */
+ 		if (mhi_dev->dl_chan && mhi_dev->dl_chan->wake_capable)
+ 			device_init_wakeup(&mhi_dev->dev, true);
+ 
+ 		ret = device_add(&mhi_dev->dev);
+-		if (ret)
+-			put_device(&mhi_dev->dev);
++		if (!ret)
++			continue;
++
++		device_init_wakeup(&mhi_dev->dev, false);
++err_unlink:
++		mhi_unlink_channels(mhi_dev);
++		put_device(&mhi_dev->dev);
+ 	}
+ }
+ 
+-- 
+2.55.0
+

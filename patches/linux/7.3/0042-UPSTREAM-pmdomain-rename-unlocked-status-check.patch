@@ -1,0 +1,141 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ulf Hansson <ulf.hansson@oss.qualcomm.com>
+Date: Mon, 14 Sep 2026 17:01:37 +0200
+Subject: [PATCH] pmdomain: core: Rename genpd_status_on()
+
+Rename the genpd_status_on() to genpd_status_on_unlocked() to make the name
+available for a lock taking wrapper introduced by a subsequent change.
+
+Suggested-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+
+Codex verified this backport on the Piano 7.3.3 configuration. It
+applies without code changes as part of the PSCI OSI series.
+
+Tested-by: Yuanfang Zhang <yuanfang.zhang@oss.qualcomm.com>
+Reviewed-by: Dhruva Gole <goledhruva@gmail.com>
+Signed-off-by: Ulf Hansson <ulf.hansson@oss.qualcomm.com>
+Signed-off-by: Ulf Hansson <ulfh@kernel.org>
+Link: https://github.com/torvalds/linux/commit/81f1099186fd501768ea4bd24523347211322fbe
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/pmdomain/core.c | 26 +++++++++++++-------------
+ 1 file changed, 13 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/pmdomain/core.c b/drivers/pmdomain/core.c
+index 052ec478d..6abe8b198 100644
+--- a/drivers/pmdomain/core.c
++++ b/drivers/pmdomain/core.c
+@@ -173,7 +173,7 @@ static const struct genpd_lock_ops genpd_raw_spin_ops = {
+ #define genpd_lock_interruptible(p)	p->lock_ops->lock_interruptible(p)
+ #define genpd_unlock(p)			p->lock_ops->unlock(p)
+ 
+-#define genpd_status_on(genpd)		(genpd->status == GENPD_STATE_ON)
++#define genpd_status_on_unlocked(genpd)	(genpd->status == GENPD_STATE_ON)
+ #define genpd_is_irq_safe(genpd)	(genpd->flags & GENPD_FLAG_IRQ_SAFE)
+ #define genpd_is_always_on(genpd)	(genpd->flags & GENPD_FLAG_ALWAYS_ON)
+ #define genpd_is_active_wakeup(genpd)	(genpd->flags & GENPD_FLAG_ACTIVE_WAKEUP)
+@@ -771,8 +771,7 @@ EXPORT_SYMBOL_GPL(dev_pm_genpd_rpm_always_on);
+  * @dev: Device to get the current power status
+  *
+  * This function checks whether the generic power domain associated with the
+- * given device is on or not by verifying if genpd_status_on equals
+- * GENPD_STATE_ON.
++ * given device is on or not by checking if genpd->status equals GENPD_STATE_ON.
+  *
+  * Note: this function returns the power status of the genpd at the time of the
+  * call. The power status may change after due to activity from other devices
+@@ -791,7 +790,7 @@ bool dev_pm_genpd_is_on(struct device *dev)
+ 		return false;
+ 
+ 	genpd_lock(genpd);
+-	is_on = genpd_status_on(genpd);
++	is_on = genpd_status_on_unlocked(genpd);
+ 	genpd_unlock(genpd);
+ 
+ 	return is_on;
+@@ -963,7 +962,7 @@ static void genpd_power_off(struct generic_pm_domain *genpd, bool one_dev_on,
+ 	 * The domain was on at boot and still need to stay on.
+ 	 * The domain has a subdomain being powered on.
+ 	 */
+-	if (!genpd_status_on(genpd) || genpd->prepared_count > 0 ||
++	if (!genpd_status_on_unlocked(genpd) || genpd->prepared_count > 0 ||
+ 	    genpd_is_always_on(genpd) || genpd_is_rpm_always_on(genpd) ||
+ 	    genpd->stay_on || atomic_read(&genpd->sd_count) > 0)
+ 		return;
+@@ -1040,7 +1039,7 @@ static int genpd_power_on(struct generic_pm_domain *genpd, unsigned int depth)
+ 	struct gpd_link *link;
+ 	int ret = 0;
+ 
+-	if (genpd_status_on(genpd))
++	if (genpd_status_on_unlocked(genpd))
+ 		return 0;
+ 
+ 	/* Reflect over the entered idle-states residency for debugfs. */
+@@ -1406,7 +1405,7 @@ static void genpd_sync_power_off(struct generic_pm_domain *genpd, bool use_lock,
+ {
+ 	struct gpd_link *link;
+ 
+-	if (!genpd_status_on(genpd) || genpd_is_always_on(genpd))
++	if (!genpd_status_on_unlocked(genpd) || genpd_is_always_on(genpd))
+ 		return;
+ 
+ 	if (genpd->suspended_count != genpd->device_count
+@@ -1472,7 +1471,7 @@ static void genpd_sync_power_on(struct generic_pm_domain *genpd, bool use_lock,
+ {
+ 	struct gpd_link *link;
+ 
+-	if (genpd_status_on(genpd))
++	if (genpd_status_on_unlocked(genpd))
+ 		return;
+ 
+ 	list_for_each_entry(link, &genpd->child_links, child_node) {
+@@ -2170,7 +2169,8 @@ static int genpd_add_subdomain(struct generic_pm_domain *genpd,
+ 	genpd_lock(subdomain);
+ 	genpd_lock_nested(genpd, SINGLE_DEPTH_NESTING);
+ 
+-	if (!genpd_status_on(genpd) && genpd_status_on(subdomain)) {
++	if (!genpd_status_on_unlocked(genpd) &&
++	    genpd_status_on_unlocked(subdomain)) {
+ 		ret = -EINVAL;
+ 		goto out;
+ 	}
+@@ -2186,7 +2186,7 @@ static int genpd_add_subdomain(struct generic_pm_domain *genpd,
+ 	list_add_tail(&link->parent_node, &genpd->parent_links);
+ 	link->child = subdomain;
+ 	list_add_tail(&link->child_node, &subdomain->child_links);
+-	if (genpd_status_on(subdomain))
++	if (genpd_status_on_unlocked(subdomain))
+ 		genpd_sd_counter_inc(genpd);
+ 
+  out:
+@@ -2246,7 +2246,7 @@ int pm_genpd_remove_subdomain(struct generic_pm_domain *genpd,
+ 		list_del(&link->parent_node);
+ 		list_del(&link->child_node);
+ 		kfree(link);
+-		if (genpd_status_on(subdomain))
++		if (genpd_status_on_unlocked(subdomain))
+ 			genpd_sd_counter_dec(genpd);
+ 
+ 		ret = 0;
+@@ -2441,7 +2441,7 @@ int pm_genpd_init(struct generic_pm_domain *genpd,
+ 
+ 	/* Always-on domains must be powered on at initialization. */
+ 	if ((genpd_is_always_on(genpd) || genpd_is_rpm_always_on(genpd)) &&
+-			!genpd_status_on(genpd)) {
++			!genpd_status_on_unlocked(genpd)) {
+ 		pr_err("always-on PM domain %s is not on\n", genpd->name);
+ 		return -EINVAL;
+ 	}
+@@ -3839,7 +3839,7 @@ static int genpd_summary_one(struct seq_file *s,
+ 
+ 	if (WARN_ON(genpd->status >= ARRAY_SIZE(status_lookup)))
+ 		goto exit;
+-	if (!genpd_status_on(genpd))
++	if (!genpd_status_on_unlocked(genpd))
+ 		snprintf(state, sizeof(state), "%s-%u",
+ 			 status_lookup[genpd->status], genpd->state_idx);
+ 	else
+-- 
+2.55.0
+

@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Wed, 25 Nov 2026 15:40:39 +0800
+Subject: [PATCH] wifi: ath12k: allow disabling WoWLAN capability registration
+
+Some configurations use the normal PCI and firmware suspend path
+throughout. Allow the kernel configuration to omit WoWLAN capability
+registration, which also makes cfg80211 reject a request to enable it.
+The default preserves the existing capability for other builds.
+
+Codex checked the ath12k capability registration and nl80211 trigger
+validation, and added the build switch for the Piano NixOS kernel.
+
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ drivers/net/wireless/ath/ath12k/Kconfig | 8 ++++++++
+ drivers/net/wireless/ath/ath12k/wow.c   | 3 ++-
+ 2 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/Kconfig b/drivers/net/wireless/ath/ath12k/Kconfig
+index 0d5d1c55b..18198134a 100644
+--- a/drivers/net/wireless/ath/ath12k/Kconfig
++++ b/drivers/net/wireless/ath/ath12k/Kconfig
+@@ -14,6 +14,14 @@ config ATH12K
+ 
+ 	  If you choose to build a module, it'll be called ath12k.
+ 
++config ATH12K_WOWLAN
++	bool "ath12k Wake on Wireless LAN"
++	depends on ATH12K && PM
++	default y
++	help
++	  Advertise Wake on Wireless LAN when supported by the firmware.
++	  Turning this off keeps the normal suspend and resume path.
++
+ config ATH12K_AHB
+ 	bool "Qualcomm ath12k AHB support"
+ 	depends on ATH12K && REMOTEPROC
+diff --git a/drivers/net/wireless/ath/ath12k/wow.c b/drivers/net/wireless/ath/ath12k/wow.c
+index d8789104d..47c56f592 100644
+--- a/drivers/net/wireless/ath/ath12k/wow.c
++++ b/drivers/net/wireless/ath/ath12k/wow.c
+@@ -1023,7 +1023,8 @@ EXPORT_SYMBOL(ath12k_wow_op_resume);
+ 
+ int ath12k_wow_init(struct ath12k *ar)
+ {
+-	if (!test_bit(WMI_TLV_SERVICE_WOW, ar->wmi->wmi_ab->svc_map))
++	if (!IS_ENABLED(CONFIG_ATH12K_WOWLAN) ||
++	    !test_bit(WMI_TLV_SERVICE_WOW, ar->wmi->wmi_ab->svc_map))
+ 		return 0;
+ 
+ 	ar->wow.wowlan_support = ath12k_wowlan_support;

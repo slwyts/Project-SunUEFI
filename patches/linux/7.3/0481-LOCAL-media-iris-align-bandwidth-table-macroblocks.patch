@@ -1,0 +1,123 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+Date: Wed, 25 Nov 2026 20:37:42 +0800
+Subject: [PATCH] media: iris: Align decoder bandwidth table entries to
+ macroblocks
+
+The decoder bandwidth lookup rounds both dimensions up to 16-pixel
+blocks. The tables use unaligned frame area, so a 1920x1080 stream can
+exceed its own nominal table entry. For example, one 1080p frame has
+8160 macroblocks in the lookup and 8100 in the old tables.
+
+Use NUM_MBS_PER_FRAME() to calculate both the table thresholds and the
+workload. Keep the platform admission limits unchanged.
+
+Codex traced the lookup, checked the table boundaries, built the
+affected platform and power objects, and collected Piano playback
+and bandwidth traces from the combined implementation.
+
+Link: https://docs.kernel.org/userspace-api/media/v4l/dev-decoder.html
+Assisted-by: LLM
+Signed-off-by: Cryolitia PukNgae <cryolitia.pukngae@linux.dev>
+---
+ .../media/platform/qcom/iris/iris_platform_sc7280.h    | 10 ++++++----
+ .../media/platform/qcom/iris/iris_platform_sm8250.h    | 10 ++++++----
+ drivers/media/platform/qcom/iris/iris_platform_vpu3x.c |  9 +++++----
+ drivers/media/platform/qcom/iris/iris_power.c          |  3 ++-
+ 4 files changed, 19 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_sc7280.h b/drivers/media/platform/qcom/iris/iris_platform_sc7280.h
+index 0ec8f334d..e0b4cddbe 100644
+--- a/drivers/media/platform/qcom/iris/iris_platform_sc7280.h
++++ b/drivers/media/platform/qcom/iris/iris_platform_sc7280.h
+@@ -6,11 +6,13 @@
+ #ifndef __IRIS_PLATFORM_SC7280_H__
+ #define __IRIS_PLATFORM_SC7280_H__
+ 
++#include "iris_utils.h"
++
+ static const struct bw_info sc7280_bw_table_dec[] = {
+-	{ ((3840 * 2160) / 256) * 60, 1896000, },
+-	{ ((3840 * 2160) / 256) * 30,  968000, },
+-	{ ((1920 * 1080) / 256) * 60,  618000, },
+-	{ ((1920 * 1080) / 256) * 30,  318000, },
++	{ NUM_MBS_PER_FRAME(2160, 3840) * 60, 1896000, },
++	{ NUM_MBS_PER_FRAME(2160, 3840) * 30,  968000, },
++	{ NUM_MBS_PER_FRAME(1080, 1920) * 60,  618000, },
++	{ NUM_MBS_PER_FRAME(1080, 1920) * 30,  318000, },
+ };
+ 
+ static const char * const sc7280_opp_pd_table[] = { "cx" };
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_sm8250.h b/drivers/media/platform/qcom/iris/iris_platform_sm8250.h
+index 50306043e..a6c701072 100644
+--- a/drivers/media/platform/qcom/iris/iris_platform_sm8250.h
++++ b/drivers/media/platform/qcom/iris/iris_platform_sm8250.h
+@@ -6,11 +6,13 @@
+ #ifndef __IRIS_PLATFORM_SM8250_H__
+ #define __IRIS_PLATFORM_SM8250_H__
+ 
++#include "iris_utils.h"
++
+ static const struct bw_info sm8250_bw_table_dec[] = {
+-	{ ((4096 * 2160) / 256) * 60, 2403000 },
+-	{ ((4096 * 2160) / 256) * 30, 1224000 },
+-	{ ((1920 * 1080) / 256) * 60,  812000 },
+-	{ ((1920 * 1080) / 256) * 30,  416000 },
++	{ NUM_MBS_PER_FRAME(2160, 4096) * 60, 2403000 },
++	{ NUM_MBS_PER_FRAME(2160, 4096) * 30, 1224000 },
++	{ NUM_MBS_PER_FRAME(1080, 1920) * 60,  812000 },
++	{ NUM_MBS_PER_FRAME(1080, 1920) * 30,  416000 },
+ };
+ 
+ static const char * const sm8250_opp_pd_table[] = { "mx", "mmcx" };
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_vpu3x.c b/drivers/media/platform/qcom/iris/iris_platform_vpu3x.c
+index 74626b35d..431e4148f 100644
+--- a/drivers/media/platform/qcom/iris/iris_platform_vpu3x.c
++++ b/drivers/media/platform/qcom/iris/iris_platform_vpu3x.c
+@@ -9,6 +9,7 @@
+ #include "iris_hfi_gen2.h"
+ #include "iris_hfi_gen2_defines.h"
+ #include "iris_platform_common.h"
++#include "iris_utils.h"
+ #include "iris_vpu_buffer.h"
+ #include "iris_vpu_common.h"
+ 
+@@ -61,10 +62,10 @@ static const struct icc_info iris_icc_info_vpu3x[] = {
+ };
+ 
+ static const struct bw_info iris_bw_table_dec_vpu3x[] = {
+-	{ ((4096 * 2160) / 256) * 60, 1608000 },
+-	{ ((4096 * 2160) / 256) * 30,  826000 },
+-	{ ((1920 * 1080) / 256) * 60,  567000 },
+-	{ ((1920 * 1080) / 256) * 30,  294000 },
++	{ NUM_MBS_PER_FRAME(2160, 4096) * 60, 1608000 },
++	{ NUM_MBS_PER_FRAME(2160, 4096) * 30,  826000 },
++	{ NUM_MBS_PER_FRAME(1080, 1920) * 60,  567000 },
++	{ NUM_MBS_PER_FRAME(1080, 1920) * 30,  294000 },
+ };
+ 
+ static const char * const iris_pmdomain_table_vpu3x[] = { "venus", "vcodec0" };
+diff --git a/drivers/media/platform/qcom/iris/iris_power.c b/drivers/media/platform/qcom/iris/iris_power.c
+index 8969982df..cceb31b80 100644
+--- a/drivers/media/platform/qcom/iris/iris_power.c
++++ b/drivers/media/platform/qcom/iris/iris_power.c
+@@ -11,6 +11,7 @@
+ #include "iris_instance.h"
+ #include "iris_power.h"
+ #include "iris_resources.h"
++#include "iris_utils.h"
+ #include "iris_vpu_common.h"
+ 
+ static u32 iris_calc_bw(struct iris_inst *inst, struct icc_vote_data *data)
+@@ -20,7 +21,7 @@ static u32 iris_calc_bw(struct iris_inst *inst, struct icc_vote_data *data)
+ 	u32 num_rows, i, mbs, mbps;
+ 	u32 icc_bw = 0;
+ 
+-	mbs = DIV_ROUND_UP(data->height, 16) * DIV_ROUND_UP(data->width, 16);
++	mbs = NUM_MBS_PER_FRAME(data->height, data->width);
+ 	mbps = mbs * data->fps;
+ 	if (mbps == 0)
+ 		goto exit;
+-- 
+2.55.0
+
