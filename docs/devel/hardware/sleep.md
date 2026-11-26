@@ -20,6 +20,19 @@ Linux 的 `qcom_stats` 从 `/sys/kernel/debug/qcom_stats/` 提供 `aosd`、
 计数和 DDR 频点记录；这些统计需要在拔线前后对照，单次读数不代表
 进入深睡或达到原厂待机时间。
 
+## 板级省电
+
+APPS RSC 由 PSCI SS3 电源域管理。打包设备树停用未使用的原厂消费者，
+使 RPMh 和互联供应者可以同步并撤销启动时的投票。LPASS 时钟由音频驱动
+按需申请和释放。
+
+板载 WLAN 默认关闭 WoWLAN。GPIO104 是 WLAN 的低有效 WAKE#，随端点
+的唤醒策略配置。普通挂起等待 WLAN 固件应答和 MHI M3，再让 PCI 核心
+进入 D3hot、根端口发出 PME_Turn_Off。USB 处于拔线设备角色时跳过
+仅用于主机唤醒的 HS PHY L2 检查。
+
+Iris 硬解按输入分辨率和帧率申请互联带宽，运行时挂起后释放投票。
+
 ## 插电熄屏
 
 HyperOS `OS4.0.6.0.XPYCNXM` 的充电驱动在线时持有 `charger_wakelock`，
