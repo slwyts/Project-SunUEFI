@@ -10,6 +10,15 @@
         "url": "https://gitlab.freedesktop.org/mesa/mesa/-/blob/e549b466fcf1237469b6814614d21cbcd144c30b/src/gallium/drivers/freedreno/freedreno_resource.c",
         "drop_when": "The selected Mesa source allocates renderonly scanout buffers large enough for a6xx and newer GMEM layouts; verify non-four-row-aligned heights import without reducing the visible dimensions."
       }
+    },
+    {
+      "file": "0002-vulkan-wsi-display-render-only.patch",
+      "sha256": "379fd530e427fb2dec8280f224f4b653a06a4583d23fe9b79a782ee41d655f9c",
+      "upstream": {
+        "status": "submitted",
+        "url": "https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/46619",
+        "drop_when": "The selected Mesa source handles EOPNOTSUPP as an empty display enumeration on render-only DRM primary nodes, returns VK_ERROR_OUT_OF_HOST_MEMORY for ENOMEM and VK_ERROR_UNKNOWN for other query failures."
+      }
     }
   ]
 }
