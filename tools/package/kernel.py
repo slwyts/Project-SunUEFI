@@ -59,11 +59,11 @@ def package_versions(kernel_version, release, package_format, epoch):
             base + '+' + '.'.join((abi_epoch, str(epoch), digest)))
 
 
-def debian_image_dependencies(kernel_version, release, abi_epoch):
+def debian_image_dependencies(kernel_version, release, release_epoch):
     from package.boot import dtb_package_name
 
     # Do not change the image package when only package_epoch advances.
-    _, boot_version = package_versions(kernel_version, release, 'debian', abi_epoch)
+    _, boot_version = package_versions(kernel_version, release, 'debian', release_epoch)
     return (f'{dtb_package_name(release)}, '
             f'piano-boot-config (>= {boot_version}-{DEBIAN_REVISION})')
 
@@ -111,7 +111,7 @@ def package_plan(kernel, build, output, package_format, jobs):
         command += [f'KDEB_PKGVERSION={abi_version}-{revision}', 'KDEB_SOURCENAME=linux-piano',
                     'KDEB_CHANGELOG_DIST=unstable', 'KBUILD_BUILD_VERSION=1', 'bindeb-pkg']
         environment['SUNUEFI_DEBIAN_IMAGE_DEPENDS'] = debian_image_dependencies(
-            kernel_version, release, abi_epoch)
+            kernel_version, release, release_epoch)
         # Do not build a redundant multi-gigabyte debug image package.
         profiles = os.environ.get('DEB_BUILD_PROFILES', '').split()
         environment['DEB_BUILD_PROFILES'] = ' '.join(dict.fromkeys(
